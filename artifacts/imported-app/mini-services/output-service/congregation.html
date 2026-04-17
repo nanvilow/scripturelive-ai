@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ScriptureLive — Live Output</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #fff;
+    }
+
+    #output {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      transition: opacity 0.5s ease;
+    }
+
+    #output.hidden { opacity: 0; }
+
+    .bg-image {
+      position: absolute; inset: 0;
+      object-fit: cover; opacity: 0.4;
+      pointer-events: none;
+    }
+    .bg-overlay {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0.3);
+      pointer-events: none;
+    }
+
+    .slide-content {
+      position: relative; z-index: 1;
+      text-align: center;
+      max-width: 75vw;
+      padding: 4rem 2rem;
+    }
+
+    .slide-reference {
+      font-size: 1rem;
+      opacity: 0.5;
+      margin-bottom: 1rem;
+      letter-spacing: 0.05em;
+    }
+
+    .slide-text {
+      font-size: 2.5rem;
+      font-weight: 500;
+      line-height: 1.5;
+      text-shadow: 0 2px 12px rgba(0,0,0,0.3);
+    }
+
+    .slide-title {
+      font-size: 3rem;
+      font-weight: 700;
+      line-height: 1.3;
+      text-shadow: 0 2px 12px rgba(0,0,0,0.3);
+    }
+
+    .slide-subtitle {
+      font-size: 1.2rem;
+      opacity: 0.7;
+      margin-top: 1rem;
+    }
+
+    /* Theme backgrounds */
+    .theme-worship { background: linear-gradient(135deg, #1e0a3c, #1e1b4b); }
+    .theme-sermon { background: linear-gradient(135deg, #3c1a0a, #451a03); }
+    .theme-easter { background: linear-gradient(135deg, #0a3c2a, #042f2e); }
+    .theme-christmas { background: linear-gradient(135deg, #3c0a0a, #4c0519); }
+    .theme-praise { background: linear-gradient(135deg, #3c3a0a, #451a03); }
+    .theme-minimal { background: linear-gradient(135deg, #0a0a0a, #171717); }
+
+    /* Lower Third */
+    .lower-third {
+      position: absolute;
+      left: 0; right: 0;
+      display: flex; align-items: center; justify-content: center;
+      padding: 1rem 3rem;
+    }
+    .lower-third.bottom { bottom: 0; }
+    .lower-third.top { top: 0; }
+    .lower-third-box {
+      width: 100%; max-width: 60rem;
+      background: rgba(0,0,0,0.85);
+      backdrop-filter: blur(8px);
+      border-radius: 0.5rem;
+      padding: 1.5rem 2.5rem;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .lower-third .slide-text { font-size: 2rem; line-height: 1.3; }
+    .lower-third.small { padding: 0.5rem 2rem; }
+    .lower-third.small .slide-text { font-size: 1.3rem; }
+    .lower-third.large { padding: 3rem; }
+    .lower-third.large .slide-text { font-size: 3rem; }
+
+    /* Status indicator */
+    #status {
+      position: fixed; top: 1rem; right: 1rem;
+      display: flex; align-items: center; gap: 0.5rem;
+      z-index: 100;
+      font-size: 0.75rem;
+      color: #999;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    #status.visible { opacity: 1; }
+    #status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #ef4444;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    #status.connected #status-dot { background: #22c55e; animation: none; }
+
+    /* Reconnecting overlay */
+    #reconnecting {
+      position: fixed; inset: 0;
+      display: none; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.95);
+      z-index: 200;
+      flex-direction: column; gap: 1rem;
+    }
+    #reconnecting.active { display: flex; }
+    #reconnecting .spinner {
+      width: 2rem; height: 2rem;
+      border: 3px solid #333;
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="status">
+    <div id="status-dot"></div>
+    <span id="status-text">Connecting...</span>
+  </div>
+
+  <div id="reconnecting">
+    <div class="spinner"></div>
+    <div style="color:#999;font-size:0.9rem;">Reconnecting to output service...</div>
+  </div>
+
+  <div id="output"></div>
+
+  <script>
+    // ── Configuration ────────────────────────────────────────────────
+    // Auto-detect the WebSocket URL based on current page origin
+    const wsUrl = `ws://${location.host}/`
+
+    // ── State ────────────────────────────────────────────────────────
+    let currentState = null
+    let ws = null
+    let reconnectAttempts = 0
+    let maxReconnectAttempts = 30
+    let reconnectDelay = 1000
+
+    // ── DOM ──────────────────────────────────────────────────────────
+    const outputEl = document.getElementById('output')
+    const statusEl = document.getElementById('status')
+    const statusText = document.getElementById('status-text')
+    const reconnectingEl = document.getElementById('reconnecting')
+
+    // ── Themes ───────────────────────────────────────────────────────
+    const themeClasses = {
+      worship: 'theme-worship',
+      sermon: 'theme-sermon',
+      easter: 'theme-easter',
+      christmas: 'theme-christmas',
+      praise: 'theme-praise',
+      minimal: 'theme-minimal',
+    }
+
+    // ── Render ───────────────────────────────────────────────────────
+    function render(state) {
+      if (!state || !state.isLive || !state.slide) {
+        outputEl.innerHTML = ''
+        outputEl.classList.add('hidden')
+        return
+      }
+
+      const { slide, displayMode = 'full', settings = {} } = state
+      const themeKey = slide.background || (settings.congregationScreenTheme || 'minimal')
+      const themeClass = themeClasses[themeKey] || 'theme-minimal'
+      const isLowerThird = displayMode && displayMode.startsWith('lower-third')
+      const isBlackLowerThird = displayMode === 'lower-third-black'
+      const ltPosition = settings.lowerThirdPosition || 'bottom'
+      const ltHeight = settings.lowerThirdHeight || 'md'
+
+      let bgImage = ''
+      let bgOverlay = ''
+      if (settings.customBackground) {
+        bgImage = `<img class="bg-image" src="${settings.customBackground}" alt="" crossorigin="anonymous" onerror="this.style.display='none'">`
+        bgOverlay = '<div class="bg-overlay"></div>'
+      }
+
+      const refHtml = settings.showReferenceOnOutput !== false && slide.title
+        ? `<div class="slide-reference">${slide.title}${slide.subtitle ? ` — ${slide.subtitle}` : ''}</div>`
+        : ''
+
+      let contentHtml = ''
+      if (slide.type === 'title') {
+        const size = { sm: '2rem', md: '2.5rem', lg: '3rem', xl: '3.5rem' }[settings.fontSize] || '2.5rem'
+        const shadow = settings.textShadow !== false ? 'text-shadow:0 2px 12px rgba(0,0,0,0.3);' : ''
+        contentHtml = `
+          <div class="slide-title" style="font-size:${size};${shadow}">${slide.title}</div>
+          ${slide.subtitle ? `<div class="slide-subtitle" style="${shadow}">${slide.subtitle}</div>` : ''}
+        `
+      } else if (slide.content && slide.content.length > 0) {
+        const size = { sm: '1.5rem', md: '2rem', lg: '2.5rem', xl: '3rem' }[settings.fontSize] || '2rem'
+        const shadow = settings.textShadow !== false ? 'text-shadow:0 2px 12px rgba(0,0,0,0.3);' : ''
+        const lines = slide.content.map(l => `<div class="slide-text" style="font-size:${size};${shadow}">${l}</div>`).join('')
+        contentHtml = lines
+      } else {
+        contentHtml = `<div class="slide-text" style="opacity:0.3">${slide.title || 'Blank Slide'}</div>`
+      }
+
+      if (isLowerThird) {
+        const containerClass = isBlackLowerThird ? '' : themeClass
+        const ltSizeClass = ltHeight === 'sm' ? 'small' : ltHeight === 'lg' ? 'large' : ''
+        const posClass = ltPosition === 'top' ? 'top' : 'bottom'
+
+        outputEl.innerHTML = `
+          <div class="${containerClass}" style="width:100%;height:100%;position:relative;">
+            ${bgImage}${bgOverlay}
+            <div class="lower-third ${posClass} ${ltSizeClass}">
+              <div class="lower-third-box">
+                ${refHtml}
+                ${contentHtml}
+              </div>
+            </div>
+          </div>
+        `
+      } else {
+        outputEl.innerHTML = `
+          <div class="${themeClass}" style="width:100%;height:100%;position:relative;">
+            ${bgImage}${bgOverlay}
+            <div class="slide-content">
+              ${refHtml}
+              ${contentHtml}
+            </div>
+          </div>
+        `
+      }
+
+      outputEl.classList.remove('hidden')
+    }
+
+    // ── WebSocket Connection ─────────────────────────────────────────
+    function connect() {
+      try {
+        ws = new WebSocket(wsUrl)
+
+        ws.onopen = () => {
+          reconnectAttempts = 0
+          statusEl.id = 'status'
+          statusEl.classList.add('connected', 'visible')
+          statusText.textContent = 'Connected'
+          reconnectingEl.classList.remove('active')
+
+          // Show status briefly then fade
+          setTimeout(() => statusEl.classList.remove('visible'), 3000)
+        }
+
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data)
+            if (msg.type === 'state') {
+              currentState = msg
+              render(currentState)
+            } else if (msg.type === 'ping') {
+              // Respond to keepalive
+              ws.send(JSON.stringify({ type: 'pong' }))
+            }
+          } catch { /* ignore parse errors */ }
+        }
+
+        ws.onclose = () => {
+          statusEl.classList.remove('connected')
+          statusText.textContent = 'Disconnected'
+          statusEl.classList.add('visible')
+          reconnect()
+        }
+
+        ws.onerror = () => {
+          statusEl.classList.remove('connected')
+          statusText.textContent = 'Error'
+          statusEl.classList.add('visible')
+        }
+      } catch {
+        reconnect()
+      }
+    }
+
+    function reconnect() {
+      if (reconnectAttempts >= maxReconnectAttempts) {
+        statusText.textContent = 'Connection failed'
+        reconnectingEl.classList.remove('active')
+        return
+      }
+
+      reconnectingEl.classList.add('active')
+      const delay = Math.min(reconnectDelay * Math.pow(1.3, reconnectAttempts), 5000)
+      reconnectAttempts++
+
+      statusText.textContent = `Reconnecting (${reconnectAttempts})...`
+      setTimeout(connect, delay)
+    }
+
+    // ── Mouse movement shows status ──────────────────────────────────
+    let hideTimeout = null
+    document.addEventListener('mousemove', () => {
+      statusEl.classList.add('visible')
+      clearTimeout(hideTimeout)
+      hideTimeout = setTimeout(() => statusEl.classList.remove('visible'), 3000)
+    })
+
+    // ── Start ────────────────────────────────────────────────────────
+    connect()
+  </script>
+</body>
+</html>
