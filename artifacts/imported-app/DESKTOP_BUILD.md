@@ -52,6 +52,15 @@ pnpm run package:mac
 # → release/ScriptureLive AI-0.2.0-x64.dmg
 ```
 
+## Recommended: automated cloud builds via GitHub Actions
+
+A ready-to-use pipeline lives at `.github/workflows/release-desktop.yml`. Once
+the project is pushed to a GitHub repo, tagging a release (`git tag v0.2.0 &&
+git push origin v0.2.0`) triggers GitHub-hosted Windows and macOS runners to
+build, sign-in-the-future, and upload installers as a GitHub Release. See
+`.github/workflows/README.md` for the one-time setup (~ 2 minutes) and how to
+point the `/download` page at the published assets.
+
 ## Publishing the installers so users can download them
 
 The web app exposes a polished `/download` page with OS detection at
