@@ -37,6 +37,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { NdiOutputPanel } from './ndi-output-panel'
 
 export function SettingsView() {
   const { settings, updateSettings, setSelectedTranslation } = useAppStore()
@@ -315,6 +316,9 @@ export function SettingsView() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Native NDI (desktop app) */}
+      <NdiOutputPanel />
 
       {/* NDI / Output Setup Guide */}
       <Card className="bg-card border-border">

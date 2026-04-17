@@ -1,0 +1,48 @@
+appId: ai.scripturelive.desktop
+productName: ScriptureLive AI
+copyright: ScriptureLive AI
+directories:
+  output: release
+  buildResources: build-resources
+files:
+  - dist-electron/**/*
+  - package.json
+  - "node_modules/**/*"
+  - "!node_modules/**/{*.md,*.markdown,*.ts,*.map,test,tests,__tests__,docs,doc,example,examples,LICENSE*}"
+  - "!node_modules/.cache/**/*"
+asarUnpack:
+  - "node_modules/grandiose/**/*"
+npmRebuild: true
+extraResources:
+  - from: .next/standalone
+    to: app/.next/standalone
+    filter: ["**/*"]
+  - from: .next/static
+    to: app/.next/standalone/.next/static
+    filter: ["**/*"]
+  - from: public
+    to: app/.next/standalone/public
+    filter: ["**/*"]
+  - from: db/custom.db
+    to: app-db/custom.db
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: "${productName}-${version}-Setup-${arch}.${ext}"
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  category: public.app-category.productivity
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+  hardenedRuntime: false
+  gatekeeperAssess: false
+dmg:
+  writeUpdateInfo: false
