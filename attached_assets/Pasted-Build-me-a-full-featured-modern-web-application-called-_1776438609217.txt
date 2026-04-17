@@ -1,0 +1,37 @@
+Build me a full-featured, modern web application called "ScriptureLive AI" — an AI-powered Bible and church worship presentation platform inspired by LogosAI (thelogosai.com). The app should include the following features and pages:
+
+🎯 Core Features:
+Real-Time Scripture Detection — Use speech-to-text (Web Speech API or similar) to listen to a live sermon/speaker and automatically detect when Bible verses are mentioned. Instantly display the full verse text on-screen with sub-2-second latency.
+Bible Verse Lookup & Display — A searchable Bible database (use a free Bible API like bible-api.com or scripture.api.bible) where users can search by book, chapter, verse, keyword, or topic. Display verses in a clean, large-font, projector-ready format.
+Multiple Bible Translations — Support at least KJV, NIV, ESV, and NKJV translations with a toggle/dropdown selector.
+AI-Powered Slide Generator — Users can type or paste a sermon topic, Bible passage, or theme, and the AI generates beautiful presentation slides (with titles, subtitles, verse text, and backgrounds). Allow export to PDF or image.
+Worship Lyrics Manager — A module where users can:
+Paste raw song lyrics and have the AI auto-structure them into Verse, Chorus, Bridge, etc.
+Search a cloud lyrics database for hymns and modern worship songs.
+Display lyrics in a projector-ready full-screen mode with smooth transitions.
+Live Presenter Mode — A dual-screen system: one screen for the operator (preview + controls), and a second output screen for the congregation (clean display). Include next-slide preview.
+Smart Verse Splitting — Automatically split long Bible passages into readable 2-line or 4-line slides for maximum legibility on projection screens.
+Sermon Notes & Outline Builder — A simple rich-text editor where pastors can build sermon outlines, link Bible references (which auto-populate the verse text), and export as PDF.
+Import/Export — Allow importing song libraries from common formats (XML, plain text). Export presentations as PDF, PPTX, or image slides.
+🎨 UI/UX Requirements:
+Modern, clean, dark-themed UI (suitable for church media teams working in low-light environments).
+Responsive design — works on desktop, tablet, and mobile.
+Large, readable typography for projected content.
+Smooth slide transitions and animations.
+Dashboard homepage with quick-access cards for each module.
+🛠 Tech Stack Suggestions:
+Frontend: React.js or Next.js with Tailwind CSS
+Backend: Node.js with Express or a serverless approach
+Bible Data: Free Bible API integration (bible-api.com, or embedded JSON Bible data)
+Speech Recognition: Web Speech API for real-time scripture detection
+AI Features: Integration with an LLM API (OpenAI, or local GLM model) for slide generation, lyrics structuring, and smart suggestions
+Database: Firebase, Supabase, or SQLite for storing user data, song libraries, and sermon notes
+📁 Project Structure:
+Please provide:
+
+A complete project folder structure
+All necessary code files (frontend + backend)
+A README.md with setup instructions
+Sample data (a few Bible books in JSON, sample songs)
+Environment variable templates
+Make the app production-ready, well-commented, and deployable. Start building now.
