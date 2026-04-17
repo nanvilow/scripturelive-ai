@@ -154,7 +154,9 @@ export default function DownloadPage() {
                   </Button>
                   {!available && !loading && (
                     <p className="text-[10px] text-muted-foreground leading-snug">
-                      Awaiting first build. See <code className="bg-muted px-1 rounded">DESKTOP_BUILD.md</code> — build on the matching OS, then drop the file into <code className="bg-muted px-1 rounded">public/downloads/</code>.
+                      First cloud build pending. The GitHub Actions pipeline at
+                      {' '}<code className="bg-muted px-1 rounded">.github/workflows/release-desktop.yml</code>{' '}
+                      builds this on a real {key.startsWith('mac') ? 'Mac' : 'Windows machine'} when you push a <code className="bg-muted px-1 rounded">v*</code> tag.
                     </p>
                   )}
                 </div>
