@@ -33,6 +33,7 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - The imported app owns both `/` and `/api` preview routes so its built-in Next API routes work.
 - The starter API server was moved from `/api` to `/__api-server` to avoid route conflicts.
 - Wireless congregation output is served from `/api/output/congregation` and receives live slide updates via `/api/output` Server-Sent Events.
-- NDI output is supported by opening the congregation output page fullscreen and capturing that browser window with NDI Tools, OBS, vMix, or Wirecast.
+- Browser-only NDI: open the congregation output page fullscreen and capture that browser window with NDI Tools, OBS, vMix, or Wirecast.
+- Built-in NDI (desktop app): an Electron wrapper in `artifacts/imported-app/electron/` adds a native NDI sender via the `grandiose` binding. The renderer talks to the main process through a `contextIsolation` preload. Build with `pnpm --filter @workspace/imported-app run package:win` (on Windows) or `package:mac` (on macOS). See `artifacts/imported-app/DESKTOP_BUILD.md` for the full guide.
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
