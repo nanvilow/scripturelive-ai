@@ -52,6 +52,36 @@ pnpm run package:mac
 # → release/ScriptureLive AI-0.2.0-x64.dmg
 ```
 
+## Publishing the installers so users can download them
+
+The web app exposes a polished `/download` page with OS detection at
+`https://<your-host>/download`. It reads `public/downloads/manifest.json` and
+serves files via `/api/download/<platform>`.
+
+Two ways to publish:
+
+### Option A — host the files alongside the app (default)
+
+1. Copy the build output from `release/` into `artifacts/imported-app/public/downloads/`,
+   keeping the original filenames (the manifest's `filename` field must match).
+2. Update `version` and `releaseNotes` in `public/downloads/manifest.json`.
+3. Restart the server. The download page will pick up size and availability
+   automatically from disk.
+
+### Option B — host on GitHub Releases (recommended for large files)
+
+Create a Release on GitHub, upload the three artifacts, then edit
+`public/downloads/manifest.json`:
+
+```json
+{
+  "externalReleaseUrl": "https://github.com/your-org/scripturelive-ai/releases/download/v0.2.0"
+}
+```
+
+The `/api/download/*` endpoints will 302-redirect to GitHub instead of
+streaming local files.
+
 ## First-run notes
 
 - **Windows**: SmartScreen will warn that the publisher is unknown (we do not yet ship a code-signing certificate). Click "More info" → "Run anyway".

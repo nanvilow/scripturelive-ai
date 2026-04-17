@@ -1,47 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#1a1a2e;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#16213e;stop-opacity:1" />
-    </linearGradient>
-    <linearGradient id="crossGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#f6c90e;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#e8a817;stop-opacity:1" />
-    </linearGradient>
-    <linearGradient id="rayGrad" x1="50%" y1="0%" x2="50%" y2="100%">
-      <stop offset="0%" style="stop-color:#f6c90e;stop-opacity:0.6" />
-      <stop offset="100%" style="stop-color:#f6c90e;stop-opacity:0" />
-    </linearGradient>
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
-      <feMerge>
-        <feMergeNode in="coloredBlur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-    <filter id="shadow">
-      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.3"/>
-    </filter>
-  </defs>
-  <!-- Background circle -->
-  <circle cx="256" cy="256" r="230" fill="url(#bgGrad)" stroke="#f6c90e" stroke-width="4" stroke-opacity="0.3"/>
-  <!-- Light rays -->
-  <g opacity="0.15">
-    <polygon points="256,30 246,120 266,120" fill="url(#rayGrad)"/>
-    <polygon points="420,90 348,148 362,162" fill="url(#rayGrad)"/>
-    <polygon points="482,256 392,246 392,266" fill="url(#rayGrad)"/>
-    <polygon points="420,422 362,362 348,348" fill="url(#rayGrad)"/>
-    <polygon points="256,482 266,392 246,392" fill="url(#rayGrad)"/>
-    <polygon points="92,422 148,348 162,362" fill="url(#rayGrad)"/>
-    <polygon points="30,256 120,266 120,246" fill="url(#rayGrad)"/>
-    <polygon points="92,90 162,162 148,148" fill="url(#rayGrad)"/>
-  </g>
-  <!-- Cross with glow -->
-  <g filter="url(#glow)">
-    <rect x="222" y="110" width="68" height="240" rx="8" fill="url(#crossGrad)"/>
-    <rect x="152" y="178" width="208" height="68" rx="8" fill="url(#crossGrad)"/>
-  </g>
-  <!-- Book base shape -->
-  <path d="M140,340 Q256,310 372,340 L372,400 Q256,370 140,400 Z" fill="#0f3460" opacity="0.7" filter="url(#shadow)"/>
-  <path d="M140,340 Q256,316 372,340" fill="none" stroke="#f6c90e" stroke-width="1.5" opacity="0.4"/>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="64" fill="#0a0a0a"/>
+  <image href="/logo.png" x="0" y="100" width="512" height="312" preserveAspectRatio="xMidYMid meet"/>
 </svg>
