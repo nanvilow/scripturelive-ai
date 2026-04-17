@@ -32,5 +32,7 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - The archive's `.env` and `.git` contents were intentionally not imported.
 - The imported app owns both `/` and `/api` preview routes so its built-in Next API routes work.
 - The starter API server was moved from `/api` to `/__api-server` to avoid route conflicts.
+- Wireless congregation output is served from `/api/output/congregation` and receives live slide updates via `/api/output` Server-Sent Events.
+- NDI output is supported by opening the congregation output page fullscreen and capturing that browser window with NDI Tools, OBS, vMix, or Wirecast.
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.

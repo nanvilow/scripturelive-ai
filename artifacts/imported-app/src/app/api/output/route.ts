@@ -1,5 +1,8 @@
 import { NextRequest } from 'next/server'
-import { getOutputState, updateOutputState, getSubscriberCount } from '@/lib/output-broadcast'
+import { getOutputState, updateOutputState, getSubscriberCount, subscribeToOutput } from '@/lib/output-broadcast'
+
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
 
 /**
  * GET /api/output
@@ -33,8 +36,10 @@ export async function GET(request: NextRequest) {
       const { unsubscribe } = subscribeToOutput((data: string) => {
         try {
           controller.enqueue(encoder.encode(data))
+          return true
         } catch {
           unsubscribe()
+          return false
         }
       })
 

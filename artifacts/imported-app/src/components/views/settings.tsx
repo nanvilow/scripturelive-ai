@@ -42,6 +42,9 @@ export function SettingsView() {
   const { settings, updateSettings, setSelectedTranslation } = useAppStore()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isUploading, setIsUploading] = useState(false)
+  const congregationOutputUrl = typeof window !== 'undefined'
+    ? new URL('/api/output/congregation', window.location.origin).toString()
+    : '/api/output/congregation'
 
   const handleUploadBackground = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -268,8 +271,8 @@ export function SettingsView() {
             <div className="flex flex-wrap gap-2">
               {([
                 { value: 'window' as OutputDestination, label: 'Window', desc: 'New browser window', icon: <Monitor className="h-3.5 w-3.5" /> },
-                { value: 'ndi' as OutputDestination, label: 'NDI / WebSocket', desc: 'Wireless to other apps', icon: <Wifi className="h-3.5 w-3.5" /> },
-                { value: 'both' as OutputDestination, label: 'Both', desc: 'Window + NDI', icon: <Layers className="h-3.5 w-3.5" /> },
+                { value: 'ndi' as OutputDestination, label: 'NDI / Wireless', desc: 'Share display wirelessly', icon: <Wifi className="h-3.5 w-3.5" /> },
+                { value: 'both' as OutputDestination, label: 'Both', desc: 'Window + wireless', icon: <Layers className="h-3.5 w-3.5" /> },
               ]).map((dest) => (
                 <button
                   key={dest.value}
@@ -331,7 +334,7 @@ export function SettingsView() {
               <div>
                 <p className="text-sm font-medium">Start the Output Service</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Go to <strong>Live Presenter</strong> and click the <strong>Output</strong> button. Or set the Output Destination to &quot;NDI / WebSocket&quot; or &quot;Both&quot; above — it auto-connects.
+                  Go to <strong>Live Presenter</strong> and click the <strong>Output</strong> button. Or set the Output Destination to &quot;NDI / Wireless&quot; or &quot;Both&quot; above.
                 </p>
               </div>
             </div>
@@ -345,7 +348,7 @@ export function SettingsView() {
                 </p>
                 <div className="flex items-center gap-2 mt-2">
                   <code className="flex-1 px-2 py-1.5 rounded bg-muted text-[10px] font-mono truncate block">
-                    {typeof window !== 'undefined' ? `${window.location.origin}/api/output/congregation` : '/api/output/congregation'}
+                    {congregationOutputUrl}
                   </code>
                   <Button
                     variant="outline"
@@ -353,8 +356,7 @@ export function SettingsView() {
                     className="h-7 text-[10px] gap-1 shrink-0"
                     onClick={async () => {
                       try {
-                        const url = `/api/output/congregation`
-                        await navigator.clipboard.writeText(url)
+                        await navigator.clipboard.writeText(congregationOutputUrl)
                         toast.success('URL copied!')
                       } catch {
                         toast.error('Failed to copy')
@@ -412,7 +414,7 @@ export function SettingsView() {
             <CardContent className="p-3 flex items-start gap-2">
               <Eye className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
               <p className="text-xs text-blue-300/80 leading-relaxed">
-                <strong>Troubleshooting:</strong> If the NDI source doesn&apos;t appear, make sure the congregation browser window is visible (not minimized). NDI Screen Capture only captures visible windows. The output uses Server-Sent Events (SSE) — no separate WebSocket service is needed. It works through the normal web server on port 80/443.
+                <strong>Troubleshooting:</strong> If the NDI source doesn&apos;t appear, make sure the congregation browser window is visible and fullscreen. NDI Screen Capture captures visible displays/windows. The output uses Server-Sent Events (SSE), so no separate WebSocket service or extra port is needed.
               </p>
             </CardContent>
           </Card>
@@ -421,7 +423,7 @@ export function SettingsView() {
             <CardContent className="p-3 flex items-start gap-2">
               <Wifi className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
               <p className="text-xs text-amber-300/80 leading-relaxed">
-                <strong>Limited connectivity:</strong> The output uses Server-Sent Events over normal HTTP — no extra ports to open. It works through your existing web server. If vMix/Wirecast is on a different machine, share the congregation URL with that machine&apos;s local IP (e.g., <code className="bg-amber-500/20 px-1 rounded">http://192.168.1.100/api/output/congregation</code>). No firewall changes needed.
+                <strong>Wireless display:</strong> Open the congregation URL on any browser that can reach this app, then capture that screen with NDI Tools, AirPlay, Chromecast, OBS, vMix, or Wirecast. For a private local network install, use your machine&apos;s local IP plus <code className="bg-amber-500/20 px-1 rounded">/api/output/congregation</code>.
               </p>
             </CardContent>
           </Card>

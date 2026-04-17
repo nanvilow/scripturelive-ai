@@ -41,6 +41,11 @@ const defaultTheme = { bg: 'from-zinc-950 to-neutral-950', accent: 'text-zinc-30
 const fontSizeMap = { sm: 'text-lg md:text-xl', md: 'text-xl md:text-2xl lg:text-3xl', lg: 'text-2xl md:text-3xl lg:text-4xl', xl: 'text-3xl md:text-4xl lg:text-5xl' }
 const fontFamilyMap = { sans: 'font-sans', serif: 'font-serif', mono: 'font-mono' }
 
+const getCongregationOutputUrl = () => {
+  if (typeof window === 'undefined') return '/api/output/congregation'
+  return new URL('/api/output/congregation', window.location.origin).toString()
+}
+
 function SlideContent({ slide, theme, large = false, settings }: { slide: { type: string; title: string; subtitle: string; content: string[] }; theme: { accent: string }; large?: boolean; settings: { fontSize: string; fontFamily: string; textShadow: boolean; showReferenceOnOutput: boolean } }) {
   const sizeClass = large ? fontSizeMap[settings.fontSize as keyof typeof fontSizeMap] || 'text-2xl md:text-3xl lg:text-4xl' : 'text-lg md:text-2xl'
   const fontClass = fontFamilyMap[settings.fontFamily as keyof typeof fontFamilyMap] || 'font-sans'
@@ -160,7 +165,6 @@ export function LivePresenterView() {
 
   // ── Send slide to output via HTTP POST to SSE relay ──────────────────
   const sendToOutput = useCallback(async (slide: typeof liveSlide, live: boolean) => {
-    if (!outputActive) return
     try {
       await fetch('/api/output', {
         method: 'POST',
@@ -177,7 +181,11 @@ export function LivePresenterView() {
         }),
       })
     } catch { /* congregation display reconnects via SSE */ }
-  }, [outputActive, settings])
+  }, [settings])
+
+  useEffect(() => {
+    setOutputUrl(getCongregationOutputUrl())
+  }, [])
 
   // Poll output status
   useEffect(() => {
@@ -212,7 +220,9 @@ export function LivePresenterView() {
       toast.success('Output stopped')
     } else {
       setOutputActive(true); setNdiConnected(true)
-      toast.success('Output started — congregation display will receive live updates')
+      const url = getCongregationOutputUrl()
+      setOutputUrl(url)
+      toast.success('Wireless output started')
       const st = useAppStore.getState()
       const cur = st.liveSlideIndex >= 0 ? st.slides[st.liveSlideIndex] : null
       sendToOutput(cur, st.isLive)
@@ -223,22 +233,27 @@ export function LivePresenterView() {
   useEffect(() => {
     if ((settings.outputDestination === 'ndi' || settings.outputDestination === 'both') && !outputActive) {
       setOutputActive(true); setNdiConnected(true) // eslint-disable-line react-hooks/set-state-in-effect
+      setOutputUrl(getCongregationOutputUrl())
     }
   }, [settings.outputDestination, outputActive, setNdiConnected])
 
   const openOutputScreen = () => {
-    const congUrl = '/api/output/congregation'
-    const url = `${window.location.pathname}?screen=congregation`
-    if (settings.outputDestination === 'window' || settings.outputDestination === 'both') {
-      window.open(url, '_blank', 'width=1920,height=1080')
-    }
+    const congUrl = getCongregationOutputUrl()
+    setOutputActive(true)
+    setNdiConnected(true)
     setOutputUrl(congUrl)
+    const st = useAppStore.getState()
+    const cur = st.liveSlideIndex >= 0 ? st.slides[st.liveSlideIndex] : null
+    sendToOutput(cur, st.isLive)
+    if (settings.outputDestination === 'window' || settings.outputDestination === 'both') {
+      window.open(congUrl, '_blank', 'width=1920,height=1080')
+    }
   }
 
   const goToLiveAndOpen = () => { goToLive(); openOutputScreen() }
 
   const copyCongregationUrl = async () => {
-    const url = outputUrl || '/api/output/congregation'
+    const url = outputUrl || getCongregationOutputUrl()
     try {
       await navigator.clipboard.writeText(url)
       setCopiedUrl(true); toast.success('URL copied!')
@@ -346,15 +361,15 @@ export function LivePresenterView() {
                 </div>
                 <div className="space-y-2 text-xs text-muted-foreground leading-relaxed">
                   <p><strong className="text-foreground">Step 1:</strong> Click <strong>Output</strong> above to enable the output service.</p>
-                  <p><strong className="text-foreground">Step 2:</strong> Open this congregation URL in a browser:</p>
+                  <p><strong className="text-foreground">Step 2:</strong> Open this wireless display URL in a browser:</p>
                   <div className="flex items-center gap-2 mt-1">
-                    <code className="flex-1 px-2 py-1.5 rounded bg-muted text-[10px] font-mono truncate">/api/output/congregation</code>
+                    <code className="flex-1 px-2 py-1.5 rounded bg-muted text-[10px] font-mono truncate">{outputUrl || '/api/output/congregation'}</code>
                     <Button variant="outline" size="sm" className="h-7 text-[10px] gap-1 shrink-0" onClick={copyCongregationUrl}>
                       {copiedUrl ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}{copiedUrl ? 'Copied' : 'Copy'}
                     </Button>
                   </div>
                   <p><strong className="text-foreground">Step 3:</strong> Make the browser window fullscreen (F11).</p>
-                  <p><strong className="text-foreground">Step 4:</strong> Use <strong>NDI Screen Capture</strong> (free from NDI Tools) to capture it as NDI.</p>
+                  <p><strong className="text-foreground">Step 4:</strong> Use <strong>NDI Screen Capture</strong> to capture that fullscreen browser window as NDI.</p>
                   <p><strong className="text-foreground">Step 5:</strong> In vMix/Wirecast, add the NDI source. Done!</p>
                 </div>
               </CardContent>
