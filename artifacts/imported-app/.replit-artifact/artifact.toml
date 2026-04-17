@@ -1,0 +1,38 @@
+kind = "web"
+  previewPath = "/"
+  title = "Imported App"
+  version = "1.0.0"
+  id = "artifacts/imported-app"
+  router = "path"
+
+  [[integratedSkills]]
+  name = "react-vite"
+  version = "1.0.0"
+
+  [[services]]
+  name = "web"
+  paths = [ "/api", "/" ]
+  localPort = 25650
+
+  [services.development]
+  run = "pnpm --filter @workspace/imported-app run dev"
+
+  [services.production]
+
+  [services.production.build]
+  args = ["pnpm", "--filter", "@workspace/imported-app", "run", "build"]
+
+  [services.production.build.env]
+  NODE_ENV = "production"
+
+  [services.production.run]
+  args = ["pnpm", "--filter", "@workspace/imported-app", "run", "start"]
+
+  [services.production.run.env]
+  PORT = "25650"
+  NODE_ENV = "production"
+
+  [services.env]
+  PORT = "25650"
+  BASE_PATH = "/"
+  

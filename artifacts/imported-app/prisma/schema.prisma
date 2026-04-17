@@ -1,0 +1,66 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Song {
+  id          String   @id @default(cuid())
+  title       String
+  artist      String?
+  lyrics      String   // Raw lyrics text
+  structured  String?  // AI-structured JSON: {sections: [{type, label, lines}]}
+  category    String   @default("worship") // worship, hymn, gospel, contemporary
+  tags        String?  // Comma-separated tags
+  keySignature String?
+  tempo       Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  presentations Presentation[]
+}
+
+model SermonNote {
+  id          String   @id @default(cuid())
+  title       String
+  content     String   // Rich text content (Markdown or HTML)
+  outline     String?  // JSON outline structure
+  bibleRefs   String?  // Comma-separated Bible references
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  presentations Presentation[]
+}
+
+model Presentation {
+  id          String   @id @default(cuid())
+  title       String
+  slides      String   // JSON: [{type, title, subtitle, content, background}]
+  songId      String?
+  sermonId    String?
+  bibleRefs   String?  // Comma-separated Bible references
+  theme       String   @default("default") // default, worship, sermon
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  song   Song?       @relation(fields: [songId], references: [id])
+  sermon SermonNote? @relation(fields: [sermonId], references: [id])
+}
+
+model BibleVerseCache {
+  id          String   @id @default(cuid())
+  reference   String   // e.g. "John 3:16"
+  translation String   // KJV, NIV, etc.
+  text        String   // The verse text
+  book        String
+  chapter     Int
+  verseStart  Int
+  verseEnd    Int?
+  createdAt   DateTime @default(now())
+
+  @@unique([reference, translation])
+}
