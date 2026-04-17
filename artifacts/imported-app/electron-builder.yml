@@ -29,6 +29,7 @@ win:
   target:
     - target: nsis
       arch: [x64]
+  icon: build-resources/icon.png
   artifactName: "${productName}-${version}-Setup-${arch}.${ext}"
 nsis:
   oneClick: false
@@ -40,6 +41,7 @@ mac:
   target:
     - target: dmg
       arch: [x64, arm64]
+  icon: build-resources/icon.png
   category: public.app-category.productivity
   artifactName: "${productName}-${version}-${arch}.${ext}"
   hardenedRuntime: false

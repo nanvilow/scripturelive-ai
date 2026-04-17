@@ -10,7 +10,10 @@ import {
   FileText,
   Sparkles,
   ArrowRight,
+  Download,
+  Wifi,
 } from 'lucide-react'
+import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -133,6 +136,29 @@ export function DashboardView() {
             </p>
           </div>
         </div>
+      </div>
+
+      {/* Desktop app download CTA */}
+      <div className="rounded-2xl border border-amber-500/20 bg-gradient-to-r from-amber-500/10 via-orange-500/5 to-transparent p-5 md:p-6 flex flex-col md:flex-row md:items-center gap-4">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-300">
+          <Download className="h-6 w-6" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold text-foreground">Get the desktop app</h3>
+            <Badge className="bg-emerald-500/15 text-emerald-300 border border-emerald-500/20 gap-1 text-[10px]">
+              <Wifi className="h-3 w-3" /> Built-in NDI
+            </Badge>
+          </div>
+          <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+            Windows &amp; macOS app with one-click NDI output for vMix, Wirecast, and OBS — no screen capture needed.
+          </p>
+        </div>
+        <Button asChild className="shrink-0 gap-2 bg-amber-500 text-black hover:bg-amber-400">
+          <Link href="/download">
+            <Download className="h-4 w-4" /> Download for Windows / macOS
+          </Link>
+        </Button>
       </div>
 
       {/* Quick Stats */}

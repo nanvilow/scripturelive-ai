@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "releaseNotes": "Built-in NDI desktop app — one-click NDI sender for vMix, Wirecast, and OBS on your LAN. Now with refreshed ScriptureLive AI branding.",
+  "publishedAt": null,
+  "files": {
+    "win-x64": {
+      "label": "Windows (10 / 11, 64-bit)",
+      "filename": "ScriptureLive AI-0.2.0-Setup-x64.exe",
+      "size": null,
+      "sha256": null,
+      "available": false
+    },
+    "mac-arm64": {
+      "label": "macOS (Apple Silicon — M1/M2/M3/M4)",
+      "filename": "ScriptureLive AI-0.2.0-arm64.dmg",
+      "size": null,
+      "sha256": null,
+      "available": false
+    },
+    "mac-x64": {
+      "label": "macOS (Intel)",
+      "filename": "ScriptureLive AI-0.2.0-x64.dmg",
+      "size": null,
+      "sha256": null,
+      "available": false
+    }
+  },
+  "externalReleaseUrl": null
+}
