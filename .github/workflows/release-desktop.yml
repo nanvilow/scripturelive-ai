@@ -64,8 +64,10 @@ jobs:
           Write-Host "Downloading NDI SDK from $url"
           # Use curl.exe (built into Windows 10+) instead of Invoke-WebRequest:
           # IWR's progress bar makes 40MB downloads take 10+ minutes on CI.
-          & curl.exe -fsSL --max-time 300 -o $out $url
-          if ($LASTEXITCODE -ne 0) { throw "Download failed (curl exit $LASTEXITCODE)" }
+          # --retry handles transient 5xx (504 Gateway Time-out is common when
+          # the SDK is hosted on slow file hosts like Google Drive/Dropbox).
+          & curl.exe -fsSL --max-time 300 --retry 5 --retry-delay 10 --retry-all-errors -o $out $url
+          if ($LASTEXITCODE -ne 0) { throw "Download failed (curl exit $LASTEXITCODE) -- if the URL is a Google Drive/Dropbox link, switch to a GitHub Release asset URL which is CDN-backed and rarely times out" }
           $size = (Get-Item $out).Length
           Write-Host "Downloaded $size bytes"
           if ($size -lt 10000000) { throw "Downloaded file is suspiciously small ($size bytes) -- URL likely returned an HTML error page" }
@@ -106,7 +108,7 @@ jobs:
           set -euo pipefail
           URL="${NDI_SDK_URL_MAC:-https://downloads.ndi.tv/SDK/NDI_SDK_Mac/Install_NDI_SDK_v6_Apple.pkg}"
           echo "Downloading NDI SDK from $URL"
-          curl -fsSL --max-time 600 "$URL" -o /tmp/ndi-sdk.pkg
+          curl -fsSL --max-time 600 --retry 5 --retry-delay 10 --retry-all-errors "$URL" -o /tmp/ndi-sdk.pkg
           SIZE=$(stat -f%z /tmp/ndi-sdk.pkg)
           echo "Downloaded $SIZE bytes"
           file /tmp/ndi-sdk.pkg
