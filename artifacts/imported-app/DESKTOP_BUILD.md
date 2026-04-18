@@ -93,9 +93,90 @@ streaming local files.
 
 ## First-run notes
 
-- **Windows**: SmartScreen will warn that the publisher is unknown (we do not yet ship a code-signing certificate). Click "More info" → "Run anyway".
-- **macOS**: Gatekeeper will refuse to open it the first time. Right-click the app → **Open**, then confirm. (We do not yet ship Apple notarization.)
+- **Windows**: a signed installer (Authenticode) installs cleanly. An unsigned installer triggers SmartScreen — click "More info" → "Run anyway".
+- **macOS**: a signed + notarized DMG opens directly. An unsigned DMG is blocked by Gatekeeper — right-click the app → **Open**, then confirm.
 - Both: ensure your firewall allows the app on the local network — NDI uses mDNS for discovery and TCP/UDP between peers on the LAN.
+
+## Code signing & notarization
+
+Signed builds use the standard `electron-builder` env vars, so anything you set
+in your shell, your CI, or a `.env` file the build inherits will be picked up
+automatically.
+
+### Windows (Authenticode)
+
+Set both env vars before running `pnpm run package:win`:
+
+```bash
+# .pfx can be a path on disk, a base64 string, or an https URL
+export CSC_LINK="/absolute/path/to/codesign.pfx"
+export CSC_KEY_PASSWORD="<pfx password>"
+
+pnpm run package:win
+```
+
+Any Authenticode certificate from a recognised CA (DigiCert, Sectigo, SSL.com,
+…) works. **EV certificates** clear SmartScreen warnings the first time the
+installer runs; standard OV certificates accumulate trust over the first few
+hundred downloads.
+
+To verify the result:
+
+```powershell
+Get-AuthenticodeSignature ".\release\ScriptureLive AI-0.2.0-Setup-x64.exe"
+# Status should report "Valid" with your publisher name.
+```
+
+### macOS (Developer ID + Apple notarization)
+
+You need a `Developer ID Application` certificate from your Apple Developer
+account (export it from Keychain Access as a `.p12`) and an app-specific
+password generated at <https://appleid.apple.com>.
+
+```bash
+# Signing identity
+export CSC_LINK="/absolute/path/to/developer-id.p12"
+export CSC_KEY_PASSWORD="<p12 password>"
+
+# Notarization (notarytool)
+export APPLE_ID="you@example.com"
+export APPLE_APP_SPECIFIC_PASSWORD="abcd-efgh-ijkl-mnop"
+export APPLE_TEAM_ID="ABCDE12345"
+
+pnpm run package:mac
+```
+
+What happens during the build:
+
+1. The `.app` bundle is signed with your Developer ID identity, the hardened
+   runtime is enabled, and the entitlements at
+   `build-resources/entitlements.mac.plist` are applied.
+2. The `afterSign` hook (`build-resources/notarize.js`) submits the `.app` to
+   Apple's `notarytool` and waits for the verdict (typically 2–10 minutes).
+3. On success the notarization ticket is stapled to the `.app` before the DMG
+   is packaged. Gatekeeper will then accept the app on first launch with no
+   right-click workaround.
+
+If `CSC_LINK` is unset the build still completes — it just produces an
+unsigned/un-notarized DMG so local development isn't blocked. **However**, if
+`CSC_LINK` is set but any of `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` /
+`APPLE_TEAM_ID` is missing, the build fails fast. This is intentional: a
+signed-but-not-notarized DMG would still trigger Gatekeeper warnings on first
+launch, defeating the point of paying for a Developer ID certificate.
+
+To verify the result:
+
+```bash
+codesign -dv --verbose=4 "release/ScriptureLive AI.app"
+spctl -a -vvv --type install "release/ScriptureLive AI-0.2.0-arm64.dmg"
+# Should report: source=Notarized Developer ID
+```
+
+### Cloud builds (GitHub Actions)
+
+The same env vars are wired up in `.github/workflows/release-desktop.yml`.
+Add the certificates as repository secrets — see
+`.github/workflows/README.md` for the exact secret names and expected formats.
 
 ## How NDI is broadcast
 

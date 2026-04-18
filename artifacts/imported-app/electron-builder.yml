@@ -25,12 +25,25 @@ extraResources:
     filter: ["**/*"]
   - from: db/custom.db
     to: app-db/custom.db
+# A small hook that runs after electron-builder finishes signing each platform
+# package. For macOS it submits the .app to Apple's notarytool when notarization
+# credentials are present in the environment. For all other platforms (and when
+# credentials are missing) it is a no-op.
+afterSign: build-resources/notarize.js
 win:
   target:
     - target: nsis
       arch: [x64]
   icon: build-resources/icon.png
   artifactName: "${productName}-${version}-Setup-${arch}.${ext}"
+  # Authenticode code signing.
+  # electron-builder reads the certificate from these standard env vars:
+  #   CSC_LINK            path to .pfx, base64-encoded .pfx contents, or https URL
+  #   CSC_KEY_PASSWORD    password for the .pfx
+  # If both are absent the installer is built unsigned and SmartScreen will warn.
+  signingHashAlgorithms:
+    - sha256
+  rfc3161TimeStampServer: http://timestamp.digicert.com
 nsis:
   oneClick: false
   perMachine: false
@@ -43,8 +56,25 @@ mac:
       arch: [x64, arm64]
   icon: build-resources/icon.png
   category: public.app-category.productivity
-  artifactName: "${productName}-${version}-${arch}.${ext}"
-  hardenedRuntime: false
+  # Required for Apple Developer ID signing + notarization to succeed.
+  hardenedRuntime: true
   gatekeeperAssess: false
+  entitlements: build-resources/entitlements.mac.plist
+  entitlementsInherit: build-resources/entitlements.mac.plist
+  # electron-builder reads the signing identity from these standard env vars:
+  #   CSC_LINK            path to .p12, base64-encoded .p12 contents, or https URL
+  #   CSC_KEY_PASSWORD    password for the .p12
+  # If absent, the .app is left unsigned and the afterSign hook skips notarization.
+  # Notarization (handled in build-resources/notarize.js via @electron/notarize)
+  # reads these env vars:
+  #   APPLE_ID                     Apple developer account email
+  #   APPLE_APP_SPECIFIC_PASSWORD  app-specific password from appleid.apple.com
+  #   APPLE_TEAM_ID                10-character Team ID from developer.apple.com
+  notarize: false
+  artifactName: "${productName}-${version}-${arch}.${ext}"
 dmg:
   writeUpdateInfo: false
+  # The DMG is signed with the same Developer ID identity electron-builder
+  # picks up from CSC_LINK. Combined with the notarization ticket stapled to
+  # the inner .app, this gives Gatekeeper a clean install on first launch.
+  sign: true

@@ -88,11 +88,35 @@ jobs:
         working-directory: artifacts/imported-app
         run: pnpm run electron:build
 
-      - name: Package installer
+      # Two separate, OS-gated package steps so each platform only ever sees
+      # its own signing secrets. Using a single step with a ternary like
+      # `runner.os == 'Windows' && secrets.WIN_CSC_LINK || secrets.MAC_CSC_LINK`
+      # is unsafe in GitHub Actions: if the left value is empty/unset it falls
+      # through to the right side, which on a Windows runner would try to sign
+      # the .exe with the macOS .p12.
+      - name: Package Windows installer
+        if: runner.os == 'Windows'
         working-directory: artifacts/imported-app
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm exec electron-builder --config electron-builder.yml ${{ runner.os == 'Windows' && '--win' || '--mac' }} --publish=never
+          # Authenticode signing. Build still succeeds unsigned when unset.
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: pnpm exec electron-builder --config electron-builder.yml --win --publish=never
+
+      - name: Package macOS installer
+        if: runner.os == 'macOS'
+        working-directory: artifacts/imported-app
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Developer ID signing. Build still succeeds unsigned when unset.
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          # Notarization (used only when CSC_LINK is also set).
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm exec electron-builder --config electron-builder.yml --mac --publish=never
 
       # ---- Upload as workflow artifact ----
       - name: Upload installers

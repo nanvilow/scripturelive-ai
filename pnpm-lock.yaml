@@ -417,6 +417,9 @@ importers:
         specifier: ^5.0.6
         version: 5.0.12(@types/react@19.2.14)(react@19.1.0)(use-sync-external-store@1.6.0(react@19.1.0))
     devDependencies:
+      '@electron/notarize':
+        specifier: ^2.5.0
+        version: 2.5.0
       '@tailwindcss/postcss':
         specifier: ^4
         version: 4.2.2
