@@ -107,21 +107,29 @@ export function BibleLookupView() {
     const verseSlides = splitMode ? splitVerseIntoSlides(verse, splitMode) : [verse.text.split('\n').filter(Boolean)]
     const theme = settings.congregationScreenTheme
 
-    const newSlides = [
-      {
-        id: `slide-${Date.now()}-0`,
-        type: 'verse' as const,
-        title: verse.reference,
-        subtitle: verse.translation,
-        content: splitMode && verseSlides.length > 0 ? verseSlides[currentSplitIndex] || verseSlides[0] : [verse.text],
-        background: theme,
-      },
-    ]
+    // Build one slide per chunk (so multi-slide verses become navigable in the schedule)
+    const chunks = splitMode && verseSlides.length > 0 ? verseSlides : [verse.text.split('\n').filter(Boolean)]
+    const newSlides = chunks.map((lines, i) => ({
+      id: `slide-${Date.now()}-${i}`,
+      type: 'verse' as const,
+      title: verse.reference,
+      subtitle: verse.translation,
+      content: lines.length > 0 ? lines : [verse.text],
+      background: theme,
+    }))
 
+    // Add as a schedule item — this auto-loads slides into the live console.
+    useAppStore.getState().addScheduleItem({
+      type: 'verse',
+      title: verse.reference,
+      subtitle: verse.translation,
+      slides: newSlides,
+    })
+
+    // Keep the old behavior available for non-EW shell consumers.
     setSlides(newSlides)
     setPreviewSlideIndex(0)
-    setCurrentView('presenter')
-    toast.success('Verse sent to Live Presenter')
+    toast.success(`${verse.reference} added to schedule`)
   }
 
   const goToLive = () => {
