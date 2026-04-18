@@ -92,6 +92,7 @@
     "grandiose": "^3.0.5"
   },
   "devDependencies": {
+    "@electron/notarize": "^2.5.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^22",
     "@types/react": "^19",

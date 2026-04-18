@@ -49,13 +49,52 @@ You can also trigger the workflow without a tag from the **Actions** tab in
 GitHub: pick **Release ScriptureLive AI Desktop** → **Run workflow** and
 optionally provide a tag name.
 
+## Code signing & notarization
+
+The pipeline picks up signing certificates from repo secrets. When the secrets
+are unset (e.g. on a fresh fork) the build still succeeds — it just produces
+an unsigned installer. Add these secrets in **Settings → Secrets and variables
+→ Actions** to get clean installs on user machines:
+
+### Windows (Authenticode)
+
+| Secret name            | Value                                                                |
+| ---------------------- | -------------------------------------------------------------------- |
+| `WIN_CSC_LINK`         | Base64 of your `.pfx` file: `base64 -w 0 cert.pfx` (Linux/macOS) or `[Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx"))` (PowerShell). |
+| `WIN_CSC_KEY_PASSWORD` | Password that protects the `.pfx`.                                   |
+
+Any Authenticode certificate from a recognised CA works (DigiCert, Sectigo,
+SSL.com, etc.). EV certificates remove SmartScreen warnings instantly;
+standard OV certificates accumulate reputation over the first few hundred
+downloads.
+
+### macOS (Developer ID + notarization)
+
+| Secret name                   | Value                                                                                  |
+| ----------------------------- | -------------------------------------------------------------------------------------- |
+| `MAC_CSC_LINK`                | Base64 of your `Developer ID Application` `.p12` exported from Keychain Access.        |
+| `MAC_CSC_KEY_PASSWORD`        | Password that protects the `.p12`.                                                     |
+| `APPLE_ID`                    | Apple ID email of an account on your developer team.                                   |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password generated at <https://appleid.apple.com> → Sign-In and Security. |
+| `APPLE_TEAM_ID`               | 10-character Team ID from <https://developer.apple.com/account>.                       |
+
+When all five macOS secrets are present the build:
+
+1. Signs the `.app` with the Developer ID Application certificate (with
+   hardened runtime + the entitlements in
+   `artifacts/imported-app/build-resources/entitlements.mac.plist`).
+2. Submits it to Apple's `notarytool` and waits for a verdict.
+3. Staples the notarization ticket onto the `.app` before packaging the DMG.
+
+Result: Gatekeeper opens the app on first launch with no right-click workaround.
+
 ## Caveats
 
-- Builds are **unsigned**. Windows SmartScreen and macOS Gatekeeper will warn
-  on first launch. Code signing is tracked separately as a follow-up task.
 - The NDI SDK download is fetched from <https://downloads.ndi.tv> at build
   time. If their CDN is temporarily unavailable, the build will fail; re-run
   it or set the URL secrets noted above.
 - Each runner has the matching toolchain (Visual Studio Build Tools on
   windows-latest, Xcode Command Line Tools on macos-latest), so no extra
   setup is needed beyond what the workflow file already does.
+- Notarization usually takes 2–10 minutes. Apple very occasionally has
+  multi-hour queues; the workflow will simply wait.
