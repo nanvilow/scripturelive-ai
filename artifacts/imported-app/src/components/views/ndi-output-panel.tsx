@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Wifi, WifiOff, Radio, AlertTriangle, MonitorPlay } from 'lucide-react'
+import { Wifi, WifiOff, Radio, AlertTriangle, MonitorPlay, Layers, Copy } from 'lucide-react'
 import { useNdi } from '@/lib/use-electron'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -16,12 +16,22 @@ const RESOLUTIONS: Record<string, { w: number; h: number; label: string }> = {
   '1080p': { w: 1920, h: 1080, label: '1080p (1920×1080)' },
 }
 
+type Layout = 'mirror' | 'ndi'
+
 export function NdiOutputPanel() {
   const { desktop, status, available, unavailableReason } = useNdi()
   const [name, setName] = useState('ScriptureLive')
   const [resolution, setResolution] = useState<'720p' | '1080p'>('1080p')
   const [fps, setFps] = useState<30 | 60>(30)
   const [busy, setBusy] = useState(false)
+
+  // Layer / overlay options for the dedicated NDI layout
+  const [layout, setLayout] = useState<Layout>('mirror')
+  const [transparent, setTransparent] = useState(true)
+  const [showLowerThird, setShowLowerThird] = useState(true)
+  const [ltPosition, setLtPosition] = useState<'top' | 'bottom'>('bottom')
+  const [branding, setBranding] = useState('')
+  const [accent, setAccent] = useState('22c55e')
 
   if (!desktop) {
     return (
@@ -65,11 +75,30 @@ export function NdiOutputPanel() {
     setBusy(true)
     try {
       const r = RESOLUTIONS[resolution]
-      const res = await desktop.ndi.start({ name: name.trim() || 'ScriptureLive', width: r.w, height: r.h, fps })
+      const res = await desktop.ndi.start({
+        name: name.trim() || 'ScriptureLive',
+        width: r.w,
+        height: r.h,
+        fps,
+        layout,
+        transparent: layout === 'ndi' ? transparent : false,
+        lowerThird: layout === 'ndi'
+          ? {
+              enabled: showLowerThird,
+              position: ltPosition,
+              branding: branding.trim(),
+              accent,
+            }
+          : undefined,
+      })
       if (!res.ok) {
         toast.error(res.error || 'Failed to start NDI')
       } else {
-        toast.success(`Broadcasting "${name}" on the LAN`)
+        toast.success(
+          layout === 'ndi'
+            ? `Broadcasting "${name}" as keyable NDI layer`
+            : `Broadcasting "${name}" on the LAN`,
+        )
       }
     } finally {
       setBusy(false)
@@ -91,6 +120,27 @@ export function NdiOutputPanel() {
   const handleOpenWindow = async () => {
     if (!desktop) return
     await desktop.output.openWindow()
+  }
+
+  const previewPath = (() => {
+    if (layout !== 'ndi') return '/api/output/congregation'
+    const params = new URLSearchParams()
+    if (transparent) params.set('transparent', '1')
+    if (showLowerThird) params.set('lowerThird', '1')
+    if (ltPosition === 'top') params.set('position', 'top')
+    if (branding.trim()) params.set('branding', branding.trim())
+    if (accent) params.set('accent', accent)
+    const qs = params.toString()
+    return '/api/output/ndi' + (qs ? `?${qs}` : '')
+  })()
+
+  const copyPreview = async () => {
+    try {
+      await navigator.clipboard.writeText(previewPath)
+      toast.success('Preview path copied')
+    } catch {
+      toast.error('Could not copy')
+    }
   }
 
   return (
@@ -121,6 +171,153 @@ export function NdiOutputPanel() {
               {unavailableReason ? <span className="opacity-80">({unavailableReason})</span> : null}
               <br />
               Install <a href="https://ndi.video/tools/" target="_blank" rel="noopener noreferrer" className="underline">NDI Tools</a> (free) on this machine, then restart the desktop app. NDI Tools provides the runtime that lets vMix, Wirecast, and OBS see this source on the network.
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-1.5">
+          <Label className="text-xs flex items-center gap-1.5"><Layers className="h-3.5 w-3.5" /> Broadcast Layer</Label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button
+              onClick={() => setLayout('mirror')}
+              disabled={isRunning}
+              className={cn(
+                'rounded-md border p-3 text-left transition-colors',
+                layout === 'mirror'
+                  ? 'bg-primary/10 border-primary/40'
+                  : 'bg-muted/30 border-border hover:bg-muted/60',
+                isRunning && 'opacity-50 cursor-not-allowed',
+              )}
+            >
+              <div className="text-xs font-semibold mb-0.5">Mirror congregation</div>
+              <div className="text-[11px] text-muted-foreground leading-snug">
+                Broadcast the same full-screen layout the audience sees on the wireless display.
+              </div>
+            </button>
+            <button
+              onClick={() => setLayout('ndi')}
+              disabled={isRunning}
+              className={cn(
+                'rounded-md border p-3 text-left transition-colors',
+                layout === 'ndi'
+                  ? 'bg-primary/10 border-primary/40'
+                  : 'bg-muted/30 border-border hover:bg-muted/60',
+                isRunning && 'opacity-50 cursor-not-allowed',
+              )}
+            >
+              <div className="text-xs font-semibold mb-0.5">NDI layer (keyable)</div>
+              <div className="text-[11px] text-muted-foreground leading-snug">
+                Transparent feed with optional lower-thirds — composite over a camera in vMix / Wirecast.
+              </div>
+            </button>
+          </div>
+        </div>
+
+        {layout === 'ndi' && (
+          <div className="rounded-md border border-border bg-muted/20 p-3 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-medium">Alpha-channel transparency</div>
+                <div className="text-[11px] text-muted-foreground">Send a clean key. Disable to broadcast on a black background.</div>
+              </div>
+              <button
+                onClick={() => setTransparent((v) => !v)}
+                disabled={isRunning}
+                className={cn(
+                  'relative h-5 w-9 rounded-full transition-colors',
+                  transparent ? 'bg-emerald-600' : 'bg-muted',
+                  isRunning && 'opacity-50 cursor-not-allowed',
+                )}
+                aria-pressed={transparent}
+              >
+                <span className={cn(
+                  'absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform',
+                  transparent ? 'translate-x-4' : 'translate-x-0.5',
+                )} />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-medium">Always show lower-third</div>
+                <div className="text-[11px] text-muted-foreground">Render every slide as a lower-third bar instead of full-screen.</div>
+              </div>
+              <button
+                onClick={() => setShowLowerThird((v) => !v)}
+                disabled={isRunning}
+                className={cn(
+                  'relative h-5 w-9 rounded-full transition-colors',
+                  showLowerThird ? 'bg-emerald-600' : 'bg-muted',
+                  isRunning && 'opacity-50 cursor-not-allowed',
+                )}
+                aria-pressed={showLowerThird}
+              >
+                <span className={cn(
+                  'absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform',
+                  showLowerThird ? 'translate-x-4' : 'translate-x-0.5',
+                )} />
+              </button>
+            </div>
+
+            {showLowerThird && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-[11px]">Position</Label>
+                  <div className="flex gap-1.5">
+                    {(['bottom', 'top'] as const).map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => setLtPosition(p)}
+                        disabled={isRunning}
+                        className={cn(
+                          'px-2.5 py-1 rounded-md text-[11px] font-medium border capitalize',
+                          ltPosition === p
+                            ? 'bg-primary/15 border-primary/30 text-primary'
+                            : 'bg-muted border-border text-muted-foreground hover:bg-muted/80',
+                          isRunning && 'opacity-50 cursor-not-allowed',
+                        )}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-[11px]">Branding label</Label>
+                  <Input
+                    value={branding}
+                    onChange={(e) => setBranding(e.target.value.slice(0, 80))}
+                    disabled={isRunning}
+                    placeholder="e.g. Sunday Service"
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-[11px]">Accent color</Label>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="h-7 w-7 rounded border border-border"
+                      style={{ background: `#${accent}` }}
+                    />
+                    <Input
+                      value={accent}
+                      onChange={(e) => setAccent(e.target.value.replace(/[^0-9a-fA-F]/g, '').slice(0, 6))}
+                      disabled={isRunning}
+                      placeholder="22c55e"
+                      className="h-8 text-xs font-mono uppercase"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 pt-1">
+              <code className="flex-1 truncate text-[10px] text-muted-foreground bg-background border border-border rounded px-2 py-1 font-mono">
+                {previewPath}
+              </code>
+              <Button onClick={copyPreview} variant="outline" size="sm" className="h-7 px-2 gap-1 text-[11px]">
+                <Copy className="h-3 w-3" /> Copy
+              </Button>
             </div>
           </div>
         )}
@@ -195,6 +392,9 @@ export function NdiOutputPanel() {
 
         <p className="text-[11px] text-muted-foreground leading-relaxed">
           Once enabled, your slides appear as an NDI source named <code className="bg-muted px-1 rounded">{name || 'ScriptureLive'}</code> on every machine on your LAN. In <strong>vMix</strong>: Add Input → NDI. In <strong>Wirecast</strong>: Add Source → NDI. In <strong>OBS</strong>: install obs-ndi, then add an NDI Source.
+          {layout === 'ndi' && transparent && (
+            <> The NDI layer broadcasts with a true alpha channel, so vMix / Wirecast key it cleanly over a camera with no green-screen fringing.</>
+          )}
         </p>
       </CardContent>
     </Card>

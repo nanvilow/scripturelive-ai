@@ -1,10 +1,22 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+export type NdiLayout = 'mirror' | 'ndi'
+
+export type NdiLowerThirdConfig = {
+  enabled?: boolean
+  position?: 'top' | 'bottom'
+  branding?: string
+  accent?: string
+}
+
 export type NdiStartOptions = {
   name: string
   width: number
   height: number
   fps: number
+  layout?: NdiLayout
+  transparent?: boolean
+  lowerThird?: NdiLowerThirdConfig
 }
 
 export type NdiStatus = {
