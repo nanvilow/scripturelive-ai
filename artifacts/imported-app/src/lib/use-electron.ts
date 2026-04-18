@@ -25,8 +25,20 @@ export type ScriptureLiveDesktop = {
   }>
   ndi: {
     getStatus: () => Promise<NdiStatus>
-    start: (opts: { name: string; width: number; height: number; fps: number }) =>
-      Promise<{ ok: boolean; status?: NdiStatus; error?: string }>
+    start: (opts: {
+      name: string
+      width: number
+      height: number
+      fps: number
+      layout?: 'mirror' | 'ndi'
+      transparent?: boolean
+      lowerThird?: {
+        enabled?: boolean
+        position?: 'top' | 'bottom'
+        branding?: string
+        accent?: string
+      }
+    }) => Promise<{ ok: boolean; status?: NdiStatus; error?: string }>
     stop: () => Promise<{ ok: boolean; error?: string }>
     onStatus: (cb: (s: NdiStatus) => void) => () => void
   }

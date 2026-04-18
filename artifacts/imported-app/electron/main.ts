@@ -3,7 +3,18 @@ import path from 'node:path'
 import { spawn, ChildProcess } from 'node:child_process'
 import { createServer } from 'node:net'
 import fs from 'node:fs'
-import { NdiService, NdiStartOptions, NdiStatus } from './ndi-service'
+import { NdiService, NdiStartOptions as NdiServiceStartOptions, NdiStatus } from './ndi-service'
+
+type NdiStartOptions = NdiServiceStartOptions & {
+  layout?: 'mirror' | 'ndi'
+  transparent?: boolean
+  lowerThird?: {
+    enabled?: boolean
+    position?: 'top' | 'bottom'
+    branding?: string
+    accent?: string
+  }
+}
 import { FrameCapture } from './frame-capture'
 
 const isDev = !app.isPackaged
@@ -153,7 +164,28 @@ function setupIpc() {
           onFrame: (buf, w, h) => ndi.sendFrame(buf, w, h),
           onStatus: (msg) => broadcastNdiStatus({ ...ndi.getStatus(), captureMessage: msg }),
         })
-        await frameCapture.start({ width: opts.width, height: opts.height, fps: opts.fps })
+        const layout = opts.layout === 'ndi' ? 'ndi' : 'mirror'
+        let capturePath = '/api/output/congregation'
+        let transparent = false
+        if (layout === 'ndi') {
+          transparent = opts.transparent !== false
+          const lt = opts.lowerThird || {}
+          const params = new URLSearchParams()
+          if (transparent) params.set('transparent', '1')
+          if (lt.enabled) params.set('lowerThird', '1')
+          if (lt.position === 'top') params.set('position', 'top')
+          if (lt.branding) params.set('branding', lt.branding.slice(0, 80))
+          if (lt.accent) params.set('accent', lt.accent.replace(/[^0-9a-fA-F]/g, '').slice(0, 6))
+          const qs = params.toString()
+          capturePath = '/api/output/ndi' + (qs ? `?${qs}` : '')
+        }
+        await frameCapture.start({
+          width: opts.width,
+          height: opts.height,
+          fps: opts.fps,
+          path: capturePath,
+          transparent,
+        })
         broadcastNdiStatus(ndi.getStatus())
         return { ok: true, status: ndi.getStatus() }
       } catch (err) {
