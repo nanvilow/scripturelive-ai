@@ -44,46 +44,58 @@ jobs:
           node-version: 20
           cache: pnpm
 
-      # ---- NDI SDK install (required to compile the grandiose native binding) ----
-      # Step-level timeouts prevent a single hung installer (NDI's installer
-      # has popped GUI dialogs in the past) from burning the entire 6-hour
-      # job budget. If install fails, the build proceeds without NDI and the
-      # resulting installer simply won't expose NDI output -- end users can
-      # still install NDI Tools separately.
+      # ---- NDI SDK install (optional -- enables compiling the grandiose
+      # native binding for built-in NDI output). These steps NEVER exit
+      # non-zero: if anything fails (download error, hung installer,
+      # missing files), the step prints a warning, leaves NDI_SDK_DIR
+      # unset, and the build proceeds. grandiose is an optionalDependency
+      # and ndi-service.ts wraps `require('grandiose')` in try/catch, so
+      # the produced installer simply won't have NDI output -- the rest
+      # of the app (scripture lookup, slides, output window) still works,
+      # and end users can install NDI Tools separately to add NDI output.
       - name: Install NDI SDK (Windows)
         if: runner.os == 'Windows'
         timeout-minutes: 15
-        continue-on-error: true
         shell: pwsh
         env:
           NDI_SDK_URL_WIN: ${{ secrets.NDI_SDK_URL_WIN }}
         run: |
-          $ErrorActionPreference = "Stop"
+          # NOTE: do NOT set $ErrorActionPreference = "Stop" -- we want this
+          # step to always exit 0 so the rest of the build runs.
           $url = if ($env:NDI_SDK_URL_WIN) { $env:NDI_SDK_URL_WIN } else { "https://downloads.ndi.tv/SDK/NDI_SDK/NDI%206%20SDK.exe" }
           $out = "$env:RUNNER_TEMP\ndi-sdk.exe"
           Write-Host "Downloading NDI SDK from $url"
           # Use curl.exe (built into Windows 10+) instead of Invoke-WebRequest:
           # IWR's progress bar makes 40MB downloads take 10+ minutes on CI.
-          # --retry handles transient 5xx (504 Gateway Time-out is common when
-          # the SDK is hosted on slow file hosts like Google Drive/Dropbox).
           & curl.exe -fsSL --max-time 300 --retry 5 --retry-delay 10 --retry-all-errors -o $out $url
-          if ($LASTEXITCODE -ne 0) { throw "Download failed (curl exit $LASTEXITCODE) -- if the URL is a Google Drive/Dropbox link, switch to a GitHub Release asset URL which is CDN-backed and rarely times out" }
-          $size = (Get-Item $out).Length
-          Write-Host "Downloaded $size bytes"
-          if ($size -lt 10000000) { throw "Downloaded file is suspiciously small ($size bytes) -- URL likely returned an HTML error page" }
-
-          # NDI 6 SDK installer is built with Advanced Installer, which uses
-          # /quiet (MSI-style), NOT /VERYSILENT (Inno Setup-style). Run it
-          # in the background so PowerShell can kill it if it hangs.
-          Write-Host "Running silent install with /quiet /norestart"
-          $proc = Start-Process -FilePath $out -ArgumentList "/quiet","/norestart" -PassThru
-          if (-not $proc.WaitForExit(600000)) {
-            $proc.Kill()
-            throw "NDI installer hung for 10 minutes -- killed. The installer probably popped a GUI dialog. Try downloading the SDK manually, hosting it somewhere, and setting the NDI_SDK_URL_WIN secret."
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::warning::NDI SDK download failed (curl exit $LASTEXITCODE). Build will proceed without NDI compiled."
+            exit 0
           }
-          Write-Host "Installer exited with code $($proc.ExitCode)"
+          $size = (Get-Item $out -ErrorAction SilentlyContinue).Length
+          Write-Host "Downloaded $size bytes"
+          if (-not $size -or $size -lt 10000000) {
+            Write-Host "::warning::Downloaded file is suspiciously small ($size bytes) -- URL likely returned an HTML error page. Build will proceed without NDI compiled."
+            exit 0
+          }
 
-          # Locate the installed SDK -- v6 path, falling back to v5.
+          # NDI 6 SDK installer is built with Advanced Installer (/quiet),
+          # not Inno Setup (/VERYSILENT). Run via Start-Process so we can
+          # kill it if it hangs on a GUI dialog.
+          Write-Host "Running silent install with /quiet /norestart"
+          try {
+            $proc = Start-Process -FilePath $out -ArgumentList "/quiet","/norestart" -PassThru -ErrorAction Stop
+            if (-not $proc.WaitForExit(600000)) {
+              $proc.Kill()
+              Write-Host "::warning::NDI installer hung for 10 minutes -- killed. Build will proceed without NDI."
+              exit 0
+            }
+            Write-Host "Installer exited with code $($proc.ExitCode)"
+          } catch {
+            Write-Host "::warning::NDI installer failed to start: $_. Build will proceed without NDI."
+            exit 0
+          }
+
           $candidates = @(
             "C:\Program Files\NDI\NDI 6 SDK",
             "C:\Program Files\NDI\NDI 6 Advanced SDK",
@@ -91,9 +103,9 @@ jobs:
           )
           $sdkRoot = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $sdkRoot) {
-            Write-Host "NDI SDK install path not found. Contents of C:\Program Files\NDI:"
-            if (Test-Path "C:\Program Files\NDI") { Get-ChildItem "C:\Program Files\NDI" } else { Write-Host "(directory does not exist)" }
-            throw "Could not locate installed NDI SDK"
+            Write-Host "::warning::NDI SDK install path not found. Build will proceed without NDI."
+            if (Test-Path "C:\Program Files\NDI") { Get-ChildItem "C:\Program Files\NDI" }
+            exit 0
           }
           echo "NDI_SDK_DIR=$sdkRoot" >> $env:GITHUB_ENV
           Write-Host "NDI SDK installed at $sdkRoot"
@@ -101,25 +113,27 @@ jobs:
       - name: Install NDI SDK (macOS)
         if: runner.os == 'macOS'
         timeout-minutes: 15
-        continue-on-error: true
         env:
           NDI_SDK_URL_MAC: ${{ secrets.NDI_SDK_URL_MAC }}
         run: |
-          set -euo pipefail
+          # NOTE: no `set -e` -- this step always exits 0 so the build proceeds.
           URL="${NDI_SDK_URL_MAC:-https://downloads.ndi.tv/SDK/NDI_SDK_Mac/Install_NDI_SDK_v6_Apple.pkg}"
           echo "Downloading NDI SDK from $URL"
-          curl -fsSL --max-time 600 --retry 5 --retry-delay 10 --retry-all-errors "$URL" -o /tmp/ndi-sdk.pkg
-          SIZE=$(stat -f%z /tmp/ndi-sdk.pkg)
-          echo "Downloaded $SIZE bytes"
-          file /tmp/ndi-sdk.pkg
-          if [ "$SIZE" -lt 10000000 ]; then
-            echo "Downloaded file is suspiciously small -- URL likely returned an HTML error page"
-            head -c 500 /tmp/ndi-sdk.pkg
-            exit 1
+          if ! curl -fsSL --max-time 600 --retry 5 --retry-delay 10 --retry-all-errors "$URL" -o /tmp/ndi-sdk.pkg; then
+            echo "::warning::NDI SDK download failed. Build will proceed without NDI compiled."
+            exit 0
           fi
-          # -verboseR surfaces the actual installer error if anything fails.
-          sudo installer -verboseR -pkg /tmp/ndi-sdk.pkg -target /
-          # Locate the installed SDK -- check known v6 and v5 paths.
+          SIZE=$(stat -f%z /tmp/ndi-sdk.pkg 2>/dev/null || echo 0)
+          echo "Downloaded $SIZE bytes"
+          file /tmp/ndi-sdk.pkg || true
+          if [ "$SIZE" -lt 10000000 ]; then
+            echo "::warning::Downloaded file is suspiciously small ($SIZE bytes) -- URL likely returned an HTML error page. Build will proceed without NDI."
+            exit 0
+          fi
+          if ! sudo installer -verboseR -pkg /tmp/ndi-sdk.pkg -target /; then
+            echo "::warning::NDI SDK installer failed. Build will proceed without NDI."
+            exit 0
+          fi
           for d in \
             "/Library/NDI SDK for Apple" \
             "/Library/NDI Advanced SDK for Apple" \
@@ -128,15 +142,12 @@ jobs:
             if [ -d "$d" ]; then
               echo "NDI_SDK_DIR=$d" >> "$GITHUB_ENV"
               echo "Found SDK at $d"
-              found=1
-              break
+              exit 0
             fi
           done
-          if [ -z "${found:-}" ]; then
-            echo "NDI SDK install path not found. Searching for include dir..."
-            sudo find /Library /Applications -maxdepth 4 -type d -name "*NDI*" 2>/dev/null || true
-            exit 1
-          fi
+          echo "::warning::NDI SDK install path not found. Build will proceed without NDI."
+          sudo find /Library /Applications -maxdepth 4 -type d -name "*NDI*" 2>/dev/null || true
+          exit 0
 
       # ---- Install dependencies and build ----
       - name: Install dependencies
