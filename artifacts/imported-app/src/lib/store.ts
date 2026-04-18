@@ -11,6 +11,23 @@ export type AppView =
   | 'sermon'
   | 'settings'
 
+export type LibraryTab =
+  | 'bible'
+  | 'songs'
+  | 'detection'
+  | 'ai-slides'
+  | 'sermon'
+  | 'media'
+
+export interface ScheduleItem {
+  id: string
+  type: 'verse' | 'song' | 'sermon' | 'slides' | 'announcement'
+  title: string
+  subtitle?: string
+  slides: Slide[]
+  addedAt: number
+}
+
 export type BibleTranslation = string
 export type DisplayMode = 'full' | 'lower-third' | 'lower-third-black'
 export type OutputDestination = 'window' | 'ndi' | 'both'
@@ -133,6 +150,17 @@ interface AppState {
   currentLyricIndex: number
   setCurrentLyricIndex: (i: number) => void
 
+  // Schedule (EasyWorship-style running order)
+  schedule: ScheduleItem[]
+  selectedScheduleItemId: string | null
+  activeLibraryTab: LibraryTab
+  setActiveLibraryTab: (t: LibraryTab) => void
+  addScheduleItem: (item: Omit<ScheduleItem, 'id' | 'addedAt'>) => string
+  removeScheduleItem: (id: string) => void
+  selectScheduleItem: (id: string | null) => void
+  moveScheduleItem: (id: string, direction: 'up' | 'down') => void
+  clearSchedule: () => void
+
   // Settings
   settings: AppSettings
   updateSettings: (s: Partial<AppSettings>) => void
@@ -229,6 +257,66 @@ export const useAppStore = create<AppState>()(
       currentLyricIndex: 0,
       setCurrentLyricIndex: (i) => set({ currentLyricIndex: i }),
 
+      // Schedule
+      schedule: [],
+      selectedScheduleItemId: null,
+      activeLibraryTab: 'bible',
+      setActiveLibraryTab: (t) => set({ activeLibraryTab: t }),
+      addScheduleItem: (item) => {
+        const id = `sch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+        const full: ScheduleItem = { ...item, id, addedAt: Date.now() }
+        set((state) => ({
+          schedule: [...state.schedule, full],
+          selectedScheduleItemId: id,
+          slides: full.slides,
+          previewSlideIndex: 0,
+          liveSlideIndex: -1,
+        }))
+        return id
+      },
+      removeScheduleItem: (id) =>
+        set((state) => {
+          const next = state.schedule.filter((s) => s.id !== id)
+          const wasSelected = state.selectedScheduleItemId === id
+          return {
+            schedule: next,
+            selectedScheduleItemId: wasSelected ? next[0]?.id ?? null : state.selectedScheduleItemId,
+            slides: wasSelected ? next[0]?.slides ?? [] : state.slides,
+            previewSlideIndex: wasSelected ? 0 : state.previewSlideIndex,
+            liveSlideIndex: wasSelected ? -1 : state.liveSlideIndex,
+          }
+        }),
+      selectScheduleItem: (id) =>
+        set((state) => {
+          if (id === null) return { selectedScheduleItemId: null }
+          const item = state.schedule.find((s) => s.id === id)
+          if (!item) return {}
+          return {
+            selectedScheduleItemId: id,
+            slides: item.slides,
+            previewSlideIndex: 0,
+            liveSlideIndex: -1,
+          }
+        }),
+      moveScheduleItem: (id, direction) =>
+        set((state) => {
+          const idx = state.schedule.findIndex((s) => s.id === id)
+          if (idx === -1) return {}
+          const targetIdx = direction === 'up' ? idx - 1 : idx + 1
+          if (targetIdx < 0 || targetIdx >= state.schedule.length) return {}
+          const next = [...state.schedule]
+          ;[next[idx], next[targetIdx]] = [next[targetIdx], next[idx]]
+          return { schedule: next }
+        }),
+      clearSchedule: () =>
+        set({
+          schedule: [],
+          selectedScheduleItemId: null,
+          slides: [],
+          previewSlideIndex: 0,
+          liveSlideIndex: -1,
+        }),
+
       // Settings
       settings: defaultSettings,
       updateSettings: (partial) =>
@@ -241,6 +329,8 @@ export const useAppStore = create<AppState>()(
       partialize: (state) => ({
         settings: state.settings,
         selectedTranslation: state.selectedTranslation,
+        schedule: state.schedule,
+        activeLibraryTab: state.activeLibraryTab,
       }),
     }
   )

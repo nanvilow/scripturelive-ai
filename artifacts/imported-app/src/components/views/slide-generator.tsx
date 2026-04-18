@@ -85,9 +85,15 @@ export function SlideGeneratorView() {
         })),
       ]
 
+      useAppStore.getState().addScheduleItem({
+        type: 'verse',
+        title: verse.reference,
+        subtitle: verse.translation,
+        slides: newSlides,
+      })
       setSlides(newSlides)
       setPreviewSlideIndex(0)
-      toast.success(`Generated ${newSlides.length} slides from ${verse.reference}`)
+      toast.success(`${verse.reference} (${newSlides.length} slides) added to schedule`)
     } catch {
       toast.error('Failed to generate slides')
     } finally {
@@ -115,9 +121,14 @@ export function SlideGeneratorView() {
       const aiSlides: Slide[] = data.slides || []
 
       if (aiSlides.length > 0) {
+        useAppStore.getState().addScheduleItem({
+          type: 'sermon',
+          title: topic.trim() || 'AI Slides',
+          slides: aiSlides,
+        })
         setSlides(aiSlides)
         setPreviewSlideIndex(0)
-        toast.success(`AI generated ${aiSlides.length} slides`)
+        toast.success(`AI generated ${aiSlides.length} slides — added to schedule`)
       } else {
         toast.error('AI could not generate slides. Try a different topic.')
       }
