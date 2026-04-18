@@ -42,12 +42,17 @@ import {
   Plus,
 } from 'lucide-react'
 
-import { BibleLookupView } from '@/components/views/bible-lookup'
-import { WorshipLyricsView } from '@/components/views/worship-lyrics'
-import { ScriptureDetectionView } from '@/components/views/scripture-detection'
-import { SlideGeneratorView } from '@/components/views/slide-generator'
-import { SermonNotesView } from '@/components/views/sermon-notes'
-import { SettingsView } from '@/components/views/settings'
+import {
+  BibleLookupCompact,
+  ScriptureDetectionCompact,
+  SlideGeneratorCompact,
+  SermonNotesCompact,
+  WorshipLyricsCompact,
+  MediaLibraryCompact,
+} from '@/components/layout/library-compact'
+import { NdiOutputPanel } from '@/components/views/ndi-output-panel'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { MonitorPlay } from 'lucide-react'
 
 // ──────────────────────────────────────────────────────────────────────
 // Library tab definitions
@@ -64,26 +69,17 @@ const LIBRARY_TABS: { id: LibraryTab; label: string; icon: typeof BookOpen }[] =
 function LibraryPanelContent({ tab }: { tab: LibraryTab }) {
   switch (tab) {
     case 'bible':
-      return <BibleLookupView />
+      return <BibleLookupCompact />
     case 'songs':
-      return <WorshipLyricsView />
+      return <WorshipLyricsCompact />
     case 'detection':
-      return <ScriptureDetectionView />
+      return <ScriptureDetectionCompact />
     case 'ai-slides':
-      return <SlideGeneratorView />
+      return <SlideGeneratorCompact />
     case 'sermon':
-      return <SermonNotesView />
+      return <SermonNotesCompact />
     case 'media':
-      return (
-        <div className="p-6 text-center">
-          <ImageIcon className="h-10 w-10 text-zinc-600 mx-auto mb-3" />
-          <h3 className="text-sm font-semibold mb-1">Media Library</h3>
-          <p className="text-xs text-zinc-500 max-w-xs mx-auto">
-            Upload backgrounds and images from <strong>Settings → Background</strong> for now.
-            Full media library coming soon.
-          </p>
-        </div>
-      )
+      return <MediaLibraryCompact />
   }
 }
 
@@ -104,7 +100,30 @@ function TopToolbar({
     setCurrentView,
     schedule,
     clearSchedule,
+    ndiConnected,
   } = useAppStore()
+
+  const openOnScreen = useCallback(() => {
+    // Try Electron native multi-screen first; fall back to browser window.open.
+    const electron = (typeof window !== 'undefined' ? (window as unknown as { electron?: { output?: { openWindow?: () => Promise<{ ok: boolean; error?: string }> } } }).electron : undefined)
+    if (electron?.output?.openWindow) {
+      electron.output.openWindow().then((r) => {
+        if (!r?.ok) toast.error(r?.error || 'Could not open output window')
+        else toast.success('Output window opened on second screen')
+      })
+      return
+    }
+    const w = window.open(
+      '/api/output/congregation',
+      'scripturelive-output',
+      'width=1280,height=720,toolbar=no,menubar=no,location=no,status=no',
+    )
+    if (w) {
+      toast.success('Output window opened — drag it to your second display, then press F11')
+    } else {
+      toast.error('Pop-up blocked. Allow pop-ups for ScriptureLive in your browser.')
+    }
+  }, [])
 
   return (
     <header className="flex h-12 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-3 shrink-0">
@@ -176,6 +195,49 @@ function TopToolbar({
           {outputActive ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
           {outputActive ? 'Output ON' : 'Output OFF'}
         </Button>
+
+        {/* Show on Screen — opens congregation page (drag to TV/HDMI) */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-[11px] gap-1.5 border text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white"
+          onClick={openOnScreen}
+          title="Open the live output as a window — drag it to a second monitor or TV (HDMI) and press F11 to fullscreen."
+        >
+          <MonitorPlay className="h-3 w-3" />
+          Show on Screen
+        </Button>
+
+        {/* NDI inline popover (built-in, like EasyWorship) */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                'h-7 px-2 text-[11px] gap-1.5 border',
+                ndiConnected
+                  ? 'bg-emerald-600/20 text-emerald-300 border-emerald-700 hover:bg-emerald-600/30'
+                  : 'text-zinc-300 border-zinc-800 hover:bg-zinc-800',
+              )}
+              title="Send the live output to vMix / Wirecast / OBS over NDI on your local network."
+            >
+              <Radio className="h-3 w-3" />
+              NDI
+              {ndiConnected && (
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
+              )}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="end"
+            className="w-[420px] p-0 bg-zinc-950 border-zinc-800 max-h-[80vh] overflow-y-auto"
+          >
+            <div className="p-3">
+              <NdiOutputPanel />
+            </div>
+          </PopoverContent>
+        </Popover>
 
         <Button
           variant="ghost"
