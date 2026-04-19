@@ -1,7 +1,7 @@
 'use client'
 
 import { SpeechProvider } from '@/components/providers/speech-provider'
-import { EasyWorshipShell } from '@/components/layout/easyworship-shell'
+import { LogosShell } from '@/components/layout/logos-shell'
 import { AppShell } from '@/components/layout/app-shell'
 import { SettingsView } from '@/components/views/settings'
 import { useAppStore } from '@/lib/store'
@@ -31,7 +31,7 @@ function AppContent() {
     )
   }
 
-  return <EasyWorshipShell />
+  return <LogosShell />
 }
 
 export default function Home() {
