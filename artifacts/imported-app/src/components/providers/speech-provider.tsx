@@ -208,8 +208,30 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (speechCommand === 'start') {
       processedRefsRef.current = new Set()
-      startListening(stableProcessCallback)
-      setSpeechCommand(null)
+      // If the user picked a specific mic, claim it via getUserMedia first.
+      // Browsers' Web Speech API doesn't expose deviceId directly, but
+      // acquiring the chosen input device prompts the OS / browser to route
+      // recognition through it. We then immediately release the stream so we
+      // don't hold the mic open in parallel.
+      const chosenId = useAppStore.getState().selectedMicrophoneId
+      const beginRecognition = () => {
+        startListening(stableProcessCallback)
+        setSpeechCommand(null)
+      }
+      if (chosenId && typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+        navigator.mediaDevices
+          .getUserMedia({ audio: { deviceId: { exact: chosenId } } })
+          .then((stream) => {
+            stream.getTracks().forEach((t) => t.stop())
+            beginRecognition()
+          })
+          .catch(() => {
+            // Fall back to system default if the chosen mic is unavailable.
+            beginRecognition()
+          })
+      } else {
+        beginRecognition()
+      }
     } else if (speechCommand === 'stop') {
       stopListening()
       setSpeechCommand(null)
