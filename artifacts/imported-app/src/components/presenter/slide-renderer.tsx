@@ -30,13 +30,19 @@ const fontFamilyMap = { sans: 'font-sans', serif: 'font-serif', mono: 'font-mono
 // total character count, so long passages still fit their frame and short ones
 // stay legible.
 function pickContentCqi(base: number, totalChars: number, lineCount: number): number {
+  // More aggressive shrinking so long detected-verse passages always
+  // fit inside the Preview / Live Display frames without overflowing.
   let s = base
+  if (totalChars > 140) s -= 0.5
   if (totalChars > 220) s -= 0.6
-  if (totalChars > 380) s -= 0.6
-  if (totalChars > 600) s -= 0.6
-  if (lineCount > 4) s -= 0.4
-  if (lineCount > 8) s -= 0.4
-  return Math.max(2.4, s)
+  if (totalChars > 320) s -= 0.6
+  if (totalChars > 440) s -= 0.5
+  if (totalChars > 600) s -= 0.5
+  if (totalChars > 800) s -= 0.5
+  if (lineCount > 3) s -= 0.3
+  if (lineCount > 6) s -= 0.3
+  if (lineCount > 10) s -= 0.4
+  return Math.max(1.8, s)
 }
 
 function SlideContent({
@@ -45,11 +51,15 @@ function SlideContent({
   slide: Slide
   theme: { accent: string }
   large: boolean
-  settings: Pick<AppSettings, 'fontSize' | 'fontFamily' | 'textShadow' | 'showReferenceOnOutput'>
+  settings: Pick<AppSettings, 'fontSize' | 'fontFamily' | 'textShadow' | 'showReferenceOnOutput' | 'textScale'>
 }) {
   const fontClass = fontFamilyMap[settings.fontFamily as keyof typeof fontFamilyMap] || 'font-sans'
   const shadow = settings.textShadow ? { textShadow: '0 2px 12px rgba(0,0,0,0.4)' } : {}
-  const baseCqi = fontSizeBaseCqi[settings.fontSize] || fontSizeBaseCqi.lg
+  // Apply the operator's manual text-scale multiplier on top of the
+  // base font size so they can dial readability live without rebuilding
+  // the slide. Clamped to a sane band so the screen never blows up.
+  const scale = Math.min(2, Math.max(0.5, settings.textScale ?? 1))
+  const baseCqi = (fontSizeBaseCqi[settings.fontSize] || fontSizeBaseCqi.lg) * scale
 
   if (slide.type === 'title') {
     return (

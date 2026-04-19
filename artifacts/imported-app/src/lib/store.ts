@@ -84,6 +84,18 @@ export interface AppSettings {
   speechLanguage: string
   autoGoLiveOnDetection: boolean
   autoGoLiveOnLookup: boolean
+  // ── Secondary screen layout. `displayRatio` controls how the slide
+  // canvas is fitted into the operator's secondary screen window:
+  //   'fill'   – stretch to the full window (recommended for projectors)
+  //   '16:9'   – pillar/letterbox to 16:9 (broadcast / NDI feeds)
+  //   '4:3'    – legacy projector / SD ratio
+  //   '21:9'   – ultrawide stage screen
+  // `textScale` is a 0.5–2.0 multiplier applied on top of the chosen
+  // font size, letting operators dial readability without rebuilding
+  // the slide deck. Both update the secondary screen instantly via the
+  // existing /api/output broadcast.
+  displayRatio: 'fill' | '16:9' | '4:3' | '21:9'
+  textScale: number
 }
 
 interface AppState {
@@ -182,6 +194,8 @@ const defaultSettings: AppSettings = {
   fontSize: 'lg',
   textShadow: true,
   showReferenceOnOutput: true,
+  displayRatio: 'fill',
+  textScale: 1,
   congregationScreenTheme: 'minimal',
   speechLanguage: 'en-US',
   autoGoLiveOnDetection: false,

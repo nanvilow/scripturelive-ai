@@ -658,23 +658,51 @@ function DetectedVersesCard() {
     settings,
   } = useAppStore()
 
-  const sendDetected = (v: typeof detectedVerses[number], live: boolean) => {
-    const slide = {
-      id: `slide-${Date.now()}`,
-      type: 'verse' as const,
-      title: v.reference,
-      subtitle: v.translation,
-      content: (v.text || '').split('\n').filter(Boolean),
-      background: settings.congregationScreenTheme,
+  // Long detected verses (whole passages, paraphrases, multi-verse
+  // ranges) used to be rammed onto a single slide and shrank to
+  // illegibility in the Preview / Live frames. Split anything past
+  // ~180 chars at sentence boundaries, and never put more than two
+  // sentences on a single slide. Each chunk becomes its own slide so
+  // the operator can ◀ ▶ through the passage and every line is
+  // readable on the secondary screen.
+  const splitForSlides = (text: string): string[][] => {
+    const cleaned = (text || '').replace(/\s+/g, ' ').trim()
+    if (!cleaned) return [[]]
+    if (cleaned.length <= 180) return [[cleaned]]
+    const sentences = cleaned.match(/[^.!?]+[.!?]+["']?|\S[^.!?]*$/g) || [cleaned]
+    const chunks: string[][] = []
+    let buf = ''
+    for (const s of sentences) {
+      const candidate = buf ? buf + ' ' + s.trim() : s.trim()
+      if (candidate.length > 220 && buf) {
+        chunks.push([buf])
+        buf = s.trim()
+      } else {
+        buf = candidate
+      }
     }
+    if (buf) chunks.push([buf])
+    return chunks.length ? chunks : [[cleaned]]
+  }
+
+  const sendDetected = (v: typeof detectedVerses[number], live: boolean) => {
+    const groups = splitForSlides(v.text || '')
+    const slides = groups.map((content, idx) => ({
+      id: `slide-${Date.now()}-${idx}`,
+      type: 'verse' as const,
+      title: v.reference + (groups.length > 1 ? ` (${idx + 1}/${groups.length})` : ''),
+      subtitle: v.translation,
+      content,
+      background: settings.congregationScreenTheme,
+    }))
     addScheduleItem({
       type: 'verse',
       title: v.reference,
       subtitle: v.translation,
-      slides: [slide],
+      slides,
     })
     if (live) {
-      setSlides([slide])
+      setSlides(slides)
       setPreviewSlideIndex(0)
       setLiveSlideIndex(0)
       setIsLive(true)
@@ -835,6 +863,8 @@ export function LogosShell() {
               lowerThirdPosition: settings.lowerThirdPosition,
               customBackground: settings.customBackground,
               congregationScreenTheme: settings.congregationScreenTheme,
+              displayRatio: settings.displayRatio,
+              textScale: settings.textScale,
             },
           }),
         })
@@ -844,6 +874,32 @@ export function LogosShell() {
     },
     [settings],
   )
+
+  // Push the latest settings to the secondary screen the moment any of
+  // them change — display ratio, text scale, theme, font size, etc.
+  // This is what makes the "applied immediately, no restart" behavior
+  // the user asked for actually work: a settings tweak goes through
+  // /api/output and the congregation page picks it up on its next
+  // poll/SSE tick (sub-second).
+  useEffect(() => {
+    const cur = liveSlideIndex >= 0 ? slides[liveSlideIndex] : (slides[previewSlideIndex] || null)
+    sendToOutput(cur, isLive)
+    // We intentionally depend on the settings fields the renderer reads,
+    // not on the slide indices — those are handled by the other effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    settings.displayRatio,
+    settings.textScale,
+    settings.fontSize,
+    settings.fontFamily,
+    settings.textShadow,
+    settings.showReferenceOnOutput,
+    settings.lowerThirdHeight,
+    settings.lowerThirdPosition,
+    settings.customBackground,
+    settings.congregationScreenTheme,
+    settings.displayMode,
+  ])
 
   // Auto-enable NDI / output if mode requires it
   useEffect(() => {

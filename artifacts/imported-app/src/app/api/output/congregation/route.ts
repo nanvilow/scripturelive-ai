@@ -17,16 +17,23 @@ export async function GET() {
 <title>ScriptureLive — Congregation Display</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#fff}
-#output{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;transition:opacity .5s ease}
+html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#fff}
+/* The output canvas is the inner letterbox honoring displayRatio. The
+   stage element fills the whole viewport with the theme background and
+   centers the canvas. */
+#stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000}
+#output{position:relative;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;transition:opacity .35s ease;overflow:hidden}
 #output.hidden{opacity:0}
-.bg-image{position:absolute;inset:0;object-fit:cover;opacity:.4;pointer-events:none}
+#output.ratio-16x9{aspect-ratio:16/9;width:min(100vw,calc(100vh*16/9));height:min(100vh,calc(100vw*9/16))}
+#output.ratio-4x3{aspect-ratio:4/3;width:min(100vw,calc(100vh*4/3));height:min(100vh,calc(100vw*3/4))}
+#output.ratio-21x9{aspect-ratio:21/9;width:min(100vw,calc(100vh*21/9));height:min(100vh,calc(100vw*9/21))}
+.bg-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;pointer-events:none}
 .bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);pointer-events:none}
-.slide-content{position:relative;z-index:1;text-align:center;max-width:75vw;padding:4rem 2rem}
-.slide-reference{font-size:1rem;opacity:.5;margin-bottom:1rem;letter-spacing:.05em}
-.slide-text{font-size:2.5rem;font-weight:500;line-height:1.5}
-.slide-title{font-size:3rem;font-weight:700;line-height:1.3}
-.slide-subtitle{font-size:1.2rem;opacity:.7;margin-top:1rem}
+.slide-content{position:relative;z-index:1;text-align:center;width:90%;max-width:90vw;padding:4vh 3vw;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.slide-reference{font-size:clamp(.85rem,1.4vw,1.6rem);opacity:.55;margin-bottom:1.4vh;letter-spacing:.06em}
+.slide-text{font-weight:500;line-height:1.35;margin:.4vh 0;word-wrap:break-word;overflow-wrap:break-word}
+.slide-title{font-weight:700;line-height:1.2}
+.slide-subtitle{opacity:.7;margin-top:1.4vh}
 .theme-worship{background:linear-gradient(135deg,#1e0a3c,#1e1b4b)}
 .theme-sermon{background:linear-gradient(135deg,#3c1a0a,#451a03)}
 .theme-easter{background:linear-gradient(135deg,#0a3c2a,#042f2e)}
@@ -50,38 +57,80 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:-ap
 <body>
 <div id="status"><div id="status-dot"></div><span id="status-text">Connecting...</span></div>
 <div id="reconnecting"><div class="spinner"></div><div style="color:#999;font-size:.9rem">Reconnecting to ScriptureLive...</div></div>
-<div id="output"></div>
+<div id="stage"><div id="output"></div></div>
 <script>
 const themes={worship:'theme-worship',sermon:'theme-sermon',easter:'theme-easter',christmas:'theme-christmas',praise:'theme-praise',minimal:'theme-minimal'};
 let es=null,reconnects=0;
 const $=id=>document.getElementById(id);
 
+// Compute clamp() font sizes that scale with the viewport so text is
+// always readable but never overflows. fontSize picks the base, and
+// textScale multiplies it. Long passages get bumped down further.
+function fitFont(base, scale, totalChars){
+  // base mid-vmin per fontSize bucket, scaled to viewport with min/max
+  var bandTitle={sm:5,md:6,lg:7,xl:8.5}[base]||7;
+  var bandText={sm:3.6,md:4.4,lg:5.2,xl:6.4}[base]||5.2;
+  if(totalChars>180)bandText-=.6;
+  if(totalChars>320)bandText-=.6;
+  if(totalChars>480)bandText-=.6;
+  if(totalChars>700)bandText-=.6;
+  if(bandText<2.2)bandText=2.2;
+  bandTitle*=scale;bandText*=scale;
+  return {
+    title:'clamp(1.2rem,'+bandTitle+'vmin,8rem)',
+    text:'clamp(1rem,'+bandText+'vmin,5.5rem)',
+    sub:'clamp(.9rem,'+(bandTitle*.55)+'vmin,2.5rem)',
+  };
+}
+
+function applyRatio(r){
+  var o=$('output');
+  o.classList.remove('ratio-16x9','ratio-4x3','ratio-21x9');
+  if(r==='16:9')o.classList.add('ratio-16x9');
+  else if(r==='4:3')o.classList.add('ratio-4x3');
+  else if(r==='21:9')o.classList.add('ratio-21x9');
+}
+
 function render(s){
   // Show whatever slide is currently selected even before "Live" is engaged,
   // so the operator never sees a blank black screen on the secondary display.
-  if(!s||!s.slide){$('output').innerHTML='';$('output').classList.add('hidden');return}
-  const{slide,dm=(s.displayMode||'full'),st=(s.settings||{})}=s;
-  const tk=slide.background||(st.congregationScreenTheme||'minimal');
-  const tc=themes[tk]||'theme-minimal';
-  const isLT=dm&&dm.startsWith('lower-third');
-  const sh=st.textShadow!==false?'text-shadow:0 2px 12px rgba(0,0,0,.3);':'';
-  const bg=st.customBackground?'<img class="bg-image" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>':'';
-  const ref=st.showReferenceOnOutput!==false&&slide.title?'<div class="slide-reference">'+slide.title+(slide.subtitle?' \\u2014 '+slide.subtitle:'')+'</div>':'';
-  let txt='';
+  if(!s){$('output').innerHTML='';$('output').classList.add('hidden');return}
+  var slide=s.slide;
+  var dm=s.displayMode||'full';
+  var st=s.settings||{};
+  applyRatio(st.displayRatio||'fill');
+  if(!slide){
+    // Render themed background only — never a black void
+    var tkE=(st.congregationScreenTheme||'minimal');
+    var tcE=themes[tkE]||'theme-minimal';
+    var bgE=st.customBackground?'<img class="bg-image" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>':'';
+    $('output').innerHTML='<div class="'+tcE+'" style="width:100%;height:100%;position:relative;">'+bgE+'</div>';
+    $('output').classList.remove('hidden');
+    return;
+  }
+  var tk=slide.background||(st.congregationScreenTheme||'minimal');
+  var tc=themes[tk]||'theme-minimal';
+  var isLT=dm&&dm.indexOf('lower-third')===0;
+  var sh=st.textShadow!==false?'text-shadow:0 2px 12px rgba(0,0,0,.4);':'';
+  var bg=st.customBackground?'<img class="bg-image" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>':'';
+  var ref=st.showReferenceOnOutput!==false&&slide.title?'<div class="slide-reference">'+slide.title+(slide.subtitle?' \\u2014 '+slide.subtitle:'')+'</div>':'';
+  var totalChars=0;
+  if(slide.content&&slide.content.length){for(var i=0;i<slide.content.length;i++)totalChars+=(slide.content[i]||'').length;}
+  var scale=Math.min(2,Math.max(.5,(typeof st.textScale==='number'?st.textScale:1)));
+  var fs=fitFont(st.fontSize||'lg',scale,totalChars);
+  var txt='';
   if(slide.type==='title'){
-    const sz={sm:'2rem',md:'2.5rem',lg:'3rem',xl:'3.5rem'}[st.fontSize]||'2.5rem';
-    txt='<div class="slide-title" style="font-size:'+sz+';'+sh+'">'+slide.title+'</div>'+(slide.subtitle?'<div class="slide-subtitle" style="'+sh+'">'+slide.subtitle+'</div>':'');
+    txt='<div class="slide-title" style="font-size:'+fs.title+';'+sh+'">'+(slide.title||'')+'</div>'+(slide.subtitle?'<div class="slide-subtitle" style="font-size:'+fs.sub+';'+sh+'">'+slide.subtitle+'</div>':'');
   }else if(slide.content&&slide.content.length){
-    const sz={sm:'1.5rem',md:'2rem',lg:'2.5rem',xl:'3rem'}[st.fontSize]||'2rem';
-    txt=slide.content.map(function(l){return '<div class="slide-text" style="font-size:'+sz+';'+sh+'">'+l+'</div>'}).join('');
+    txt=slide.content.map(function(l){return '<div class="slide-text" style="font-size:'+fs.text+';'+sh+'">'+l+'</div>'}).join('');
   }else{
-    txt='<div class="slide-text" style="opacity:.3">'+(slide.title||'Blank')+'</div>';
+    txt='<div class="slide-text" style="opacity:.3;font-size:'+fs.text+'">'+(slide.title||'Blank')+'</div>';
   }
   if(isLT){
     var pos=st.lowerThirdPosition==='top'?'top':'bottom';
     $('output').innerHTML='<div style="width:100%;height:100%;position:relative;">'+bg+'<div class="lower-third '+pos+'"><div class="lt-box">'+ref+txt+'</div></div></div>';
   }else{
-    $('output').innerHTML='<div class="'+tc+'" style="width:100%;height:100%;position:relative;">'+bg+'<div class="slide-content">'+ref+txt+'</div></div>';
+    $('output').innerHTML='<div class="'+tc+'" style="width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:center;">'+bg+'<div class="slide-content">'+ref+txt+'</div></div>';
   }
   $('output').classList.remove('hidden');
 }
@@ -109,7 +158,9 @@ function pollOnce(){
     })
     .catch(function(){});
 }
-setInterval(pollOnce,1500);
+// Poll fast so settings tweaks (display ratio, text scale, theme) feel
+// instant on the secondary screen without waiting on SSE delivery.
+setInterval(pollOnce,800);
 
 function connect(){
   $('reconnecting').classList.remove('active');
