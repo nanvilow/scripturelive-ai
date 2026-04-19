@@ -62,6 +62,10 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 const themes={worship:'theme-worship',sermon:'theme-sermon',easter:'theme-easter',christmas:'theme-christmas',praise:'theme-praise',minimal:'theme-minimal'};
 let es=null,reconnects=0;
 const $=id=>document.getElementById(id);
+// Hash of the last rendered payload — render() bails out if the next
+// payload is identical, which prevents the flash that came from rapid
+// SSE + poll double-fire and from re-broadcasting the same settings.
+let lastRenderKey='';
 
 // Compute clamp() font sizes that scale with the viewport so text is
 // always readable but never overflows. fontSize picks the base, and
@@ -92,9 +96,16 @@ function applyRatio(r){
 }
 
 function render(s){
-  // Show whatever slide is currently selected even before "Live" is engaged,
-  // so the operator never sees a blank black screen on the secondary display.
-  if(!s){$('output').innerHTML='';$('output').classList.add('hidden');return}
+  if(!s){$('output').innerHTML='';$('output').classList.add('hidden');lastRenderKey='';return}
+  // Skip the rebuild entirely if the payload is identical to what's
+  // already on screen. Without this guard the secondary display
+  // flickered every time we rebroadcast settings or the poll raced
+  // an SSE message.
+  try{
+    var key=JSON.stringify({sl:s.slide,dm:s.displayMode,st:s.settings});
+    if(key===lastRenderKey)return;
+    lastRenderKey=key;
+  }catch(e){}
   var slide=s.slide;
   var dm=s.displayMode||'full';
   var st=s.settings||{};
@@ -124,7 +135,7 @@ function render(s){
   }else if(slide.content&&slide.content.length){
     txt=slide.content.map(function(l){return '<div class="slide-text" style="font-size:'+fs.text+';'+sh+'">'+l+'</div>'}).join('');
   }else{
-    txt='<div class="slide-text" style="opacity:.3;font-size:'+fs.text+'">'+(slide.title||'Blank')+'</div>';
+    txt='<div class="slide-text" style="opacity:.3;font-size:'+fs.text+'">'+(slide.title||'')+'</div>';
   }
   if(isLT){
     var pos=st.lowerThirdPosition==='top'?'top':'bottom';
@@ -158,9 +169,9 @@ function pollOnce(){
     })
     .catch(function(){});
 }
-// Poll fast so settings tweaks (display ratio, text scale, theme) feel
-// instant on the secondary screen without waiting on SSE delivery.
-setInterval(pollOnce,800);
+// SSE handles the realtime push; this poll is a 1.5s safety net for
+// autoscale deployments where SSE can land on a different replica.
+setInterval(pollOnce,1500);
 
 function connect(){
   $('reconnecting').classList.remove('active');

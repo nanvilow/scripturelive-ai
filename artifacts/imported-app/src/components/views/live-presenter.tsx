@@ -75,7 +75,7 @@ function SlideContent({ slide, theme, large = false, settings }: { slide: { type
 
   return (
     <div className={cn('opacity-30', theme.accent, large ? 'text-3xl' : 'text-xl')} style={shadow}>
-      {slide.title || 'Blank Slide'}
+      {slide.title || ''}
     </div>
   )
 }

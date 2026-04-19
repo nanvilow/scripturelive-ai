@@ -115,7 +115,7 @@ function SlideContent({
       className={cn('opacity-30', theme.accent)}
       style={{ fontSize: large ? `${baseCqi}cqi` : '1.4cqi', ...shadow }}
     >
-      {slide.title || 'Blank'}
+      {slide.title || ''}
     </div>
   )
 }
