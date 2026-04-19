@@ -180,29 +180,70 @@ export function TopToolbar({
   // window-management permission. We probe it lazily so we don't trigger
   // a permission prompt on app load.
   type ScreenDetailed = { label?: string; width: number; height: number; left: number; top: number; isPrimary: boolean }
-  type ScreenDetails = { screens: ScreenDetailed[] }
+  type ScreenDetails = { screens: ScreenDetailed[]; addEventListener?: (ev: string, cb: () => void) => void }
   type WindowWithScreenDetails = Window & { getScreenDetails?: () => Promise<ScreenDetails> }
+  const [screenPermission, setScreenPermission] = useState<'granted' | 'denied' | 'prompt' | 'unsupported' | 'unknown'>('unknown')
+
+  const applyScreens = useCallback((details: ScreenDetails) => {
+    setBrowserScreens(
+      details.screens.map((s, i: number) => ({
+        id: `browser-${i}`,
+        label: s.label || `Display ${i + 1}`,
+        primary: !!s.isPrimary,
+        width: s.width,
+        height: s.height,
+        left: s.left,
+        top: s.top,
+      })),
+    )
+  }, [])
+
   const probeBrowserScreens = useCallback(async () => {
     if (typeof window === 'undefined') return
     const win = window as WindowWithScreenDetails
-    if (!win.getScreenDetails) return
+    if (!win.getScreenDetails) {
+      setScreenPermission('unsupported')
+      return
+    }
     try {
       const details = await win.getScreenDetails()
-      setBrowserScreens(
-        details.screens.map((s, i: number) => ({
-          id: `browser-${i}`,
-          label: s.label || `Display ${i + 1}`,
-          primary: !!s.isPrimary,
-          width: s.width,
-          height: s.height,
-          left: s.left,
-          top: s.top,
-        })),
-      )
+      applyScreens(details)
+      setScreenPermission('granted')
+      // Re-enumerate when the user plugs/unplugs a monitor.
+      details.addEventListener?.('screenschange', () => applyScreens(details))
     } catch {
-      /* permission denied or unsupported */
+      setScreenPermission('denied')
     }
-  }, [])
+  }, [applyScreens])
+
+  // Try to silently re-use a previously granted permission on mount so the
+  // multi-monitor list is ready before the user even opens the popover —
+  // matches the vMix / Wirecast feel where displays "just appear".
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('permissions' in navigator)) return
+    type PermName = PermissionName | 'window-management' | 'window-placement'
+    const tryNames: PermName[] = ['window-management', 'window-placement']
+    ;(async () => {
+      for (const name of tryNames) {
+        try {
+          const status = await (navigator.permissions as Permissions).query({ name: name as PermissionName })
+          if (status.state === 'granted') {
+            await probeBrowserScreens()
+            return
+          }
+          if (status.state === 'denied') {
+            setScreenPermission('denied')
+            return
+          }
+          setScreenPermission('prompt')
+          return
+        } catch {
+          /* try next name */
+        }
+      }
+      // Permissions API doesn't recognise the name; we'll know on first probe.
+    })()
+  }, [probeBrowserScreens])
 
   const pushCurrentSlide = useCallback(async () => {
     if (!outputActive) toggleOutput()
@@ -449,10 +490,35 @@ export function TopToolbar({
               <ChevronDown className="h-3 w-3 opacity-60" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent align="end" className="w-[300px] p-1 bg-zinc-950 border-zinc-800">
-            <div className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
-              Choose output screen
+          <PopoverContent align="end" className="w-[320px] p-1 bg-zinc-950 border-zinc-800">
+            <div className="flex items-center justify-between px-2 py-1.5">
+              <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+                Choose output screen
+              </span>
+              {desktop?.output?.listDisplays && (
+                <Badge className="h-4 px-1 text-[8px] bg-emerald-500/15 text-emerald-300 border-0">
+                  DESKTOP
+                </Badge>
+              )}
+              {!desktop?.output?.listDisplays && screenPermission === 'granted' && (
+                <Badge className="h-4 px-1 text-[8px] bg-sky-500/15 text-sky-300 border-0">
+                  BROWSER
+                </Badge>
+              )}
             </div>
+
+            {/* If running in a browser without permission yet, show a single
+                CTA that triggers the OS prompt and immediately enumerates
+                displays — closely mirrors how vMix/Wirecast feel native. */}
+            {!desktop?.output?.listDisplays && screenPermission !== 'granted' && screenPermission !== 'unsupported' && (
+              <button
+                onClick={probeBrowserScreens}
+                className="w-full text-left px-2 py-2 mb-1 rounded bg-sky-500/15 border border-sky-500/40 text-[11px] text-sky-200 hover:bg-sky-500/25 flex items-center gap-2"
+              >
+                <MonitorPlay className="h-3.5 w-3.5" />
+                <span className="flex-1">Detect connected monitors</span>
+              </button>
+            )}
 
             {/* Electron physical displays */}
             {displays.length > 0 && displays.map((d) => (
@@ -490,22 +556,38 @@ export function TopToolbar({
               </button>
             ))}
 
-            {displays.length === 0 && browserScreens.length === 0 && (
+            {displays.length === 0 && browserScreens.length === 0 && screenPermission === 'granted' && (
               <div className="px-2 py-2 mb-1 rounded bg-zinc-900/60 border border-zinc-800 text-[10px] text-zinc-400">
-                Multiple monitors are detected automatically in the desktop
-                app and in Chrome / Edge after granting screen permission.
-                In other browsers, use <strong className="text-zinc-200">Pop-out window</strong> below
-                and drag it to your second display.
+                Only one monitor detected. Connect a second display via
+                HDMI / DisplayPort and it will appear here automatically.
+              </div>
+            )}
+
+            {!desktop?.output?.listDisplays && screenPermission === 'denied' && (
+              <div className="px-2 py-2 mb-1 rounded bg-rose-500/10 border border-rose-500/30 text-[10px] text-rose-200">
+                Screen permission was blocked. Click the lock icon in your
+                browser's address bar and allow <strong>Window Management</strong>,
+                or use the desktop app for native monitor selection.
+              </div>
+            )}
+
+            {!desktop?.output?.listDisplays && screenPermission === 'unsupported' && (
+              <div className="px-2 py-2 mb-1 rounded bg-amber-500/10 border border-amber-500/30 text-[10px] text-amber-200">
+                This browser can&apos;t list connected monitors. For native
+                vMix-style display selection, install the
+                <strong> ScriptureLive desktop app</strong> from the
+                Download page — it sees every PC monitor automatically.
               </div>
             )}
 
             <div className="border-t border-zinc-800 mt-1 pt-1">
               <button
                 onClick={() => openOnScreen()}
-                className="w-full text-left px-2 py-1.5 text-[11px] text-zinc-300 hover:bg-zinc-800 rounded flex items-center gap-2"
+                className="w-full text-left px-2 py-1.5 text-[10px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 rounded flex items-center gap-2"
+                title="Manual fallback: open the output as a draggable window."
               >
-                <ExternalLink className="h-3 w-3 text-zinc-500" />
-                Pop-out window (drag to any display)
+                <ExternalLink className="h-3 w-3" />
+                Open as window (manual fallback)
               </button>
             </div>
           </PopoverContent>
