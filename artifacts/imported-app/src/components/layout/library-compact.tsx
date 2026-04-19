@@ -750,14 +750,26 @@ export function SlideGeneratorCompact() {
     if (!t) return
     setBusy(true)
     try {
-      const r = await fetch('/api/ai/slides', {
+      // The actual AI route lives at /api/ai/generate-slides — this used
+      // to point at /api/ai/slides which 404s, so the "Generate with AI"
+      // button silently failed for every user. Route now matches the
+      // implementation and surfaces real server errors instead of a
+      // generic "AI generation failed".
+      const r = await fetch('/api/ai/generate-slides', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: t, theme: settings.congregationScreenTheme }),
+        body: JSON.stringify({
+          topic: t,
+          theme: settings.congregationScreenTheme,
+          translation: selectedTranslation,
+        }),
       })
-      if (!r.ok) throw new Error('failed')
-      const data = await r.json()
-      const slides: Slide[] = data.slides || []
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        toast.error(data?.error || `AI request failed (${r.status})`)
+        return
+      }
+      const slides: Slide[] = Array.isArray(data?.slides) ? data.slides : []
       if (!slides.length) {
         toast.error('AI returned no slides')
         return
@@ -765,8 +777,8 @@ export function SlideGeneratorCompact() {
       addScheduleItem({ type: 'sermon', title: t, slides })
       toast.success(`AI generated ${slides.length} slides`)
       setTopic('')
-    } catch {
-      toast.error('AI generation failed')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'AI generation failed')
     } finally {
       setBusy(false)
     }

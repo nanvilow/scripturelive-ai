@@ -101,7 +101,7 @@ export function Dashboard() {
                 ScriptureLive AI
               </h1>
               <p className="text-sm text-muted-foreground">
-                AI-Powered Bible & Worship Presentation Platform
+                Powered by WassMedia (+233246798526)
               </p>
             </div>
           </div>

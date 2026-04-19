@@ -330,7 +330,7 @@ export function TopToolbar({
           <Image src="/logo.png" alt="ScriptureLive" width={28} height={28} className="rounded" style={{ height: 'auto' }} />
           <div className="leading-tight">
             <h1 className="text-xs font-bold text-zinc-100 tracking-tight">ScriptureLive AI</h1>
-            <p className="text-[9px] text-zinc-500 uppercase tracking-wider">Live Production Console</p>
+            <p className="text-[9px] text-zinc-500 tracking-wide">Powered by WassMedia (+233246798526)</p>
           </div>
         </div>
 

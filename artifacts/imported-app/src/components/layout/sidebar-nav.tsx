@@ -55,7 +55,7 @@ export function SidebarNav() {
           </div>
           <div className="flex flex-col">
             <span className="text-lg font-bold text-foreground tracking-tight">ScriptureLive</span>
-            <span className="text-xs text-muted-foreground font-medium">AI-Powered Platform</span>
+            <span className="text-xs text-muted-foreground font-medium">Powered by WassMedia (+233246798526)</span>
           </div>
           <Button variant="ghost" size="icon" className="ml-auto lg:hidden h-8 w-8" onClick={() => setSidebarOpen(false)}>
             <X className="h-4 w-4" />

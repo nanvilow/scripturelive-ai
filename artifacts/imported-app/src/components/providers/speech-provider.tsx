@@ -156,6 +156,14 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         try {
           const verse = await fetchBibleVerse(ref, state.selectedTranslation)
           if (verse) {
+            // Insert a paragraph break in the running transcript so each
+            // detected scripture starts a fresh visual section in the
+            // Live Transcription pane. Without this every detection runs
+            // into the previous one as a single wall of text.
+            const t = useAppStore.getState().liveTranscript
+            if (t && !t.endsWith('\n\n')) {
+              useAppStore.getState().setLiveTranscript(t.replace(/\s*$/, '') + '\n\n')
+            }
             const detected: DetectedVerse = {
               id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
               reference: ref,

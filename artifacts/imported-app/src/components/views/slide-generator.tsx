@@ -347,8 +347,11 @@ export function SlideGeneratorView() {
             <div>
               <h3 className="text-lg font-semibold text-foreground mb-1">AI Slide Generator</h3>
               <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                Enter a sermon topic or Bible reference to generate beautiful presentation slides.
-                Powered by AI for intelligent content creation.
+                Enter a sermon topic or Bible reference to generate beautiful
+                presentation slides.
+              </p>
+              <p className="text-xs text-muted-foreground/70 mt-2">
+                Powered by WassMedia (+233246798526)
               </p>
             </div>
           </div>
