@@ -159,6 +159,16 @@ function TopToolbar({
   }, [outputActive, toggleOutput])
 
   const openOnScreen = useCallback(async (displayId?: number) => {
+    // If nothing is live yet, auto-promote the current preview slide so the
+    // output screen immediately shows real content instead of staying blank.
+    const before = useAppStore.getState()
+    if (before.liveSlideIndex < 0 && before.slides.length > 0) {
+      const idx = Math.max(0, before.previewSlideIndex)
+      before.setLiveSlideIndex(idx)
+      before.setIsLive(true)
+    } else if (before.liveSlideIndex >= 0 && !before.isLive) {
+      before.setIsLive(true)
+    }
     await pushCurrentSlide()
     if (desktop?.output?.openWindow) {
       const r = await desktop.output.openWindow(displayId !== undefined ? { displayId } : undefined)
@@ -245,7 +255,7 @@ function TopToolbar({
                 title="Pick which monitor / TV to send the live output to."
               >
                 <MonitorPlay className="h-3 w-3" />
-                Show on Screen
+                Output Display
                 <ChevronDown className="h-3 w-3 opacity-60" />
               </Button>
             </PopoverTrigger>
@@ -293,7 +303,7 @@ function TopToolbar({
             title="Open the live output as a window — drag it to a second monitor or TV (HDMI) and press F11 to fullscreen."
           >
             {outputActive ? <Wifi className="h-3 w-3" /> : <MonitorPlay className="h-3 w-3" />}
-            Show on Screen
+            Output Display
           </Button>
         )}
 

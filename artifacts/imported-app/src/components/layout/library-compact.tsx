@@ -340,9 +340,19 @@ export function BibleLookupCompact() {
                   <div
                     key={v.verse}
                     data-verse={v.verse}
-                    onClick={() => setActiveVerse(v.verse)}
+                    onClick={() => {
+                      // Single click: focus AND add to schedule
+                      setActiveVerse(v.verse)
+                      sendVerse(v.verse, false)
+                    }}
+                    onDoubleClick={() => {
+                      // Double click: send straight to live output
+                      setActiveVerse(v.verse)
+                      sendVerse(v.verse, true)
+                    }}
+                    title="Click → add to schedule · Double-click → send live"
                     className={cn(
-                      'group rounded border px-2 py-1.5 cursor-pointer transition-colors',
+                      'group rounded border px-2 py-1.5 cursor-pointer transition-colors select-none',
                       active
                         ? 'border-amber-500/60 bg-amber-500/10'
                         : 'border-zinc-800 bg-zinc-900/40 hover:border-zinc-700 hover:bg-zinc-900',

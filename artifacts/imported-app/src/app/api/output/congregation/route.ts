@@ -57,7 +57,9 @@ let es=null,reconnects=0;
 const $=id=>document.getElementById(id);
 
 function render(s){
-  if(!s||!s.isLive||!s.slide){$('output').innerHTML='';$('output').classList.add('hidden');return}
+  // Show whatever slide is currently selected even before "Live" is engaged,
+  // so the operator never sees a blank black screen on the secondary display.
+  if(!s||!s.slide){$('output').innerHTML='';$('output').classList.add('hidden');return}
   const{slide,dm=(s.displayMode||'full'),st=(s.settings||{})}=s;
   const tk=slide.background||(st.congregationScreenTheme||'minimal');
   const tc=themes[tk]||'theme-minimal';
