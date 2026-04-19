@@ -115,6 +115,8 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                 detectedAt: new Date(),
                 confidence: 0.75,
               }
+              const tBefore = useAppStore.getState().liveTranscript
+              useAppStore.getState().pushTranscriptBreak(tBefore.length)
               useAppStore.getState().addDetectedVerse(detected)
               useAppStore.getState().addToVerseHistory({
                 reference: top.reference,
@@ -156,14 +158,14 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         try {
           const verse = await fetchBibleVerse(ref, state.selectedTranslation)
           if (verse) {
-            // Insert a paragraph break in the running transcript so each
-            // detected scripture starts a fresh visual section in the
-            // Live Transcription pane. Without this every detection runs
-            // into the previous one as a single wall of text.
+            // Mark the current transcript length as a paragraph break.
+            // Each detected scripture pushes a break point so the Live
+            // Transcription pane visually starts a new paragraph for
+            // every detection. We don't mutate the transcript string
+            // itself because the speech hook re-emits the full text on
+            // every audio chunk and would clobber any inline markers.
             const t = useAppStore.getState().liveTranscript
-            if (t && !t.endsWith('\n\n')) {
-              useAppStore.getState().setLiveTranscript(t.replace(/\s*$/, '') + '\n\n')
-            }
+            useAppStore.getState().pushTranscriptBreak(t.length)
             const detected: DetectedVerse = {
               id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
               reference: ref,
@@ -247,6 +249,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       resetTranscript()
       setLiveTranscript('')
       setLiveInterimTranscript('')
+      useAppStore.getState().clearTranscriptBreaks()
       processedRefsRef.current = new Set()
       setSpeechCommand(null)
     }

@@ -97,6 +97,20 @@ function applyRatio(r){
 
 function render(s){
   if(!s){$('output').innerHTML='';$('output').classList.add('hidden');lastRenderKey='';return}
+  // When the operator hits "Disconnect secondary screen" the broadcaster
+  // sends type:'clear'. Honor it as a true blank (black) frame so the
+  // congregation TV goes dark instead of showing the themed background.
+  if(s.type==='clear'){
+    var ckey='__clear__';
+    if(ckey===lastRenderKey)return;
+    lastRenderKey=ckey;
+    $('output').innerHTML='';
+    $('output').style.background='#000';
+    $('output').classList.remove('hidden');
+    return;
+  }
+  // Reset any prior forced-black background on normal renders.
+  $('output').style.background='';
   // Skip the rebuild entirely if the payload is identical to what's
   // already on screen. Without this guard the secondary display
   // flickered every time we rebroadcast settings or the poll raced

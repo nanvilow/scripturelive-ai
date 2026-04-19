@@ -126,6 +126,7 @@ function LiveTranscriptionCard() {
     setSpeechCommand,
     liveTranscript,
     liveInterimTranscript,
+    transcriptBreaks,
     isLive,
   } = useAppStore()
 
@@ -137,16 +138,31 @@ function LiveTranscriptionCard() {
     setSpeechCommand(isListening ? 'stop' : 'start')
   }
 
-  // Split the running transcript into paragraphs at every blank line.
-  // The speech provider inserts a blank line every time it locks on a
-  // new scripture reference, so each detection visually starts a new
-  // paragraph and the transcript reads like a sermon outline rather
-  // than one endless wall of text.
-  const paragraphs = (liveTranscript || '')
-    .split(/\n\s*\n/)
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .slice(-12)
+  // Build paragraphs by slicing the running transcript at every
+  // detection break point. The speech provider pushes a break index
+  // (current transcript length) whenever it locks on a new scripture,
+  // so each detection visually starts a fresh paragraph here. We
+  // can't embed `\n\n` directly into the transcript string because
+  // the speech hook re-emits the full transcript on every audio
+  // chunk and would clobber any inline markers.
+  const paragraphs = (() => {
+    const t = liveTranscript || ''
+    if (!t) return [] as string[]
+    const breaks = (transcriptBreaks || [])
+      .filter((i) => i > 0 && i < t.length)
+      .sort((a, b) => a - b)
+    if (!breaks.length) return [t.trim()].filter(Boolean)
+    const out: string[] = []
+    let prev = 0
+    for (const b of breaks) {
+      const seg = t.slice(prev, b).trim()
+      if (seg) out.push(seg)
+      prev = b
+    }
+    const tail = t.slice(prev).trim()
+    if (tail) out.push(tail)
+    return out.slice(-12)
+  })()
 
   return (
     <Card
@@ -800,9 +816,14 @@ export function LogosShell() {
     detectedVerses,
     addScheduleItem,
     setSlides,
+    outputEnabled,
+    setOutputEnabled,
   } = useAppStore()
 
-  const [outputActive, setOutputActive] = useState(false)
+  // The "output active" lamp on the toolbar mirrors the master output
+  // enable flag in the store so the toggle and the global broadcaster
+  // always agree.
+  const outputActive = outputEnabled
   const [elapsedTime, setElapsedTime] = useState(0)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -842,62 +863,17 @@ export function LogosShell() {
     toast.success(`Auto: ${newest.reference}`)
   }, [autoAdvance, detectedVerses, addScheduleItem, setSlides, setPreviewSlideIndex, setLiveSlideIndex, setIsLive, settings.congregationScreenTheme])
 
-  // Broadcast helper: same payload shape used by the EasyWorship shell
+  // Local no-op broadcaster — the real broadcaster lives globally in
+  // <OutputBroadcaster /> (mounted in page.tsx) so settings tweaks
+  // flow to the secondary screen even when the operator is on the
+  // Settings overlay. We keep this stub so existing transport
+  // callbacks (clearLive / goBlack / goLogo) compile unchanged.
   const sendToOutput = useCallback(
-    async (slide: typeof slides[number] | null, live: boolean) => {
-      try {
-        await fetch('/api/output', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'slide',
-            slide,
-            isLive: live,
-            displayMode: settings.displayMode,
-            settings: {
-              fontSize: settings.fontSize,
-              fontFamily: settings.fontFamily,
-              textShadow: settings.textShadow,
-              showReferenceOnOutput: settings.showReferenceOnOutput,
-              lowerThirdHeight: settings.lowerThirdHeight,
-              lowerThirdPosition: settings.lowerThirdPosition,
-              customBackground: settings.customBackground,
-              congregationScreenTheme: settings.congregationScreenTheme,
-              displayRatio: settings.displayRatio,
-              textScale: settings.textScale,
-            },
-          }),
-        })
-      } catch {
-        /* SSE will reconnect */
-      }
+    async (_slide: typeof slides[number] | null, _live: boolean) => {
+      /* no-op — handled by <OutputBroadcaster /> */
     },
-    [settings],
+    [],
   )
-
-  // Push the latest settings to the secondary screen the moment any of
-  // them change — display ratio, text scale, theme, font size, etc.
-  // This is what makes the "applied immediately, no restart" behavior
-  // the user asked for actually work: a settings tweak goes through
-  // /api/output and the congregation page picks it up on its next
-  // poll/SSE tick (sub-second).
-  useEffect(() => {
-    const cur = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
-    sendToOutput(cur, isLive)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    settings.displayRatio,
-    settings.textScale,
-    settings.fontSize,
-    settings.fontFamily,
-    settings.textShadow,
-    settings.showReferenceOnOutput,
-    settings.lowerThirdHeight,
-    settings.lowerThirdPosition,
-    settings.customBackground,
-    settings.congregationScreenTheme,
-    settings.displayMode,
-  ])
 
   // Auto-enable NDI / output if mode requires it
   useEffect(() => {
@@ -905,10 +881,10 @@ export function LogosShell() {
       (settings.outputDestination === 'ndi' || settings.outputDestination === 'both') &&
       !outputActive
     ) {
-      setOutputActive(true) // eslint-disable-line react-hooks/set-state-in-effect
+      setOutputEnabled(true)
       setNdiConnected(true)
     }
-  }, [settings.outputDestination, outputActive, setNdiConnected])
+  }, [settings.outputDestination, outputActive, setOutputEnabled, setNdiConnected])
 
   // Live timer
   const prevIsLive = useRef(isLive)
@@ -926,12 +902,6 @@ export function LogosShell() {
       if (timerRef.current) clearInterval(timerRef.current)
     }
   }, [isLive])
-
-  // Sync live changes to output
-  useEffect(() => {
-    const cur = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
-    sendToOutput(cur, isLive)
-  }, [liveSlideIndex, isLive, slides, sendToOutput])
 
   // Transport actions
   const goLive = useCallback(() => {
@@ -957,27 +927,46 @@ export function LogosShell() {
   }, [setLiveSlideIndex, setIsLive, sendToOutput])
 
   const goLogo = useCallback(() => {
-    sendToOutput(
-      { id: 'logo', type: 'title', title: 'ScriptureLive AI', subtitle: '', content: [] },
-      true,
-    )
+    // Logo is a transient overlay that doesn't live in the slide deck,
+    // so we POST it directly. The global broadcaster's deduper will
+    // accept this because the payload differs from the last live one.
+    void fetch('/api/output', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'slide',
+        slide: { id: 'logo', type: 'title', title: 'ScriptureLive AI', subtitle: '', content: [], background: settings.congregationScreenTheme },
+        isLive: true,
+        displayMode: settings.displayMode,
+        settings: {
+          fontSize: settings.fontSize,
+          fontFamily: settings.fontFamily,
+          textShadow: settings.textShadow,
+          showReferenceOnOutput: settings.showReferenceOnOutput,
+          lowerThirdHeight: settings.lowerThirdHeight,
+          lowerThirdPosition: settings.lowerThirdPosition,
+          customBackground: settings.customBackground,
+          congregationScreenTheme: settings.congregationScreenTheme,
+          displayRatio: settings.displayRatio,
+          textScale: settings.textScale,
+        },
+      }),
+      keepalive: true,
+    }).catch(() => {})
     setIsLive(true)
     toast.success('Logo sent to output')
-  }, [sendToOutput, setIsLive])
+  }, [settings, setIsLive])
 
   const toggleOutput = useCallback(() => {
     if (outputActive) {
-      setOutputActive(false)
+      setOutputEnabled(false)
       setNdiConnected(false)
-      toast.success('Output stopped')
+      toast.success('Output disconnected')
     } else {
-      setOutputActive(true)
-      setNdiConnected(true)
-      toast.success('Output started')
-      const cur = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
-      sendToOutput(cur, isLive)
+      setOutputEnabled(true)
+      toast.success('Output reconnected')
     }
-  }, [outputActive, setNdiConnected, sendToOutput, liveSlideIndex, slides, isLive])
+  }, [outputActive, setOutputEnabled, setNdiConnected])
 
   // Keyboard shortcuts
   useEffect(() => {
