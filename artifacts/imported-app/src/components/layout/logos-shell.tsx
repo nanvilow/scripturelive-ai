@@ -137,7 +137,16 @@ function LiveTranscriptionCard() {
     setSpeechCommand(isListening ? 'stop' : 'start')
   }
 
-  const lines = (liveTranscript || '').split('\n').filter(Boolean).slice(-30)
+  // Split the running transcript into paragraphs at every blank line.
+  // The speech provider inserts a blank line every time it locks on a
+  // new scripture reference, so each detection visually starts a new
+  // paragraph and the transcript reads like a sermon outline rather
+  // than one endless wall of text.
+  const paragraphs = (liveTranscript || '')
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .slice(-12)
 
   return (
     <Card
@@ -180,7 +189,7 @@ function LiveTranscriptionCard() {
               Speech recognition is not available — try Chrome or Edge.
             </p>
           )}
-          {lines.length === 0 && !liveInterimTranscript && (
+          {paragraphs.length === 0 && !liveInterimTranscript && (
             <div className="text-center py-6 text-[11px] text-zinc-600">
               <Mic className="h-7 w-7 mx-auto opacity-40 mb-2" />
               Tap <span className="text-sky-300 font-semibold">Go Live</span> to start
@@ -188,9 +197,16 @@ function LiveTranscriptionCard() {
               the right-hand panels.
             </div>
           )}
-          {lines.map((line, i) => (
-            <p key={i} className="text-[12px] leading-relaxed text-zinc-200">
-              {line}
+          {paragraphs.map((para, i) => (
+            <p
+              key={i}
+              className={cn(
+                'text-[12px] leading-relaxed text-zinc-200',
+                // Add visible spacing between paragraphs
+                i > 0 && 'mt-3 pt-3 border-t border-zinc-800/40',
+              )}
+            >
+              {para}
             </p>
           ))}
           {liveInterimTranscript && (
@@ -399,21 +415,36 @@ function LiveDisplayCard({
       }
       bodyClassName="bg-black"
     >
-      <div className="flex-1 min-h-0 flex items-center justify-center p-3">
-        {liveSlide && !hidden ? (
+      <div className="flex-1 min-h-0 flex items-center justify-center p-3 relative">
+        {/* Always render the themed background, even when no scripture
+            is on air. This gives the operator a constant "what the
+            congregation will see" preview instead of a black void, and
+            matches how Logos / Wirecast keep the background alive
+            between slides. We render an empty placeholder slide so
+            the SlideThumb still draws the theme (gradient + custom
+            background image) underneath. */}
+        {!hidden && (
           <div className="w-full max-w-full" style={{ transform: `scale(${size})`, transformOrigin: 'center' }}>
             <SlideThumb
-              slide={liveSlide}
-              themeKey={liveSlide.background || settings.congregationScreenTheme}
-              isLive
+              slide={liveSlide ?? {
+                id: 'lv-bg',
+                type: 'blank',
+                title: '',
+                subtitle: '',
+                content: [],
+                background: settings.congregationScreenTheme,
+              }}
+              themeKey={(liveSlide?.background) || settings.congregationScreenTheme}
+              isLive={!!liveSlide}
               size="lg"
               settings={settings}
             />
           </div>
-        ) : (
+        )}
+        {hidden && (
           <div className="text-center text-[11px] text-zinc-600">
             <CircleSlash className="h-8 w-8 mx-auto opacity-30 mb-2" />
-            {hidden ? 'Output is hidden' : 'Output is dark'}
+            Output is hidden
           </div>
         )}
       </div>
@@ -917,9 +948,28 @@ export function LogosShell() {
     return () => window.removeEventListener('keydown', handler)
   }, [previewSlideIndex, slides.length, goLive, clearLive, goBlack, setPreviewSlideIndex])
 
-  // Live Display transport (the inline ◀ Display ▶ row)
-  const onPrev = () => setPreviewSlideIndex(Math.max(0, previewSlideIndex - 1))
-  const onNext = () => setPreviewSlideIndex(Math.min(slides.length - 1, previewSlideIndex + 1))
+  // Live Display transport (the inline ◀ Display ▶ row).
+  // The arrows here step the *live* slide forward / backward through
+  // the current verse deck and immediately push it to the secondary
+  // screen — operators expect Live Display arrows to drive what's on
+  // air, not just the preview pane. Falls back to the preview index if
+  // nothing is on air yet so the very first click goes live cleanly.
+  const onPrev = useCallback(() => {
+    if (!slides.length) return
+    const cur = liveSlideIndex >= 0 ? liveSlideIndex : previewSlideIndex
+    const next = Math.max(0, cur - 1)
+    setLiveSlideIndex(next)
+    setPreviewSlideIndex(next)
+    setIsLive(true)
+  }, [slides.length, liveSlideIndex, previewSlideIndex, setLiveSlideIndex, setPreviewSlideIndex, setIsLive])
+  const onNext = useCallback(() => {
+    if (!slides.length) return
+    const cur = liveSlideIndex >= 0 ? liveSlideIndex : previewSlideIndex
+    const next = Math.min(slides.length - 1, cur + 1)
+    setLiveSlideIndex(next)
+    setPreviewSlideIndex(next)
+    setIsLive(true)
+  }, [slides.length, liveSlideIndex, previewSlideIndex, setLiveSlideIndex, setPreviewSlideIndex, setIsLive])
   const onSendLive = () => goLive()
 
   return (
@@ -962,6 +1012,17 @@ export function LogosShell() {
         onBlack={goBlack}
         onLogo={goLogo}
       />
+
+      {/* App-wide branding strip — sits beneath the entire console so the
+          attribution is always visible to the operator without crowding
+          the workspace cards. */}
+      <footer className="flex h-7 items-center justify-center gap-2 border-t border-zinc-800 bg-zinc-950/80 shrink-0 select-none">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logo.png" alt="" className="h-3.5 w-3.5 rounded object-cover opacity-80" />
+        <span className="text-[10px] tracking-wide text-zinc-400">
+          Powered by WassMedia (+233246798526)
+        </span>
+      </footer>
     </div>
   )
 }

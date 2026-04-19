@@ -124,15 +124,14 @@ export function DashboardView() {
                 <img src="/logo.png" alt="" className="h-full w-full object-cover" />
               </div>
               <Badge variant="secondary" className="bg-primary/15 text-primary border-primary/20 text-xs">
-                <Sparkles className="h-3 w-3 mr-1" /> AI-Powered
+                Powered by WassMedia (+233246798526)
               </Badge>
             </div>
             <h2 className="text-2xl md:text-3xl font-bold text-foreground tracking-tight mt-2">
               Welcome to ScriptureLive AI
             </h2>
             <p className="text-muted-foreground max-w-xl text-sm md:text-base leading-relaxed">
-              Your all-in-one platform for Bible study, worship presentation, and sermon preparation.
-              Powered by AI to help you serve your congregation better.
+              Powered by WassMedia (+233246798526)
             </p>
           </div>
         </div>

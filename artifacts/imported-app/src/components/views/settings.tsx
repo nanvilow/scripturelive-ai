@@ -111,10 +111,35 @@ export function SettingsView() {
   }
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-3xl space-y-6">
-      <div>
-        <h2 className="text-xl font-bold text-foreground">Settings</h2>
-        <p className="text-sm text-muted-foreground mt-1">Configure your ScriptureLive AI preferences</p>
+    <div className="p-4 md:p-6 lg:p-8 max-w-4xl space-y-6">
+      {/* Modernised header — gradient hero card with logo + reset action,
+          matching the polished look of the rest of the live console. */}
+      <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-primary/10 via-background to-violet-500/10 px-5 py-5 md:px-7 md:py-6">
+        <div className="absolute inset-0 pointer-events-none opacity-40 [background-image:radial-gradient(circle_at_top_right,rgba(99,102,241,.18),transparent_60%)]" />
+        <div className="relative flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="flex items-center gap-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo.png" alt="" className="h-11 w-11 rounded-xl object-cover ring-1 ring-border/60 shadow-sm" />
+            <div className="leading-tight">
+              <h2 className="text-2xl font-bold text-foreground tracking-tight">Settings</h2>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Tune Bible defaults, output mode, theming, and live presentation behavior.
+              </p>
+              <p className="text-[11px] text-muted-foreground/70 mt-1">
+                Powered by WassMedia (+233246798526)
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={resetSettings}
+            className="gap-1.5 self-start md:self-auto"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            Reset to defaults
+          </Button>
+        </div>
       </div>
 
       {/* Bible Settings */}

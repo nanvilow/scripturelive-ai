@@ -17,7 +17,6 @@ import {
   LayoutDashboard,
   Menu,
   Sparkles,
-  Cross,
 } from 'lucide-react'
 
 const NAV_ITEMS: { id: AppView; label: string; icon: React.ElementType; description: string }[] = [
@@ -37,12 +36,12 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     <div className="flex flex-col h-full">
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 py-5">
-        <div className="w-9 h-9 rounded-lg bg-primary/15 flex items-center justify-center">
-          <Cross className="w-5 h-5 text-primary" />
-        </div>
-        <div>
+        <img src="/logo.png" alt="ScriptureLive" className="w-9 h-9 rounded-lg object-cover" />
+        <div className="leading-tight">
           <h1 className="text-base font-bold tracking-tight">ScriptureLive</h1>
-          <p className="text-[11px] text-muted-foreground -mt-0.5">AI-Powered Platform</p>
+          <p className="text-[10px] text-muted-foreground -mt-0.5">
+            Powered by WassMedia (+233246798526)
+          </p>
         </div>
       </div>
 
@@ -80,12 +79,10 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
       {/* Footer */}
       <Separator className="opacity-50" />
-      <div className="px-4 py-3">
-        <p className="text-[11px] text-muted-foreground">
-          ScriptureLive AI v1.0
-        </p>
-        <p className="text-[10px] text-muted-foreground/60 mt-0.5">
-          Powered by AI
+      <div className="px-4 py-3 flex items-center gap-2">
+        <img src="/logo.png" alt="" className="w-5 h-5 rounded object-cover opacity-80" />
+        <p className="text-[10px] text-muted-foreground/80 leading-tight">
+          Powered by WassMedia (+233246798526)
         </p>
       </div>
     </div>

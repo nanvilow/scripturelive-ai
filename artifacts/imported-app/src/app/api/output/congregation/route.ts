@@ -86,8 +86,36 @@ function render(s){
   $('output').classList.remove('hidden');
 }
 
+// Polling fallback. Server-Sent Events break when the deployment is
+// horizontally scaled (autoscale): the GET that opens the SSE stream
+// can land on a different instance from the POSTs that mutate state,
+// so the secondary screen stays black even though the operator is
+// pushing slides. Polling /api/output?format=json works regardless of
+// which instance answers, because every instance returns whatever it
+// most recently saw. We still prefer the SSE push (zero latency) but
+// keep a 1.5s poll running underneath so output is never stuck.
+let lastPolled=0;
+function pollOnce(){
+  fetch('/api/output?format=json',{cache:'no-store'})
+    .then(function(r){return r.ok?r.json():null})
+    .then(function(j){
+      if(!j||!j.state)return;
+      if(j.state.timestamp&&j.state.timestamp<=lastPolled)return;
+      lastPolled=j.state.timestamp||Date.now();
+      render(j.state);
+      $('status').classList.add('connected','visible');
+      $('status-text').textContent='Connected (poll)';
+      setTimeout(function(){$('status').classList.remove('visible')},2000);
+    })
+    .catch(function(){});
+}
+setInterval(pollOnce,1500);
+
 function connect(){
   $('reconnecting').classList.remove('active');
+  // Kick off a poll right away so the screen lights up even before SSE
+  // negotiates (some proxies hold the first message for a beat).
+  pollOnce();
   es=new EventSource('/api/output');
   es.onopen=function(){
     reconnects=0;
@@ -96,7 +124,13 @@ function connect(){
     setTimeout(function(){$('status').classList.remove('visible')},3000);
   };
   es.onmessage=function(e){
-    try{var d=JSON.parse(e.data);if(d.type==='state')render(d)}catch(err){}
+    try{
+      var d=JSON.parse(e.data);
+      if(d.type==='state'){
+        if(d.timestamp)lastPolled=d.timestamp;
+        render(d);
+      }
+    }catch(err){}
   };
   es.onerror=function(){
     es.close();
