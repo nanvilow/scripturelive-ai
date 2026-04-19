@@ -274,9 +274,15 @@ export function LivePresenterView() {
     return () => window.removeEventListener('keydown', handler)
   }, [previewSlideIndex, slides.length, goToLive, setIsLive, setLiveSlideIndex, sendToOutput])
 
-  // Congregation screen (same browser window mode)
-  const isCongregationScreen = typeof window !== 'undefined'
-    && new URLSearchParams(window.location.search).get('screen') === 'congregation'
+  // Congregation screen (same browser window mode). Computed in an effect so
+  // the SSR pass and the first client render agree (hydration-safe), then
+  // re-rendered with the real value once the component is mounted.
+  const [isCongregationScreen, setIsCongregationScreen] = useState(false)
+  useEffect(() => {
+    setIsCongregationScreen(
+      new URLSearchParams(window.location.search).get('screen') === 'congregation'
+    )
+  }, [])
 
   if (isCongregationScreen) {
     return (
