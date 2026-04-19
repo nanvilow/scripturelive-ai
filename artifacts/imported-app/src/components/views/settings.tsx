@@ -105,6 +105,8 @@ export function SettingsView() {
       speechLanguage: 'en-US',
       autoGoLiveOnDetection: false,
       autoGoLiveOnLookup: false,
+      displayRatio: 'fill',
+      textScale: 1,
     })
     setSelectedTranslation('KJV')
     toast.success('Settings reset to defaults')
@@ -324,6 +326,79 @@ export function SettingsView() {
               ))}
             </div>
           </div>
+
+          <Separator />
+
+          {/* ── Secondary screen sizing — operator-facing ratio picker
+              that the congregation display honors instantly. */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Secondary Screen Ratio</Label>
+            <div className="flex flex-wrap gap-2">
+              {([
+                { value: 'fill' as const, label: 'Fill Screen', desc: 'Use full window' },
+                { value: '16:9' as const, label: '16:9', desc: 'Broadcast / NDI' },
+                { value: '4:3' as const, label: '4:3', desc: 'Legacy projector' },
+                { value: '21:9' as const, label: '21:9', desc: 'Ultrawide stage' },
+              ]).map((r) => (
+                <button
+                  key={r.value}
+                  onClick={() => updateSettings({ displayRatio: r.value })}
+                  className={cn(
+                    'flex flex-col items-start rounded-lg px-3 py-2.5 transition-colors border min-w-[130px]',
+                    settings.displayRatio === r.value
+                      ? 'bg-primary/10 border-primary/30'
+                      : 'bg-muted/30 border-border hover:bg-muted/50'
+                  )}
+                >
+                  <span className="text-xs font-medium">{r.label}</span>
+                  <span className="text-[10px] text-muted-foreground">{r.desc}</span>
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Applied to the secondary screen instantly — no refresh needed.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-sm font-medium flex items-center justify-between">
+              <span>Text Size on Secondary Screen</span>
+              <span className="text-[11px] font-mono text-primary">
+                {Math.round((settings.textScale ?? 1) * 100)}%
+              </span>
+            </Label>
+            <input
+              type="range"
+              min={0.5}
+              max={2}
+              step={0.05}
+              value={settings.textScale ?? 1}
+              onChange={(e) => updateSettings({ textScale: parseFloat(e.target.value) })}
+              className="w-full h-2 rounded-full bg-muted accent-primary cursor-pointer"
+            />
+            <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+              <button
+                onClick={() => updateSettings({ textScale: 0.75 })}
+                className="hover:text-foreground transition-colors"
+              >
+                Smaller
+              </button>
+              <button
+                onClick={() => updateSettings({ textScale: 1 })}
+                className="hover:text-foreground transition-colors"
+              >
+                100%
+              </button>
+              <button
+                onClick={() => updateSettings({ textScale: 1.5 })}
+                className="hover:text-foreground transition-colors"
+              >
+                Larger
+              </button>
+            </div>
+          </div>
+
+          <Separator />
 
           <div className="space-y-2">
             <Label className="text-sm font-medium">Congregation Screen Theme</Label>
