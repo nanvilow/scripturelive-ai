@@ -91,6 +91,13 @@ export async function fetchBibleChapterFromAPI(
   translation: string = 'KJV',
 ): Promise<BibleChapter | null> {
   try {
+    const info = TRANSLATIONS_INFO[translation]
+    // Modern translations via bolls.life
+    if (info?.source === 'bolls') {
+      const bolls = await fetchChapterFromBolls(book, chapter, info.abbreviation)
+      if (bolls) return bolls
+      // Fall through to bible-api.com if bolls fails
+    }
     const apiTrans = TRANSLATION_MAP[translation] || 'kjv'
     const ref = `${book.replace(/\s+/g, '+')}+${chapter}`
     const tryFetch = async (t: string) => {
@@ -106,7 +113,7 @@ export async function fetchBibleChapterFromAPI(
     return {
       book,
       chapter,
-      translation,
+      translation: info?.source === 'bolls' ? `${translation} (KJV used)` : translation,
       verses: data.verses.map((v: { verse: number; text: string }) => ({
         verse: v.verse,
         text: (v.text || '').trim(),
@@ -139,32 +146,36 @@ export async function fetchBibleChapter(
 // ──────────────────────────────────────────────
 // All available Bible translations
 // ──────────────────────────────────────────────
-export const TRANSLATIONS_INFO: Record<string, { name: string; full: string; abbreviation: string }> = {
-  KJV: { name: 'KJV', full: 'King James Version', abbreviation: 'kjv' },
-  ASV: { name: 'ASV', full: 'American Standard Version', abbreviation: 'asv' },
-  WEB: { name: 'WEB', full: 'World English Bible', abbreviation: 'web' },
-  OEB: { name: 'OEB', full: 'Open English Bible', abbreviation: 'oeb-cw' },
-  BBE: { name: 'BBE', full: 'Bible in Basic English', abbreviation: 'bbe' },
-  YLT: { name: 'YLT', full: "Young's Literal Translation", abbreviation: 'ylt' },
-  DARBY: { name: 'DARBY', full: "Darby Translation", abbreviation: 'darby' },
-  RSV: { name: 'RSV', full: 'Revised Standard Version', abbreviation: 'rsv' },
-  ESV: { name: 'ESV', full: 'English Standard Version', abbreviation: 'esv' },
-  NIV: { name: 'NIV', full: 'New International Version', abbreviation: 'niv' },
-  NLT: { name: 'NLT', full: 'New Living Translation', abbreviation: 'nlt' },
-  MSG: { name: 'MSG', full: 'The Message', abbreviation: 'msg' },
-  NKJV: { name: 'NKJV', full: 'New King James Version', abbreviation: 'nkjv' },
-  NASB: { name: 'NASB', full: 'New American Standard Bible (1995)', abbreviation: 'nasb1995' },
-  AMP: { name: 'AMP', full: 'Amplified Bible', abbreviation: 'amp' },
-  CSB: { name: 'CSB', full: 'Christian Standard Bible', abbreviation: 'csb' },
-  CEB: { name: 'CEB', full: 'Common English Bible', abbreviation: 'ceb' },
+// Bible translations actually served by the upstream APIs we use
+// (bible-api.com for verse/chapter, bolls.life as a fallback for modern
+// versions). Modern copyrighted translations (NIV/ESV/NLT/NASB/MSG) are
+// proxied through bolls.life when available; KJV/ASV/WEB/etc. use bible-api.com
+// directly. All entries here return their *actual* translation text — no silent
+// KJV fallback for the user.
+export const TRANSLATIONS_INFO: Record<string, { name: string; full: string; abbreviation: string; source: 'bible-api' | 'bolls' }> = {
+  KJV: { name: 'KJV', full: 'King James Version', abbreviation: 'kjv', source: 'bible-api' },
+  ASV: { name: 'ASV', full: 'American Standard Version', abbreviation: 'asv', source: 'bible-api' },
+  WEB: { name: 'WEB', full: 'World English Bible', abbreviation: 'web', source: 'bible-api' },
+  BBE: { name: 'BBE', full: 'Bible in Basic English', abbreviation: 'bbe', source: 'bible-api' },
+  YLT: { name: 'YLT', full: "Young's Literal Translation", abbreviation: 'ylt', source: 'bible-api' },
+  DARBY: { name: 'DARBY', full: 'Darby Translation', abbreviation: 'darby', source: 'bible-api' },
+  OEB: { name: 'OEB', full: 'Open English Bible', abbreviation: 'oeb-cw', source: 'bible-api' },
+  // Modern versions via bolls.life
+  ESV: { name: 'ESV', full: 'English Standard Version', abbreviation: 'ESV', source: 'bolls' },
+  NIV: { name: 'NIV', full: 'New International Version', abbreviation: 'NIV', source: 'bolls' },
+  NLT: { name: 'NLT', full: 'New Living Translation', abbreviation: 'NLT', source: 'bolls' },
+  NKJV: { name: 'NKJV', full: 'New King James Version', abbreviation: 'NKJV', source: 'bolls' },
+  NASB: { name: 'NASB', full: 'New American Standard Bible', abbreviation: 'NASB', source: 'bolls' },
+  AMP: { name: 'AMP', full: 'Amplified Bible', abbreviation: 'AMP', source: 'bolls' },
+  CSB: { name: 'CSB', full: 'Christian Standard Bible', abbreviation: 'CSB', source: 'bolls' },
+  MSG: { name: 'MSG', full: 'The Message', abbreviation: 'MSG', source: 'bolls' },
+  RSV: { name: 'RSV', full: 'Revised Standard Version', abbreviation: 'RSV', source: 'bolls' },
 }
 
-// API translation mapping
+// API translation mapping (bible-api.com slugs only; bolls translations use the key directly)
 export const TRANSLATION_MAP: Record<string, string> = {
   KJV: 'kjv', ASV: 'asv', WEB: 'web', OEB: 'oeb-cw', BBE: 'bbe',
-  YLT: 'ylt', DARBY: 'darby', RSV: 'rsv', ESV: 'esv', NIV: 'niv',
-  NLT: 'nlt', MSG: 'msg', NKJV: 'nkjv', NASB: 'nasb1995', AMP: 'amp',
-  CSB: 'csb', CEB: 'ceb',
+  YLT: 'ylt', DARBY: 'darby',
 }
 
 // ──────────────────────────────────────────────
@@ -444,6 +455,55 @@ export function getAutocompleteSuggestions(input: string, maxResults = 8): Autoc
 // Server-side Bible API fetch (for API routes only)
 // ──────────────────────────────────────────────
 const BIBLE_API_BASE = 'https://bible-api.com'
+const BOLLS_API_BASE = 'https://bolls.life'
+
+// Bolls.life uses sequential book IDs in standard Protestant order — same as
+// our BOOK_ORDER (Genesis=1 ... Revelation=66).
+function bollsBookId(book: string): number | null {
+  const idx = BOOK_ORDER.indexOf(book)
+  return idx >= 0 ? idx + 1 : null
+}
+
+async function fetchVerseFromBolls(
+  parsed: { book: string; chapter: number; verseStart: number; verseEnd?: number },
+  translation: string,
+  reference: string,
+): Promise<BibleVerse | null> {
+  const bookId = bollsBookId(parsed.book)
+  if (!bookId) return null
+  const start = parsed.verseStart
+  const end = parsed.verseEnd ?? parsed.verseStart
+  // bolls /get-text/<trans>/<book>/<chapter>/ returns the whole chapter
+  const url = `${BOLLS_API_BASE}/get-text/${encodeURIComponent(translation)}/${bookId}/${parsed.chapter}/`
+  const r = await fetch(url, { headers: { Accept: 'application/json' } })
+  if (!r.ok) return null
+  const data = (await r.json()) as Array<{ verse: number; text: string }>
+  if (!Array.isArray(data)) return null
+  const wanted = data.filter((v) => v.verse >= start && v.verse <= end)
+  if (wanted.length === 0) return null
+  const text = wanted.map((v) => v.text.replace(/<[^>]+>/g, '').trim()).join('\n')
+  return { reference, text, translation, book: parsed.book, chapter: parsed.chapter, verseStart: start, verseEnd: parsed.verseEnd }
+}
+
+async function fetchChapterFromBolls(
+  book: string,
+  chapter: number,
+  translation: string,
+): Promise<BibleChapter | null> {
+  const bookId = bollsBookId(book)
+  if (!bookId) return null
+  const url = `${BOLLS_API_BASE}/get-text/${encodeURIComponent(translation)}/${bookId}/${chapter}/`
+  const r = await fetch(url, { headers: { Accept: 'application/json' } })
+  if (!r.ok) return null
+  const data = (await r.json()) as Array<{ verse: number; text: string }>
+  if (!Array.isArray(data) || data.length === 0) return null
+  return {
+    book,
+    chapter,
+    translation,
+    verses: data.map((v) => ({ verse: v.verse, text: v.text.replace(/<[^>]+>/g, '').trim() })),
+  }
+}
 
 export async function fetchBibleVerseFromAPI(
   reference: string,
@@ -453,6 +513,14 @@ export async function fetchBibleVerseFromAPI(
     const parsed = parseVerseReference(reference)
     if (!parsed) return null
 
+    const info = TRANSLATIONS_INFO[translation]
+    // Modern translations (NIV/ESV/NLT/...) are served by bolls.life
+    if (info?.source === 'bolls') {
+      const bolls = await fetchVerseFromBolls(parsed, info.abbreviation, reference)
+      if (bolls) return bolls
+      // Fall through to bible-api.com KJV as last resort, clearly labeled
+    }
+
     const bibleApiTranslation = TRANSLATION_MAP[translation] || 'kjv'
     const apiRef = `${parsed.book}+${parsed.chapter}:${parsed.verseStart}${parsed.verseEnd ? `-${parsed.verseEnd}` : ''}`
 
@@ -461,7 +529,6 @@ export async function fetchBibleVerseFromAPI(
     })
 
     if (!response.ok) {
-      // If translation not found, try KJV as fallback
       if (translation !== 'KJV') {
         const fallbackResponse = await fetch(`${BIBLE_API_BASE}/${apiRef}?translation=kjv`, {
           headers: { 'Accept': 'application/json' },
@@ -503,6 +570,68 @@ export async function fetchBibleVerseFromAPI(
   } catch (error) {
     console.error('Error fetching Bible verse from API:', error)
     return null
+  }
+}
+
+// ──────────────────────────────────────────────
+// Voice text detection — search Bible by spoken phrase
+// ──────────────────────────────────────────────
+export type BibleSearchHit = {
+  book: string
+  chapter: number
+  verse: number
+  text: string
+  translation: string
+  reference: string
+  score: number
+}
+
+/**
+ * Search for verses matching a spoken phrase ("In the beginning God created…")
+ * via bolls.life's full-text endpoint. Returns ranked candidates.
+ */
+export async function searchBibleByTextFromAPI(
+  query: string,
+  translation: string = 'KJV',
+  limit: number = 5,
+): Promise<BibleSearchHit[]> {
+  try {
+    const cleaned = query.trim()
+    if (cleaned.length < 8) return []
+    const info = TRANSLATIONS_INFO[translation]
+    const bollsTrans = info?.source === 'bolls' ? info.abbreviation : 'KJV'
+    const url = `${BOLLS_API_BASE}/find/${encodeURIComponent(bollsTrans)}/?search=${encodeURIComponent(cleaned)}`
+    const r = await fetch(url, { headers: { Accept: 'application/json' } })
+    if (!r.ok) return []
+    const data = (await r.json()) as Array<{
+      book: number
+      chapter: number
+      verse: number
+      text: string
+    }>
+    if (!Array.isArray(data) || data.length === 0) return []
+    // Strip <mark> highlights and <S>NNNN</S> Strong-number annotations.
+    const clean = (s: string) =>
+      (s || '')
+        .replace(/<S>[^<]*<\/S>/g, '')
+        .replace(/<[^>]+>/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+    return data.slice(0, limit).map((v) => {
+      const bookName = BOOK_ORDER[v.book - 1] || `Book ${v.book}`
+      return {
+        book: bookName,
+        chapter: v.chapter,
+        verse: v.verse,
+        text: clean(v.text),
+        translation,
+        reference: `${bookName} ${v.chapter}:${v.verse}`,
+        score: 1,
+      }
+    })
+  } catch (e) {
+    console.error('Bible text search failed:', e)
+    return []
   }
 }
 
