@@ -103,7 +103,38 @@ function TopToolbar({
     ndiConnected,
   } = useAppStore()
 
-  const openOnScreen = useCallback(() => {
+  const openOnScreen = useCallback(async () => {
+    // Activate output broadcasting (turn ON if it isn't already) and push the
+    // current live slide to the server *before* the new window opens, so that
+    // the popup's first SSE message contains real content instead of "blank".
+    if (!outputActive) toggleOutput()
+    try {
+      const s = useAppStore.getState()
+      const cur = s.liveSlideIndex >= 0 ? s.slides[s.liveSlideIndex] : null
+      await fetch('/api/output', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'slide',
+          slide: cur,
+          isLive: s.isLive,
+          displayMode: s.settings.displayMode,
+          settings: {
+            fontSize: s.settings.fontSize,
+            fontFamily: s.settings.fontFamily,
+            textShadow: s.settings.textShadow,
+            showReferenceOnOutput: s.settings.showReferenceOnOutput,
+            lowerThirdHeight: s.settings.lowerThirdHeight,
+            lowerThirdPosition: s.settings.lowerThirdPosition,
+            customBackground: s.settings.customBackground,
+            congregationScreenTheme: s.settings.congregationScreenTheme,
+          },
+        }),
+      })
+    } catch {
+      /* SSE connection in popup will pick up state from next change */
+    }
+
     // Try Electron native multi-screen first; fall back to browser window.open.
     const electron = (typeof window !== 'undefined' ? (window as unknown as { electron?: { output?: { openWindow?: () => Promise<{ ok: boolean; error?: string }> } } }).electron : undefined)
     if (electron?.output?.openWindow) {
@@ -123,7 +154,7 @@ function TopToolbar({
     } else {
       toast.error('Pop-up blocked. Allow pop-ups for ScriptureLive in your browser.')
     }
-  }, [])
+  }, [outputActive, toggleOutput])
 
   return (
     <header className="flex h-12 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-3 shrink-0">
@@ -808,13 +839,14 @@ export function EasyWorshipShell() {
     }
   }, [isLive])
 
-  // Sync live changes to output
+  // Sync live changes to output. We always broadcast — the SSE/HTTP channel is
+  // cheap and the secondary "Show on Screen" window relies on it, even when
+  // the user hasn't explicitly toggled the NDI/Output button on. The
+  // outputActive flag still drives NDI activation and the toolbar indicator.
   useEffect(() => {
-    if (outputActive) {
-      const cur = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
-      sendToOutput(cur, isLive)
-    }
-  }, [liveSlideIndex, isLive, outputActive, slides, sendToOutput])
+    const cur = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
+    sendToOutput(cur, isLive)
+  }, [liveSlideIndex, isLive, slides, sendToOutput])
 
   // ── Transport actions ────────────────────────────────────────────────
   const goLive = useCallback(() => {

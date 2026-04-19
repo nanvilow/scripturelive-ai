@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   fetchBibleVerseFromAPI,
   fetchBibleChapterFromAPI,
+  searchBibleByTextFromAPI,
   parseVerseReference,
   detectVersesInText,
   TRANSLATION_MAP,
@@ -13,6 +14,7 @@ export async function GET(request: NextRequest) {
   const reference = searchParams.get('reference')
   const translation = searchParams.get('translation') || 'KJV'
   const detect = searchParams.get('detect')
+  const search = searchParams.get('search')
   const book = searchParams.get('book')
   const chapter = searchParams.get('chapter')
 
@@ -20,6 +22,12 @@ export async function GET(request: NextRequest) {
   if (detect) {
     const references = detectVersesInText(detect)
     return NextResponse.json({ references })
+  }
+
+  // Voice/text passage search: ?search=in+the+beginning+god+created
+  if (search) {
+    const hits = await searchBibleByTextFromAPI(search, translation, 5)
+    return NextResponse.json({ hits })
   }
 
   // Whole chapter mode: ?book=John&chapter=3

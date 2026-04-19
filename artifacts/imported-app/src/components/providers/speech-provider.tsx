@@ -4,6 +4,7 @@ import { useEffect, useCallback, useRef } from 'react'
 import { useSpeechRecognition } from '@/hooks/use-speech-recognition'
 import { useAppStore } from '@/lib/store'
 import { detectVersesInText, fetchBibleVerse } from '@/lib/bible-api'
+import type { BibleSearchHit } from '@/lib/bible-api'
 import type { DetectedVerse } from '@/lib/store'
 import { toast } from 'sonner'
 
@@ -63,6 +64,11 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // Use a ref-based callback so the hook always calls the latest version
   const processCallbackRef = useRef<(text: string) => Promise<void>>(async () => {})
 
+  // Track the spoken-text searches we've already attempted so we don't spam
+  // the search API every couple of words as the transcript grows.
+  const lastTextSearchAtRef = useRef<number>(0)
+  const processedTextHitsRef = useRef<Set<string>>(new Set())
+
   // Update the ref in an effect (not during render) to satisfy ESLint react-hooks/refs
   useEffect(() => {
     processCallbackRef.current = async (text: string) => {
@@ -70,6 +76,78 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
 
       const references = detectVersesInText(text)
       const state = useAppStore.getState()
+
+      // ── Voice text detection ─────────────────────────────────────────
+      // When the speaker quotes a passage (e.g. "In the beginning God
+      // created…") with no explicit reference, search the Bible by text.
+      // Throttled: at most one search every ~2.5s and only on chunks of 6+
+      // words. We use the *tail* of the running transcript (last ~14 words)
+      // to favour the most recent spoken phrase.
+      // Strip filler words and use only distinctive content words to give the
+      // search engine a high-signal query (it does keyword-match, not phrase
+      // match, so a too-long phrase often returns no hits).
+      const STOPWORDS = new Set(['the','a','an','of','and','or','to','in','for','on','at','is','was','were','be','by','that','this','it','as','with','from','but','so','if','then','than','i','you','he','she','they','we','my','your','our','their','his','her','its','what','when','where','how','why'])
+      const allWords = text.trim().toLowerCase().split(/\s+/)
+      const tailWords = allWords.slice(-14)
+      const keywords = tailWords.filter((w) => !STOPWORDS.has(w) && w.length > 2).slice(-6)
+      const tail = keywords.join(' ')
+      const now = Date.now()
+      if (
+        references.length === 0 &&
+        allWords.length >= 6 &&
+        keywords.length >= 3 &&
+        now - lastTextSearchAtRef.current > 2500
+      ) {
+        lastTextSearchAtRef.current = now
+        try {
+          const params = new URLSearchParams({ search: tail, translation: state.selectedTranslation })
+          const r = await fetch(`/api/bible?${params.toString()}`)
+          if (r.ok) {
+            const { hits } = (await r.json()) as { hits: BibleSearchHit[] }
+            const top = hits?.[0]
+            if (top && !processedTextHitsRef.current.has(top.reference)) {
+              processedTextHitsRef.current = new Set(processedTextHitsRef.current).add(top.reference)
+              const detected: DetectedVerse = {
+                id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                reference: top.reference,
+                text: top.text,
+                translation: top.translation,
+                detectedAt: new Date(),
+                confidence: 0.75,
+              }
+              useAppStore.getState().addDetectedVerse(detected)
+              useAppStore.getState().addToVerseHistory({
+                reference: top.reference,
+                text: top.text,
+                translation: top.translation,
+                book: top.book,
+                chapter: top.chapter,
+                verseStart: top.verse,
+              })
+              toast.success(`Heard passage: ${top.reference}`)
+              if (state.settings.autoGoLiveOnDetection) {
+                const slide = {
+                  id: `slide-${Date.now()}`,
+                  type: 'verse' as const,
+                  title: top.reference,
+                  subtitle: top.translation,
+                  content: top.text.split('\n').filter(Boolean),
+                  background: state.settings.congregationScreenTheme,
+                }
+                const cur = useAppStore.getState().slides
+                const next = cur.length > 0 ? [...cur, slide] : [slide]
+                const idx = next.length - 1
+                useAppStore.getState().setSlides(next)
+                useAppStore.getState().setPreviewSlideIndex(idx)
+                useAppStore.getState().setLiveSlideIndex(idx)
+                useAppStore.getState().setIsLive(true)
+              }
+            }
+          }
+        } catch {
+          /* ignore search failures */
+        }
+      }
 
       for (const ref of references) {
         if (processedRefsRef.current.has(ref)) continue
