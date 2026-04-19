@@ -882,10 +882,8 @@ export function LogosShell() {
   // /api/output and the congregation page picks it up on its next
   // poll/SSE tick (sub-second).
   useEffect(() => {
-    const cur = liveSlideIndex >= 0 ? slides[liveSlideIndex] : (slides[previewSlideIndex] || null)
+    const cur = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
     sendToOutput(cur, isLive)
-    // We intentionally depend on the settings fields the renderer reads,
-    // not on the slide indices — those are handled by the other effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     settings.displayRatio,

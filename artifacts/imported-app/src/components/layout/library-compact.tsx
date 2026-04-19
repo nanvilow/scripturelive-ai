@@ -375,52 +375,9 @@ export function BibleLookupCompact() {
                       </span>
                       <p className="text-[11.5px] leading-snug text-zinc-200 flex-1">{v.text}</p>
                     </div>
-                    {active && (
-                      <div className="flex gap-1 mt-1.5">
-                        <Button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            sendVerse(v.verse, false)
-                          }}
-                          size="sm"
-                          variant="outline"
-                          className="h-6 text-[10px] flex-1 border-zinc-700 bg-zinc-900 hover:bg-zinc-800 gap-1"
-                        >
-                          <Plus className="h-3 w-3" /> Schedule
-                        </Button>
-                        <Button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            sendVerse(v.verse, true)
-                          }}
-                          size="sm"
-                          className="h-6 text-[10px] flex-1 bg-red-600 hover:bg-red-700 gap-1"
-                        >
-                          <Send className="h-3 w-3" /> Go Live
-                        </Button>
-                      </div>
-                    )}
                   </div>
                 )
               })}
-              {/* Whole-chapter actions */}
-              <div className="flex gap-1 pt-1.5 sticky bottom-0 bg-zinc-950/90 backdrop-blur -mx-2 px-2 pb-1">
-                <Button
-                  onClick={() => sendChapter(false)}
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-[10px] flex-1 border-zinc-700 bg-zinc-900 hover:bg-zinc-800 gap-1"
-                >
-                  <Plus className="h-3 w-3" /> Whole chapter
-                </Button>
-                <Button
-                  onClick={() => sendChapter(true)}
-                  size="sm"
-                  className="h-7 text-[10px] flex-1 bg-amber-500 hover:bg-amber-600 text-black font-semibold gap-1"
-                >
-                  <Send className="h-3 w-3" /> Chapter live
-                </Button>
-              </div>
             </>
           ) : error ? (
             <div className="text-center py-6 text-[11px] text-amber-400/80">{error}</div>
