@@ -43,9 +43,14 @@ export function SettingsView() {
   const { settings, updateSettings, setSelectedTranslation } = useAppStore()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isUploading, setIsUploading] = useState(false)
-  const congregationOutputUrl = typeof window !== 'undefined'
-    ? new URL('/api/output/congregation', window.location.origin).toString()
-    : '/api/output/congregation'
+  // Resolve absolute URL on the client after hydration to avoid a server/client
+  // mismatch (the server has no window.location.origin).
+  const [congregationOutputUrl, setCongregationOutputUrl] = useState('/api/output/congregation')
+  useEffect(() => {
+    setCongregationOutputUrl(
+      new URL('/api/output/congregation', window.location.origin).toString()
+    )
+  }, [])
 
   const handleUploadBackground = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
