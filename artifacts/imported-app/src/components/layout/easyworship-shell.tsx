@@ -93,7 +93,7 @@ type DesktopApi = {
   }
 }
 
-function TopToolbar({
+export function TopToolbar({
   outputActive,
   toggleOutput,
 }: {
@@ -747,7 +747,7 @@ function OutputPanel() {
 // ──────────────────────────────────────────────────────────────────────
 // Bottom transport bar
 // ──────────────────────────────────────────────────────────────────────
-function TransportBar({
+export function TransportBar({
   outputActive,
   elapsedTime,
   onGoLive,
