@@ -13,9 +13,13 @@ import { useAppStore, type Slide, type DetectedVerse } from '@/lib/store'
 import {
   parseVerseReference,
   fetchBibleVerse,
+  fetchBibleChapter,
   detectVersesInText,
   getAutocompleteSuggestions,
+  getNextChapter,
+  getPrevChapter,
   type AutocompleteSuggestion,
+  type BibleChapter,
 } from '@/lib/bible-api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -38,6 +42,8 @@ import {
   Trash2,
   Plus,
   Wand2,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -57,11 +63,63 @@ export function BibleLookupCompact() {
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [preview, setPreview] = useState<{ reference: string; text: string; translation: string } | null>(null)
+  const [chapter, setChapter] = useState<BibleChapter | null>(null)
+  const [activeVerse, setActiveVerse] = useState<number | null>(null)
   const [suggestions, setSuggestions] = useState<AutocompleteSuggestion[]>([])
   const [showSuggest, setShowSuggest] = useState(false)
   const [highlight, setHighlight] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
+  const versesRef = useRef<HTMLDivElement>(null)
+
+  // Load a chapter and optionally focus a specific verse.
+  const loadChapter = useCallback(
+    async (book: string, chap: number, focusVerse?: number) => {
+      setLoading(true)
+      setError(null)
+      setShowSuggest(false)
+      try {
+        const data = await fetchBibleChapter(book, chap, selectedTranslation)
+        if (!data || data.verses.length === 0) {
+          setError('Chapter not found')
+          setChapter(null)
+          return
+        }
+        setChapter(data)
+        const target = focusVerse && data.verses.find((v) => v.verse === focusVerse) ? focusVerse : data.verses[0].verse
+        setActiveVerse(target)
+        // Cache the focused verse in history for continuity with rest of app
+        const focused = data.verses.find((v) => v.verse === target)
+        if (focused) {
+          addToVerseHistory({
+            reference: `${book} ${chap}:${target}`,
+            text: focused.text,
+            translation: data.translation,
+            book,
+            chapter: chap,
+            verseStart: target,
+          })
+        }
+        // Scroll the focused verse into view after render
+        requestAnimationFrame(() => {
+          const el = versesRef.current?.querySelector<HTMLElement>(`[data-verse="${target}"]`)
+          el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        })
+      } catch {
+        setError('Lookup failed')
+      } finally {
+        setLoading(false)
+      }
+    },
+    [selectedTranslation, addToVerseHistory],
+  )
+
+  // Reload current chapter when translation changes.
+  useEffect(() => {
+    if (chapter) {
+      void loadChapter(chapter.book, chapter.chapter, activeVerse ?? undefined)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTranslation])
 
   const lookup = useCallback(
     async (q?: string) => {
@@ -72,50 +130,72 @@ export function BibleLookupCompact() {
         setError('Try "John 3:16" or "Psalms 23"')
         return
       }
-      setLoading(true)
-      setError(null)
-      setShowSuggest(false)
-      try {
-        const verse = await fetchBibleVerse(query, selectedTranslation)
-        if (verse) {
-          setPreview({ reference: verse.reference, text: verse.text, translation: verse.translation })
-          addToVerseHistory(verse)
-        } else {
-          setError('Verse not found')
-        }
-      } catch {
-        setError('Lookup failed')
-      } finally {
-        setLoading(false)
-      }
+      await loadChapter(parsed.book, parsed.chapter, parsed.verseStart)
     },
-    [searchQuery, selectedTranslation, addToVerseHistory],
+    [searchQuery, loadChapter],
   )
 
-  const sendToSchedule = (live: boolean) => {
-    if (!preview) return
+  const goPrev = () => {
+    if (!chapter) return
+    const p = getPrevChapter(chapter.book, chapter.chapter)
+    if (p) void loadChapter(p.book, p.chapter)
+  }
+  const goNext = () => {
+    if (!chapter) return
+    const n = getNextChapter(chapter.book, chapter.chapter)
+    if (n) void loadChapter(n.book, n.chapter)
+  }
+
+  const sendVerse = (verseNum: number, live: boolean) => {
+    if (!chapter) return
+    const v = chapter.verses.find((x) => x.verse === verseNum)
+    if (!v) return
+    const reference = `${chapter.book} ${chapter.chapter}:${verseNum}`
     const slide: Slide = {
       id: `slide-${Date.now()}`,
       type: 'verse',
-      title: preview.reference,
-      subtitle: preview.translation,
-      content: preview.text.split('\n').filter(Boolean),
+      title: reference,
+      subtitle: chapter.translation,
+      content: v.text.split('\n').filter(Boolean),
       background: settings.congregationScreenTheme,
     }
-    const id = addScheduleItem({
+    addScheduleItem({
       type: 'verse',
-      title: preview.reference,
-      subtitle: preview.translation,
+      title: reference,
+      subtitle: chapter.translation,
       slides: [slide],
     })
     if (live) {
-      // selectScheduleItem already runs inside addScheduleItem; promote to live
       const s = useAppStore.getState()
       s.setLiveSlideIndex(0)
       s.setIsLive(true)
     }
-    toast.success(live ? `${preview.reference} sent live` : `${preview.reference} added to schedule`)
-    return id
+    toast.success(live ? `${reference} sent live` : `${reference} added to schedule`)
+  }
+
+  const sendChapter = (live: boolean) => {
+    if (!chapter) return
+    const reference = `${chapter.book} ${chapter.chapter}`
+    const slides: Slide[] = chapter.verses.map((v) => ({
+      id: `slide-${Date.now()}-${v.verse}`,
+      type: 'verse',
+      title: `${reference}:${v.verse}`,
+      subtitle: chapter.translation,
+      content: v.text.split('\n').filter(Boolean),
+      background: settings.congregationScreenTheme,
+    }))
+    addScheduleItem({
+      type: 'verse',
+      title: reference,
+      subtitle: `${chapter.translation} • ${chapter.verses.length} verses`,
+      slides,
+    })
+    if (live) {
+      const s = useAppStore.getState()
+      s.setLiveSlideIndex(0)
+      s.setIsLive(true)
+    }
+    toast.success(live ? `${reference} sent live` : `${reference} added to schedule`)
   }
 
   const onChange = (v: string) => {
@@ -210,43 +290,119 @@ export function BibleLookupCompact() {
         </div>
       </div>
 
-      {/* Result preview + actions */}
+      {/* Chapter header with prev/next nav (EasyWorship style) */}
+      {chapter && (
+        <div className="flex items-center gap-1 px-2 py-1.5 border-b border-zinc-800 bg-zinc-950/60">
+          <Button
+            onClick={goPrev}
+            size="sm"
+            variant="ghost"
+            className="h-6 w-6 p-0 text-zinc-400 hover:text-amber-300 hover:bg-zinc-800"
+            title="Previous chapter"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </Button>
+          <div className="flex-1 text-center">
+            <div className="text-[12px] font-semibold text-zinc-100 leading-tight">
+              {chapter.book} {chapter.chapter}
+            </div>
+            <div className="text-[9px] text-zinc-500 leading-tight">
+              {chapter.translation} · {chapter.verses.length} verses
+            </div>
+          </div>
+          <Button
+            onClick={goNext}
+            size="sm"
+            variant="ghost"
+            className="h-6 w-6 p-0 text-zinc-400 hover:text-amber-300 hover:bg-zinc-800"
+            title="Next chapter"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      )}
+
+      {/* Verse list + actions */}
       <ScrollArea className="flex-1">
-        <div className="p-2.5 space-y-2">
+        <div ref={versesRef} className="p-2 space-y-1">
           {loading ? (
-            <div className="space-y-2">
+            <div className="space-y-2 p-1">
               <Skeleton className="h-3 w-24" />
               <Skeleton className="h-3 w-full" />
               <Skeleton className="h-3 w-5/6" />
+              <Skeleton className="h-3 w-4/6" />
             </div>
-          ) : preview ? (
+          ) : chapter ? (
             <>
-              <div className="flex items-center gap-1.5">
-                <Badge className="bg-blue-500/15 text-blue-300 border-blue-700/40 text-[9px] h-4 px-1">
-                  {preview.translation}
-                </Badge>
-                <span className="text-[10px] text-zinc-500 font-mono">{preview.reference}</span>
-              </div>
-              <div className="rounded border border-zinc-800 bg-zinc-900/50 p-2.5">
-                <p className="text-[12px] leading-relaxed text-zinc-200 whitespace-pre-line">
-                  {preview.text}
-                </p>
-              </div>
-              <div className="flex gap-1">
+              {chapter.verses.map((v) => {
+                const active = v.verse === activeVerse
+                return (
+                  <div
+                    key={v.verse}
+                    data-verse={v.verse}
+                    onClick={() => setActiveVerse(v.verse)}
+                    className={cn(
+                      'group rounded border px-2 py-1.5 cursor-pointer transition-colors',
+                      active
+                        ? 'border-amber-500/60 bg-amber-500/10'
+                        : 'border-zinc-800 bg-zinc-900/40 hover:border-zinc-700 hover:bg-zinc-900',
+                    )}
+                  >
+                    <div className="flex gap-1.5">
+                      <span
+                        className={cn(
+                          'text-[10px] font-mono shrink-0 mt-[1px]',
+                          active ? 'text-amber-300' : 'text-zinc-500',
+                        )}
+                      >
+                        {v.verse}
+                      </span>
+                      <p className="text-[11.5px] leading-snug text-zinc-200 flex-1">{v.text}</p>
+                    </div>
+                    {active && (
+                      <div className="flex gap-1 mt-1.5">
+                        <Button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            sendVerse(v.verse, false)
+                          }}
+                          size="sm"
+                          variant="outline"
+                          className="h-6 text-[10px] flex-1 border-zinc-700 bg-zinc-900 hover:bg-zinc-800 gap-1"
+                        >
+                          <Plus className="h-3 w-3" /> Schedule
+                        </Button>
+                        <Button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            sendVerse(v.verse, true)
+                          }}
+                          size="sm"
+                          className="h-6 text-[10px] flex-1 bg-red-600 hover:bg-red-700 gap-1"
+                        >
+                          <Send className="h-3 w-3" /> Go Live
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+              {/* Whole-chapter actions */}
+              <div className="flex gap-1 pt-1.5 sticky bottom-0 bg-zinc-950/90 backdrop-blur -mx-2 px-2 pb-1">
                 <Button
-                  onClick={() => sendToSchedule(false)}
+                  onClick={() => sendChapter(false)}
                   size="sm"
                   variant="outline"
                   className="h-7 text-[10px] flex-1 border-zinc-700 bg-zinc-900 hover:bg-zinc-800 gap-1"
                 >
-                  <Plus className="h-3 w-3" /> Schedule
+                  <Plus className="h-3 w-3" /> Whole chapter
                 </Button>
                 <Button
-                  onClick={() => sendToSchedule(true)}
+                  onClick={() => sendChapter(true)}
                   size="sm"
-                  className="h-7 text-[10px] flex-1 bg-red-600 hover:bg-red-700 gap-1"
+                  className="h-7 text-[10px] flex-1 bg-amber-500 hover:bg-amber-600 text-black font-semibold gap-1"
                 >
-                  <Send className="h-3 w-3" /> Go Live
+                  <Send className="h-3 w-3" /> Chapter live
                 </Button>
               </div>
             </>
@@ -255,7 +411,7 @@ export function BibleLookupCompact() {
           ) : (
             <div className="text-center py-4 space-y-2">
               <BookOpen className="h-7 w-7 text-zinc-700 mx-auto" />
-              <p className="text-[11px] text-zinc-500">Search any verse and add it to the schedule.</p>
+              <p className="text-[11px] text-zinc-500">Search any verse to load the whole chapter.</p>
               <div className="flex flex-wrap gap-1 justify-center">
                 {['John 3:16', 'Psalms 23', 'Romans 8:28'].map((r) => (
                   <button

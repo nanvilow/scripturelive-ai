@@ -31,6 +31,112 @@ const BOOK_ALIASES: Record<string, string> = {
 const BOOK_NAMES = Object.values(BOOK_ALIASES)
 
 // ──────────────────────────────────────────────
+// Chapter counts per book — used for prev/next chapter navigation
+// ──────────────────────────────────────────────
+export const BOOK_CHAPTER_COUNTS: Record<string, number> = {
+  'Genesis': 50, 'Exodus': 40, 'Leviticus': 27, 'Numbers': 36, 'Deuteronomy': 34,
+  'Joshua': 24, 'Judges': 21, 'Ruth': 4, '1 Samuel': 31, '2 Samuel': 24,
+  '1 Kings': 22, '2 Kings': 25, '1 Chronicles': 29, '2 Chronicles': 36,
+  'Ezra': 10, 'Nehemiah': 13, 'Esther': 10, 'Job': 42, 'Psalms': 150,
+  'Proverbs': 31, 'Ecclesiastes': 12, 'Song of Solomon': 8, 'Isaiah': 66,
+  'Jeremiah': 52, 'Lamentations': 5, 'Ezekiel': 48, 'Daniel': 12, 'Hosea': 14,
+  'Joel': 3, 'Amos': 9, 'Obadiah': 1, 'Jonah': 4, 'Micah': 7, 'Nahum': 3,
+  'Habakkuk': 3, 'Zephaniah': 3, 'Haggai': 2, 'Zechariah': 14, 'Malachi': 4,
+  'Matthew': 28, 'Mark': 16, 'Luke': 24, 'John': 21, 'Acts': 28, 'Romans': 16,
+  '1 Corinthians': 16, '2 Corinthians': 13, 'Galatians': 6, 'Ephesians': 6,
+  'Philippians': 4, 'Colossians': 4, '1 Thessalonians': 5, '2 Thessalonians': 3,
+  '1 Timothy': 6, '2 Timothy': 4, 'Titus': 3, 'Philemon': 1, 'Hebrews': 13,
+  'James': 5, '1 Peter': 5, '2 Peter': 3, '1 John': 5, '2 John': 1, '3 John': 1,
+  'Jude': 1, 'Revelation': 22,
+}
+
+// Canonical book order — used for crossing book boundaries during nav.
+export const BOOK_ORDER: string[] = Object.keys(BOOK_CHAPTER_COUNTS)
+
+export function getNextChapter(book: string, chapter: number): { book: string; chapter: number } | null {
+  const max = BOOK_CHAPTER_COUNTS[book]
+  if (!max) return null
+  if (chapter < max) return { book, chapter: chapter + 1 }
+  const idx = BOOK_ORDER.indexOf(book)
+  if (idx >= 0 && idx < BOOK_ORDER.length - 1) {
+    return { book: BOOK_ORDER[idx + 1], chapter: 1 }
+  }
+  return null
+}
+
+export function getPrevChapter(book: string, chapter: number): { book: string; chapter: number } | null {
+  if (chapter > 1) return { book, chapter: chapter - 1 }
+  const idx = BOOK_ORDER.indexOf(book)
+  if (idx > 0) {
+    const prevBook = BOOK_ORDER[idx - 1]
+    return { book: prevBook, chapter: BOOK_CHAPTER_COUNTS[prevBook] }
+  }
+  return null
+}
+
+// ──────────────────────────────────────────────
+// Whole-chapter fetch — used by the library's chapter browser
+// ──────────────────────────────────────────────
+export type ChapterVerse = { verse: number; text: string }
+export type BibleChapter = {
+  book: string
+  chapter: number
+  translation: string
+  verses: ChapterVerse[]
+}
+
+export async function fetchBibleChapterFromAPI(
+  book: string,
+  chapter: number,
+  translation: string = 'KJV',
+): Promise<BibleChapter | null> {
+  try {
+    const apiTrans = TRANSLATION_MAP[translation] || 'kjv'
+    const ref = `${book.replace(/\s+/g, '+')}+${chapter}`
+    const tryFetch = async (t: string) => {
+      const r = await fetch(`${BIBLE_API_BASE}/${ref}?translation=${t}`, {
+        headers: { Accept: 'application/json' },
+      })
+      if (!r.ok) return null
+      return r.json()
+    }
+    let data = await tryFetch(apiTrans)
+    if (!data && translation !== 'KJV') data = await tryFetch('kjv')
+    if (!data || !Array.isArray(data.verses)) return null
+    return {
+      book,
+      chapter,
+      translation,
+      verses: data.verses.map((v: { verse: number; text: string }) => ({
+        verse: v.verse,
+        text: (v.text || '').trim(),
+      })),
+    }
+  } catch (e) {
+    console.error('Error fetching Bible chapter from API:', e)
+    return null
+  }
+}
+
+export async function fetchBibleChapter(
+  book: string,
+  chapter: number,
+  translation: string = 'KJV',
+): Promise<BibleChapter | null> {
+  try {
+    const params = new URLSearchParams({ book, chapter: String(chapter), translation })
+    const r = await fetch(`/api/bible?${params.toString()}`)
+    if (!r.ok) return null
+    const data = await r.json()
+    if (!data || !Array.isArray(data.verses)) return null
+    return data as BibleChapter
+  } catch (e) {
+    console.error('Error fetching chapter:', e)
+    return null
+  }
+}
+
+// ──────────────────────────────────────────────
 // All available Bible translations
 // ──────────────────────────────────────────────
 export const TRANSLATIONS_INFO: Record<string, { name: string; full: string; abbreviation: string }> = {
