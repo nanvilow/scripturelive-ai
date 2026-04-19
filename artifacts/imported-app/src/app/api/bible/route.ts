@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { fetchBibleVerseFromAPI, parseVerseReference, detectVersesInText, TRANSLATION_MAP } from '@/lib/bible-api'
+import {
+  fetchBibleVerseFromAPI,
+  fetchBibleChapterFromAPI,
+  parseVerseReference,
+  detectVersesInText,
+  TRANSLATION_MAP,
+} from '@/lib/bible-api'
 import { db } from '@/lib/db'
 
 export async function GET(request: NextRequest) {
@@ -7,11 +13,26 @@ export async function GET(request: NextRequest) {
   const reference = searchParams.get('reference')
   const translation = searchParams.get('translation') || 'KJV'
   const detect = searchParams.get('detect')
+  const book = searchParams.get('book')
+  const chapter = searchParams.get('chapter')
 
   // Detect verses in text
   if (detect) {
     const references = detectVersesInText(detect)
     return NextResponse.json({ references })
+  }
+
+  // Whole chapter mode: ?book=John&chapter=3
+  if (book && chapter) {
+    const chapNum = parseInt(chapter, 10)
+    if (!chapNum || chapNum < 1) {
+      return NextResponse.json({ error: 'Invalid chapter' }, { status: 400 })
+    }
+    const result = await fetchBibleChapterFromAPI(book, chapNum, translation)
+    if (!result) {
+      return NextResponse.json({ error: 'Could not fetch chapter' }, { status: 404 })
+    }
+    return NextResponse.json(result)
   }
 
   // Single verse lookup
