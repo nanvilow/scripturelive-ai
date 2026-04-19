@@ -25,7 +25,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Search,
@@ -330,7 +329,7 @@ export function BibleLookupCompact() {
       )}
 
       {/* Verse list + actions */}
-      <ScrollArea className="flex-1">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         <div ref={versesRef} className="p-2 space-y-1">
           {loading ? (
             <div className="space-y-2 p-1">
@@ -446,7 +445,7 @@ export function BibleLookupCompact() {
             </div>
           )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   )
 }
@@ -647,7 +646,7 @@ export function ScriptureDetectionCompact() {
           </button>
         )}
       </div>
-      <ScrollArea className="flex-1">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {detectedVerses.length === 0 ? (
           <div className="text-center py-6 px-3">
             <BookOpen className="h-6 w-6 text-zinc-700 mx-auto mb-1.5" />
@@ -683,7 +682,7 @@ export function ScriptureDetectionCompact() {
               ))}
           </ul>
         )}
-      </ScrollArea>
+      </div>
     </div>
   )
 }
@@ -774,7 +773,7 @@ export function SlideGeneratorCompact() {
   }
 
   return (
-    <ScrollArea className="h-full">
+    <div className="h-full overflow-y-auto">
       <div className="p-3 space-y-3 text-zinc-200">
         <div className="space-y-1.5">
           <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
@@ -823,7 +822,7 @@ export function SlideGeneratorCompact() {
           </Button>
         </div>
       </div>
-    </ScrollArea>
+    </div>
   )
 }
 
@@ -856,7 +855,7 @@ export function SermonNotesCompact() {
   }
 
   return (
-    <ScrollArea className="h-full">
+    <div className="h-full overflow-y-auto">
       <div className="p-3 space-y-2.5 text-zinc-200">
         <div>
           <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
@@ -890,7 +889,7 @@ export function SermonNotesCompact() {
           <FileText className="h-3 w-3" /> Add to Schedule
         </Button>
       </div>
-    </ScrollArea>
+    </div>
   )
 }
 
@@ -929,7 +928,7 @@ export function WorshipLyricsCompact() {
   }
 
   return (
-    <ScrollArea className="h-full">
+    <div className="h-full overflow-y-auto">
       <div className="p-3 space-y-2.5 text-zinc-200">
         <div>
           <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
@@ -966,7 +965,7 @@ export function WorshipLyricsCompact() {
           <Music2 className="h-3 w-3" /> Add Song to Schedule
         </Button>
       </div>
-    </ScrollArea>
+    </div>
   )
 }
 
@@ -1109,7 +1108,7 @@ export function MediaLibraryCompact() {
         )}
       </div>
 
-      <ScrollArea className="flex-1">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {items.length === 0 ? (
           <div className="text-center py-6 px-3">
             <ImageIcon className="h-7 w-7 text-zinc-700 mx-auto mb-1.5" />
@@ -1159,7 +1158,7 @@ export function MediaLibraryCompact() {
             ))}
           </div>
         )}
-      </ScrollArea>
+      </div>
     </div>
   )
 }
