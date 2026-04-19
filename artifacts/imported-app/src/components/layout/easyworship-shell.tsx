@@ -112,8 +112,10 @@ export function TopToolbar({
     schedule,
     clearSchedule,
     ndiConnected,
+    setNdiConnected,
     selectedMicrophoneId,
     setSelectedMicrophoneId,
+    updateSettings,
   } = useAppStore()
 
   const [displays, setDisplays] = useState<DesktopDisplay[]>([])
@@ -491,6 +493,20 @@ export function TopToolbar({
             </Button>
           </PopoverTrigger>
           <PopoverContent align="end" className="w-[320px] p-1 bg-zinc-950 border-zinc-800">
+            {/* Disconnect: instantly blanks the secondary screen and
+                stops broadcasting until the operator re-enables output.
+                Operators asked for a one-click "kill the second screen"
+                control similar to the OUTPUT button on hardware mixers. */}
+            {outputActive && (
+              <button
+                onClick={toggleOutput}
+                className="w-full text-left px-2 py-2 mb-1 rounded bg-rose-500/15 border border-rose-500/40 text-[11px] text-rose-200 hover:bg-rose-500/25 flex items-center gap-2"
+              >
+                <MonitorPlay className="h-3.5 w-3.5" />
+                <span className="flex-1 font-medium">Disconnect secondary screen</span>
+                <span className="text-[9px] uppercase tracking-wider opacity-70">Blank</span>
+              </button>
+            )}
             <div className="flex items-center justify-between px-2 py-1.5">
               <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
                 Choose output screen
@@ -618,6 +634,24 @@ export function TopToolbar({
             align="end"
             className="w-[420px] p-0 bg-zinc-950 border-zinc-800 max-h-[80vh] overflow-y-auto"
           >
+            {/* NDI disconnect: stops the NDI sender and forces the
+                output destination back to the local window so vMix /
+                Wirecast / OBS no longer see the feed. Mirrors the
+                "Stop NDI Output" command in those apps. */}
+            {ndiConnected && (
+              <button
+                onClick={() => {
+                  setNdiConnected(false)
+                  updateSettings({ outputDestination: 'window' })
+                  toast.success('NDI output disconnected')
+                }}
+                className="w-full text-left px-3 py-2 rounded-none bg-rose-500/15 border-b border-rose-500/40 text-[11px] text-rose-200 hover:bg-rose-500/25 flex items-center gap-2"
+              >
+                <Radio className="h-3.5 w-3.5" />
+                <span className="flex-1 font-medium">Disconnect NDI output</span>
+                <span className="text-[9px] uppercase tracking-wider opacity-70">Stop sender</span>
+              </button>
+            )}
             <div className="p-3">
               <NdiOutputPanel />
             </div>

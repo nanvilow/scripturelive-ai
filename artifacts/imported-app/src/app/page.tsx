@@ -1,6 +1,7 @@
 'use client'
 
 import { SpeechProvider } from '@/components/providers/speech-provider'
+import { OutputBroadcaster } from '@/components/providers/output-broadcaster'
 import { LogosShell } from '@/components/layout/logos-shell'
 import { SettingsView } from '@/components/views/settings'
 import { useAppStore } from '@/lib/store'
@@ -49,6 +50,11 @@ function AppContent() {
 export default function Home() {
   return (
     <SpeechProvider>
+      {/* Global secondary-screen broadcaster — runs whether the operator
+          is on the live console or the Settings overlay, so display-ratio
+          / text-scale / theme tweaks land on the secondary screen
+          immediately instead of after a refresh. */}
+      <OutputBroadcaster />
       <AppContent />
     </SpeechProvider>
   )

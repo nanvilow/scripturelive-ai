@@ -43,7 +43,11 @@ export async function GET(request: NextRequest) {
         }
       })
 
-      // Send keepalive every 15 seconds
+      // Keepalive every 5 seconds. Replit's edge proxy and many
+      // corporate networks idle-timeout HTTP streams at 30s — sending
+      // a comment frame every 5s keeps the SSE channel pinned open
+      // and prevents the visible disconnect / reconnect cycle the
+      // user reported on the secondary screen.
       const keepalive = setInterval(() => {
         try {
           controller.enqueue(encoder.encode(`: keepalive ${Date.now()}\n\n`))
@@ -51,7 +55,7 @@ export async function GET(request: NextRequest) {
           clearInterval(keepalive)
           unsubscribe()
         }
-      }, 15000)
+      }, 5000)
 
       // Cleanup on close
       request.signal.addEventListener('abort', () => {

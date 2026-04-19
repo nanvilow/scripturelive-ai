@@ -127,6 +127,16 @@ interface AppState {
   // Persistent Speech Recognition (not persisted to localStorage)
   liveTranscript: string
   setLiveTranscript: (t: string) => void
+  // Character offsets in `liveTranscript` where a fresh paragraph
+  // should be rendered. Each detected scripture pushes the current
+  // transcript length onto this array so the Live Transcription pane
+  // visually breaks before the new reference. We keep the breaks in
+  // the store (rather than embedding `\n\n` into the transcript
+  // string) because the speech hook re-emits the full transcript on
+  // every chunk and would clobber any inline markers we added.
+  transcriptBreaks: number[]
+  pushTranscriptBreak: (index: number) => void
+  clearTranscriptBreaks: () => void
   liveInterimTranscript: string
   setLiveInterimTranscript: (t: string) => void
   speechSupported: boolean
@@ -158,6 +168,14 @@ interface AppState {
   setNdiConnected: (c: boolean) => void
   ndiUrl: string
   setNdiUrl: (u: string) => void
+
+  // Master output enable. When false the global broadcaster stops
+  // POSTing to /api/output and pushes a single "clear" so the
+  // congregation page goes blank. Operators can re-enable from the
+  // Output Display popover. Mirrors the kill switch on hardware
+  // mixers like the vMix Output toggle.
+  outputEnabled: boolean
+  setOutputEnabled: (b: boolean) => void
 
   // Lyrics
   currentSongSections: SongSection[]
@@ -239,6 +257,14 @@ export const useAppStore = create<AppState>()(
       // Persistent Speech Recognition
       liveTranscript: '',
       setLiveTranscript: (t) => set({ liveTranscript: t }),
+      transcriptBreaks: [],
+      pushTranscriptBreak: (index) =>
+        set((state) => {
+          if (index <= 0) return {}
+          if (state.transcriptBreaks[state.transcriptBreaks.length - 1] === index) return {}
+          return { transcriptBreaks: [...state.transcriptBreaks, index].slice(-200) }
+        }),
+      clearTranscriptBreaks: () => set({ transcriptBreaks: [] }),
       liveInterimTranscript: '',
       setLiveInterimTranscript: (t) => set({ liveInterimTranscript: t }),
       speechSupported: false,
@@ -269,6 +295,9 @@ export const useAppStore = create<AppState>()(
       setNdiConnected: (c) => set({ ndiConnected: c }),
       ndiUrl: '',
       setNdiUrl: (u) => set({ ndiUrl: u }),
+
+      outputEnabled: true,
+      setOutputEnabled: (b) => set({ outputEnabled: b }),
 
       // Lyrics
       currentSongSections: [],
