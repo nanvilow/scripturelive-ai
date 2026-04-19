@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, screen } from 'electron'
 import path from 'node:path'
 import { spawn, ChildProcess } from 'node:child_process'
 import { createServer } from 'node:net'
@@ -212,12 +212,46 @@ function setupIpc() {
     })
   )
 
-  ipcMain.handle('output:open-window', () => {
+  // List physical displays so the renderer can show a "send to which screen?" picker
+  ipcMain.handle('output:list-displays', () => {
+    try {
+      const primary = screen.getPrimaryDisplay()
+      return screen.getAllDisplays().map((d, i) => ({
+        id: d.id,
+        label: d.label && d.label.length > 0 ? d.label : `Display ${i + 1}`,
+        primary: d.id === primary.id,
+        width: d.size.width,
+        height: d.size.height,
+      }))
+    } catch {
+      return []
+    }
+  })
+
+  ipcMain.handle('output:open-window', (_e, opts?: { displayId?: number }) => {
     if (!appBaseUrl) return { ok: false, error: 'app not ready' }
+    let target = screen.getPrimaryDisplay()
+    if (opts?.displayId !== undefined) {
+      const found = screen.getAllDisplays().find((d) => d.id === opts.displayId)
+      if (found) target = found
+      else {
+        // Pick the first non-primary display if available
+        const others = screen.getAllDisplays().filter((d) => d.id !== screen.getPrimaryDisplay().id)
+        if (others[0]) target = others[0]
+      }
+    } else if (screen.getAllDisplays().length > 1) {
+      // No explicit pick → prefer the first non-primary display so the
+      // operator's main monitor stays free for the console.
+      const others = screen.getAllDisplays().filter((d) => d.id !== screen.getPrimaryDisplay().id)
+      if (others[0]) target = others[0]
+    }
+    const { x, y, width, height } = target.bounds
     const win = new BrowserWindow({
-      width: 1280, height: 720, backgroundColor: '#000',
+      x, y, width, height,
+      backgroundColor: '#000',
       title: 'ScriptureLive — Congregation Display',
       autoHideMenuBar: true,
+      fullscreen: target.id !== screen.getPrimaryDisplay().id,
     })
     win.removeMenu()
     win.loadURL(`${appBaseUrl}/api/output/congregation`)

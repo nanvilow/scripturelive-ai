@@ -30,7 +30,6 @@ import {
   CircleSlash,
   Image as LogoIcon,
   Wifi,
-  WifiOff,
   ExternalLink,
   Trash2,
   ChevronUp,
@@ -86,6 +85,14 @@ function LibraryPanelContent({ tab }: { tab: LibraryTab }) {
 // ──────────────────────────────────────────────────────────────────────
 // Top toolbar (EasyWorship-style "ribbon" — flat, dark, dense)
 // ──────────────────────────────────────────────────────────────────────
+type DesktopDisplay = { id: number; label: string; primary: boolean; width: number; height: number }
+type DesktopApi = {
+  output?: {
+    openWindow?: (opts?: { displayId?: number }) => Promise<{ ok: boolean; error?: string }>
+    listDisplays?: () => Promise<DesktopDisplay[]>
+  }
+}
+
 function TopToolbar({
   outputActive,
   toggleOutput,
@@ -103,10 +110,25 @@ function TopToolbar({
     ndiConnected,
   } = useAppStore()
 
-  const openOnScreen = useCallback(async () => {
-    // Activate output broadcasting (turn ON if it isn't already) and push the
-    // current live slide to the server *before* the new window opens, so that
-    // the popup's first SSE message contains real content instead of "blank".
+  const [displays, setDisplays] = useState<DesktopDisplay[]>([])
+
+  const desktop: DesktopApi | undefined = (typeof window !== 'undefined'
+    ? ((window as unknown as { electron?: DesktopApi; scriptureLive?: DesktopApi }).electron
+      ?? (window as unknown as { scriptureLive?: DesktopApi }).scriptureLive)
+    : undefined)
+
+  // Load list of available physical displays (Electron only)
+  useEffect(() => {
+    let cancelled = false
+    if (desktop?.output?.listDisplays) {
+      desktop.output.listDisplays().then((list) => {
+        if (!cancelled) setDisplays(list || [])
+      }).catch(() => {})
+    }
+    return () => { cancelled = true }
+  }, [desktop])
+
+  const pushCurrentSlide = useCallback(async () => {
     if (!outputActive) toggleOutput()
     try {
       const s = useAppStore.getState()
@@ -132,16 +154,16 @@ function TopToolbar({
         }),
       })
     } catch {
-      /* SSE connection in popup will pick up state from next change */
+      /* SSE in the popup will pick up the next state change anyway */
     }
+  }, [outputActive, toggleOutput])
 
-    // Try Electron native multi-screen first; fall back to browser window.open.
-    const electron = (typeof window !== 'undefined' ? (window as unknown as { electron?: { output?: { openWindow?: () => Promise<{ ok: boolean; error?: string }> } } }).electron : undefined)
-    if (electron?.output?.openWindow) {
-      electron.output.openWindow().then((r) => {
-        if (!r?.ok) toast.error(r?.error || 'Could not open output window')
-        else toast.success('Output window opened on second screen')
-      })
+  const openOnScreen = useCallback(async (displayId?: number) => {
+    await pushCurrentSlide()
+    if (desktop?.output?.openWindow) {
+      const r = await desktop.output.openWindow(displayId !== undefined ? { displayId } : undefined)
+      if (!r?.ok) toast.error(r?.error || 'Could not open output window')
+      else toast.success(displayId !== undefined ? 'Output opened on selected screen' : 'Output window opened')
       return
     }
     const w = window.open(
@@ -149,12 +171,9 @@ function TopToolbar({
       'scripturelive-output',
       'width=1280,height=720,toolbar=no,menubar=no,location=no,status=no',
     )
-    if (w) {
-      toast.success('Output window opened — drag it to your second display, then press F11')
-    } else {
-      toast.error('Pop-up blocked. Allow pop-ups for ScriptureLive in your browser.')
-    }
-  }, [outputActive, toggleOutput])
+    if (w) toast.success('Output opened — drag it to your second display, then press F11')
+    else toast.error('Pop-up blocked. Allow pop-ups for ScriptureLive in your browser.')
+  }, [pushCurrentSlide, desktop])
 
   return (
     <header className="flex h-12 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-3 shrink-0">
@@ -212,32 +231,71 @@ function TopToolbar({
           </SelectContent>
         </Select>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          className={cn(
-            'h-7 px-2 text-[11px] gap-1.5 border',
-            outputActive
-              ? 'bg-emerald-600/20 text-emerald-300 border-emerald-700 hover:bg-emerald-600/30'
-              : 'text-zinc-300 border-zinc-800 hover:bg-zinc-800',
-          )}
-          onClick={toggleOutput}
-        >
-          {outputActive ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-          {outputActive ? 'Output ON' : 'Output OFF'}
-        </Button>
-
-        {/* Show on Screen — opens congregation page (drag to TV/HDMI) */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-[11px] gap-1.5 border text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white"
-          onClick={openOnScreen}
-          title="Open the live output as a window — drag it to a second monitor or TV (HDMI) and press F11 to fullscreen."
-        >
-          <MonitorPlay className="h-3 w-3" />
-          Show on Screen
-        </Button>
+        {/* Show on Screen — picks the physical display to send Live to.
+            In desktop (Electron) we list every connected monitor and let the
+            user open the output directly on that screen.  In a regular browser
+            we just open a popup window the user can drag to any display. */}
+        {displays.length > 1 ? (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-[11px] gap-1.5 border text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white"
+                title="Pick which monitor / TV to send the live output to."
+              >
+                <MonitorPlay className="h-3 w-3" />
+                Show on Screen
+                <ChevronDown className="h-3 w-3 opacity-60" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-[260px] p-1 bg-zinc-950 border-zinc-800">
+              <div className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+                Choose monitor
+              </div>
+              {displays.map((d) => (
+                <button
+                  key={d.id}
+                  onClick={() => openOnScreen(d.id)}
+                  className="w-full text-left px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 rounded flex items-center gap-2"
+                >
+                  <MonitorPlay className="h-3.5 w-3.5 text-zinc-500" />
+                  <span className="flex-1 truncate">{d.label}</span>
+                  {d.primary && (
+                    <Badge className="h-4 px-1 text-[8px] bg-zinc-800 text-zinc-400 border-0">
+                      MAIN
+                    </Badge>
+                  )}
+                  <span className="text-[9px] text-zinc-500 tabular-nums">{d.width}×{d.height}</span>
+                </button>
+              ))}
+              <div className="border-t border-zinc-800 mt-1 pt-1">
+                <button
+                  onClick={() => openOnScreen()}
+                  className="w-full text-left px-2 py-1.5 text-[11px] text-zinc-400 hover:bg-zinc-800 rounded"
+                >
+                  Open on default screen
+                </button>
+              </div>
+            </PopoverContent>
+          </Popover>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn(
+              'h-7 px-2 text-[11px] gap-1.5 border',
+              outputActive
+                ? 'bg-emerald-600/20 text-emerald-300 border-emerald-700 hover:bg-emerald-600/30'
+                : 'text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white',
+            )}
+            onClick={() => openOnScreen()}
+            title="Open the live output as a window — drag it to a second monitor or TV (HDMI) and press F11 to fullscreen."
+          >
+            {outputActive ? <Wifi className="h-3 w-3" /> : <MonitorPlay className="h-3 w-3" />}
+            Show on Screen
+          </Button>
+        )}
 
         {/* NDI inline popover (built-in, like EasyWorship) */}
         <Popover>
@@ -401,6 +459,18 @@ function SchedulePanel() {
                   <button
                     type="button"
                     onClick={() => selectScheduleItem(item.id)}
+                    onDoubleClick={() => {
+                      // Double-click a schedule item → send its first slide to LIVE
+                      selectScheduleItem(item.id)
+                      const s = useAppStore.getState()
+                      if (item.slides.length > 0) {
+                        s.setSlides(item.slides)
+                        s.setPreviewSlideIndex(0)
+                        s.setLiveSlideIndex(0)
+                        s.setIsLive(true)
+                        toast.success(`Live: ${item.title}`)
+                      }
+                    }}
                     className="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 text-left"
                   >
                     <GripVertical className="h-3 w-3 text-zinc-600 shrink-0" />
@@ -515,15 +585,25 @@ function SlidesPanel() {
           <div className="p-2 grid grid-cols-2 xl:grid-cols-3 gap-2">
             {slides.map((slide, i) => (
               <div key={slide.id} className="space-y-1">
-                <SlideThumb
-                  slide={slide}
-                  themeKey={slide.background || settings.congregationScreenTheme}
-                  isActive={previewSlideIndex === i}
-                  isLive={liveSlideIndex === i}
-                  onClick={() => setPreviewSlideIndex(i)}
-                  size="sm"
-                  settings={settings}
-                />
+                <div
+                  onDoubleClick={() => {
+                    // Double-click a slide thumb → send THIS slide to LIVE
+                    const s = useAppStore.getState()
+                    s.setPreviewSlideIndex(i)
+                    s.setLiveSlideIndex(i)
+                    s.setIsLive(true)
+                  }}
+                >
+                  <SlideThumb
+                    slide={slide}
+                    themeKey={slide.background || settings.congregationScreenTheme}
+                    isActive={previewSlideIndex === i}
+                    isLive={liveSlideIndex === i}
+                    onClick={() => setPreviewSlideIndex(i)}
+                    size="sm"
+                    settings={settings}
+                  />
+                </div>
                 <div className="flex items-center justify-between gap-1 px-0.5">
                   <span
                     className={cn(

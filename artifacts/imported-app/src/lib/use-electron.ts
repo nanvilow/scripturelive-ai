@@ -43,7 +43,8 @@ export type ScriptureLiveDesktop = {
     onStatus: (cb: (s: NdiStatus) => void) => () => void
   }
   output: {
-    openWindow: () => Promise<{ ok: boolean; error?: string }>
+    openWindow: (opts?: { displayId?: number }) => Promise<{ ok: boolean; error?: string }>
+    listDisplays?: () => Promise<Array<{ id: number; label: string; primary: boolean; width: number; height: number }>>
   }
 }
 

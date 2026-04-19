@@ -94,9 +94,9 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       const now = Date.now()
       if (
         references.length === 0 &&
-        allWords.length >= 6 &&
+        allWords.length >= 4 &&
         keywords.length >= 3 &&
-        now - lastTextSearchAtRef.current > 2500
+        now - lastTextSearchAtRef.current > 800
       ) {
         lastTextSearchAtRef.current = now
         try {

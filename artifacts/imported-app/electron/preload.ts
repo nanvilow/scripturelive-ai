@@ -54,8 +54,13 @@ const api = {
     },
   },
   output: {
-    openWindow: (): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('output:open-window'),
+    openWindow: (
+      opts?: { displayId?: number },
+    ): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('output:open-window', opts),
+    listDisplays: (): Promise<
+      Array<{ id: number; label: string; primary: boolean; width: number; height: number }>
+    > => ipcRenderer.invoke('output:list-displays'),
   },
 }
 

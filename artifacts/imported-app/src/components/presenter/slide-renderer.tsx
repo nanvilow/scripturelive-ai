@@ -14,13 +14,30 @@ export const slideThemes: Record<string, { bg: string; accent: string; label: st
 }
 export const defaultTheme = { bg: 'from-zinc-950 to-neutral-950', accent: 'text-zinc-300', label: 'Minimal' }
 
-const fontSizeMap = {
-  sm: 'text-base md:text-lg',
-  md: 'text-lg md:text-xl lg:text-2xl',
-  lg: 'text-xl md:text-2xl lg:text-3xl',
-  xl: 'text-2xl md:text-3xl lg:text-4xl',
+// Container-query base sizes (cqi = 1% of container inline size). These let
+// the slide text auto-fit the actual frame size — the same renderer is used
+// for the small thumbs in the slide grid, the medium preview/live frames on
+// the right column, and the full-screen congregation output.
+const fontSizeBaseCqi: Record<string, number> = {
+  sm: 4.0,
+  md: 4.6,
+  lg: 5.2,
+  xl: 6.0,
 }
 const fontFamilyMap = { sans: 'font-sans', serif: 'font-serif', mono: 'font-mono' }
+
+// Pick a comfortable text size for the verse content given the line count and
+// total character count, so long passages still fit their frame and short ones
+// stay legible.
+function pickContentCqi(base: number, totalChars: number, lineCount: number): number {
+  let s = base
+  if (totalChars > 220) s -= 0.6
+  if (totalChars > 380) s -= 0.6
+  if (totalChars > 600) s -= 0.6
+  if (lineCount > 4) s -= 0.4
+  if (lineCount > 8) s -= 0.4
+  return Math.max(2.4, s)
+}
 
 function SlideContent({
   slide, theme, large, settings,
@@ -30,29 +47,23 @@ function SlideContent({
   large: boolean
   settings: Pick<AppSettings, 'fontSize' | 'fontFamily' | 'textShadow' | 'showReferenceOnOutput'>
 }) {
-  const sizeClass = large
-    ? fontSizeMap[settings.fontSize] || fontSizeMap.lg
-    : 'text-[10px] md:text-xs'
   const fontClass = fontFamilyMap[settings.fontFamily as keyof typeof fontFamilyMap] || 'font-sans'
   const shadow = settings.textShadow ? { textShadow: '0 2px 12px rgba(0,0,0,0.4)' } : {}
+  const baseCqi = fontSizeBaseCqi[settings.fontSize] || fontSizeBaseCqi.lg
 
   if (slide.type === 'title') {
     return (
-      <div className={cn(fontClass, 'flex flex-col items-center justify-center text-center')}>
+      <div className={cn(fontClass, 'flex flex-col items-center justify-center text-center w-full h-full overflow-hidden')}>
         <h2
-          className={cn(
-            'font-bold',
-            theme.accent,
-            large ? 'text-3xl md:text-4xl lg:text-5xl' : 'text-xs md:text-sm',
-          )}
-          style={shadow}
+          className={cn('font-bold leading-tight', theme.accent)}
+          style={{ fontSize: large ? `${baseCqi * 1.6}cqi` : '1.6cqi', ...shadow }}
         >
           {slide.title}
         </h2>
         {slide.subtitle && settings.showReferenceOnOutput && (
           <p
-            className={cn('mt-2 opacity-70', theme.accent, large ? 'text-lg md:text-xl' : 'text-[8px]')}
-            style={shadow}
+            className={cn('mt-2 opacity-70', theme.accent)}
+            style={{ fontSize: large ? `${baseCqi * 0.7}cqi` : '1.1cqi', ...shadow }}
           >
             {slide.subtitle}
           </p>
@@ -62,31 +73,38 @@ function SlideContent({
   }
 
   if (slide.type === 'verse' || slide.type === 'lyrics') {
+    const totalChars = slide.content.reduce((n, l) => n + l.length, 0)
+    const contentCqi = pickContentCqi(baseCqi, totalChars, slide.content.length)
     return (
-      <div className={cn('text-center max-w-3xl', fontClass)}>
+      <div className={cn('text-center w-full h-full flex flex-col items-center justify-center overflow-hidden', fontClass)}>
         {settings.showReferenceOnOutput && (
           <p
-            className={cn('opacity-60 mb-2', theme.accent, large ? 'text-base' : 'text-[8px]')}
-            style={shadow}
+            className={cn('opacity-60 mb-2 shrink-0', theme.accent)}
+            style={{ fontSize: large ? `${baseCqi * 0.55}cqi` : '1.0cqi', ...shadow }}
           >
             {slide.title}
           </p>
         )}
-        {slide.content.map((line, i) => (
-          <p
-            key={i}
-            className={cn('font-medium leading-relaxed', theme.accent, sizeClass)}
-            style={shadow}
-          >
-            {line}
-          </p>
-        ))}
+        <div className="w-full max-w-[90%] mx-auto">
+          {slide.content.map((line, i) => (
+            <p
+              key={i}
+              className={cn('font-medium leading-snug', theme.accent)}
+              style={{ fontSize: large ? `${contentCqi}cqi` : '1.4cqi', ...shadow }}
+            >
+              {line}
+            </p>
+          ))}
+        </div>
       </div>
     )
   }
 
   return (
-    <div className={cn('opacity-30', theme.accent, large ? 'text-2xl' : 'text-xs')} style={shadow}>
+    <div
+      className={cn('opacity-30', theme.accent)}
+      style={{ fontSize: large ? `${baseCqi}cqi` : '1.4cqi', ...shadow }}
+    >
       {slide.title || 'Blank'}
     </div>
   )
@@ -130,7 +148,7 @@ export function SlideThumb({
   return (
     <div
       className={cn(
-        'group relative w-full overflow-hidden aspect-video transition-all',
+        'group relative w-full overflow-hidden aspect-video transition-all @container',
         isLive ? 'ring-2 ring-red-500' : isActive ? 'ring-2 ring-amber-400' : 'ring-1 ring-zinc-800',
         onClick && 'cursor-pointer hover:ring-zinc-600',
       )}
