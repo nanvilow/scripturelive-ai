@@ -41,6 +41,13 @@ import {
   SlideGeneratorCompact,
 } from '@/components/layout/library-compact'
 import { TopToolbar, TransportBar } from '@/components/layout/easyworship-shell'
+import {
+  parseVerseReference,
+  getNextChapter,
+  getPrevChapter,
+  fetchBibleChapter,
+} from '@/lib/bible-api'
+import type { Slide } from '@/lib/store'
 
 // ──────────────────────────────────────────────────────────────────────
 // Card primitives
@@ -204,10 +211,64 @@ function PreviewCard() {
   const {
     slides,
     previewSlideIndex,
-    setPreviewSlideIndex,
+    selectedTranslation,
     settings,
+    setSlides,
+    setPreviewSlideIndex,
+    setLiveSlideIndex,
+    setIsLive,
   } = useAppStore()
   const previewSlide = slides[previewSlideIndex] || null
+  const [navigating, setNavigating] = useState(false)
+
+  // ── Chapter navigation: parse the live preview slide's reference
+  // (e.g. "John 6:6", "John 6:6-9", "John 6"), step to the adjacent
+  // chapter using the Bible book index, fetch it, replace the live deck,
+  // and engage Live mode. Used by both the ◀ and ▶ buttons in the
+  // preview pane header so the operator can step through the Bible
+  // chapter-by-chapter from the secondary screen straight from here.
+  const goChapter = useCallback(async (direction: 'prev' | 'next') => {
+    if (navigating) return
+    if (!previewSlide || !previewSlide.title) {
+      toast.info('Look up a passage first, then use these arrows to step chapters')
+      return
+    }
+    const parsed = parseVerseReference(previewSlide.title)
+    if (!parsed) {
+      toast.info('No Bible reference in the current slide')
+      return
+    }
+    const target = direction === 'next'
+      ? getNextChapter(parsed.book, parsed.chapter)
+      : getPrevChapter(parsed.book, parsed.chapter)
+    if (!target) {
+      toast.info(direction === 'next' ? 'End of the Bible' : 'Beginning of the Bible')
+      return
+    }
+    setNavigating(true)
+    try {
+      const ch = await fetchBibleChapter(target.book, target.chapter, selectedTranslation)
+      if (!ch || !ch.verses?.length) {
+        toast.error(`Could not load ${target.book} ${target.chapter}`)
+        return
+      }
+      const newSlides: Slide[] = ch.verses.map((v) => ({
+        id: `slide-${Date.now()}-${v.verse}`,
+        type: 'verse',
+        title: `${ch.book} ${ch.chapter}:${v.verse}`,
+        subtitle: ch.translation,
+        content: v.text.split('\n').filter(Boolean),
+        background: settings.congregationScreenTheme,
+      }))
+      setSlides(newSlides)
+      setPreviewSlideIndex(0)
+      setLiveSlideIndex(0)
+      setIsLive(true)
+      toast.success(`Live: ${ch.book} ${ch.chapter}`)
+    } finally {
+      setNavigating(false)
+    }
+  }, [navigating, previewSlide, selectedTranslation, settings.congregationScreenTheme, setSlides, setPreviewSlideIndex, setLiveSlideIndex, setIsLive])
 
   return (
     <Card
@@ -225,8 +286,9 @@ function PreviewCard() {
             variant="ghost"
             size="icon"
             className="h-6 w-6 text-zinc-400 hover:text-white"
-            onClick={() => setPreviewSlideIndex(Math.max(0, previewSlideIndex - 1))}
-            disabled={!slides.length || previewSlideIndex === 0}
+            onClick={() => void goChapter('prev')}
+            disabled={navigating || !previewSlide}
+            title="Previous chapter (live)"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
           </Button>
@@ -234,10 +296,9 @@ function PreviewCard() {
             variant="ghost"
             size="icon"
             className="h-6 w-6 text-zinc-400 hover:text-white"
-            onClick={() =>
-              setPreviewSlideIndex(Math.min(slides.length - 1, previewSlideIndex + 1))
-            }
-            disabled={!slides.length || previewSlideIndex >= slides.length - 1}
+            onClick={() => void goChapter('next')}
+            disabled={navigating || !previewSlide}
+            title="Next chapter (live)"
           >
             <ChevronRight className="h-3.5 w-3.5" />
           </Button>

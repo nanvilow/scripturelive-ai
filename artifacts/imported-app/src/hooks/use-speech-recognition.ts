@@ -41,6 +41,12 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const manualStopRef = useRef(false)
   const restartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fullTranscriptRef = useRef('')
+  // Track the next index of `event.results` we still need to commit to the
+  // running transcript. Web Speech keeps the same array across `onresult`
+  // events with `continuous: true` + `interimResults: true`, so without this
+  // guard the same finals get appended on every event — which is exactly
+  // what produced the "John 6:6 John 6:6 John 6:6 …" tower bug.
+  const processedFinalIndexRef = useRef(0)
   // Use a ref to hold the restart logic so we avoid circular callback references
   const scheduleRestartRef = useRef<() => void>(() => {})
 
@@ -57,6 +63,65 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     setTranscript('')
     setInterimTranscript('')
     fullTranscriptRef.current = ''
+    processedFinalIndexRef.current = 0
+  }, [])
+
+  // ── Shared event handlers (used by both startListening and the restart
+  // path) — keeping them in one place avoids the bug where one branch was
+  // patched and the other silently kept the old logic.
+  const handleResult = useCallback((event: { results: { isFinal: boolean; 0: { transcript: string } }[]; resultIndex: number }) => {
+    // Append only finals we haven't committed yet — fixes the "John 6:6
+    // John 6:6 John 6:6 …" repeating-tower bug.
+    while (
+      processedFinalIndexRef.current < event.results.length &&
+      event.results[processedFinalIndexRef.current].isFinal
+    ) {
+      const finalText = event.results[processedFinalIndexRef.current][0].transcript.trim()
+      if (finalText) {
+        fullTranscriptRef.current += finalText + ' '
+        const cb = onResultCallbackRef.current
+        if (cb) cb(finalText)
+      }
+      processedFinalIndexRef.current += 1
+    }
+    // Build the live interim from any results past the committed pointer
+    // that haven't gone final yet.
+    let interim = ''
+    for (let i = processedFinalIndexRef.current; i < event.results.length; i++) {
+      if (!event.results[i].isFinal) interim += event.results[i][0].transcript
+    }
+    setTranscript(fullTranscriptRef.current.trim())
+    setInterimTranscript(interim.trim())
+  }, [])
+
+  const handleError = useCallback((event: { error: string }) => {
+    const err = event.error
+    if (err === 'no-speech' || err === 'aborted') return
+    if (err === 'not-allowed') {
+      setError('Microphone access denied. Please allow microphone permissions.')
+      manualStopRef.current = true
+      shouldKeepListeningRef.current = false
+      setIsListening(false)
+      return
+    }
+    if (err === 'audio-capture') {
+      setError('No microphone found. Please connect a microphone.')
+      manualStopRef.current = true
+      setIsListening(false)
+      return
+    }
+    console.warn(`Speech recognition error: ${err}, auto-restarting...`)
+    setError(null)
+  }, [])
+
+  const handleEnd = useCallback(() => {
+    setIsListening(false)
+    if (shouldKeepListeningRef.current && !manualStopRef.current) {
+      // A new recognition instance restarts with a fresh `event.results`
+      // array, so reset our committed-finals pointer to 0.
+      processedFinalIndexRef.current = 0
+      scheduleRestartRef.current()
+    }
   }, [])
 
   // Set up the schedule restart ref once
@@ -81,54 +146,9 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
                 setError(null)
               }
 
-              recognition.onresult = (event) => {
-                let interim = ''
-                for (let i = 0; i < event.results.length; i++) {
-                  const result = event.results[i]
-                  if (result.isFinal) {
-                    fullTranscriptRef.current += result[0].transcript + ' '
-                  } else {
-                    interim += result[0].transcript
-                  }
-                }
-                setTranscript(fullTranscriptRef.current.trim())
-                setInterimTranscript(interim.trim())
-
-                for (let i = event.resultIndex; i < event.results.length; i++) {
-                  if (event.results[i].isFinal) {
-                    const cb = onResultCallbackRef.current
-                    if (cb) cb(event.results[i][0].transcript.trim())
-                  }
-                }
-              }
-
-              recognition.onerror = (event) => {
-                const err = event.error
-                if (err === 'no-speech' || err === 'aborted') return
-                if (err === 'not-allowed') {
-                  setError('Microphone access denied. Please allow microphone permissions.')
-                  manualStopRef.current = true
-                  shouldKeepListeningRef.current = false
-                  setIsListening(false)
-                  return
-                }
-                if (err === 'audio-capture') {
-                  setError('No microphone found. Please connect a microphone.')
-                  manualStopRef.current = true
-                  setIsListening(false)
-                  return
-                }
-                // For network and other transient errors, auto-restart
-                console.warn(`Speech recognition error: ${err}, auto-restarting...`)
-                setError(null)
-              }
-
-              recognition.onend = () => {
-                setIsListening(false)
-                if (shouldKeepListeningRef.current && !manualStopRef.current) {
-                  scheduleRestartRef.current()
-                }
-              }
+              recognition.onresult = handleResult
+              recognition.onerror = handleError
+              recognition.onend = handleEnd
 
               recognitionRef.current = recognition
               recognition.start()
@@ -160,6 +180,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     manualStopRef.current = false
     shouldKeepListeningRef.current = true
     onResultCallbackRef.current = onResult
+    processedFinalIndexRef.current = 0
 
     try {
       const recognition = new SpeechRecognition()
@@ -173,54 +194,9 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
         setError(null)
       }
 
-      recognition.onresult = (event) => {
-        let interim = ''
-        for (let i = 0; i < event.results.length; i++) {
-          const result = event.results[i]
-          if (result.isFinal) {
-            fullTranscriptRef.current += result[0].transcript + ' '
-          } else {
-            interim += result[0].transcript
-          }
-        }
-        setTranscript(fullTranscriptRef.current.trim())
-        setInterimTranscript(interim.trim())
-
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          if (event.results[i].isFinal) {
-            const cb = onResultCallbackRef.current
-            if (cb) cb(event.results[i][0].transcript.trim())
-          }
-        }
-      }
-
-      recognition.onerror = (event) => {
-        const err = event.error
-        if (err === 'no-speech' || err === 'aborted') return
-        if (err === 'not-allowed') {
-          setError('Microphone access denied. Please allow microphone permissions.')
-          manualStopRef.current = true
-          shouldKeepListeningRef.current = false
-          setIsListening(false)
-          return
-        }
-        if (err === 'audio-capture') {
-          setError('No microphone found. Please connect a microphone.')
-          manualStopRef.current = true
-          setIsListening(false)
-          return
-        }
-        console.warn(`Speech recognition error: ${err}, auto-restarting...`)
-        setError(null)
-      }
-
-      recognition.onend = () => {
-        setIsListening(false)
-        // Auto-restart: never stop the transcript
-        if (shouldKeepListeningRef.current && !manualStopRef.current) {
-          scheduleRestartRef.current()
-        }
-      }
+      recognition.onresult = handleResult
+      recognition.onerror = handleError
+      recognition.onend = handleEnd
 
       recognitionRef.current = recognition
       recognition.start()
