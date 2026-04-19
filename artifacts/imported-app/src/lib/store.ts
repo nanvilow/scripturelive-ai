@@ -123,6 +123,9 @@ interface AppState {
   setSpeechError: (e: string | null) => void
   speechCommand: 'start' | 'stop' | 'reset' | null
   setSpeechCommand: (cmd: 'start' | 'stop' | 'reset' | null) => void
+  // User-chosen microphone (deviceId from enumerateDevices). null = system default.
+  selectedMicrophoneId: string | null
+  setSelectedMicrophoneId: (id: string | null) => void
 
   // Slides
   slides: Slide[]
@@ -230,6 +233,8 @@ export const useAppStore = create<AppState>()(
       setSpeechError: (e) => set({ speechError: e }),
       speechCommand: null,
       setSpeechCommand: (cmd) => set({ speechCommand: cmd }),
+      selectedMicrophoneId: null,
+      setSelectedMicrophoneId: (id) => set({ selectedMicrophoneId: id }),
 
       // Slides
       slides: [],

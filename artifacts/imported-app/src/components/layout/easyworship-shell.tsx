@@ -39,6 +39,7 @@ import {
   GripVertical,
   X,
   Plus,
+  RefreshCw,
 } from 'lucide-react'
 
 import {
@@ -93,6 +94,9 @@ type DesktopApi = {
   }
 }
 
+// Browser-only screen list returned by the experimental Window Management API.
+type BrowserScreen = { id: string; label: string; primary: boolean; width: number; height: number; left: number; top: number }
+
 export function TopToolbar({
   outputActive,
   toggleOutput,
@@ -108,9 +112,14 @@ export function TopToolbar({
     schedule,
     clearSchedule,
     ndiConnected,
+    selectedMicrophoneId,
+    setSelectedMicrophoneId,
   } = useAppStore()
 
   const [displays, setDisplays] = useState<DesktopDisplay[]>([])
+  const [browserScreens, setBrowserScreens] = useState<BrowserScreen[]>([])
+  const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([])
+  const [micPermission, setMicPermission] = useState<'granted' | 'denied' | 'prompt' | 'unknown'>('unknown')
 
   const desktop: DesktopApi | undefined = (typeof window !== 'undefined'
     ? ((window as unknown as { electron?: DesktopApi; scriptureLive?: DesktopApi }).electron
@@ -127,6 +136,73 @@ export function TopToolbar({
     }
     return () => { cancelled = true }
   }, [desktop])
+
+  // ── Microphone enumeration ──────────────────────────────────────────
+  // We list audio inputs whenever the popover opens or device list changes.
+  // Device labels are only available after the user grants mic permission,
+  // so we expose a "Grant mic access" affordance when labels are blank.
+  const refreshMicrophones = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) return
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices()
+      const inputs = all.filter((d) => d.kind === 'audioinput')
+      setMicrophones(inputs)
+      const anyLabel = inputs.some((d) => d.label && d.label.length > 0)
+      setMicPermission(anyLabel ? 'granted' : 'prompt')
+    } catch {
+      setMicPermission('denied')
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshMicrophones()
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.addEventListener) {
+      const handler = () => refreshMicrophones()
+      navigator.mediaDevices.addEventListener('devicechange', handler)
+      return () => navigator.mediaDevices.removeEventListener('devicechange', handler)
+    }
+  }, [refreshMicrophones])
+
+  const requestMicAccess = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream.getTracks().forEach((t) => t.stop())
+      setMicPermission('granted')
+      await refreshMicrophones()
+    } catch {
+      setMicPermission('denied')
+      toast.error('Microphone access was denied')
+    }
+  }, [refreshMicrophones])
+
+  // ── Browser-side screen enumeration via Window Management API ──────
+  // Chrome/Edge expose getScreenDetails() once the user grants the
+  // window-management permission. We probe it lazily so we don't trigger
+  // a permission prompt on app load.
+  type ScreenDetailed = { label?: string; width: number; height: number; left: number; top: number; isPrimary: boolean }
+  type ScreenDetails = { screens: ScreenDetailed[] }
+  type WindowWithScreenDetails = Window & { getScreenDetails?: () => Promise<ScreenDetails> }
+  const probeBrowserScreens = useCallback(async () => {
+    if (typeof window === 'undefined') return
+    const win = window as WindowWithScreenDetails
+    if (!win.getScreenDetails) return
+    try {
+      const details = await win.getScreenDetails()
+      setBrowserScreens(
+        details.screens.map((s, i: number) => ({
+          id: `browser-${i}`,
+          label: s.label || `Display ${i + 1}`,
+          primary: !!s.isPrimary,
+          width: s.width,
+          height: s.height,
+          left: s.left,
+          top: s.top,
+        })),
+      )
+    } catch {
+      /* permission denied or unsupported */
+    }
+  }, [])
 
   const pushCurrentSlide = useCallback(async () => {
     if (!outputActive) toggleOutput()
@@ -158,7 +234,9 @@ export function TopToolbar({
     }
   }, [outputActive, toggleOutput])
 
-  const openOnScreen = useCallback(async (displayId?: number) => {
+  const openOnScreen = useCallback(async (
+    target?: { displayId?: number; browserScreen?: BrowserScreen },
+  ) => {
     // If nothing is live yet, auto-promote the current preview slide so the
     // output screen immediately shows real content instead of staying blank.
     const before = useAppStore.getState()
@@ -170,19 +248,38 @@ export function TopToolbar({
       before.setIsLive(true)
     }
     await pushCurrentSlide()
+    // Desktop (Electron): hand off to the main process which knows about every
+    // physical monitor and can place the BrowserWindow on the right one.
     if (desktop?.output?.openWindow) {
-      const r = await desktop.output.openWindow(displayId !== undefined ? { displayId } : undefined)
+      const r = await desktop.output.openWindow(
+        target?.displayId !== undefined ? { displayId: target.displayId } : undefined,
+      )
       if (!r?.ok) toast.error(r?.error || 'Could not open output window')
-      else toast.success(displayId !== undefined ? 'Output opened on selected screen' : 'Output window opened')
+      else toast.success(target?.displayId !== undefined ? 'Output opened on selected screen' : 'Output window opened')
       return
     }
-    const w = window.open(
-      '/api/output/congregation',
-      'scripturelive-output',
-      'width=1280,height=720,toolbar=no,menubar=no,location=no,status=no',
-    )
-    if (w) toast.success('Output opened — drag it to your second display, then press F11')
-    else toast.error('Pop-up blocked. Allow pop-ups for ScriptureLive in your browser.')
+    // Browser: if the user picked a specific monitor (Window Management API),
+    // open the popup positioned at that screen's origin so the operator only
+    // has to press F11 to fullscreen — no manual dragging required.
+    let features = 'width=1280,height=720,toolbar=no,menubar=no,location=no,status=no'
+    if (target?.browserScreen) {
+      const s = target.browserScreen
+      features = `left=${s.left},top=${s.top},width=${s.width},height=${s.height},toolbar=no,menubar=no,location=no,status=no`
+    }
+    const w = window.open('/api/output/congregation', 'scripturelive-output', features)
+    if (w) {
+      if (target?.browserScreen) {
+        try {
+          w.moveTo(target.browserScreen.left, target.browserScreen.top)
+          w.resizeTo(target.browserScreen.width, target.browserScreen.height)
+        } catch { /* some browsers block move/resize on existing windows */ }
+        toast.success(`Output opened on "${target.browserScreen.label}" — press F11 to fullscreen`)
+      } else {
+        toast.success('Output opened — drag it to your second display, then press F11')
+      }
+    } else {
+      toast.error('Pop-up blocked. Allow pop-ups for ScriptureLive in your browser.')
+    }
   }, [pushCurrentSlide, desktop])
 
   return (
@@ -241,71 +338,178 @@ export function TopToolbar({
           </SelectContent>
         </Select>
 
-        {/* Show on Screen — picks the physical display to send Live to.
-            In desktop (Electron) we list every connected monitor and let the
-            user open the output directly on that screen.  In a regular browser
-            we just open a popup window the user can drag to any display. */}
-        {displays.length > 1 ? (
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-[11px] gap-1.5 border text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white"
-                title="Pick which monitor / TV to send the live output to."
+        {/* ── Microphone selector ────────────────────────────────────────
+            Lists every connected audio input device. The chosen mic is
+            stored globally and the SpeechProvider claims it via getUserMedia
+            before starting recognition. */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[11px] gap-1.5 border text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white max-w-[160px]"
+              title="Choose which connected microphone to use for live transcription."
+            >
+              <Mic className="h-3 w-3 shrink-0" />
+              <span className="truncate">
+                {(() => {
+                  if (selectedMicrophoneId) {
+                    const m = microphones.find((d) => d.deviceId === selectedMicrophoneId)
+                    if (m?.label) return m.label
+                  }
+                  return 'Default Mic'
+                })()}
+              </span>
+              <ChevronDown className="h-3 w-3 opacity-60 shrink-0" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-[280px] p-1 bg-zinc-950 border-zinc-800">
+            <div className="flex items-center justify-between px-2 py-1.5">
+              <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+                Microphone
+              </span>
+              <button
+                onClick={refreshMicrophones}
+                className="text-zinc-500 hover:text-zinc-200 p-0.5"
+                title="Refresh microphone list"
               >
-                <MonitorPlay className="h-3 w-3" />
-                Output Display
-                <ChevronDown className="h-3 w-3 opacity-60" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-[260px] p-1 bg-zinc-950 border-zinc-800">
-              <div className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
-                Choose monitor
-              </div>
-              {displays.map((d) => (
+                <RefreshCw className="h-3 w-3" />
+              </button>
+            </div>
+            {micPermission !== 'granted' && (
+              <div className="px-2 py-2 mb-1 rounded bg-amber-500/10 border border-amber-500/30 text-[10px] text-amber-200">
+                Grant microphone access to see device names.
                 <button
-                  key={d.id}
-                  onClick={() => openOnScreen(d.id)}
-                  className="w-full text-left px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 rounded flex items-center gap-2"
+                  onClick={requestMicAccess}
+                  className="block mt-1 underline text-amber-300 hover:text-amber-200"
                 >
-                  <MonitorPlay className="h-3.5 w-3.5 text-zinc-500" />
-                  <span className="flex-1 truncate">{d.label}</span>
-                  {d.primary && (
-                    <Badge className="h-4 px-1 text-[8px] bg-zinc-800 text-zinc-400 border-0">
-                      MAIN
-                    </Badge>
-                  )}
-                  <span className="text-[9px] text-zinc-500 tabular-nums">{d.width}×{d.height}</span>
-                </button>
-              ))}
-              <div className="border-t border-zinc-800 mt-1 pt-1">
-                <button
-                  onClick={() => openOnScreen()}
-                  className="w-full text-left px-2 py-1.5 text-[11px] text-zinc-400 hover:bg-zinc-800 rounded"
-                >
-                  Open on default screen
+                  Allow microphone
                 </button>
               </div>
-            </PopoverContent>
-          </Popover>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(
-              'h-7 px-2 text-[11px] gap-1.5 border',
-              outputActive
-                ? 'bg-emerald-600/20 text-emerald-300 border-emerald-700 hover:bg-emerald-600/30'
-                : 'text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white',
             )}
-            onClick={() => openOnScreen()}
-            title="Open the live output as a window — drag it to a second monitor or TV (HDMI) and press F11 to fullscreen."
-          >
-            {outputActive ? <Wifi className="h-3 w-3" /> : <MonitorPlay className="h-3 w-3" />}
-            Output Display
-          </Button>
-        )}
+            <button
+              onClick={() => {
+                setSelectedMicrophoneId(null)
+                toast.success('Using system default microphone')
+              }}
+              className={cn(
+                'w-full text-left px-2 py-1.5 text-xs rounded flex items-center gap-2',
+                selectedMicrophoneId === null ? 'bg-sky-500/15 text-sky-200' : 'text-zinc-200 hover:bg-zinc-800',
+              )}
+            >
+              <Mic className="h-3.5 w-3.5 text-zinc-500" />
+              <span className="flex-1 truncate">System default</span>
+            </button>
+            {microphones.length === 0 ? (
+              <div className="px-2 py-2 text-[10px] text-zinc-500">
+                No microphones detected.
+              </div>
+            ) : (
+              microphones.map((d, i) => (
+                <button
+                  key={d.deviceId || `mic-${i}`}
+                  onClick={() => {
+                    setSelectedMicrophoneId(d.deviceId || null)
+                    toast.success(`Microphone: ${d.label || `Microphone ${i + 1}`}`)
+                  }}
+                  className={cn(
+                    'w-full text-left px-2 py-1.5 text-xs rounded flex items-center gap-2',
+                    selectedMicrophoneId === d.deviceId
+                      ? 'bg-sky-500/15 text-sky-200'
+                      : 'text-zinc-200 hover:bg-zinc-800',
+                  )}
+                >
+                  <Mic className="h-3.5 w-3.5 text-zinc-500" />
+                  <span className="flex-1 truncate">{d.label || `Microphone ${i + 1}`}</span>
+                </button>
+              ))
+            )}
+          </PopoverContent>
+        </Popover>
+
+        {/* ── Output Display picker ─────────────────────────────────────
+            Always a popover. Lists every physical monitor in the desktop
+            app, every screen returned by the Window Management API in
+            modern browsers, and a "Pop-out window" fallback otherwise. */}
+        <Popover onOpenChange={(o) => { if (o) probeBrowserScreens() }}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                'h-7 px-2 text-[11px] gap-1.5 border',
+                outputActive
+                  ? 'bg-emerald-600/20 text-emerald-300 border-emerald-700 hover:bg-emerald-600/30'
+                  : 'text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white',
+              )}
+              title="Pick which monitor / TV to send the live output to."
+            >
+              {outputActive ? <Wifi className="h-3 w-3" /> : <MonitorPlay className="h-3 w-3" />}
+              Output Display
+              <ChevronDown className="h-3 w-3 opacity-60" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-[300px] p-1 bg-zinc-950 border-zinc-800">
+            <div className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+              Choose output screen
+            </div>
+
+            {/* Electron physical displays */}
+            {displays.length > 0 && displays.map((d) => (
+              <button
+                key={`disp-${d.id}`}
+                onClick={() => openOnScreen({ displayId: d.id })}
+                className="w-full text-left px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 rounded flex items-center gap-2"
+              >
+                <MonitorPlay className="h-3.5 w-3.5 text-zinc-500" />
+                <span className="flex-1 truncate">{d.label}</span>
+                {d.primary && (
+                  <Badge className="h-4 px-1 text-[8px] bg-zinc-800 text-zinc-400 border-0">
+                    MAIN
+                  </Badge>
+                )}
+                <span className="text-[9px] text-zinc-500 tabular-nums">{d.width}×{d.height}</span>
+              </button>
+            ))}
+
+            {/* Browser-detected screens (Window Management API) */}
+            {browserScreens.length > 0 && browserScreens.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => openOnScreen({ browserScreen: s })}
+                className="w-full text-left px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 rounded flex items-center gap-2"
+              >
+                <MonitorPlay className="h-3.5 w-3.5 text-zinc-500" />
+                <span className="flex-1 truncate">{s.label}</span>
+                {s.primary && (
+                  <Badge className="h-4 px-1 text-[8px] bg-zinc-800 text-zinc-400 border-0">
+                    MAIN
+                  </Badge>
+                )}
+                <span className="text-[9px] text-zinc-500 tabular-nums">{s.width}×{s.height}</span>
+              </button>
+            ))}
+
+            {displays.length === 0 && browserScreens.length === 0 && (
+              <div className="px-2 py-2 mb-1 rounded bg-zinc-900/60 border border-zinc-800 text-[10px] text-zinc-400">
+                Multiple monitors are detected automatically in the desktop
+                app and in Chrome / Edge after granting screen permission.
+                In other browsers, use <strong className="text-zinc-200">Pop-out window</strong> below
+                and drag it to your second display.
+              </div>
+            )}
+
+            <div className="border-t border-zinc-800 mt-1 pt-1">
+              <button
+                onClick={() => openOnScreen()}
+                className="w-full text-left px-2 py-1.5 text-[11px] text-zinc-300 hover:bg-zinc-800 rounded flex items-center gap-2"
+              >
+                <ExternalLink className="h-3 w-3 text-zinc-500" />
+                Pop-out window (drag to any display)
+              </button>
+            </div>
+          </PopoverContent>
+        </Popover>
 
         {/* NDI inline popover (built-in, like EasyWorship) */}
         <Popover>
