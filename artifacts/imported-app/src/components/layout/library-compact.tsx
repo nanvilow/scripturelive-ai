@@ -166,7 +166,12 @@ export function BibleLookupCompact() {
       slides: [slide],
     })
     if (live) {
+      // Replace the active slide deck with this verse so the broadcast
+      // effect (which reads slides[liveSlideIndex]) actually pushes the
+      // new verse to the congregation display instead of a stale entry.
       const s = useAppStore.getState()
+      s.setSlides([slide])
+      s.setPreviewSlideIndex(0)
       s.setLiveSlideIndex(0)
       s.setIsLive(true)
     }
@@ -192,6 +197,8 @@ export function BibleLookupCompact() {
     })
     if (live) {
       const s = useAppStore.getState()
+      s.setSlides(slides)
+      s.setPreviewSlideIndex(0)
       s.setLiveSlideIndex(0)
       s.setIsLive(true)
     }
@@ -487,6 +494,8 @@ export function ScriptureDetectionCompact() {
       })
       if (autoLive) {
         const s = useAppStore.getState()
+        s.setSlides([slide])
+        s.setPreviewSlideIndex(0)
         s.setLiveSlideIndex(0)
         s.setIsLive(true)
       }
