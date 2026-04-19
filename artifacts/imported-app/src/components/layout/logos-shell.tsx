@@ -15,7 +15,6 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useAppStore } from '@/lib/store'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { SlideThumb } from '@/components/presenter/slide-renderer'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -164,7 +163,7 @@ function LiveTranscriptionCard() {
         </Button>
       }
     >
-      <ScrollArea className="flex-1">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="p-3 space-y-1.5">
           {speechError && (
             <p className="text-[10px] text-rose-400">{speechError}</p>
@@ -193,7 +192,7 @@ function LiveTranscriptionCard() {
             </p>
           )}
         </div>
-      </ScrollArea>
+      </div>
     </Card>
   )
 }
@@ -442,7 +441,7 @@ function ScriptureFeedCard() {
         </div>
       }
     >
-      <ScrollArea className="flex-1">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="p-2 space-y-1.5">
           {tab === 'history' ? (
             verseHistory.length === 0 ? (
@@ -526,7 +525,7 @@ function ScriptureFeedCard() {
             })
           )}
         </div>
-      </ScrollArea>
+      </div>
     </Card>
   )
 }
@@ -612,7 +611,7 @@ function DetectedVersesCard() {
         ) : null
       }
     >
-      <ScrollArea className="flex-1">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="p-2 space-y-1.5">
           {detectedVerses.length === 0 ? (
             <div className="text-center py-8 text-[11px] text-zinc-600">
@@ -640,7 +639,7 @@ function DetectedVersesCard() {
             ))
           )}
         </div>
-      </ScrollArea>
+      </div>
     </Card>
   )
 }
@@ -678,6 +677,9 @@ export function LogosShell() {
     setIsLive,
     setNdiConnected,
     settings,
+    detectedVerses,
+    addScheduleItem,
+    setSlides,
   } = useAppStore()
 
   const [outputActive, setOutputActive] = useState(false)
@@ -688,6 +690,37 @@ export function LogosShell() {
   const [displaySize, setDisplaySize] = useState(0.85)
   const [displayHidden, setDisplayHidden] = useState(false)
   const [autoAdvance, setAutoAdvance] = useState(false)
+
+  // ── Auto-advance: when ON, every newly detected verse is sent straight
+  // to the live output (and added to the schedule). Mirrors how Logos AI
+  // and similar production tools handle "follow the speaker" mode.
+  const lastAutoVerseId = useRef<string | null>(null)
+  useEffect(() => {
+    if (!autoAdvance) return
+    if (!detectedVerses.length) return
+    const newest = detectedVerses[0]
+    if (!newest || newest.id === lastAutoVerseId.current) return
+    lastAutoVerseId.current = newest.id
+    const slide = {
+      id: `auto-${newest.id}`,
+      type: 'verse' as const,
+      title: newest.reference,
+      subtitle: newest.translation,
+      content: (newest.text || '').split('\n').filter(Boolean),
+      background: settings.congregationScreenTheme,
+    }
+    addScheduleItem({
+      type: 'verse',
+      title: newest.reference,
+      subtitle: newest.translation,
+      slides: [slide],
+    })
+    setSlides([slide])
+    setPreviewSlideIndex(0)
+    setLiveSlideIndex(0)
+    setIsLive(true)
+    toast.success(`Auto: ${newest.reference}`)
+  }, [autoAdvance, detectedVerses, addScheduleItem, setSlides, setPreviewSlideIndex, setLiveSlideIndex, setIsLive, settings.congregationScreenTheme])
 
   // Broadcast helper: same payload shape used by the EasyWorship shell
   const sendToOutput = useCallback(
