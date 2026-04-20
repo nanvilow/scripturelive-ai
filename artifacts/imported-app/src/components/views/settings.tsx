@@ -14,6 +14,8 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  SelectGroup,
+  SelectLabel,
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import {
@@ -43,6 +45,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { NdiOutputPanel } from './ndi-output-panel'
 import { OutputPreview } from '@/components/settings/output-preview'
+import { FONT_REGISTRY } from '@/lib/fonts'
 
 export function SettingsView() {
   const { settings, updateSettings, setSelectedTranslation } = useAppStore()
@@ -650,9 +653,22 @@ export function SettingsView() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="sans">Default Sans-Serif</SelectItem>
-                <SelectItem value="serif">Serif</SelectItem>
-                <SelectItem value="mono">Monospace</SelectItem>
+                {(['Sans-serif', 'Serif', 'Display', 'Monospace'] as const).map((group) => {
+                  const items = FONT_REGISTRY.filter((f) => f.group === group)
+                  if (!items.length) return null
+                  return (
+                    <SelectGroup key={group}>
+                      <SelectLabel className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                        {group}
+                      </SelectLabel>
+                      {items.map((f) => (
+                        <SelectItem key={f.key} value={f.key}>
+                          <span style={{ fontFamily: f.stack }}>{f.label}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  )
+                })}
               </SelectContent>
             </Select>
           </div>

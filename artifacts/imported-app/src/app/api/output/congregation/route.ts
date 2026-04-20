@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { googleFontsHref, FONT_REGISTRY } from '@/lib/fonts'
 
 /**
  * GET /api/output/congregation
@@ -9,12 +10,22 @@ import { NextResponse } from 'next/server'
  * Use NDI Screen Capture on this window to send to vMix/Wirecast.
  */
 export async function GET() {
+  // Inject the same Google Fonts link the operator UI loads, so any
+  // family the operator picks renders identically here. Then expose the
+  // full font registry to the page script so render() can resolve a
+  // key like "playfair" → its CSS stack without a round-trip.
+  const fontMapJson = JSON.stringify(
+    Object.fromEntries(FONT_REGISTRY.map((f) => [f.key, f.stack])),
+  )
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ScriptureLive — Congregation Display</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="${googleFontsHref}">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#fff}
@@ -46,7 +57,9 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 .theme-minimal{background:linear-gradient(135deg,#0a0a0a,#171717)}
 .lower-third{position:absolute;left:0;right:0;display:flex;align-items:center;justify-content:center;padding:0 6%;container-type:size}
 .lower-third.bottom{bottom:6%}.lower-third.top{top:6%}
-.lt-box{width:100%;max-width:68rem;background:rgba(0,0,0,.85);backdrop-filter:blur(8px);border-radius:.5rem;padding:3% 5%;border:1px solid rgba(255,255,255,.1);display:flex;flex-direction:column;justify-content:center;overflow:hidden;height:100%;box-sizing:border-box}
+/* Lower-third bar is fully transparent — the slide / global background
+   shows through it. Text shadow + font weight keep it readable. */
+.lt-box{width:100%;max-width:68rem;background:transparent;padding:3% 5%;display:flex;flex-direction:column;justify-content:center;overflow:hidden;height:100%;box-sizing:border-box}
 .lt-box .slide-reference{font-size:clamp(.7rem,min(2cqw,4cqh),1.4rem);opacity:.7;font-weight:500;line-height:1.2;margin-bottom:.6cqh}
 .lt-box .slide-text,.lt-box .slide-title{font-weight:600;line-height:1.25}
 .align-left{text-align:left;align-items:flex-start}
@@ -70,6 +83,17 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 <div id="stage"><div id="output"></div></div>
 <script>
 const themes={worship:'theme-worship',sermon:'theme-sermon',easter:'theme-easter',christmas:'theme-christmas',praise:'theme-praise',minimal:'theme-minimal'};
+// Font registry mirrored from src/lib/fonts.ts so we can resolve
+// fontFamily keys (e.g. "playfair") to the same CSS stack the operator
+// console uses. Tolerates legacy "font-sans"-style values.
+const FONT_MAP=${fontMapJson};
+function resolveFont(k){
+  if(!k)return FONT_MAP['sans'];
+  if(typeof k==='string'&&k.indexOf('font-')===0)k=k.slice(5);
+  return FONT_MAP[k]||FONT_MAP['sans'];
+}
+// Same four-bucket size multiplier the operator preview applies.
+const FS_MULT={sm:.85,md:1,lg:1.25,xl:1.5};
 let es=null,reconnects=0;
 const $=id=>document.getElementById(id);
 // Hash of the last rendered payload — render() bails out if the next
@@ -151,8 +175,13 @@ function render(s){
   var ref=st.showReferenceOnOutput!==false&&slide.title?'<div class="slide-reference">'+slide.title+(slide.subtitle?' \\u2014 '+slide.subtitle:'')+'</div>':'';
   var totalChars=0;
   if(slide.content&&slide.content.length){for(var i=0;i<slide.content.length;i++)totalChars+=(slide.content[i]||'').length;}
-  var scale=Math.min(2,Math.max(.5,(typeof st.textScale==='number'?st.textScale:1)));
+  // Combine the operator's manual textScale with the font-size bucket
+  // multiplier so picking Small/Medium/Large/Extra Large visibly steps
+  // text on the secondary screen too — matching the operator preview.
+  var scale=Math.min(2,Math.max(.5,(typeof st.textScale==='number'?st.textScale:1)))*(FS_MULT[st.fontSize]||1);
   var fs=fitFont(st.fontSize||'lg',scale,totalChars);
+  var fontFam=resolveFont(st.fontFamily);
+  var fontStyle='font-family:'+fontFam+';';
   var txt='';
   if(slide.type==='title'){
     txt='<div class="slide-title" style="font-size:'+fs.title+';'+sh+'">'+(slide.title||'')+'</div>'+(slide.subtitle?'<div class="slide-subtitle" style="font-size:'+fs.sub+';'+sh+'">'+slide.subtitle+'</div>':'');
@@ -186,11 +215,13 @@ function render(s){
     var ltBand=totalChars>320?5:totalChars>180?7:totalChars>90?9:11;
     var ltFs='clamp(.6rem,min('+(ltBand*0.55)+'cqw,'+ltBand+'cqh),2rem)';
     var ltTxt=txt.replace(/font-size:[^;"]+;?/g,'font-size:'+ltFs+';');
-    $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:#000;">'+ltBg+'<div class="lower-third '+pos+'" style="'+ltStyle+'"><div class="lt-box '+alignClass+'">'+ref+ltTxt+'</div></div></div>';
+    // Apply font-family on the lower-third bar via fontStyle so the
+    // operator's chosen typography (Roboto, Playfair, etc.) renders.
+    $('output').innerHTML='<div class="'+tc+'" style="width:100%;height:100%;position:relative;'+fontStyle+'">'+ltBg+'<div class="lower-third '+pos+'" style="'+ltStyle+'"><div class="lt-box '+alignClass+'" style="'+fontStyle+'">'+ref+ltTxt+'</div></div></div>';
   }else{
     var ta=st.textAlign||'center';
     var jc=ta==='left'?'flex-start':ta==='right'?'flex-end':'center';
-    $('output').innerHTML='<div class="'+tc+'" style="width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';">'+bg+'<div class="slide-content" style="text-align:'+ta+';">'+ref+txt+'</div></div>';
+    $('output').innerHTML='<div class="'+tc+'" style="width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';'+fontStyle+'">'+bg+'<div class="slide-content" style="text-align:'+ta+';'+fontStyle+'">'+ref+txt+'</div></div>';
   }
   $('output').classList.remove('hidden');
 }

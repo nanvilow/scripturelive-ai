@@ -2,6 +2,7 @@
 
 import { useAppStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
+import { getFontStack, FONT_SIZE_MULT } from '@/lib/fonts'
 
 /**
  * Compact WYSIWYG preview used inside the Settings cards. It mirrors
@@ -64,6 +65,18 @@ export function OutputPreview({
   const bg = themeMap[settings.congregationScreenTheme] || themeMap.minimal
   const shadow = settings.textShadow !== false ? '0 2px 12px rgba(0,0,0,.4)' : 'none'
 
+  // Resolve the actual CSS font-family stack the operator picked, plus
+  // the four-bucket size multiplier (sm/md/lg/xl). Multiplying the
+  // clamp() bands keeps text readable at every preview width while
+  // still visibly stepping between buckets.
+  const fontStack = getFontStack(settings.fontFamily)
+  const sizeMult =
+    (FONT_SIZE_MULT[settings.fontSize] || 1) *
+    Math.min(2, Math.max(0.5, settings.textScale ?? 1))
+  const refFs = `clamp(${7 * sizeMult}px, min(${2 * sizeMult}cqw, ${4 * sizeMult}cqh), ${18 * sizeMult}px)`
+  const bodyFs = `clamp(${10 * sizeMult}px, min(${4 * sizeMult}cqw, ${8 * sizeMult}cqh), ${28 * sizeMult}px)`
+  const ltBodyFs = `clamp(${9 * sizeMult}px, min(${4 * sizeMult}cqw, ${9 * sizeMult}cqh), ${24 * sizeMult}px)`
+
   return (
     <div className="space-y-1.5">
       {label && (
@@ -92,7 +105,7 @@ export function OutputPreview({
             )}
             style={{
               padding: '6% 6%',
-              fontFamily: settings.fontFamily,
+              fontFamily: fontStack,
               textShadow: shadow,
             }}
           >
@@ -100,7 +113,7 @@ export function OutputPreview({
               <p
                 className="m-0 p-0 opacity-60"
                 style={{
-                  fontSize: 'clamp(7px, min(2cqw, 4cqh), 18px)',
+                  fontSize: refFs,
                   lineHeight: 1.2,
                   marginBottom: '1cqh',
                 }}
@@ -111,7 +124,7 @@ export function OutputPreview({
             <p
               className="m-0 p-0 font-medium"
               style={{
-                fontSize: 'clamp(10px, min(4cqw, 8cqh), 28px)',
+                fontSize: bodyFs,
                 lineHeight: 1.4,
                 wordWrap: 'break-word',
                 overflowWrap: 'break-word',
@@ -134,18 +147,20 @@ export function OutputPreview({
           >
             <div
               className={cn(
-                'w-full h-full max-w-[68rem] mx-auto rounded-md flex flex-col justify-center text-white',
+                'w-full h-full max-w-[68rem] mx-auto flex flex-col justify-center text-white',
                 itemsClass,
                 textClass,
               )}
               style={{
-                background: 'rgba(0,0,0,0.85)',
-                backdropFilter: 'blur(8px)',
-                border: '1px solid rgba(255,255,255,0.1)',
+                // Lower-third bar is fully transparent so the operator
+                // sees only the slide / global background through it,
+                // matching the spec ("no solid box"). Text shadow keeps
+                // it readable on bright backgrounds.
+                background: 'transparent',
                 padding: '3% 5%',
                 gap: '0.6cqh',
                 overflow: 'hidden',
-                fontFamily: settings.fontFamily,
+                fontFamily: fontStack,
                 textShadow: shadow,
               }}
             >
@@ -153,7 +168,7 @@ export function OutputPreview({
                 <p
                   className="m-0 p-0 opacity-70 font-medium"
                   style={{
-                    fontSize: 'clamp(7px, min(2cqw, 4cqh), 18px)',
+                    fontSize: refFs,
                     lineHeight: 1.2,
                   }}
                 >
@@ -163,7 +178,7 @@ export function OutputPreview({
               <p
                 className="m-0 p-0 font-semibold w-full"
                 style={{
-                  fontSize: 'clamp(9px, min(4cqw, 9cqh), 24px)',
+                  fontSize: ltBodyFs,
                   lineHeight: 1.4,
                   wordWrap: 'break-word',
                   overflowWrap: 'break-word',

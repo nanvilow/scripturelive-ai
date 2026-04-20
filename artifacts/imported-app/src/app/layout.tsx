@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { PathAwareToaster } from "@/components/ui/path-aware-toaster";
+import { googleFontsHref } from "@/lib/fonts";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -46,6 +47,14 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
+      <head>
+        {/* Pre-load every web font in the typography registry so any
+            font the operator picks renders identically on the editor,
+            the operator preview cards, and the secondary screen. */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link rel="stylesheet" href={googleFontsHref} />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
