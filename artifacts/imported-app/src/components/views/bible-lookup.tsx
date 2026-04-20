@@ -129,7 +129,7 @@ export function BibleLookupView() {
     // Keep the old behavior available for non-EW shell consumers.
     setSlides(newSlides)
     setPreviewSlideIndex(0)
-    toast.success(`${verse.reference} added to schedule`)
+    // Suppressed per FRS — schedule list is the source of truth.
   }
 
   const goToLive = () => {

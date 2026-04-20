@@ -482,6 +482,21 @@ function LiveDisplayCard({
               </div>
             )
           }
+          // Build the verse reference + body the same way the
+          // congregation renderer does so the preview matches the
+          // secondary screen and NDI feed exactly.
+          const refLine =
+            settings.showReferenceOnOutput !== false && slide.title
+              ? `${slide.title}${slide.subtitle ? ' — ' + slide.subtitle : ''}`
+              : ''
+          const bodyLines: string[] =
+            slide.type === 'title'
+              ? [slide.title || '', slide.subtitle || ''].filter(Boolean)
+              : slide.content && slide.content.length
+                ? slide.content
+                : slide.title
+                  ? [slide.title]
+                  : []
           return (
             <div
               className="w-full max-w-full"
@@ -491,7 +506,7 @@ function LiveDisplayCard({
                 {/* lower-third uses the themed/custom background as
                     backdrop; lower-third-black uses pure black so the
                     bar reads like a broadcast caption (matches the
-                    congregation renderer below). */}
+                    congregation renderer). */}
                 {!isBlackBackdrop && settings.customBackground && (
                   <img
                     src={settings.customBackground}
@@ -499,20 +514,54 @@ function LiveDisplayCard({
                     className="absolute inset-0 w-full h-full object-cover opacity-40"
                   />
                 )}
+                {/* The bar itself. Using safe-area padding (≈6% horiz)
+                    and a translucent dark panel exactly like the .lt-box
+                    in the congregation route. Font sizes use container
+                    query units (cqw) so text scales with the preview
+                    width and never overflows on small operator panes
+                    or huge external displays. */}
                 <div
-                  className="absolute left-0 right-0"
+                  className="absolute left-0 right-0 flex items-center justify-center"
                   style={{
                     [ltPos]: 0,
                     height: `${ltHeightPct}%`,
+                    padding: '1.5% 6%',
+                    containerType: 'inline-size',
                   }}
                 >
-                  <SlideThumb
-                    slide={slide}
-                    themeKey={liveSlide?.background || settings.congregationScreenTheme}
-                    isLive={!!liveSlide}
-                    size="lg"
-                    settings={settings}
-                  />
+                  <div
+                    className="w-full h-full max-w-[60rem] mx-auto rounded-md flex flex-col items-center justify-center text-center text-white"
+                    style={{
+                      background: 'rgba(0,0,0,0.85)',
+                      backdropFilter: 'blur(8px)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      padding: '2% 4%',
+                      gap: '0.6cqw',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    {refLine && (
+                      <div
+                        className="opacity-70 font-medium"
+                        style={{ fontSize: 'clamp(8px, 2.4cqw, 22px)' }}
+                      >
+                        {refLine}
+                      </div>
+                    )}
+                    {bodyLines.map((line, i) => (
+                      <div
+                        key={i}
+                        className="font-semibold leading-tight"
+                        style={{
+                          fontSize: `clamp(10px, ${
+                            bodyLines.join(' ').length > 180 ? 3.2 : 4.2
+                          }cqw, 32px)`,
+                        }}
+                      >
+                        {line}
+                      </div>
+                    ))}
+                  </div>
                 </div>
                 <div className="absolute top-1 left-1 z-10">
                   <Badge className="text-[8px] px-1 py-0 font-bold uppercase tracking-wider border-0 bg-sky-600 text-white">

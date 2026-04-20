@@ -84,7 +84,7 @@ export function ScriptureDetectionView() {
       useAppStore.getState().setCurrentView('presenter')
     }
 
-    toast.success('Verse sent to Live Presenter')
+    // Suppressed per FRS — live pill is the source of truth.
   }, [])
 
   // ── Manual verse detection from text input ───────────────────────────
@@ -114,7 +114,7 @@ export function ScriptureDetectionView() {
           addDetectedVerse(detected)
           setLiveVerse(verse)
           addToVerseHistory(verse)
-          toast.success(`Detected: ${ref}`)
+          // Suppressed per FRS — Detected Verses panel is the source of truth.
 
           if (settings.autoGoLiveOnDetection) {
             goLiveWithVerse(detected)

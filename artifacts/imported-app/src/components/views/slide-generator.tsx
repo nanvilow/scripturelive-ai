@@ -93,7 +93,7 @@ export function SlideGeneratorView() {
       })
       setSlides(newSlides)
       setPreviewSlideIndex(0)
-      toast.success(`${verse.reference} (${newSlides.length} slides) added to schedule`)
+      // Suppressed per FRS — schedule list is the source of truth.
     } catch {
       toast.error('Failed to generate slides')
     } finally {
@@ -128,7 +128,7 @@ export function SlideGeneratorView() {
         })
         setSlides(aiSlides)
         setPreviewSlideIndex(0)
-        toast.success(`AI generated ${aiSlides.length} slides — added to schedule`)
+        // Suppressed per FRS — schedule list is the source of truth.
       } else {
         toast.error('AI could not generate slides. Try a different topic.')
       }
