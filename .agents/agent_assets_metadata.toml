@@ -18,3 +18,9 @@ id = "JeDDn_JzJGYlV2jFN1H96"
 uri = "file://.local/downloads/scripturelive-full.zip"
 type = "unspecified"
 title = "ScriptureLive — Full Project (ZIP)"
+
+[[outputs]]
+id = "gA4tqXpeR7fNj5WWphXWM"
+uri = "file://.local/downloads/scripturelive-windows-buildable.zip"
+type = "unspecified"
+title = "ScriptureLive AI — Windows Desktop Build (ZIP)"
