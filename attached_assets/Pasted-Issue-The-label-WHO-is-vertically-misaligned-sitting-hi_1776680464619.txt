@@ -1,0 +1,69 @@
+Issue:
+The label “WHO” is vertically misaligned—sitting higher than the accompanying text instead of aligning on the same baseline.
+
+Requirement:
+
+All text elements within the lower third must align consistently on a shared baseline or center line.
+The label (e.g., “WHO”) and its corresponding value must appear on the same horizontal line.
+
+Implementation Notes:
+
+Use a consistent layout model (recommended: flexbox or grid).
+Enforce vertical alignment:
+align-items: center; (for flex containers)
+Ensure consistent typography settings:
+Same line-height across elements
+Normalize margin and padding (remove default browser styles)
+Avoid mixing inline and block elements inconsistently.
+If label/value hierarchy is used:
+Wrap in a single container and control spacing with gap instead of margins.
+2. Typography Consistency
+
+Requirement:
+
+Ensure uniform font size scaling between labels and values unless intentionally styled.
+Prevent vertical shifting caused by:
+Different font weights
+Line-height inconsistencies
+Lock typography rendering so it behaves identically across:
+Preview
+Live display
+Secondary screen
+NDI output
+3. Live Preview Panels in Settings (New Feature)
+A. Typography & Appearance Panel
+
+Requirement:
+
+Add a small embedded preview screen beside settings controls.
+The preview must:
+Reflect typography changes in real time
+Show a sample lower third (e.g., “WHO: John Doe”)
+Match actual output styling and scaling
+B. Display & Output Panel
+
+Requirement:
+
+Add a second preview screen showing:
+How content appears on Live Display
+How it renders on NDI / Second Screen
+Must simulate:
+Lower Third mode
+Full Screen mode
+4. Real-Time Update Behavior
+Any change in settings must:
+Instantly update both preview panels
+Not require refresh or reload
+Preview must be an accurate representation of final rendered output (WYSIWYG).
+5. UI/UX Requirements
+Preview panels should:
+Be positioned beside or directly under settings sections
+Be clearly labeled:
+“Preview (Typography)”
+“Preview (Live Output)”
+Maintain lightweight performance (no lag while adjusting settings)
+6. Validation Criteria
+“WHO” and all text elements align perfectly on the same horizontal line
+No vertical offset or floating labels
+Typography changes reflect instantly in preview panels
+Preview accurately matches live and external outputs

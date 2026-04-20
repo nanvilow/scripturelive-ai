@@ -31,7 +31,11 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 .bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);pointer-events:none}
 .slide-content{position:relative;z-index:1;text-align:center;width:90%;max-width:90vw;padding:4vh 3vw;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .slide-reference{font-size:clamp(.85rem,1.4vw,1.6rem);opacity:.55;margin-bottom:1.4vh;letter-spacing:.06em}
-.slide-text{font-weight:500;line-height:1.35;margin:.4vh 0;word-wrap:break-word;overflow-wrap:break-word}
+.slide-text{font-weight:500;line-height:1.4;margin:0;padding:0;word-wrap:break-word;overflow-wrap:break-word}
+/* When the verse splitter hands us multiple short lines, render them
+   as a single flowing paragraph so words wrap on a consistent baseline
+   instead of each chunk floating on its own line. */
+.slide-paragraph{font-weight:500;line-height:1.4;margin:0;padding:0;word-wrap:break-word;overflow-wrap:break-word}
 .slide-title{font-weight:700;line-height:1.2}
 .slide-subtitle{opacity:.7;margin-top:1.4vh}
 .theme-worship{background:linear-gradient(135deg,#1e0a3c,#1e1b4b)}
@@ -153,7 +157,13 @@ function render(s){
   if(slide.type==='title'){
     txt='<div class="slide-title" style="font-size:'+fs.title+';'+sh+'">'+(slide.title||'')+'</div>'+(slide.subtitle?'<div class="slide-subtitle" style="font-size:'+fs.sub+';'+sh+'">'+slide.subtitle+'</div>':'');
   }else if(slide.content&&slide.content.length){
-    txt=slide.content.map(function(l){return '<div class="slide-text" style="font-size:'+fs.text+';'+sh+'">'+l+'</div>'}).join('');
+    // Flow verse / lyric lines into a single paragraph so all words
+    // sit on the same baseline. The verse splitter chunked the text
+    // for slide-grouping; the renderer should treat each slide's lines
+    // as one paragraph that wraps naturally — otherwise short opening
+    // words like "Who" hang on their own line, misaligned vs the rest.
+    var joined=slide.content.join(' ').replace(/\s+/g,' ').trim();
+    txt='<p class="slide-paragraph" style="font-size:'+fs.text+';'+sh+'">'+joined+'</p>';
   }else{
     txt='<div class="slide-text" style="opacity:.3;font-size:'+fs.text+'">'+(slide.title||'')+'</div>';
   }

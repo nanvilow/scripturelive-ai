@@ -42,6 +42,7 @@ import {
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { NdiOutputPanel } from './ndi-output-panel'
+import { OutputPreview } from '@/components/settings/output-preview'
 
 export function SettingsView() {
   const { settings, updateSettings, setSelectedTranslation } = useAppStore()
@@ -228,6 +229,15 @@ export function SettingsView() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* WYSIWYG preview — mirrors the secondary screen / NDI feed
+              so operators can see display-mode + position changes
+              instantly without opening the projector. Updates live as
+              they tweak any setting. */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <OutputPreview mode="full" label="Preview (Full Screen)" />
+            <OutputPreview mode="lower-third" label="Preview (Lower Third)" />
+          </div>
+          <Separator className="my-2" />
           <div className="space-y-2">
             <Label className="text-sm font-medium">Display Mode</Label>
             <div className="flex flex-wrap gap-2">
@@ -646,6 +656,22 @@ export function SettingsView() {
               </SelectContent>
             </Select>
           </div>
+
+          {/* WYSIWYG typography preview — every change above (font
+              size, alignment, shadow, family) is reflected here in
+              real time, with the same paragraph-flow rule the live
+              output uses, so labels and values always sit on the same
+              baseline. */}
+          <Separator className="my-2" />
+          <OutputPreview
+            mode="full"
+            label="Preview (Typography)"
+            sample={{
+              reference: 'Romans 8:34',
+              text:
+                'Who is he that condemneth? It is Christ that died, yea rather, that is risen again, who is even at the right hand of God, who also maketh intercession for us.',
+            }}
+          />
         </CardContent>
       </Card>
 
