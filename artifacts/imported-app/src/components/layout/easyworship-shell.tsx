@@ -116,7 +116,9 @@ export function TopToolbar({
     selectedMicrophoneId,
     setSelectedMicrophoneId,
     updateSettings,
+    settings,
   } = useAppStore()
+  const displayMode = settings.displayMode
 
   const [displays, setDisplays] = useState<DesktopDisplay[]>([])
   const [browserScreens, setBrowserScreens] = useState<BrowserScreen[]>([])
@@ -606,6 +608,69 @@ export function TopToolbar({
                 Open as window (manual fallback)
               </button>
             </div>
+          </PopoverContent>
+        </Popover>
+
+        {/* ── Output Display Mode (Full / Lower Third) ─────────────────
+            Per FRS: a clearly-labelled, easily-accessible top-level
+            control to switch the output between Full Screen and Lower
+            Third for BOTH the secondary screen AND the NDI feed. The
+            currently active mode is reflected in the trigger label and
+            the selected row. Changes are picked up by the global
+            <OutputBroadcaster /> on the next animation frame, so the
+            preview, the secondary screen and the NDI feed all flip
+            together with no refresh required. */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[11px] gap-1.5 border text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white"
+              title="Switch the live output between Full Screen and Lower Third overlay. Applies to both the secondary screen and NDI."
+            >
+              <MonitorPlay className="h-3 w-3" />
+              {displayMode === 'lower-third'
+                ? 'Lower Third'
+                : displayMode === 'lower-third-black'
+                  ? 'L/3 · Black'
+                  : 'Full Screen'}
+              <ChevronDown className="h-3 w-3 opacity-60" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-[260px] p-1 bg-zinc-950 border-zinc-800">
+            <div className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+              Output Display Mode
+            </div>
+            {[
+              { value: 'full', label: 'Full Screen', sub: 'Slide fills the screen' },
+              { value: 'lower-third', label: 'Lower Third', sub: 'Bar over background' },
+              { value: 'lower-third-black', label: 'Lower Third · Black', sub: 'Bar on black frame' },
+            ].map((opt) => {
+              const active = displayMode === opt.value
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => updateSettings({ displayMode: opt.value as 'full' | 'lower-third' | 'lower-third-black' })}
+                  className={cn(
+                    'w-full text-left px-2 py-1.5 rounded text-[11px] flex items-start gap-2 transition-colors',
+                    active
+                      ? 'bg-sky-500/15 text-sky-200 ring-1 ring-sky-500/40'
+                      : 'text-zinc-300 hover:bg-zinc-800',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'mt-0.5 inline-block h-1.5 w-1.5 rounded-full',
+                      active ? 'bg-sky-400' : 'bg-zinc-600',
+                    )}
+                  />
+                  <span className="flex-1">
+                    <span className="block font-medium">{opt.label}</span>
+                    <span className="block text-[10px] text-zinc-500">{opt.sub}</span>
+                  </span>
+                </button>
+              )
+            })}
           </PopoverContent>
         </Popover>
 

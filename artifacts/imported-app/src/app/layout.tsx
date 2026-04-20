@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { Toaster } from "@/components/ui/sonner";
+import { PathAwareToaster } from "@/components/ui/path-aware-toaster";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -50,7 +50,10 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
         {children}
-        <Toaster richColors position="bottom-right" />
+        {/* Toasts are suppressed on /congregation, /presenter, and the
+            NDI fan-out so display/output actions never appear on the
+            audience screen. The operator console still sees toasts. */}
+        <PathAwareToaster />
       </body>
     </html>
   );
