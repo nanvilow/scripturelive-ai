@@ -1,18 +1,16 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { PathAwareToaster } from "@/components/ui/path-aware-toaster";
 import { googleFontsHref } from "@/lib/fonts";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+// NOTE: We intentionally do NOT use next/font/google here. The Electron
+// desktop build runs `next build` on the operator's machine which often
+// has flaky or no internet access to fonts.googleapis.com, causing the
+// build to fail. System UI fonts render fine for the console; user-
+// selected display fonts are loaded at runtime via `googleFontsHref`
+// (which only fetches when an internet connection is available).
+const geistSans = { variable: "font-sans" };
+const geistMono = { variable: "font-mono" };
 
 export const metadata: Metadata = {
   title: "ScriptureLive AI — AI-Powered Bible & Worship Platform",
