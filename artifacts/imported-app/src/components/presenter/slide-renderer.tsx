@@ -3,6 +3,7 @@
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import type { Slide, AppSettings } from '@/lib/store'
+import { getFontStack } from '@/lib/fonts'
 
 export const slideThemes: Record<string, { bg: string; accent: string; label: string }> = {
   worship: { bg: 'from-violet-950 to-indigo-950', accent: 'text-violet-300', label: 'Worship' },
@@ -24,7 +25,6 @@ const fontSizeBaseCqi: Record<string, number> = {
   lg: 5.2,
   xl: 6.0,
 }
-const fontFamilyMap = { sans: 'font-sans', serif: 'font-serif', mono: 'font-mono' }
 
 // Pick a comfortable text size for the verse content given the line count and
 // total character count, so long passages still fit their frame and short ones
@@ -53,7 +53,13 @@ function SlideContent({
   large: boolean
   settings: Pick<AppSettings, 'fontSize' | 'fontFamily' | 'textShadow' | 'showReferenceOnOutput' | 'textScale'>
 }) {
-  const fontClass = fontFamilyMap[settings.fontFamily as keyof typeof fontFamilyMap] || 'font-sans'
+  // Resolve the actual CSS font-family stack from the central registry
+  // — every renderer (this component, OutputPreview, and the
+  // congregation HTML) reads from the same source of truth so font
+  // changes look identical across the operator preview, the secondary
+  // screen, and the NDI feed.
+  const fontStack = getFontStack(settings.fontFamily)
+  const fontStyle = { fontFamily: fontStack }
   const shadow = settings.textShadow ? { textShadow: '0 2px 12px rgba(0,0,0,0.4)' } : {}
   // Apply the operator's manual text-scale multiplier on top of the
   // base font size so they can dial readability live without rebuilding
@@ -63,7 +69,7 @@ function SlideContent({
 
   if (slide.type === 'title') {
     return (
-      <div className={cn(fontClass, 'flex flex-col items-center justify-center text-center w-full h-full overflow-hidden')}>
+      <div className={cn('flex flex-col items-center justify-center text-center w-full h-full overflow-hidden')} style={fontStyle}>
         <h2
           className={cn('font-bold leading-tight', theme.accent)}
           style={{ fontSize: large ? `${baseCqi * 1.6}cqi` : '1.6cqi', ...shadow }}
@@ -101,7 +107,7 @@ function SlideContent({
             ? 'text-justify'
             : 'text-center'
     return (
-      <div className={cn('w-full h-full flex flex-col justify-center overflow-hidden', itemsClass, textClass, fontClass)}>
+      <div className={cn('w-full h-full flex flex-col justify-center overflow-hidden', itemsClass, textClass)} style={fontStyle}>
         {settings.showReferenceOnOutput && (
           <p
             className={cn('opacity-60 mb-2 shrink-0 m-0 p-0', theme.accent, textClass)}
