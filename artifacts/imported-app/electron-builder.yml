@@ -19,9 +19,24 @@ files:
   - "node_modules/**/*"
   - "!node_modules/**/{*.md,*.markdown,*.ts,*.map,test,tests,__tests__,docs,doc,example,examples,LICENSE*}"
   - "!node_modules/.cache/**/*"
+  # Exclude dev-only native watchers Next.js drags in transitively. They are
+  # only used in `next dev` and trip electron-builder's node-gyp rebuild on
+  # Windows machines without Python / VS Build Tools installed.
+  - "!node_modules/@parcel/watcher/**/*"
+  - "!node_modules/@parcel/watcher-*/**/*"
+  - "!node_modules/.pnpm/@parcel+watcher@*/**/*"
+  - "!node_modules/.pnpm/@parcel+watcher-*/**/*"
+  - "!node_modules/fsevents/**/*"
+  - "!node_modules/.pnpm/fsevents@*/**/*"
 asarUnpack:
   - "node_modules/grandiose/**/*"
-npmRebuild: true
+# Skip electron-builder's automatic `npm rebuild` step. The native modules
+# we actually ship at runtime (`grandiose` for NDI) ship with prebuilds or
+# are built once during `pnpm install`. Re-running node-gyp here forces
+# every Windows user to install Python + Visual Studio Build Tools, which
+# we don't want for a one-click installer.
+npmRebuild: false
+buildDependenciesFromSource: false
 extraResources:
   - from: .next/standalone
     to: app/.next/standalone
