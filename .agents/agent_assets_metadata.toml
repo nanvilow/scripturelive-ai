@@ -2,25 +2,7 @@ uploads = []
 generated = []
 
 [[outputs]]
-id = "N_0ICZ0Toob_oK920vtiT"
-uri = "file://.local/downloads/scripturelive-webapp.zip"
-type = "unspecified"
-title = "ScriptureLive Web App (ZIP)"
-
-[[outputs]]
-id = "s5Q9YDZb41zxikuUiFbol"
-uri = "file://.local/downloads/scripturelive-webapp.tar.gz"
-type = "unspecified"
-title = "ScriptureLive Web App (tar.gz)"
-
-[[outputs]]
-id = "JeDDn_JzJGYlV2jFN1H96"
-uri = "file://.local/downloads/scripturelive-full.zip"
-type = "unspecified"
-title = "ScriptureLive — Full Project (ZIP)"
-
-[[outputs]]
 id = "gA4tqXpeR7fNj5WWphXWM"
 uri = "file://.local/downloads/scripturelive-windows-buildable.zip"
 type = "unspecified"
-title = "ScriptureLive v0.2.2 — Google Fonts removed"
+title = "ScriptureLive v0.2.2 — with auto-retry for flaky internet"
