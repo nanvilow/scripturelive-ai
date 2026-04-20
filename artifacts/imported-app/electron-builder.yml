@@ -58,7 +58,7 @@ win:
   target:
     - target: nsis
       arch: [x64]
-  icon: build-resources/icon.png
+  icon: build-resources/icon.ico
   artifactName: "${productName}-${version}-Setup-${arch}.${ext}"
   # Authenticode code signing.
   # electron-builder reads the certificate from these standard env vars:

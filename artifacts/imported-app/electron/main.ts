@@ -1,9 +1,54 @@
-import { app, BrowserWindow, ipcMain, shell, screen } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, screen, dialog } from 'electron'
 import path from 'node:path'
 import { spawn, ChildProcess } from 'node:child_process'
 import { createServer } from 'node:net'
 import fs from 'node:fs'
 import { NdiService, NdiStartOptions as NdiServiceStartOptions, NdiStatus } from './ndi-service'
+
+let logFilePath = ''
+function setupFileLogging() {
+  try {
+    const dir = app.getPath('userData')
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    logFilePath = path.join(dir, 'launch.log')
+    const stream = fs.createWriteStream(logFilePath, { flags: 'w' })
+    const wrap = (orig: (...args: unknown[]) => void, prefix: string) =>
+      (...args: unknown[]) => {
+        try {
+          const line = `[${new Date().toISOString()}] ${prefix} ` +
+            args.map(a => (a instanceof Error ? `${a.message}\n${a.stack}` : typeof a === 'string' ? a : JSON.stringify(a))).join(' ') + '\n'
+          stream.write(line)
+        } catch { /* ignore */ }
+        try { orig(...args) } catch { /* ignore */ }
+      }
+    console.log = wrap(console.log.bind(console), 'LOG')
+    console.error = wrap(console.error.bind(console), 'ERR')
+    console.warn = wrap(console.warn.bind(console), 'WRN')
+    console.log('ScriptureLive AI starting', {
+      version: app.getVersion(),
+      platform: process.platform,
+      arch: process.arch,
+      execPath: process.execPath,
+      resourcesPath: process.resourcesPath,
+      userData: dir,
+    })
+    process.on('uncaughtException', (err) => { console.error('uncaughtException', err) })
+    process.on('unhandledRejection', (err) => { console.error('unhandledRejection', err) })
+  } catch (e) {
+    // best-effort: file logging optional
+  }
+}
+
+function fatalError(stage: string, err: unknown) {
+  const msg = err instanceof Error ? `${err.message}\n${err.stack || ''}` : String(err)
+  console.error(`[fatal:${stage}]`, msg)
+  try {
+    dialog.showErrorBox(
+      'ScriptureLive AI failed to start',
+      `Stage: ${stage}\n\n${msg}\n\nFull log saved to:\n${logFilePath}\n\nPlease send this log file to support.`
+    )
+  } catch { /* ignore */ }
+}
 
 type NdiStartOptions = NdiServiceStartOptions & {
   layout?: 'mirror' | 'ndi'
@@ -91,23 +136,25 @@ async function startNextServer(): Promise<string> {
     stdio: 'pipe',
   })
 
-  nextProcess.stdout?.on('data', (b) => process.stdout.write(`[next] ${b}`))
-  nextProcess.stderr?.on('data', (b) => process.stderr.write(`[next:err] ${b}`))
+  nextProcess.stdout?.on('data', (b) => console.log(`[next] ${b.toString().trimEnd()}`))
+  nextProcess.stderr?.on('data', (b) => console.error(`[next:err] ${b.toString().trimEnd()}`))
   nextProcess.on('exit', (code) => {
-    if (code !== 0 && !app.isReady()) app.quit()
+    console.log(`[next] process exited with code ${code}`)
   })
 
   // Wait for server readiness
   const url = `http://127.0.0.1:${port}`
-  const deadline = Date.now() + 30_000
+  const deadline = Date.now() + 60_000
+  let lastErr: unknown = null
   while (Date.now() < deadline) {
     try {
       const res = await fetch(`${url}/api/output?format=json`)
       if (res.ok) return url
-    } catch { /* not ready */ }
+      lastErr = new Error(`HTTP ${res.status}`)
+    } catch (e) { lastErr = e }
     await new Promise((r) => setTimeout(r, 250))
   }
-  throw new Error('Next server failed to start')
+  throw new Error(`Next server failed to start within 60s. Last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`)
 }
 
 async function createMainWindow(url: string) {
@@ -290,16 +337,27 @@ function setupIpc() {
 }
 
 app.whenReady().then(async () => {
-  setupIpc()
+  setupFileLogging()
+  try {
+    setupIpc()
+  } catch (err) {
+    fatalError('setupIpc', err); app.quit(); return
+  }
   try {
     appBaseUrl = await startNextServer()
   } catch (err) {
-    console.error('[main] Failed to start Next server:', err)
-    app.quit()
-    return
+    fatalError('startNextServer', err); app.quit(); return
   }
-  await createMainWindow(appBaseUrl)
-  initAutoUpdater(() => mainWindow)
+  try {
+    await createMainWindow(appBaseUrl)
+  } catch (err) {
+    fatalError('createMainWindow', err); app.quit(); return
+  }
+  try {
+    initAutoUpdater(() => mainWindow)
+  } catch (err) {
+    console.error('[updater] init failed (non-fatal):', err)
+  }
 })
 
 app.on('window-all-closed', async () => {
