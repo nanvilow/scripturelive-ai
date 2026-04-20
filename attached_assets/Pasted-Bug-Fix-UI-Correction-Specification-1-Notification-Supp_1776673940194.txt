@@ -1,0 +1,75 @@
+Bug Fix & UI Correction Specification
+1. Notification Suppression (Critical Fix)
+
+Issue:
+System notifications are still appearing on screen despite prior request to disable them.
+
+Requirement:
+
+Completely disable all display-related notifications.
+Notifications must not render on:
+Preview display
+Live display
+NDI output
+Secondary screen
+
+Implementation Notes:
+
+Remove or bypass the notification trigger at the source (not just hiding via CSS).
+Ensure no DOM element or render layer is injecting notification UI into output feeds.
+If notifications are system-bound, add a global flag:
+notificationsEnabled = false
+2. Lower Third Overlay Scaling (Critical Fix)
+
+Issue:
+Lower third text is not properly fitting within:
+
+Preview display
+Live display
+Secondary screen
+
+Requirement:
+
+The lower third overlay must be fully responsive and scale correctly across all output resolutions.
+Text and container must:
+Stay within safe margins
+Maintain consistent positioning (bottom-third area)
+Avoid overflow, clipping, or misalignment
+
+Implementation Notes:
+
+Use relative units (%, vw, vh) instead of fixed px values
+Apply safe-area constraints:
+Horizontal padding: ~5–10%
+Vertical positioning: bottom 10–15% of screen
+Enable dynamic text scaling:
+Auto-resize font based on container width
+Ensure consistent aspect ratio handling across:
+Preview canvas
+Live render output
+External display
+3. Display Consistency Across Outputs
+
+Requirement:
+
+The lower third must render identically across:
+Preview
+Live display
+NDI output
+Second screen
+Any differences in resolution must be handled via responsive scaling logic, not separate layouts.
+4. Real-Time Rendering Fix
+
+Requirement:
+
+Any updates to lower third text or layout must:
+Reflect instantly across all outputs
+Not require refresh or reinitialization
+5. Validation Criteria
+
+The fix is considered complete when:
+
+No notification appears anywhere in the system outputs
+Lower third text fits perfectly within all display environments
+Layout remains consistent across different screen sizes
+No clipping, overflow, or misalignment occurs

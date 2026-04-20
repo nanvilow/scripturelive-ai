@@ -174,7 +174,9 @@ export function BibleLookupCompact() {
       s.setLiveSlideIndex(0)
       s.setIsLive(true)
     }
-    toast.success(live ? `${reference} sent live` : `${reference} added to schedule`)
+    // Notifications for routine display actions are intentionally
+    // suppressed per FRS — the live indicator pill in the toolbar is
+    // the source of truth.
   }
 
   const sendChapter = (live: boolean) => {
@@ -201,7 +203,9 @@ export function BibleLookupCompact() {
       s.setLiveSlideIndex(0)
       s.setIsLive(true)
     }
-    toast.success(live ? `${reference} sent live` : `${reference} added to schedule`)
+    // Notifications for routine display actions are intentionally
+    // suppressed per FRS — the live indicator pill in the toolbar is
+    // the source of truth.
   }
 
   const onChange = (v: string) => {
@@ -482,7 +486,7 @@ export function ScriptureDetectionCompact() {
           addDetectedVerse(det)
           addToVerseHistory(verse)
           sendDetectedToSchedule(det, settings.autoGoLiveOnDetection)
-          toast.success(`Detected: ${ref}`)
+          // Suppressed per FRS — Detected Verses panel is the source of truth.
         }
       } catch {
         /* ignore */
@@ -693,7 +697,7 @@ export function SlideGeneratorCompact() {
         subtitle: verse.translation,
         slides,
       })
-      toast.success(`${slides.length} slides added`)
+      // Suppressed per FRS — schedule list is the source of truth.
       setVerseRef('')
     } catch {
       toast.error('Failed')
@@ -732,7 +736,7 @@ export function SlideGeneratorCompact() {
         return
       }
       addScheduleItem({ type: 'sermon', title: t, slides })
-      toast.success(`AI generated ${slides.length} slides`)
+      // Suppressed per FRS — schedule list is the source of truth.
       setTopic('')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'AI generation failed')
@@ -818,7 +822,7 @@ export function SermonNotesCompact() {
       background: settings.congregationScreenTheme,
     }))
     addScheduleItem({ type: 'sermon', title: titleStr, slides })
-    toast.success(`${slides.length} sermon slides added`)
+    // Suppressed per FRS — schedule list is the source of truth.
     setText('')
     setTitle('')
   }
@@ -891,7 +895,7 @@ export function WorshipLyricsCompact() {
       }
     })
     addScheduleItem({ type: 'song', title: titleStr, slides })
-    toast.success(`${titleStr} added (${slides.length} slides)`)
+    // Suppressed per FRS — schedule list is the source of truth.
     setLyrics('')
     setTitle('')
   }

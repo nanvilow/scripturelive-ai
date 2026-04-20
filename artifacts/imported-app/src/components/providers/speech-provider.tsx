@@ -126,7 +126,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                 chapter: top.chapter,
                 verseStart: top.verse,
               })
-              toast.success(`Heard passage: ${top.reference}`)
+              // Suppressed per FRS — Detected Verses panel is the source of truth.
               if (state.settings.autoGoLiveOnDetection) {
                 const slide = {
                   id: `slide-${Date.now()}`,
@@ -178,7 +178,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             useAppStore.getState().addDetectedVerse(detected)
             useAppStore.getState().setLiveVerse(verse)
             useAppStore.getState().addToVerseHistory(verse)
-            toast.success(`Detected: ${ref}`)
+            // Suppressed per FRS — Detected Verses panel is the source of truth.
 
             // Auto go-live if enabled (read latest state to avoid stale closures)
             const latestState = useAppStore.getState()
@@ -199,7 +199,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               useAppStore.getState().setPreviewSlideIndex(newLiveIndex)
               useAppStore.getState().setLiveSlideIndex(newLiveIndex)
               useAppStore.getState().setIsLive(true)
-              toast.success('Auto-detected verse sent to Live Presenter')
+              // Suppressed per FRS — live pill is the source of truth.
             }
           }
         } catch {
