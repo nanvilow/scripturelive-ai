@@ -7,7 +7,7 @@
     "dev": "cross-env DATABASE_URL=file:../db/custom.db next dev -H 0.0.0.0 -p ${PORT:-3000}",
     "build": "cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build",
     "start": "cross-env DATABASE_URL=file:../db/custom.db NODE_ENV=production next start -H 0.0.0.0 -p ${PORT:-3000}",
-    "postinstall": "prisma generate",
+    "postinstall": "node -e \"process.exit(0)\"",
     "lint": "eslint .",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",

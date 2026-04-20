@@ -76,27 +76,45 @@ if exist "%PROGRAMFILES%\NDI\NDI 5 SDK\Bin\x64\Processing.NDI.Lib.x64.dll" (
   color 0B
 )
 
-REM ---- Step 3: Install dependencies -------------------------------
+REM ---- Step 3: Install dependencies (with auto-retry) -------------
 echo.
 echo [3/6] Installing dependencies (this takes 3-5 minutes)...
 echo       Output is being captured to build-log.txt ...
+set INSTALL_TRY=0
+:RETRY_INSTALL
+set /a INSTALL_TRY+=1
 call pnpm install >> "%LOGFILE%" 2>&1
 if errorlevel 1 (
+  if !INSTALL_TRY! lss 3 (
+    echo       Attempt !INSTALL_TRY! failed (network glitch?), retrying in 5 seconds...
+    timeout /t 5 /nobreak >nul
+    goto RETRY_INSTALL
+  )
   color 0C
   echo.
-  echo ERROR: pnpm install failed. See log: %LOGFILE%
+  echo ERROR: pnpm install failed after 3 attempts. See log: %LOGFILE%
+  echo Common cause: unstable internet. Try a different network and re-run.
   pause
   exit /b 1
 )
 echo       Dependencies installed OK
 
-REM ---- Step 4: Generate Prisma client -----------------------------
+REM ---- Step 4: Generate Prisma client (with auto-retry) -----------
 echo.
 echo [4/6] Generating database client...
+set PRISMA_TRY=0
+:RETRY_PRISMA
+set /a PRISMA_TRY+=1
 call pnpm exec prisma generate >> "%LOGFILE%" 2>&1
 if errorlevel 1 (
+  if !PRISMA_TRY! lss 3 (
+    echo       Attempt !PRISMA_TRY! failed (network glitch?), retrying in 5 seconds...
+    timeout /t 5 /nobreak >nul
+    goto RETRY_PRISMA
+  )
   color 0C
-  echo ERROR: prisma generate failed. See log: %LOGFILE%
+  echo ERROR: prisma generate failed after 3 attempts. See log: %LOGFILE%
+  echo Common cause: unstable internet downloading the Prisma engine.
   pause
   exit /b 1
 )
