@@ -13,9 +13,15 @@ title ScriptureLive AI - Build Windows Installer
 color 0B
 cd /d "%~dp0"
 
+set "LOGFILE=%CD%\build-log.txt"
+echo. > "%LOGFILE%"
+
 echo.
 echo ================================================================
 echo   ScriptureLive AI - One-click Windows Build
+echo ================================================================
+echo   Full log will be saved to:
+echo   %LOGFILE%
 echo ================================================================
 echo.
 
@@ -39,11 +45,12 @@ echo [1/6] Checking pnpm...
 where pnpm >nul 2>nul
 if errorlevel 1 (
   echo       pnpm not found. Installing globally with npm...
-  call npm install -g pnpm
+  call npm install -g pnpm >> "%LOGFILE%" 2>&1
   if errorlevel 1 (
     color 0C
     echo.
     echo ERROR: Failed to install pnpm. Run "npm install -g pnpm" manually.
+    echo See log: %LOGFILE%
     pause
     exit /b 1
   )
@@ -72,11 +79,12 @@ if exist "%PROGRAMFILES%\NDI\NDI 5 SDK\Bin\x64\Processing.NDI.Lib.x64.dll" (
 REM ---- Step 3: Install dependencies -------------------------------
 echo.
 echo [3/6] Installing dependencies (this takes 3-5 minutes)...
-call pnpm install
+echo       Output is being captured to build-log.txt ...
+call pnpm install >> "%LOGFILE%" 2>&1
 if errorlevel 1 (
   color 0C
   echo.
-  echo ERROR: pnpm install failed. Scroll up to see the error.
+  echo ERROR: pnpm install failed. See log: %LOGFILE%
   pause
   exit /b 1
 )
@@ -85,10 +93,10 @@ echo       Dependencies installed OK
 REM ---- Step 4: Generate Prisma client -----------------------------
 echo.
 echo [4/6] Generating database client...
-call pnpm exec prisma generate
+call pnpm exec prisma generate >> "%LOGFILE%" 2>&1
 if errorlevel 1 (
   color 0C
-  echo ERROR: prisma generate failed.
+  echo ERROR: prisma generate failed. See log: %LOGFILE%
   pause
   exit /b 1
 )
@@ -97,10 +105,11 @@ echo       Prisma client OK
 REM ---- Step 5: Build Next.js bundle -------------------------------
 echo.
 echo [5/6] Building app bundle (2-4 minutes)...
-call pnpm run build
+echo       Output is being captured to build-log.txt ...
+call pnpm run build >> "%LOGFILE%" 2>&1
 if errorlevel 1 (
   color 0C
-  echo ERROR: Next.js build failed.
+  echo ERROR: Next.js build failed. See log: %LOGFILE%
   pause
   exit /b 1
 )
@@ -108,15 +117,26 @@ echo       App bundle OK
 
 REM ---- Step 6: Build Windows installer ----------------------------
 echo.
-echo [6/6] Packaging Windows installer (5-8 minutes - native NDI compile)...
-call pnpm package:win
+echo [6/6] Packaging Windows installer (3-5 minutes)...
+echo       Output is being captured to build-log.txt ...
+call pnpm package:win >> "%LOGFILE%" 2>&1
 if errorlevel 1 (
   color 0C
   echo.
-  echo ERROR: electron-builder failed. Common causes:
-  echo   - NDI SDK not installed (re-check step 2)
-  echo   - Antivirus blocking files in dist\
-  echo   - Long path - move folder to C:\ScriptureLive
+  echo ================================================================
+  echo ERROR: electron-builder failed.
+  echo ================================================================
+  echo The complete error message has been saved to:
+  echo    %LOGFILE%
+  echo.
+  echo Please open that file in Notepad and send me the LAST 50 lines.
+  echo Common causes:
+  echo   - Antivirus blocking files in release\
+  echo   - Path too long - move folder to C:\SL  (shorter name)
+  echo   - File Explorer open in release\ folder - close it
+  echo.
+  echo Opening the log now...
+  start notepad "%LOGFILE%"
   pause
   exit /b 1
 )
@@ -128,15 +148,15 @@ echo ================================================================
 echo   BUILD COMPLETE
 echo ================================================================
 echo.
-echo   Installer is in:  %CD%\dist\
+echo   Installer location:  %CD%\release\
 echo.
-dir /b dist\*.exe 2>nul
+dir /b release\*.exe 2>nul
 echo.
 echo   Double-click the .exe to install ScriptureLive AI.
 echo   (Windows SmartScreen may warn - click "More info" -^> "Run anyway")
 echo.
-echo   Opening dist folder...
-start "" "%CD%\dist"
+echo   Opening release folder...
+start "" "%CD%\release"
 echo.
 pause
 endlocal
