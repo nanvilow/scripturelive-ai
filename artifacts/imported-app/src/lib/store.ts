@@ -96,6 +96,11 @@ export interface AppSettings {
   // existing /api/output broadcast.
   displayRatio: 'fill' | '16:9' | '4:3' | '21:9'
   textScale: number
+  // Horizontal alignment of slide and lower-third text. Defaults to
+  // 'center'. Operators can pick left / center / right / justify from
+  // the Typography settings card; the change is broadcast to the
+  // secondary screen and NDI feed in real time.
+  textAlign: 'left' | 'center' | 'right' | 'justify'
 }
 
 interface AppState {
@@ -214,6 +219,7 @@ const defaultSettings: AppSettings = {
   showReferenceOnOutput: true,
   displayRatio: 'fill',
   textScale: 1,
+  textAlign: 'center',
   congregationScreenTheme: 'minimal',
   speechLanguage: 'en-US',
   autoGoLiveOnDetection: false,

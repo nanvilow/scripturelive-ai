@@ -40,9 +40,15 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 .theme-christmas{background:linear-gradient(135deg,#3c0a0a,#4c0519)}
 .theme-praise{background:linear-gradient(135deg,#3c3a0a,#451a03)}
 .theme-minimal{background:linear-gradient(135deg,#0a0a0a,#171717)}
-.lower-third{position:absolute;left:0;right:0;display:flex;align-items:center;justify-content:center;padding:1.5rem 3rem}
-.lower-third.bottom{bottom:0}.lower-third.top{top:0}
-.lt-box{width:100%;max-width:60rem;background:rgba(0,0,0,.85);backdrop-filter:blur(8px);border-radius:.5rem;padding:1.5rem 2.5rem;border:1px solid rgba(255,255,255,.1)}
+.lower-third{position:absolute;left:0;right:0;display:flex;align-items:center;justify-content:center;padding:0 6%;container-type:size}
+.lower-third.bottom{bottom:6%}.lower-third.top{top:6%}
+.lt-box{width:100%;max-width:68rem;background:rgba(0,0,0,.85);backdrop-filter:blur(8px);border-radius:.5rem;padding:3% 5%;border:1px solid rgba(255,255,255,.1);display:flex;flex-direction:column;justify-content:center;overflow:hidden;height:100%;box-sizing:border-box}
+.lt-box .slide-reference{font-size:clamp(.7rem,min(2cqw,4cqh),1.4rem);opacity:.7;font-weight:500;line-height:1.2;margin-bottom:.6cqh}
+.lt-box .slide-text,.lt-box .slide-title{font-weight:600;line-height:1.25}
+.align-left{text-align:left;align-items:flex-start}
+.align-right{text-align:right;align-items:flex-end}
+.align-center{text-align:center;align-items:center}
+.align-justify{text-align:justify;align-items:stretch}
 #status{position:fixed;top:1rem;right:1rem;display:flex;align-items:center;gap:.5rem;z-index:100;font-size:.75rem;color:#999;opacity:0;transition:opacity .3s}
 #status.visible{opacity:1}
 #status-dot{width:8px;height:8px;border-radius:50%;background:#ef4444;animation:pulse 1.5s infinite}
@@ -161,10 +167,20 @@ function render(s){
     // lower-third-black: hide the custom/themed background so the bar
     // reads like a broadcast caption; plain lower-third keeps it.
     var ltBg=(dm==='lower-third-black')?'':bg;
-    var ltStyle='position:absolute;left:0;right:0;height:'+hPct+'%;'+(pos==='top'?'top:0;':'bottom:0;');
-    $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:#000;">'+ltBg+'<div class="lower-third '+pos+'" style="'+ltStyle+'"><div class="lt-box">'+ref+txt+'</div></div></div>';
+    // Lift bar 6% off the chosen edge — operators reported the
+    // previous build sat too low against the bezel.
+    var ltStyle='position:absolute;left:0;right:0;height:'+hPct+'%;'+(pos==='top'?'top:6%;':'bottom:6%;');
+    var alignClass='align-'+(st.textAlign||'center');
+    // Re-size body text inside the bar based on character density so
+    // long verses shrink to fit. Mirrors the preview logic.
+    var ltBand=totalChars>320?5:totalChars>180?7:totalChars>90?9:11;
+    var ltFs='clamp(.6rem,min('+(ltBand*0.55)+'cqw,'+ltBand+'cqh),2rem)';
+    var ltTxt=txt.replace(/font-size:[^;"]+;?/g,'font-size:'+ltFs+';');
+    $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:#000;">'+ltBg+'<div class="lower-third '+pos+'" style="'+ltStyle+'"><div class="lt-box '+alignClass+'">'+ref+ltTxt+'</div></div></div>';
   }else{
-    $('output').innerHTML='<div class="'+tc+'" style="width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:center;">'+bg+'<div class="slide-content">'+ref+txt+'</div></div>';
+    var ta=st.textAlign||'center';
+    var jc=ta==='left'?'flex-start':ta==='right'?'flex-end':'center';
+    $('output').innerHTML='<div class="'+tc+'" style="width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';">'+bg+'<div class="slide-content" style="text-align:'+ta+';">'+ref+txt+'</div></div>';
   }
   $('output').classList.remove('hidden');
 }

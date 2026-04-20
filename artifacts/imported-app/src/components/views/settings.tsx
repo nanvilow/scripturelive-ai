@@ -34,6 +34,10 @@ import {
   Zap,
   MonitorSpeaker,
   Copy,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  AlignJustify,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -573,6 +577,40 @@ export function SettingsView() {
                   {s.label}
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* ── Text Alignment ─────────────────────────────────────
+              Operators asked for the same left / center / right /
+              justify control they have in EasyWorship. Selection is
+              broadcast to the secondary screen + NDI in real time. */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Text Alignment</Label>
+            <div className="flex gap-1.5 p-1 rounded-md bg-muted w-fit border border-border">
+              {([
+                { value: 'left' as const, Icon: AlignLeft, label: 'Align left' },
+                { value: 'center' as const, Icon: AlignCenter, label: 'Align center' },
+                { value: 'right' as const, Icon: AlignRight, label: 'Align right' },
+                { value: 'justify' as const, Icon: AlignJustify, label: 'Justify' },
+              ]).map(({ value, Icon, label }) => {
+                const active = (settings.textAlign ?? 'center') === value
+                return (
+                  <button
+                    key={value}
+                    title={label}
+                    aria-label={label}
+                    onClick={() => updateSettings({ textAlign: value })}
+                    className={cn(
+                      'h-8 w-9 inline-flex items-center justify-center rounded transition-colors border',
+                      active
+                        ? 'bg-amber-500/20 border-amber-500/50 text-amber-200'
+                        : 'bg-transparent border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+                    )}
+                  >
+                    <Icon className="h-4 w-4" />
+                  </button>
+                )
+              })}
             </div>
           </div>
 
