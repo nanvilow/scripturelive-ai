@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useAppStore, type AppSettings, type BibleTranslation, type DisplayMode, type OutputDestination } from '@/lib/store'
+import { BibleOfflineDownloads } from '@/components/settings/bible-downloads'
 import { TRANSLATIONS_INFO } from '@/lib/bible-api'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -966,6 +967,9 @@ export function SettingsView() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Offline Bible translations — full-Bible cache for no-internet services */}
+      <BibleOfflineDownloads />
 
       {/* Reset */}
       <div className="flex justify-end">

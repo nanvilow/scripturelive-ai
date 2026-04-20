@@ -1,6 +1,15 @@
 appId: ai.scripturelive.desktop
 productName: ScriptureLive AI
 copyright: ScriptureLive AI
+# electron-updater pulls signed installers from this GitHub repo.
+# Update `owner` and `repo` to match where your CI publishes
+# releases. The Build Windows Installer GH workflow uses GITHUB_TOKEN
+# so no extra config is required.
+publish:
+  - provider: github
+    owner: wassmedia
+    repo: scripturelive-ai
+    releaseType: release
 directories:
   output: release
   buildResources: build-resources

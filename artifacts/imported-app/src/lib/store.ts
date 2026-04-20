@@ -44,7 +44,7 @@ export interface BibleVerse {
 
 export interface Slide {
   id: string
-  type: 'title' | 'verse' | 'lyrics' | 'custom' | 'blank'
+  type: 'title' | 'verse' | 'lyrics' | 'custom' | 'blank' | 'announcement'
   title: string
   subtitle: string
   content: string[]
@@ -182,6 +182,18 @@ interface AppState {
   outputEnabled: boolean
   setOutputEnabled: (b: boolean) => void
 
+  // Sermon notes shown on the stage-display window. Persisted with
+  // the rest of the operator settings so refreshing the console
+  // doesn't lose what the speaker is reading from.
+  sermonNotes: string
+  setSermonNotes: (s: string) => void
+
+  // Countdown timer end time (Unix ms). null = inactive.
+  // The stage display reads this via the SSE feed and renders a
+  // ticking timer. Operators can set it from the Output toolbar.
+  countdownEndAt: number | null
+  setCountdown: (endAt: number | null) => void
+
   // Lyrics
   currentSongSections: SongSection[]
   setCurrentSongSections: (s: SongSection[]) => void
@@ -305,6 +317,11 @@ export const useAppStore = create<AppState>()(
       outputEnabled: true,
       setOutputEnabled: (b) => set({ outputEnabled: b }),
 
+      sermonNotes: '',
+      setSermonNotes: (s) => set({ sermonNotes: s }),
+      countdownEndAt: null,
+      setCountdown: (endAt) => set({ countdownEndAt: endAt }),
+
       // Lyrics
       currentSongSections: [],
       setCurrentSongSections: (s) => set({ currentSongSections: s }),
@@ -385,6 +402,7 @@ export const useAppStore = create<AppState>()(
         selectedTranslation: state.selectedTranslation,
         schedule: state.schedule,
         activeLibraryTab: state.activeLibraryTab,
+        sermonNotes: state.sermonNotes,
       }),
     }
   )

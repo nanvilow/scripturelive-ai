@@ -10,16 +10,28 @@
 
 export type OutputEventType = 'state' | 'ping'
 
+export interface OutputSlide {
+  id: string
+  type: string
+  title: string
+  subtitle: string
+  content: string[]
+  background: string
+  notes?: string
+}
+
 export interface OutputState {
   type: 'slide' | 'clear'
-  slide?: {
-    id: string
-    type: string
-    title: string
-    subtitle: string
-    content: string[]
-    background: string
-  } | null
+  slide?: OutputSlide | null
+  // Optional next-slide hint for the stage display (speaker view).
+  nextSlide?: OutputSlide | null
+  // Optional 1-based progress info for the stage display.
+  slideIndex?: number
+  slideTotal?: number
+  // Speaker notes and a countdown timer the speaker can see on
+  // the stage display. countdownEndAt is a Unix-ms epoch.
+  sermonNotes?: string
+  countdownEndAt?: number | null
   isLive: boolean
   displayMode: string
   settings: {
@@ -78,7 +90,7 @@ export function updateOutputState(partial: Partial<OutputState>): OutputState {
   }
 
   // Broadcast to all SSE subscribers
-  broadcast({ type: 'state', ...currentState })
+  broadcast({ ...currentState, event: 'state' })
 
   return currentState
 }
@@ -93,7 +105,7 @@ export function subscribeToOutput(write: (data: string) => boolean): { id: strin
 
   // Send current state immediately
   try {
-    write(`data: ${JSON.stringify({ type: 'state', ...currentState })}\n\n`)
+    write(`data: ${JSON.stringify({ ...currentState, event: 'state' })}\n\n`)
   } catch {
     // Client might have disconnected already
   }

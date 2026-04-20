@@ -45,6 +45,7 @@ export type ScriptureLiveDesktop = {
   output: {
     openWindow: (opts?: { displayId?: number }) => Promise<{ ok: boolean; error?: string }>
     listDisplays?: () => Promise<Array<{ id: number; label: string; primary: boolean; width: number; height: number }>>
+    openStageDisplay?: (opts?: { displayId?: number }) => Promise<{ ok: boolean; error?: string }>
   }
 }
 

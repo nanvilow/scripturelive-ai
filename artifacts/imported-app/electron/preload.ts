@@ -61,6 +61,19 @@ const api = {
     listDisplays: (): Promise<
       Array<{ id: number; label: string; primary: boolean; width: number; height: number }>
     > => ipcRenderer.invoke('output:list-displays'),
+    openStageDisplay: (
+      opts?: { displayId?: number },
+    ): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('output:open-stage', opts),
+  },
+  updater: {
+    onStatus: (
+      cb: (status: { state: 'idle' | 'downloading' | 'ready'; version?: string; percent?: number; bytesPerSecond?: number }) => void,
+    ) => {
+      const handler = (_e: unknown, status: Parameters<typeof cb>[0]) => cb(status)
+      ipcRenderer.on('updater:status', handler)
+      return () => ipcRenderer.removeListener('updater:status', handler)
+    },
   },
 }
 
