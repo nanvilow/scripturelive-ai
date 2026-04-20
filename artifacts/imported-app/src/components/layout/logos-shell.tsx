@@ -489,11 +489,15 @@ function LiveDisplayCard({
             settings.showReferenceOnOutput !== false && slide.title
               ? `${slide.title}${slide.subtitle ? ' — ' + slide.subtitle : ''}`
               : ''
+          // Render verse / lyric content as a single paragraph so all
+          // words sit on the same baseline. Title slides keep title +
+          // subtitle as two distinct lines because they're a real
+          // hierarchy, not a wrapped paragraph.
           const bodyLines: string[] =
             slide.type === 'title'
               ? [slide.title || '', slide.subtitle || ''].filter(Boolean)
               : slide.content && slide.content.length
-                ? slide.content
+                ? [slide.content.join(' ').replace(/\s+/g, ' ').trim()]
                 : slide.title
                   ? [slide.title]
                   : []

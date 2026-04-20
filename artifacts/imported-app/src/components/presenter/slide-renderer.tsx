@@ -85,26 +85,44 @@ function SlideContent({
   if (slide.type === 'verse' || slide.type === 'lyrics') {
     const totalChars = slide.content.reduce((n, l) => n + l.length, 0)
     const contentCqi = pickContentCqi(baseCqi, totalChars, slide.content.length)
+    // Flow the verse / lyric chunks into one paragraph so all words
+    // share the same baseline. Otherwise short opening words like
+    // "Who" hang on a separate line above the rest of the verse.
+    const joined = slide.content.join(' ').replace(/\s+/g, ' ').trim()
+    const ta = settings.textAlign ?? 'center'
+    const itemsClass =
+      ta === 'left' ? 'items-start' : ta === 'right' ? 'items-end' : 'items-center'
+    const textClass =
+      ta === 'left'
+        ? 'text-left'
+        : ta === 'right'
+          ? 'text-right'
+          : ta === 'justify'
+            ? 'text-justify'
+            : 'text-center'
     return (
-      <div className={cn('text-center w-full h-full flex flex-col items-center justify-center overflow-hidden', fontClass)}>
+      <div className={cn('w-full h-full flex flex-col justify-center overflow-hidden', itemsClass, textClass, fontClass)}>
         {settings.showReferenceOnOutput && (
           <p
-            className={cn('opacity-60 mb-2 shrink-0', theme.accent)}
-            style={{ fontSize: large ? `${baseCqi * 0.55}cqi` : '1.0cqi', ...shadow }}
+            className={cn('opacity-60 mb-2 shrink-0 m-0 p-0', theme.accent, textClass)}
+            style={{ fontSize: large ? `${baseCqi * 0.55}cqi` : '1.0cqi', ...shadow, lineHeight: 1.2 }}
           >
             {slide.title}
           </p>
         )}
-        <div className="w-full max-w-[90%] mx-auto">
-          {slide.content.map((line, i) => (
-            <p
-              key={i}
-              className={cn('font-medium leading-snug', theme.accent)}
-              style={{ fontSize: large ? `${contentCqi}cqi` : '1.4cqi', ...shadow }}
-            >
-              {line}
-            </p>
-          ))}
+        <div className={cn('w-full max-w-[90%] mx-auto', textClass)}>
+          <p
+            className={cn('font-medium m-0 p-0', theme.accent, textClass)}
+            style={{
+              fontSize: large ? `${contentCqi}cqi` : '1.4cqi',
+              ...shadow,
+              lineHeight: 1.4,
+              wordWrap: 'break-word',
+              overflowWrap: 'break-word',
+            }}
+          >
+            {joined}
+          </p>
         </div>
       </div>
     )
