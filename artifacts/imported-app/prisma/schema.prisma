@@ -64,3 +64,37 @@ model BibleVerseCache {
 
   @@unique([reference, translation])
 }
+
+// Tracks which translations have been downloaded for offline use.
+// A row is created when the user starts a download from Settings →
+// Bible → Offline. `progress` is 0–100 while downloading and 100
+// once the entire Bible (or just the cached subset) is on disk.
+model BibleTranslationDownload {
+  id           String   @id @default(cuid())
+  translation  String   @unique // e.g. "KJV"
+  name         String   // human label, e.g. "King James Version"
+  language     String   @default("en")
+  status       String   @default("pending") // pending | downloading | ready | error
+  progress     Int      @default(0)
+  bookCount    Int      @default(0)
+  verseCount   Int      @default(0)
+  errorMessage String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// Whole-chapter cache — much faster than verse-by-verse for offline
+// browsing. Populated by /api/bible/translations download job and
+// consulted by the Bible lookup routes before falling back to the
+// public API.
+model BibleChapterCache {
+  id          String   @id @default(cuid())
+  translation String
+  book        String
+  chapter     Int
+  verses      String   // JSON: [{verse: 1, text: "..."}, ...]
+  createdAt   DateTime @default(now())
+
+  @@unique([translation, book, chapter])
+  @@index([translation, book])
+}

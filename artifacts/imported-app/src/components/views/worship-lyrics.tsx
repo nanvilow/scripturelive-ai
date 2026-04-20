@@ -408,15 +408,76 @@ export function WorshipLyricsView() {
                 <DialogTitle>Import Song Lyrics</DialogTitle>
               </DialogHeader>
               <div className="space-y-4 mt-4">
+                <div className="rounded-lg border border-dashed border-border/60 p-4 text-center">
+                  <p className="text-sm font-medium mb-1">Upload song files</p>
+                  <p className="text-[11px] text-muted-foreground mb-3">
+                    ChordPro (.cho), OpenLP (.xml), CCLI text exports, or any plain text with [Verse] / [Chorus] markers. Multi-select supported.
+                  </p>
+                  <input
+                    id="lyrics-file-input"
+                    type="file"
+                    multiple
+                    accept=".cho,.chordpro,.chopro,.crd,.pro,.xml,.txt"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const files = Array.from(e.target.files || [])
+                      if (files.length === 0) return
+                      const fd = new FormData()
+                      files.forEach((f) => fd.append('files', f))
+                      try {
+                        const res = await fetch('/api/songs/import', { method: 'POST', body: fd })
+                        const data = await res.json()
+                        if (!res.ok) throw new Error(data?.error || 'Import failed')
+                        const imported = (data.songs || []).map((s: { id: string; title: string; artist: string | null; lyrics: string; category: string; tags: string | null; keySignature: string | null; tempo: number | null; createdAt: string }) => ({
+                          id: s.id,
+                          title: s.title,
+                          artist: s.artist || undefined,
+                          lyrics: s.lyrics,
+                          category: s.category,
+                          tags: s.tags || undefined,
+                          keySignature: s.keySignature || undefined,
+                          tempo: s.tempo || undefined,
+                          createdAt: s.createdAt,
+                        }))
+                        if (imported.length > 0) {
+                          setSongs([...imported, ...songs])
+                          setSelectedSong(imported[0])
+                          toast.success(`Imported ${imported.length} song${imported.length === 1 ? '' : 's'}`)
+                        }
+                        if (data.errors?.length) {
+                          toast.warning(`${data.errors.length} file${data.errors.length === 1 ? '' : 's'} skipped`, {
+                            description: data.errors.slice(0, 3).join(' · '),
+                          })
+                        }
+                        setShowImportDialog(false)
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : 'Upload failed')
+                      } finally {
+                        e.target.value = ''
+                      }
+                    }}
+                  />
+                  <Button
+                    variant="outline"
+                    className="gap-2"
+                    onClick={() => document.getElementById('lyrics-file-input')?.click()}
+                  >
+                    <Upload className="h-4 w-4" /> Choose files…
+                  </Button>
+                </div>
+
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground text-center">
+                  or paste below
+                </div>
                 <Textarea
                   value={importText}
                   onChange={(e) => setImportText(e.target.value)}
                   placeholder="Paste plain text or XML lyrics here..."
-                  className="min-h-[200px] font-mono text-sm"
+                  className="min-h-[160px] font-mono text-sm"
                 />
                 <Button onClick={importSongs} className="w-full gap-2">
                   <Upload className="h-4 w-4" />
-                  Import Song
+                  Import from Text
                 </Button>
               </div>
             </DialogContent>

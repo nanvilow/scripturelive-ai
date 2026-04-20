@@ -16,6 +16,7 @@ type NdiStartOptions = NdiServiceStartOptions & {
   }
 }
 import { FrameCapture } from './frame-capture'
+import { initAutoUpdater } from './updater'
 
 const isDev = !app.isPackaged
 const ndi = new NdiService()
@@ -258,6 +259,28 @@ function setupIpc() {
     return { ok: true }
   })
 
+  // Stage-display window: shows current slide, next slide, sermon notes,
+  // countdown timer and clock for the speaker on a separate screen.
+  ipcMain.handle('output:open-stage', (_e, opts?: { displayId?: number }) => {
+    if (!appBaseUrl) return { ok: false, error: 'app not ready' }
+    let target = screen.getPrimaryDisplay()
+    if (opts?.displayId !== undefined) {
+      const found = screen.getAllDisplays().find((d) => d.id === opts.displayId)
+      if (found) target = found
+    }
+    const { x, y, width, height } = target.bounds
+    const win = new BrowserWindow({
+      x, y, width, height,
+      backgroundColor: '#000',
+      title: 'ScriptureLive — Stage Display',
+      autoHideMenuBar: true,
+      fullscreen: target.id !== screen.getPrimaryDisplay().id,
+    })
+    win.removeMenu()
+    win.loadURL(`${appBaseUrl}/api/output/stage`)
+    return { ok: true }
+  })
+
   ndi.on('frame', (count) => {
     broadcastNdiStatus({ ...ndi.getStatus(), frameCount: count })
   })
@@ -276,6 +299,7 @@ app.whenReady().then(async () => {
     return
   }
   await createMainWindow(appBaseUrl)
+  initAutoUpdater(() => mainWindow)
 })
 
 app.on('window-all-closed', async () => {

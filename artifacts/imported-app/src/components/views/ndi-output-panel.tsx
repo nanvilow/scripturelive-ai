@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Wifi, WifiOff, Radio, AlertTriangle, MonitorPlay, Layers, Copy } from 'lucide-react'
 import { useNdi } from '@/lib/use-electron'
+import { StageDisplayControls } from '@/components/views/stage-display-controls'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -120,6 +121,17 @@ export function NdiOutputPanel() {
   const handleOpenWindow = async () => {
     if (!desktop) return
     await desktop.output.openWindow()
+  }
+
+  const handleOpenStage = async () => {
+    if (!desktop?.output?.openStageDisplay) {
+      // Fall back to opening the stage page in the default browser
+      // when running in the dev (browser) environment.
+      window.open('/api/output/stage', '_blank', 'noopener')
+      return
+    }
+    const r = await desktop.output.openStageDisplay()
+    if (!r.ok) toast.error(r.error || 'Could not open stage display')
   }
 
   const previewPath = (() => {
@@ -388,7 +400,12 @@ export function NdiOutputPanel() {
           <Button onClick={handleOpenWindow} variant="outline" className="gap-2">
             <MonitorPlay className="h-4 w-4" /> Open Congregation Window
           </Button>
+          <Button onClick={handleOpenStage} variant="outline" className="gap-2">
+            <MonitorPlay className="h-4 w-4" /> Open Stage Display
+          </Button>
         </div>
+
+        <StageDisplayControls />
 
         <p className="text-[11px] text-muted-foreground leading-relaxed">
           Once enabled, your slides appear as an NDI source named <code className="bg-muted px-1 rounded">{name || 'ScriptureLive'}</code> on every machine on your LAN. In <strong>vMix</strong>: Add Input → NDI. In <strong>Wirecast</strong>: Add Source → NDI. In <strong>OBS</strong>: install obs-ndi, then add an NDI Source.

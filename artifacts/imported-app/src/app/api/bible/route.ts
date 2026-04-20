@@ -36,10 +36,38 @@ export async function GET(request: NextRequest) {
     if (!chapNum || chapNum < 1) {
       return NextResponse.json({ error: 'Invalid chapter' }, { status: 400 })
     }
+    // Offline cache hit?  /api/bible/translations populates this so
+    // chapters fetched once (or downloaded in bulk) work without internet.
+    try {
+      const cachedChapter = await db.bibleChapterCache.findUnique({
+        where: { translation_book_chapter: { translation, book, chapter: chapNum } },
+      })
+      if (cachedChapter) {
+        const verses = JSON.parse(cachedChapter.verses) as Array<{ verse: number; text: string }>
+        return NextResponse.json({
+          book, chapter: chapNum, translation,
+          verses,
+          cached: true,
+        })
+      }
+    } catch {
+      // Cache lookup failed — fall through to live fetch.
+    }
     const result = await fetchBibleChapterFromAPI(book, chapNum, translation)
     if (!result) {
       return NextResponse.json({ error: 'Could not fetch chapter' }, { status: 404 })
     }
+    // Persist the chapter for offline reuse next time.
+    try {
+      const verses = (result as { verses?: Array<{ verse: number; text: string }> }).verses
+      if (verses && verses.length) {
+        await db.bibleChapterCache.upsert({
+          where: { translation_book_chapter: { translation, book, chapter: chapNum } },
+          update: { verses: JSON.stringify(verses) },
+          create: { translation, book, chapter: chapNum, verses: JSON.stringify(verses) },
+        })
+      }
+    } catch { /* non-critical */ }
     return NextResponse.json(result)
   }
 

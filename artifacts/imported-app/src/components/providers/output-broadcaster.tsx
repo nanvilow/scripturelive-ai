@@ -51,6 +51,9 @@ export function OutputBroadcaster() {
     const buildPayload = () => {
       const s = useAppStore.getState()
       const cur = s.liveSlideIndex >= 0 ? s.slides[s.liveSlideIndex] : null
+      const next = s.liveSlideIndex >= 0 && s.liveSlideIndex + 1 < s.slides.length
+        ? s.slides[s.liveSlideIndex + 1]
+        : null
       const settings = s.settings
       const settingsBlock = {
         fontSize: settings.fontSize,
@@ -69,6 +72,11 @@ export function OutputBroadcaster() {
         ? {
             type: 'slide' as const,
             slide: cur,
+            nextSlide: next,
+            slideIndex: s.liveSlideIndex >= 0 ? s.liveSlideIndex : undefined,
+            slideTotal: s.slides.length,
+            sermonNotes: s.sermonNotes || undefined,
+            countdownEndAt: s.countdownEndAt || null,
             isLive: s.isLive,
             displayMode: settings.displayMode,
             settings: settingsBlock,
@@ -76,6 +84,9 @@ export function OutputBroadcaster() {
         : {
             type: 'clear' as const,
             slide: null,
+            nextSlide: null,
+            sermonNotes: s.sermonNotes || undefined,
+            countdownEndAt: s.countdownEndAt || null,
             isLive: false,
             displayMode: settings.displayMode,
             settings: settingsBlock,
