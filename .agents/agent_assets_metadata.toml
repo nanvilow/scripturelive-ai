@@ -12,3 +12,9 @@ id = "s5Q9YDZb41zxikuUiFbol"
 uri = "file://.local/downloads/scripturelive-webapp.tar.gz"
 type = "unspecified"
 title = "ScriptureLive Web App (tar.gz)"
+
+[[outputs]]
+id = "JeDDn_JzJGYlV2jFN1H96"
+uri = "file://.local/downloads/scripturelive-full.zip"
+type = "unspecified"
+title = "ScriptureLive — Full Project (ZIP)"
