@@ -63,6 +63,7 @@ export function OutputBroadcaster() {
         congregationScreenTheme: settings.congregationScreenTheme,
         displayRatio: settings.displayRatio,
         textScale: settings.textScale,
+        textAlign: settings.textAlign,
       }
       return s.outputEnabled
         ? {

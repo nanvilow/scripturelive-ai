@@ -520,47 +520,63 @@ function LiveDisplayCard({
                     query units (cqw) so text scales with the preview
                     width and never overflows on small operator panes
                     or huge external displays. */}
+                {/* Bar wrapper. Lift the bar 6% off the chosen edge
+                    so it doesn't hug the bezel (operators reported the
+                    previous build sat too low on TVs). Container query
+                    on the bar wrapper itself so cqw/cqh scale to the
+                    bar — not the whole stage — keeping text inside the
+                    panel on every output size. */}
                 <div
                   className="absolute left-0 right-0 flex items-center justify-center"
                   style={{
-                    [ltPos]: 0,
+                    [ltPos]: '6%',
                     height: `${ltHeightPct}%`,
-                    padding: '1.5% 6%',
-                    containerType: 'inline-size',
+                    padding: '0 6%',
+                    containerType: 'size',
                   }}
                 >
                   <div
-                    className="w-full h-full max-w-[60rem] mx-auto rounded-md flex flex-col items-center justify-center text-center text-white"
+                    className="w-full h-full max-w-[68rem] mx-auto rounded-md flex flex-col justify-center text-white"
                     style={{
                       background: 'rgba(0,0,0,0.85)',
                       backdropFilter: 'blur(8px)',
                       border: '1px solid rgba(255,255,255,0.1)',
-                      padding: '2% 4%',
-                      gap: '0.6cqw',
+                      padding: '3% 5%',
+                      gap: '1cqh',
                       overflow: 'hidden',
+                      textAlign: settings.textAlign ?? 'center',
+                      alignItems:
+                        (settings.textAlign ?? 'center') === 'left'
+                          ? 'flex-start'
+                          : (settings.textAlign ?? 'center') === 'right'
+                            ? 'flex-end'
+                            : 'center',
                     }}
                   >
                     {refLine && (
                       <div
-                        className="opacity-70 font-medium"
-                        style={{ fontSize: 'clamp(8px, 2.4cqw, 22px)' }}
+                        className="opacity-70 font-medium leading-tight"
+                        style={{ fontSize: 'clamp(7px, min(2cqw, 4cqh), 20px)' }}
                       >
                         {refLine}
                       </div>
                     )}
-                    {bodyLines.map((line, i) => (
-                      <div
-                        key={i}
-                        className="font-semibold leading-tight"
-                        style={{
-                          fontSize: `clamp(10px, ${
-                            bodyLines.join(' ').length > 180 ? 3.2 : 4.2
-                          }cqw, 32px)`,
-                        }}
-                      >
-                        {line}
-                      </div>
-                    ))}
+                    {bodyLines.map((line, i) => {
+                      const totalChars = bodyLines.join(' ').length
+                      const band =
+                        totalChars > 320 ? 5 : totalChars > 180 ? 7 : totalChars > 90 ? 9 : 11
+                      return (
+                        <div
+                          key={i}
+                          className="font-semibold leading-snug w-full"
+                          style={{
+                            fontSize: `clamp(9px, min(${band * 0.55}cqw, ${band}cqh), 30px)`,
+                          }}
+                        >
+                          {line}
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
                 <div className="absolute top-1 left-1 z-10">
