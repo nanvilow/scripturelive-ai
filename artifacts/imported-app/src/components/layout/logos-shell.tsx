@@ -296,7 +296,7 @@ function PreviewCard() {
       setPreviewSlideIndex(0)
       setLiveSlideIndex(0)
       setIsLive(true)
-      toast.success(`Live: ${ch.book} ${ch.chapter}`)
+      // Toast suppressed per FRS — output actions stay silent.
     } finally {
       setNavigating(false)
     }
@@ -438,25 +438,92 @@ function LiveDisplayCard({
             matches how Logos / Wirecast keep the background alive
             between slides. We render an empty placeholder slide so
             the SlideThumb still draws the theme (gradient + custom
-            background image) underneath. */}
-        {!hidden && (
-          <div className="w-full max-w-full" style={{ transform: `scale(${size})`, transformOrigin: 'center' }}>
-            <SlideThumb
-              slide={liveSlide ?? {
-                id: 'lv-bg',
-                type: 'blank',
-                title: '',
-                subtitle: '',
-                content: [],
-                background: settings.congregationScreenTheme,
-              }}
-              themeKey={(liveSlide?.background) || settings.congregationScreenTheme}
-              isLive={!!liveSlide}
-              size="lg"
-              settings={settings}
-            />
-          </div>
-        )}
+            background image) underneath.
+
+            When the operator picks a lower-third display mode we
+            composite the slide as an overlay bar inside a 16:9 black
+            frame so the preview matches what the congregation TV (and
+            NDI feed) will actually show — same position, same size,
+            same styling — and updates in real time as the operator
+            tweaks lower-third position / height in Settings. */}
+        {!hidden && (() => {
+          const dm = settings.displayMode || 'full'
+          const isLT = dm === 'lower-third' || dm === 'lower-third-black'
+          const ltPos = settings.lowerThirdPosition === 'top' ? 'top' : 'bottom'
+          // lowerThirdHeight is an enum ('sm' | 'md' | 'lg') in the
+          // store — map it to the same percentage values the
+          // congregation renderer uses so the preview, the secondary
+          // screen and the NDI feed show identical bar heights.
+          const ltHeightMap = { sm: 22, md: 33, lg: 45 } as const
+          const ltHeightPct = ltHeightMap[settings.lowerThirdHeight] ?? 33
+          const isBlackBackdrop = dm === 'lower-third-black'
+          const slide =
+            liveSlide ?? {
+              id: 'lv-bg',
+              type: 'blank' as const,
+              title: '',
+              subtitle: '',
+              content: [],
+              background: settings.congregationScreenTheme,
+            }
+          if (!isLT) {
+            return (
+              <div
+                className="w-full max-w-full"
+                style={{ transform: `scale(${size})`, transformOrigin: 'center' }}
+              >
+                <SlideThumb
+                  slide={slide}
+                  themeKey={liveSlide?.background || settings.congregationScreenTheme}
+                  isLive={!!liveSlide}
+                  size="lg"
+                  settings={settings}
+                />
+              </div>
+            )
+          }
+          return (
+            <div
+              className="w-full max-w-full"
+              style={{ transform: `scale(${size})`, transformOrigin: 'center' }}
+            >
+              <div className="relative w-full aspect-video bg-black overflow-hidden ring-1 ring-zinc-800">
+                {/* lower-third uses the themed/custom background as
+                    backdrop; lower-third-black uses pure black so the
+                    bar reads like a broadcast caption (matches the
+                    congregation renderer below). */}
+                {!isBlackBackdrop && settings.customBackground && (
+                  <img
+                    src={settings.customBackground}
+                    alt=""
+                    className="absolute inset-0 w-full h-full object-cover opacity-40"
+                  />
+                )}
+                <div
+                  className="absolute left-0 right-0"
+                  style={{
+                    [ltPos]: 0,
+                    height: `${ltHeightPct}%`,
+                  }}
+                >
+                  <SlideThumb
+                    slide={slide}
+                    themeKey={liveSlide?.background || settings.congregationScreenTheme}
+                    isLive={!!liveSlide}
+                    size="lg"
+                    settings={settings}
+                  />
+                </div>
+                <div className="absolute top-1 left-1 z-10">
+                  <Badge className="text-[8px] px-1 py-0 font-bold uppercase tracking-wider border-0 bg-sky-600 text-white">
+                    {isBlackBackdrop ? 'L/3 · Black · ' : 'Lower Third · '}
+                    {ltPos}
+                  </Badge>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
         {hidden && (
           <div className="text-center text-[11px] text-zinc-600">
             <CircleSlash className="h-8 w-8 mx-auto opacity-30 mb-2" />
@@ -536,7 +603,7 @@ function ScriptureFeedCard() {
         },
       ],
     })
-    toast.success(`Added ${v.reference} to schedule`)
+    // Toast suppressed per FRS — output/schedule actions stay silent.
   }
 
   return (
@@ -600,7 +667,7 @@ function ScriptureFeedCard() {
                         setPreviewSlideIndex(0)
                         setLiveSlideIndex(0)
                         setIsLive(true)
-                        toast.success(`Live: ${item.title}`)
+                        /* Toast suppressed per FRS — output actions stay silent. */
                       }
                     }}
                     className="flex-1 min-w-0 text-left"
@@ -722,7 +789,7 @@ function DetectedVersesCard() {
       setPreviewSlideIndex(0)
       setLiveSlideIndex(0)
       setIsLive(true)
-      toast.success(`Live: ${v.reference}`)
+      // Toast suppressed per FRS — output actions stay silent.
     }
   }
 
@@ -860,7 +927,7 @@ export function LogosShell() {
     setPreviewSlideIndex(0)
     setLiveSlideIndex(0)
     setIsLive(true)
-    toast.success(`Auto: ${newest.reference}`)
+    // Toast suppressed per FRS — output actions stay silent.
   }, [autoAdvance, detectedVerses, addScheduleItem, setSlides, setPreviewSlideIndex, setLiveSlideIndex, setIsLive, settings.congregationScreenTheme])
 
   // Local no-op broadcaster — the real broadcaster lives globally in
@@ -954,17 +1021,17 @@ export function LogosShell() {
       keepalive: true,
     }).catch(() => {})
     setIsLive(true)
-    toast.success('Logo sent to output')
+    /* Toast suppressed per FRS — output actions stay silent. */
   }, [settings, setIsLive])
 
   const toggleOutput = useCallback(() => {
     if (outputActive) {
       setOutputEnabled(false)
       setNdiConnected(false)
-      toast.success('Output disconnected')
+      /* Toast suppressed per FRS — output actions stay silent. */
     } else {
       setOutputEnabled(true)
-      toast.success('Output reconnected')
+      /* Toast suppressed per FRS — output actions stay silent. */
     }
   }, [outputActive, setOutputEnabled, setNdiConnected])
 

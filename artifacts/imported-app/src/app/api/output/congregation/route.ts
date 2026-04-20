@@ -153,7 +153,16 @@ function render(s){
   }
   if(isLT){
     var pos=st.lowerThirdPosition==='top'?'top':'bottom';
-    $('output').innerHTML='<div style="width:100%;height:100%;position:relative;">'+bg+'<div class="lower-third '+pos+'"><div class="lt-box">'+ref+txt+'</div></div></div>';
+    // Map the lowerThirdHeight enum ('sm'|'md'|'lg') to the same
+    // percentage the operator preview uses so all three surfaces
+    // (preview, secondary screen, NDI) render identical bar heights.
+    var hMap={sm:22,md:33,lg:45};
+    var hPct=hMap[st.lowerThirdHeight]||33;
+    // lower-third-black: hide the custom/themed background so the bar
+    // reads like a broadcast caption; plain lower-third keeps it.
+    var ltBg=(dm==='lower-third-black')?'':bg;
+    var ltStyle='position:absolute;left:0;right:0;height:'+hPct+'%;'+(pos==='top'?'top:0;':'bottom:0;');
+    $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:#000;">'+ltBg+'<div class="lower-third '+pos+'" style="'+ltStyle+'"><div class="lt-box">'+ref+txt+'</div></div></div>';
   }else{
     $('output').innerHTML='<div class="'+tc+'" style="width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:center;">'+bg+'<div class="slide-content">'+ref+txt+'</div></div>';
   }
