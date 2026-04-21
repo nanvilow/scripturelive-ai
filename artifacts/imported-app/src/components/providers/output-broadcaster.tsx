@@ -68,6 +68,11 @@ export function OutputBroadcaster() {
         textScale: settings.textScale,
         textAlign: settings.textAlign,
       }
+      // Operator hasn't put anything on air yet → secondary screen
+      // shows the centred WassMedia splash. Flag flips false the
+      // moment any slide goes live (and stays false for the rest of
+      // the session) so the splash never bounces back.
+      const showStartupLogo = !s.hasShownContent
       return s.outputEnabled
         ? {
             type: 'slide' as const,
@@ -78,6 +83,7 @@ export function OutputBroadcaster() {
             sermonNotes: s.sermonNotes || undefined,
             countdownEndAt: s.countdownEndAt || null,
             isLive: s.isLive,
+            showStartupLogo,
             displayMode: settings.displayMode,
             settings: settingsBlock,
           }
@@ -88,6 +94,7 @@ export function OutputBroadcaster() {
             sermonNotes: s.sermonNotes || undefined,
             countdownEndAt: s.countdownEndAt || null,
             isLive: false,
+            showStartupLogo,
             displayMode: settings.displayMode,
             settings: settingsBlock,
           }

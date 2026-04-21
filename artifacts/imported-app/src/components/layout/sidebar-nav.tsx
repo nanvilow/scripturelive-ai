@@ -51,7 +51,7 @@ export function SidebarNav() {
         {/* Logo */}
         <div className="flex items-center gap-3 px-6 py-5">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl overflow-hidden">
-            <img src="/logo.png" alt="ScriptureLive" className="h-full w-full object-cover" />
+            <img src="/logo.png" alt="ScriptureLive" className="h-full w-full object-contain bg-transparent" />
           </div>
           <div className="flex flex-col">
             <span className="text-lg font-bold text-foreground tracking-tight">ScriptureLive</span>

@@ -246,15 +246,63 @@ function PreviewCard() {
   const {
     slides,
     previewSlideIndex,
+    liveSlideIndex,
     selectedTranslation,
     settings,
     setSlides,
     setPreviewSlideIndex,
     setLiveSlideIndex,
     setIsLive,
+    mediaPaused,
+    setMediaPaused,
   } = useAppStore()
   const previewSlide = slides[previewSlideIndex] || null
   const [navigating, setNavigating] = useState(false)
+  // Transport visibility: the bar only makes sense for video media on
+  // the currently-selected preview slide. Operators step OTHER slide
+  // types with the main Live Display ◀ / ▶, so we hide the bar there
+  // to avoid double controls.
+  const isMediaVideo =
+    previewSlide?.type === 'media' && previewSlide?.mediaKind === 'video'
+
+  // Transport actions. Play/Pause flip the global `mediaPaused` flag —
+  // the slide-renderer effect calls .play()/.pause() on every mounted
+  // <video> in response, so the operator preview, the Live Display
+  // and the secondary screen all stay in lock-step. Back/Forward step
+  // the live cursor (mirroring the preview cursor) so the operator
+  // can walk through the schedule from the preview pane.
+  const onPlay = useCallback(() => setMediaPaused(false), [setMediaPaused])
+  const onPause = useCallback(() => setMediaPaused(true), [setMediaPaused])
+  const onSendBack = useCallback(() => {
+    if (!slides.length) return
+    const cur = liveSlideIndex >= 0 ? liveSlideIndex : previewSlideIndex
+    const next = Math.max(0, cur - 1)
+    setLiveSlideIndex(next)
+    setPreviewSlideIndex(next)
+    setIsLive(true)
+  }, [
+    slides.length,
+    liveSlideIndex,
+    previewSlideIndex,
+    setLiveSlideIndex,
+    setPreviewSlideIndex,
+    setIsLive,
+  ])
+  const onSendForward = useCallback(() => {
+    if (!slides.length) return
+    const cur = liveSlideIndex >= 0 ? liveSlideIndex : previewSlideIndex
+    const next = Math.min(slides.length - 1, cur + 1)
+    setLiveSlideIndex(next)
+    setPreviewSlideIndex(next)
+    setIsLive(true)
+  }, [
+    slides.length,
+    liveSlideIndex,
+    previewSlideIndex,
+    setLiveSlideIndex,
+    setPreviewSlideIndex,
+    setIsLive,
+  ])
 
   // ── Chapter navigation: parse the live preview slide's reference
   // (e.g. "John 6:6", "John 6:6-9", "John 6"), step to the adjacent
@@ -339,7 +387,7 @@ function PreviewCard() {
           </Button>
         </div>
       }
-      bodyClassName="bg-black"
+      bodyClassName="bg-black flex flex-col"
     >
       <div className="flex-1 min-h-0 flex items-center justify-center p-3">
         {previewSlide ? (
@@ -358,6 +406,52 @@ function PreviewCard() {
           </div>
         )}
       </div>
+      {/* Transport bar — rendered BELOW the preview surface so it
+          mirrors a broadcast transport row (Back · Play · Pause ·
+          Forward). Only visible for media-video previews; other slide
+          types are stepped from the Live Display column. */}
+      {isMediaVideo && (
+        <div className="flex items-center justify-center gap-1 border-t border-zinc-800/70 px-2 py-1.5 shrink-0">
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-7 w-7 p-0"
+            onClick={onSendBack}
+            title="Send back (previous slide)"
+          >
+            <SkipBack className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-7 w-7 p-0"
+            onClick={onPlay}
+            disabled={!mediaPaused}
+            title="Play"
+          >
+            <Play className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-7 w-7 p-0"
+            onClick={onPause}
+            disabled={mediaPaused}
+            title="Pause"
+          >
+            <Pause className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-7 w-7 p-0"
+            onClick={onSendForward}
+            title="Send forward (next slide)"
+          >
+            <SkipForward className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      )}
     </Card>
   )
 }
@@ -386,8 +480,13 @@ function LiveDisplayCard({
   onSendLive: () => void
   onNext: () => void
 }) {
-  const { slides, liveSlideIndex, settings } = useAppStore()
+  const { slides, liveSlideIndex, settings, hasShownContent } = useAppStore()
   const liveSlide = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
+  // Show the centred WassMedia splash here too — exactly while the
+  // operator is on a fresh session and hasn't sent anything yet. This
+  // is the operator's mirror of the congregation route's startup
+  // splash so both screens stay visually in sync.
+  const showStartupLogo = !hasShownContent && !liveSlide
 
   return (
     <Card
@@ -435,6 +534,20 @@ function LiveDisplayCard({
       bodyClassName="bg-black"
     >
       <div className="flex-1 min-h-0 flex items-center justify-center p-3 relative">
+        {/* Startup splash. While the operator hasn't put anything on
+            air yet (fresh session) we float the WassMedia logo over
+            the empty stage so both the operator's Live Display and the
+            congregation TV match. Disappears on the first cue. */}
+        {showStartupLogo && !hidden && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none bg-black">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logo.png"
+              alt="WassMedia"
+              className="max-w-[42%] max-h-[42%] w-auto h-auto object-contain"
+            />
+          </div>
+        )}
         {/* Always render the themed background, even when no scripture
             is on air. This gives the operator a constant "what the
             congregation will see" preview instead of a black void, and
@@ -929,6 +1042,8 @@ interface MediaItem {
   kind: 'image' | 'video'
 }
 
+type MediaFit = NonNullable<Slide['mediaFit']>
+
 function MediaCard() {
   const [items, setItems] = useState<MediaItem[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -938,18 +1053,18 @@ function MediaCard() {
   const [stagedItemId, setStagedItemId] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
-  const [isPlaying, setIsPlaying] = useState(false)
+  // Per-item display preferences. Lives only on the panel because each
+  // upload may want a different fit; we copy the chosen value onto the
+  // slide when staging or sending live.
+  const [fitById, setFitById] = useState<Record<string, MediaFit>>({})
   const fileRef = useRef<HTMLInputElement>(null)
-  const previewVideoRef = useRef<HTMLVideoElement | null>(null)
 
   const {
-    slides,
     setSlides,
-    liveSlideIndex,
     setLiveSlideIndex,
     setIsLive,
-    previewSlideIndex,
     setPreviewSlideIndex,
+    setHasShownContent,
   } = useAppStore()
 
   const selectedItem = items.find((m) => m.id === selectedId) || null
@@ -1045,7 +1160,7 @@ function MediaCard() {
   // Build a media slide from a library item. Reused by both the
   // "preview" and "send live" flows so they stay perfectly in sync.
   const makeSlide = useCallback(
-    (item: MediaItem) => ({
+    (item: MediaItem): Slide => ({
       id: `slide-media-${item.id}-${Date.now()}`,
       type: 'media' as const,
       title: item.name,
@@ -1053,8 +1168,9 @@ function MediaCard() {
       content: [],
       mediaUrl: item.url,
       mediaKind: item.kind,
+      mediaFit: fitById[item.id] || 'fit',
     }),
-    []
+    [fitById]
   )
 
   // 1st click on an item → wipe the preview and replace it with the
@@ -1077,6 +1193,10 @@ function MediaCard() {
         // Second click on the same item: send it live.
         setLiveSlideIndex(0)
         setIsLive(true)
+        // Logo splash only shows until the operator first puts
+        // something on air; trip the flag so the secondary screen and
+        // the operator's Live Display drop the splash from now on.
+        setHasShownContent(true)
         toast.success('Sent to live output')
       }
     },
@@ -1087,6 +1207,7 @@ function MediaCard() {
       setPreviewSlideIndex,
       setLiveSlideIndex,
       setIsLive,
+      setHasShownContent,
     ]
   )
 
@@ -1094,56 +1215,59 @@ function MediaCard() {
     setItems((prev) => prev.filter((m) => m.id !== id))
     setSelectedId((cur) => (cur === id ? null : cur))
     setStagedItemId((cur) => (cur === id ? null : cur))
+    setFitById((prev) => {
+      if (!(id in prev)) return prev
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
   }, [])
 
-  // Transport buttons — visible only while the Media column has a
-  // selection. Play/Pause control the in-card video preview; SkipBack
-  // and SkipForward step the live slide cursor (so an operator can
-  // walk through the schedule without leaving this column).
-  const onPlay = useCallback(() => {
-    const v = previewVideoRef.current
-    if (v) {
-      v.play().catch(() => {})
-      setIsPlaying(true)
-    }
-  }, [])
-  const onPause = useCallback(() => {
-    const v = previewVideoRef.current
-    if (v) {
-      v.pause()
-      setIsPlaying(false)
-    }
-  }, [])
-  const onSendBack = useCallback(() => {
-    if (!slides.length) return
-    const cur = liveSlideIndex >= 0 ? liveSlideIndex : previewSlideIndex
-    const next = Math.max(0, cur - 1)
-    setLiveSlideIndex(next)
-    setPreviewSlideIndex(next)
-    setIsLive(true)
-  }, [
-    slides.length,
-    liveSlideIndex,
-    previewSlideIndex,
-    setLiveSlideIndex,
-    setPreviewSlideIndex,
-    setIsLive,
-  ])
-  const onSendForward = useCallback(() => {
-    if (!slides.length) return
-    const cur = liveSlideIndex >= 0 ? liveSlideIndex : previewSlideIndex
-    const next = Math.min(slides.length - 1, cur + 1)
-    setLiveSlideIndex(next)
-    setPreviewSlideIndex(next)
-    setIsLive(true)
-  }, [
-    slides.length,
-    liveSlideIndex,
-    previewSlideIndex,
-    setLiveSlideIndex,
-    setPreviewSlideIndex,
-    setIsLive,
-  ])
+  // Push a fit/aspect-ratio change for the selected item back through
+  // the preview/live state so the operator sees it instantly on every
+  // surface (Preview, Live Display, secondary screen, NDI). Re-emits
+  // the slide rather than mutating in place so the SSE broadcast
+  // notices the change and downstream renderers re-resolve their
+  // object-fit / aspect-ratio.
+  const updateFit = useCallback(
+    (item: MediaItem, fit: MediaFit) => {
+      setFitById((prev) => ({ ...prev, [item.id]: fit }))
+      const refreshed: Slide = {
+        id: `slide-media-${item.id}-${Date.now()}`,
+        type: 'media',
+        title: item.name,
+        subtitle: '',
+        content: [],
+        mediaUrl: item.url,
+        mediaKind: item.kind,
+        mediaFit: fit,
+      }
+      // Only nudge the preview/live state if this item is currently
+      // staged or live — otherwise the operator is just pre-configuring
+      // the asset and we shouldn't touch the active deck.
+      if (stagedItemId === item.id) {
+        // setSlides() unconditionally resets liveSlideIndex to -1 (see
+        // store), which would yank the slide off-air the moment the
+        // operator adjusts Fit on a LIVE asset. Capture the live state
+        // first and re-engage it after replacing the deck so the
+        // congregation/NDI feed never blinks to black.
+        const wasLive = useAppStore.getState().liveSlideIndex >= 0
+        setSlides([refreshed])
+        setPreviewSlideIndex(0)
+        if (wasLive) {
+          setLiveSlideIndex(0)
+          setIsLive(true)
+        }
+      }
+    },
+    [
+      stagedItemId,
+      setSlides,
+      setPreviewSlideIndex,
+      setLiveSlideIndex,
+      setIsLive,
+    ]
+  )
 
   return (
     <Card
@@ -1182,76 +1306,52 @@ function MediaCard() {
         </span>
       </div>
 
-      {/* In-card preview of the selected item — purely a UX aid so the
-          operator can scrub a video before committing it to live. */}
+      {/* Per-item display options. Visible only when an item is
+          selected, so the panel stays compact when nothing is staged.
+          Choices map 1:1 to slide.mediaFit values consumed by both the
+          operator preview/live renderer and the secondary-screen
+          renderer in the congregation route. */}
       {selectedItem && (
-        <div className="border-b border-zinc-800/70 bg-black aspect-video shrink-0">
-          {selectedItem.kind === 'video' ? (
-            <video
-              key={selectedItem.id}
-              ref={previewVideoRef}
-              src={selectedItem.url}
-              controls={false}
-              muted
-              playsInline
-              className="w-full h-full object-contain"
-              onPlay={() => setIsPlaying(true)}
-              onPause={() => setIsPlaying(false)}
-              onEnded={() => setIsPlaying(false)}
-            />
-          ) : (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={selectedItem.url}
-              alt={selectedItem.name}
-              className="w-full h-full object-contain"
-            />
-          )}
-        </div>
-      )}
-
-      {/* Transport bar — only rendered when an item is selected, per
-          spec ("controls visible only when MEDIA column is active"). */}
-      {selectedItem && (
-        <div className="flex items-center justify-center gap-1 border-b border-zinc-800/70 px-2 py-1.5 shrink-0">
-          <Button
-            size="sm"
-            variant="secondary"
-            className="h-7 w-7 p-0"
-            onClick={onSendBack}
-            title="Send back (previous slide)"
-          >
-            <SkipBack className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            className="h-7 w-7 p-0"
-            onClick={onPlay}
-            disabled={selectedItem.kind !== 'video' || isPlaying}
-            title="Play"
-          >
-            <Play className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            className="h-7 w-7 p-0"
-            onClick={onPause}
-            disabled={selectedItem.kind !== 'video' || !isPlaying}
-            title="Pause"
-          >
-            <Pause className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            className="h-7 w-7 p-0"
-            onClick={onSendForward}
-            title="Send forward (next slide)"
-          >
-            <SkipForward className="h-3.5 w-3.5" />
-          </Button>
+        <div className="grid grid-cols-2 gap-2 px-2 py-1.5 border-b border-zinc-800/70 shrink-0 text-[10px] text-zinc-300">
+          <label className="flex flex-col gap-1">
+            <span className="text-zinc-500 uppercase tracking-wider text-[9px] font-semibold">
+              Fit
+            </span>
+            <select
+              value={fitById[selectedItem.id] || 'fit'}
+              onChange={(e) => updateFit(selectedItem, e.target.value as MediaFit)}
+              className="h-6 rounded bg-zinc-900 border border-zinc-800 px-1.5 text-[10px] text-zinc-200 focus:outline-none focus:ring-1 focus:ring-fuchsia-500/50"
+            >
+              <option value="fit">Fit (original)</option>
+              <option value="fill">Fill (cover)</option>
+              <option value="stretch">Stretch</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-zinc-500 uppercase tracking-wider text-[9px] font-semibold">
+              Aspect Ratio
+            </span>
+            <select
+              value={
+                fitById[selectedItem.id] === '16:9' ||
+                fitById[selectedItem.id] === '4:3'
+                  ? fitById[selectedItem.id]
+                  : 'auto'
+              }
+              onChange={(e) => {
+                const v = e.target.value
+                updateFit(
+                  selectedItem,
+                  v === 'auto' ? 'fit' : (v as MediaFit)
+                )
+              }}
+              className="h-6 rounded bg-zinc-900 border border-zinc-800 px-1.5 text-[10px] text-zinc-200 focus:outline-none focus:ring-1 focus:ring-fuchsia-500/50"
+            >
+              <option value="auto">Auto</option>
+              <option value="16:9">16 : 9</option>
+              <option value="4:3">4 : 3</option>
+            </select>
+          </label>
         </div>
       )}
 
@@ -1618,7 +1718,7 @@ export function LogosShell() {
           the workspace cards. */}
       <footer className="flex h-7 items-center justify-center gap-2 border-t border-zinc-800 bg-zinc-950/80 shrink-0 select-none">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo.png" alt="" className="h-3.5 w-3.5 rounded object-cover opacity-80" />
+        <img src="/logo.png" alt="" className="h-3.5 w-3.5 object-contain bg-transparent opacity-90" />
         <span className="text-[10px] tracking-wide text-zinc-400">
           Powered by WassMedia (+233246798526)
         </span>

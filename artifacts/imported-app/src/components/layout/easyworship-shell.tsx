@@ -331,7 +331,7 @@ export function TopToolbar({
     <header className="flex h-12 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-3 shrink-0">
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
-          <Image src="/logo.png" alt="ScriptureLive" width={28} height={28} className="rounded" style={{ height: 'auto' }} />
+          <Image src="/logo.png" alt="ScriptureLive" width={28} height={28} className="object-contain bg-transparent" style={{ height: 'auto', width: 'auto', maxWidth: 28, maxHeight: 28 }} />
           <div className="leading-tight">
             <h1 className="text-xs font-bold text-zinc-100 tracking-tight">ScriptureLive AI</h1>
             <p className="text-[9px] text-zinc-500 tracking-wide">Powered by WassMedia (+233246798526)</p>

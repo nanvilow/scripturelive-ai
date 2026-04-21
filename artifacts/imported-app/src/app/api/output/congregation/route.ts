@@ -146,6 +146,20 @@ function render(s){
   // sends type:'clear'. Honor it as a true blank (black) frame so the
   // congregation TV goes dark instead of showing the themed background.
   if(s.type==='clear'){
+    // Until the operator first sends content this session, paint a
+    // centred branded splash on a transparent (black) backdrop so the
+    // congregation sees the WassMedia mark rather than a dead screen.
+    // The flag flips false the first time a slide is broadcast and
+    // never comes back.
+    if(s.showStartupLogo){
+      var lkey='__logo__';
+      if(lkey===lastRenderKey)return;
+      lastRenderKey=lkey;
+      $('output').innerHTML='<img src="/logo.png" alt="WassMedia" style="max-width:42%;max-height:42%;width:auto;height:auto;object-fit:contain;display:block">';
+      $('output').style.background='#000';
+      $('output').classList.remove('hidden');
+      return;
+    }
     var ckey='__clear__';
     if(ckey===lastRenderKey)return;
     lastRenderKey=ckey;
@@ -195,10 +209,25 @@ function render(s){
   var fontStyle='font-family:'+fontFam+';';
   var txt='';
   if(slide.type==='media'&&slide.mediaUrl){
+    // Mirror the in-app resolveMediaPresentation() helper so the
+    // congregation/NDI feed honours the operator's per-asset Fit /
+    // Aspect Ratio choice exactly the same way as the operator
+    // preview. Falls back to "fit" (contain) for legacy slides.
+    var mf=slide.mediaFit||'fit';
+    var of='contain';
+    var ar='';
+    if(mf==='fill'){of='cover';}
+    else if(mf==='stretch'){of='fill';}
+    else if(mf==='16:9'){of='contain';ar='16/9';}
+    else if(mf==='4:3'){of='contain';ar='4/3';}
+    var mediaStyle='width:100%;height:100%;object-fit:'+of+';background:#000;display:block';
     var mediaTag=slide.mediaKind==='video'
-      ? '<video src="'+slide.mediaUrl+'" autoplay loop muted playsinline style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000"></video>'
-      : '<img src="'+slide.mediaUrl+'" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000">';
-    $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:#000">'+mediaTag+'</div>';
+      ? '<video src="'+slide.mediaUrl+'" autoplay loop muted playsinline style="'+mediaStyle+'"></video>'
+      : '<img src="'+slide.mediaUrl+'" alt="" style="'+mediaStyle+'">';
+    var inner=ar
+      ? '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#000"><div style="aspect-ratio:'+ar+';max-width:100%;max-height:100%;width:100%">'+mediaTag+'</div></div>'
+      : mediaTag;
+    $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:#000">'+inner+'</div>';
     $('output').classList.remove('hidden');
     return;
   }

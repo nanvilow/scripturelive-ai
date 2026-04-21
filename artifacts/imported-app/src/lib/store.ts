@@ -54,6 +54,12 @@ export interface Slide {
   // from the Media panel and sends straight to the live output.
   mediaUrl?: string
   mediaKind?: 'image' | 'video'
+  // How the media should fit its frame on screen. Operator picks this
+  // from the Media column when staging the asset; defaults to 'fit'
+  // (= contain — letterbox so nothing is cropped). 'fill' covers the
+  // frame and may crop, 'stretch' distorts to fill exactly, '16:9'
+  // and '4:3' force the picked aspect ratio inside the frame.
+  mediaFit?: 'fit' | 'fill' | 'stretch' | '16:9' | '4:3'
 }
 
 export interface SongSection {
@@ -218,6 +224,20 @@ interface AppState {
   // Settings
   settings: AppSettings
   updateSettings: (s: Partial<AppSettings>) => void
+
+  // Startup logo flag — true until the operator first sends content
+  // to the live display this session. Drives a centred branded splash
+  // on the operator's Live Display card and on the congregation
+  // screen. NOT persisted, so it resets to true on every app launch
+  // ("show on startup, remove once content is displayed").
+  hasShownContent: boolean
+  setHasShownContent: (b: boolean) => void
+
+  // Operator-controlled play/pause for media-slide videos. Broadcast
+  // to all renderers (preview, secondary screen, NDI). Only
+  // meaningful when the active slide is a media video.
+  mediaPaused: boolean
+  setMediaPaused: (b: boolean) => void
 }
 
 const defaultSettings: AppSettings = {
@@ -304,7 +324,14 @@ export const useAppStore = create<AppState>()(
       previewSlideIndex: 0,
       setPreviewSlideIndex: (i) => set({ previewSlideIndex: i }),
       liveSlideIndex: -1,
-      setLiveSlideIndex: (i) => set({ liveSlideIndex: i }),
+      setLiveSlideIndex: (i) =>
+        set((s) => ({
+          liveSlideIndex: i,
+          // Any time we put something on air, the startup splash is
+          // permanently dismissed for this session — no matter which
+          // panel (Media, Bible, Songs, Schedule) initiated the cue.
+          hasShownContent: i >= 0 ? true : s.hasShownContent,
+        })),
 
       // Presenter
       isPresenterMode: false,
@@ -398,6 +425,12 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           settings: { ...state.settings, ...partial },
         })),
+
+      // Startup logo / media playback flags (not persisted).
+      hasShownContent: false,
+      setHasShownContent: (b) => set({ hasShownContent: b }),
+      mediaPaused: false,
+      setMediaPaused: (b) => set({ mediaPaused: b }),
     }),
     {
       name: 'scripturelive-settings',

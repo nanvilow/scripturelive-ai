@@ -20,6 +20,7 @@ export interface OutputSlide {
   notes?: string
   mediaUrl?: string
   mediaKind?: 'image' | 'video'
+  mediaFit?: 'fit' | 'fill' | 'stretch' | '16:9' | '4:3'
 }
 
 export interface OutputState {
@@ -35,6 +36,10 @@ export interface OutputState {
   sermonNotes?: string
   countdownEndAt?: number | null
   isLive: boolean
+  // When true, the secondary screen / NDI feed should show a centred
+  // branded splash (transparent background) instead of an empty stage.
+  // Trips to false the moment the operator first sends content.
+  showStartupLogo?: boolean
   displayMode: string
   settings: {
     fontSize: string
@@ -53,6 +58,7 @@ export interface OutputState {
 let currentState: OutputState = {
   type: 'clear',
   isLive: false,
+  showStartupLogo: true,
   displayMode: 'full',
   settings: {
     fontSize: 'lg',
@@ -88,6 +94,14 @@ export function updateOutputState(partial: Partial<OutputState>): OutputState {
   currentState = {
     ...currentState,
     ...partial,
+    // Once any slide has been broadcast (type === 'slide'), the
+    // startup splash is over — keep the flag false for the rest of
+    // the process lifetime so the congregation never sees the splash
+    // bounce back between songs.
+    showStartupLogo:
+      partial.type === 'slide'
+        ? false
+        : (partial.showStartupLogo ?? currentState.showStartupLogo),
     timestamp: Date.now(),
   }
 

@@ -1,9 +1,90 @@
 'use client'
 
+import { useEffect, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import type { Slide, AppSettings } from '@/lib/store'
+import { useAppStore } from '@/lib/store'
 import { getFontStack } from '@/lib/fonts'
+
+// ──────────────────────────────────────────────────────────────────
+// Media slide rendering helpers
+// ──────────────────────────────────────────────────────────────────
+// Translate the operator's chosen mediaFit value into the right CSS
+// object-fit + container-aspect combination. Centralised so the
+// secondary screen renderer (in the congregation route) and the
+// in-app preview renderers stay perfectly in sync.
+function resolveMediaPresentation(fit: Slide['mediaFit']): {
+  objectFit: 'contain' | 'cover' | 'fill'
+  aspect: string | null
+} {
+  switch (fit) {
+    case 'fill':
+      return { objectFit: 'cover', aspect: null }
+    case 'stretch':
+      return { objectFit: 'fill', aspect: null }
+    case '16:9':
+      return { objectFit: 'contain', aspect: '16 / 9' }
+    case '4:3':
+      return { objectFit: 'contain', aspect: '4 / 3' }
+    case 'fit':
+    default:
+      return { objectFit: 'contain', aspect: null }
+  }
+}
+
+function MediaSlideContent({ slide }: { slide: Slide }) {
+  const mediaPaused = useAppStore((s) => s.mediaPaused)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const { objectFit, aspect } = resolveMediaPresentation(slide.mediaFit)
+
+  // Honour the operator's play/pause flag in real time. We don't
+  // remount the video — that would jump back to t=0 — so this just
+  // calls play()/pause() on the live element.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    if (mediaPaused) {
+      v.pause()
+    } else {
+      v.play().catch(() => {})
+    }
+  }, [mediaPaused])
+
+  const inner =
+    slide.mediaKind === 'video' ? (
+      <video
+        ref={videoRef}
+        src={slide.mediaUrl}
+        autoPlay={!mediaPaused}
+        loop
+        muted
+        playsInline
+        className="w-full h-full bg-black"
+        style={{ objectFit }}
+      />
+    ) : (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={slide.mediaUrl}
+        alt={slide.title || 'media'}
+        className="w-full h-full bg-black"
+        style={{ objectFit }}
+      />
+    )
+
+  if (aspect) {
+    // Pillarbox / letterbox to the chosen ratio inside a black frame.
+    return (
+      <div className="absolute inset-0 flex items-center justify-center bg-black">
+        <div className="max-w-full max-h-full" style={{ aspectRatio: aspect, width: '100%' }}>
+          {inner}
+        </div>
+      </div>
+    )
+  }
+  return <div className="absolute inset-0">{inner}</div>
+}
 
 export const slideThemes: Record<string, { bg: string; accent: string; label: string }> = {
   worship: { bg: 'from-violet-950 to-indigo-950', accent: 'text-violet-300', label: 'Worship' },
@@ -89,25 +170,8 @@ function SlideContent({
   }
 
   if (slide.type === 'media' && slide.mediaUrl) {
-    if (slide.mediaKind === 'video') {
-      return (
-        <video
-          src={slide.mediaUrl}
-          autoPlay
-          loop
-          muted
-          playsInline
-          className="absolute inset-0 w-full h-full object-contain bg-black"
-        />
-      )
-    }
     return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={slide.mediaUrl}
-        alt={slide.title || 'media'}
-        className="absolute inset-0 w-full h-full object-contain bg-black"
-      />
+      <MediaSlideContent slide={slide} />
     )
   }
 
