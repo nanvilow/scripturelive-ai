@@ -65,6 +65,7 @@ import {
   getNextChapter,
   getPrevChapter,
   fetchBibleChapter,
+  normalizeTranscriptForDisplay,
 } from '@/lib/bible-api'
 import type { Slide } from '@/lib/store'
 
@@ -137,33 +138,12 @@ function AudioMeter({
   const liveLevel = useAppStore((s) => s.audioLevelLive)
   const previewLevel = useAppStore((s) => s.audioLevelPreview)
   const raw = surface === 'live' ? liveLevel : previewLevel
-  // Gentle 1Hz idle pulse so the meter shows visible activity the
-  // moment the operator toggles the audio icon on, even before any
-  // video is playing. Without this the bar sits dead-flat at zero
-  // and operators report it as "broken / not responding". The
-  // pulse is small (≤22%) and stays well below any real signal.
-  const [idlePulse, setIdlePulse] = useState(0)
-  useEffect(() => {
-    if (!active || playing) {
-      setIdlePulse(0)
-      return
-    }
-    let raf = 0
-    const start = performance.now()
-    const tick = (t: number) => {
-      const phase = ((t - start) / 1000) * Math.PI // ~0.5 Hz
-      // Half-sine breath: 0 → 0.22 → 0
-      setIdlePulse(0.06 + Math.abs(Math.sin(phase)) * 0.16)
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [active, playing])
-  // When audio is actually flowing through a video, show the real
-  // RMS level. When it's just toggled on with nothing playing, show
-  // the idle pulse so the meter tells the operator "audio path is
-  // armed". When the toggle is off, bar is flat.
-  const level = !active ? 0 : playing ? raw : idlePulse
+  // Strict gating per operator request: the bar must ONLY move when
+  // a) the audio routing toggle is on AND b) the video is actually
+  // playing. No idle pulse, no breathing animation — silence reads
+  // dead-flat zero so an operator can never mistake "armed" for
+  // "live audio". If you want the toggle's state, look at the icon.
+  const level = active && playing ? raw : 0
   const grad =
     tone === 'red'
       ? 'from-rose-500 via-rose-400 to-amber-400'
@@ -287,6 +267,35 @@ function LiveTranscriptionCard() {
   // can't embed `\n\n` directly into the transcript string because
   // the speech hook re-emits the full transcript on every audio
   // chunk and would clobber any inline markers.
+  // ── Auto-scroll the transcription card ──────────────────────────
+  // Operators want the latest spoken line always visible without
+  // having to grab the scrollbar. We follow the bottom by default,
+  // but the moment the operator scrolls UP (to read an earlier
+  // paragraph) we stop forcing the bottom — and resume the moment
+  // they return there. `nearBottom` is the latched flag.
+  const transcriptScrollRef = useRef<HTMLDivElement | null>(null)
+  const followBottomRef = useRef(true)
+  const onTranscriptScroll = useCallback(() => {
+    const el = transcriptScrollRef.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    // 32px tolerance — covers anti-aliased pixel rounding and the
+    // small gap left by paragraph borders so re-docking feels snappy.
+    followBottomRef.current = distanceFromBottom < 32
+  }, [])
+  // Re-pin to bottom whenever the transcript or the interim grows.
+  // We schedule the scroll on the next frame so the layout has had
+  // a chance to commit the new line height first.
+  useEffect(() => {
+    if (!followBottomRef.current) return
+    const el = transcriptScrollRef.current
+    if (!el) return
+    const id = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight
+    })
+    return () => cancelAnimationFrame(id)
+  }, [liveTranscript, liveInterimTranscript])
+
   const paragraphs = (() => {
     const t = liveTranscript || ''
     if (!t) return [] as string[]
@@ -373,7 +382,11 @@ function LiveTranscriptionCard() {
         </div>
       }
     >
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      <div
+        ref={transcriptScrollRef}
+        onScroll={onTranscriptScroll}
+        className="flex-1 min-h-0 overflow-y-auto relative"
+      >
         <div className="p-3 space-y-1.5">
           {speechError && (
             <p className="text-[10px] text-rose-400">{speechError}</p>
@@ -400,12 +413,12 @@ function LiveTranscriptionCard() {
                 i > 0 && 'mt-3 pt-3 border-t border-zinc-800/40',
               )}
             >
-              {para}
+              {normalizeTranscriptForDisplay(para)}
             </p>
           ))}
           {liveInterimTranscript && (
             <p className="text-[12px] leading-relaxed text-zinc-500 italic">
-              {liveInterimTranscript}…
+              {normalizeTranscriptForDisplay(liveInterimTranscript)}…
             </p>
           )}
         </div>
@@ -2300,6 +2313,18 @@ export function LogosShell() {
     }
     setLiveSlideIndex(previewSlideIndex)
     setIsLive(true)
+    // Force-stop every Preview-surface video the instant we send to
+    // air. Without this the preview <video> may keep playing for a
+    // beat before React's render commits the new isLive state, and
+    // the operator hears the same audio out of two surfaces. Pausing
+    // the DOM directly closes that window.
+    if (typeof document !== 'undefined') {
+      document.querySelectorAll<HTMLVideoElement>('video[data-surface="preview"]').forEach((v) => {
+        try {
+          v.pause()
+        } catch { /* ignore */ }
+      })
+    }
     if (previewSlideIndex < slides.length - 1) setPreviewSlideIndex(previewSlideIndex + 1)
   }, [slides.length, previewSlideIndex, setLiveSlideIndex, setIsLive, setPreviewSlideIndex])
 
