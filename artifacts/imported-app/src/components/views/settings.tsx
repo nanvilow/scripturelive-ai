@@ -67,12 +67,16 @@ export function SettingsView() {
 
     setIsUploading(true)
     try {
-      const formData = new FormData()
-      formData.append('file', file)
-
+      // Stream the file as a raw body — see /api/upload (it supports
+      // up to 3 GB this way and never buffers the whole upload).
       const response = await fetch('/api/upload', {
         method: 'POST',
-        body: formData,
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream',
+          'X-Filename': file.name,
+          'X-File-Size': String(file.size),
+        },
+        body: file,
       })
 
       if (!response.ok) {
@@ -557,7 +561,10 @@ export function SettingsView() {
         </CardContent>
       </Card>
 
-      {/* Appearance Settings */}
+      {/* Appearance Settings — controls on the left, live typography
+          preview on the right (per the spec: the preview lives next to
+          the controls so operators can iterate without leaving the
+          card). On narrow screens the preview drops below the controls. */}
       <Card className="bg-card border-border">
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
@@ -568,7 +575,8 @@ export function SettingsView() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+          <div className="space-y-4">
           <div className="space-y-2">
             <Label className="text-sm font-medium">Font Size on Output</Label>
             <div className="flex gap-2">
@@ -674,12 +682,33 @@ export function SettingsView() {
             </Select>
           </div>
 
-          {/* Typography preview lives on the main console PreviewCard
-              now — every change above (font size, alignment, shadow,
-              family) is reflected there in real time, and the
-              broadcast-to-secondary-screen+NDI loop uses the same
-              renderer so what the operator sees is what the
-              congregation sees. */}
+          </div>
+
+          {/* Right column — live typography preview that mirrors the
+              broadcast renderer. Sticks to the top so it stays in
+              view as the operator scrolls the controls on narrow
+              viewports; on desktop the grid keeps it parallel. */}
+          <div className="space-y-3 md:sticky md:top-2 self-start">
+            <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
+              Preview (Typography)
+            </div>
+            <OutputPreview
+              mode="full"
+              sample={{
+                reference: 'Romans 8:34',
+                text:
+                  'Who is he that condemneth? It is Christ that died, yea rather, that is risen again, who is even at the right hand of God, who also maketh intercession for us.',
+              }}
+            />
+            <OutputPreview
+              mode="lower-third"
+              sample={{
+                reference: 'John 3:16',
+                text:
+                  'For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.',
+              }}
+            />
+          </div>
         </CardContent>
       </Card>
 

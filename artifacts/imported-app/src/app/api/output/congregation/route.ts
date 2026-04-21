@@ -57,9 +57,20 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 .theme-minimal{background:linear-gradient(135deg,#0a0a0a,#171717)}
 .lower-third{position:absolute;left:0;right:0;display:flex;align-items:center;justify-content:center;padding:0 6%;container-type:size}
 .lower-third.bottom{bottom:6%}.lower-third.top{top:6%}
-/* Lower-third bar is fully transparent — the slide / global background
-   shows through it. Text shadow + font weight keep it readable. */
-.lt-box{width:100%;max-width:68rem;background:transparent;padding:3% 5%;display:flex;flex-direction:column;justify-content:center;overflow:hidden;height:100%;box-sizing:border-box}
+/* Lower-third is now a rounded "card" that holds the verses. The
+   upper area outside it stays transparent (#000) so any background
+   change applies only to this rounded box, per spec. */
+.lt-box{position:relative;width:100%;max-width:68rem;padding:3% 5%;display:flex;flex-direction:column;justify-content:center;overflow:hidden;height:100%;box-sizing:border-box;border-radius:1.25rem;box-shadow:0 8px 28px rgba(0,0,0,.45);background:linear-gradient(135deg,#0a0a0a,#171717)}
+.lt-box.theme-worship{background:linear-gradient(135deg,#1e0a3c,#1e1b4b)}
+.lt-box.theme-sermon{background:linear-gradient(135deg,#3c1a0a,#451a03)}
+.lt-box.theme-easter{background:linear-gradient(135deg,#0a3c2a,#042f2e)}
+.lt-box.theme-christmas{background:linear-gradient(135deg,#3c0a0a,#4c0519)}
+.lt-box.theme-praise{background:linear-gradient(135deg,#3c3a0a,#451a03)}
+.lt-box.theme-minimal{background:linear-gradient(135deg,#0a0a0a,#171717)}
+/* Custom background image — clipped to the rounded box only. */
+.lt-box .lt-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;border-radius:inherit;pointer-events:none}
+.lt-box .lt-bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);border-radius:inherit;pointer-events:none}
+.lt-box .lt-content{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;width:100%;height:100%}
 .lt-box .slide-reference{font-size:clamp(.7rem,min(2cqw,4cqh),1.4rem);opacity:.7;font-weight:500;line-height:1.2;margin-bottom:.6cqh}
 .lt-box .slide-text,.lt-box .slide-title{font-weight:600;line-height:1.25}
 .align-left{text-align:left;align-items:flex-start}
@@ -211,11 +222,9 @@ function render(s){
     // (preview, secondary screen, NDI) render identical bar heights.
     var hMap={sm:22,md:33,lg:45};
     var hPct=hMap[st.lowerThirdHeight]||33;
-    // lower-third-black: hide the custom/themed background so the bar
-    // reads like a broadcast caption; plain lower-third keeps it.
-    var ltBg=(dm==='lower-third-black')?'':bg;
-    // Lift bar 6% off the chosen edge — operators reported the
-    // previous build sat too low against the bezel.
+    // The upper area outside the bar must always be transparent
+    // (#000), per spec. Theme colour and custom background image
+    // both render *inside* the rounded card only.
     var ltStyle='position:absolute;left:0;right:0;height:'+hPct+'%;'+(pos==='top'?'top:6%;':'bottom:6%;');
     var alignClass='align-'+(st.textAlign||'center');
     // Re-size body text inside the bar based on character density so
@@ -223,9 +232,12 @@ function render(s){
     var ltBand=totalChars>320?5:totalChars>180?7:totalChars>90?9:11;
     var ltFs='clamp(.6rem,min('+(ltBand*0.55)+'cqw,'+ltBand+'cqh),2rem)';
     var ltTxt=txt.replace(/font-size:[^;"]+;?/g,'font-size:'+ltFs+';');
-    // Apply font-family on the lower-third bar via fontStyle so the
-    // operator's chosen typography (Roboto, Playfair, etc.) renders.
-    $('output').innerHTML='<div class="'+tc+'" style="width:100%;height:100%;position:relative;'+fontStyle+'">'+ltBg+'<div class="lower-third '+pos+'" style="'+ltStyle+'"><div class="lt-box '+alignClass+'" style="'+fontStyle+'">'+ref+ltTxt+'</div></div></div>';
+    // lower-third-black forces the bar's background to solid black so
+    // it reads like a broadcast caption regardless of theme.
+    var boxThemeClass=(dm==='lower-third-black')?'':tc;
+    var boxStyleExtra=(dm==='lower-third-black')?'background:#000;':'';
+    var ltInnerBg=(dm==='lower-third-black')?'':(st.customBackground?'<img class="lt-bg" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="lt-bg-overlay"></div>':'');
+    $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:transparent;'+fontStyle+'"><div class="lower-third '+pos+'" style="'+ltStyle+'"><div class="lt-box '+boxThemeClass+' '+alignClass+'" style="'+boxStyleExtra+fontStyle+'">'+ltInnerBg+'<div class="lt-content '+alignClass+'">'+ref+ltTxt+'</div></div></div></div>';
   }else{
     var ta=st.textAlign||'center';
     var jc=ta==='left'?'flex-start':ta==='right'?'flex-end':'center';

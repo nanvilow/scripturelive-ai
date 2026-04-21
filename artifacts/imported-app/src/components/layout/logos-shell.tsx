@@ -37,6 +37,10 @@ import {
   Upload,
   Film,
   ImageIcon,
+  Play,
+  Pause,
+  SkipBack,
+  SkipForward,
 } from 'lucide-react'
 import { BibleLookupCompact } from '@/components/layout/library-compact'
 import { TopToolbar, TransportBar } from '@/components/layout/easyworship-shell'
@@ -928,72 +932,218 @@ interface MediaItem {
 function MediaCard() {
   const [items, setItems] = useState<MediaItem[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Tracks whether the current preview slide originated from this media
+  // panel for the selected item — used to gate the "first click previews,
+  // second click goes live" interaction.
+  const [stagedItemId, setStagedItemId] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadPct, setUploadPct] = useState(0)
+  const [isPlaying, setIsPlaying] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
-  const { slides, setSlides, setLiveSlideIndex, setIsLive, setPreviewSlideIndex } =
-    useAppStore()
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null)
+
+  const {
+    slides,
+    setSlides,
+    liveSlideIndex,
+    setLiveSlideIndex,
+    setIsLive,
+    previewSlideIndex,
+    setPreviewSlideIndex,
+  } = useAppStore()
+
+  const selectedItem = items.find((m) => m.id === selectedId) || null
 
   const onPick = useCallback(() => fileRef.current?.click(), [])
 
-  const onFiles = useCallback(async (files: FileList | null) => {
-    if (!files || !files.length) return
-    const next: MediaItem[] = []
-    for (const f of Array.from(files)) {
-      const isVideo = f.type.startsWith('video/')
-      const isImage = f.type.startsWith('image/')
-      if (!isVideo && !isImage) continue
-      // Cap at 8 MB — base64 inflates ~33%, so this keeps each SSE
-      // payload under ~11 MB which most reverse proxies tolerate.
-      // Larger clips should be served from a static URL instead.
-      if (f.size > 8 * 1024 * 1024) {
-        toast.error(`${f.name} is larger than 8 MB`)
-        continue
-      }
-      const url = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader()
-        r.onload = () => resolve(String(r.result || ''))
-        r.onerror = () => reject(r.error)
-        r.readAsDataURL(f)
-      })
-      next.push({
-        id: `media-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        name: f.name,
-        url,
-        kind: isVideo ? 'video' : 'image',
-      })
-    }
-    if (next.length) {
-      setItems((prev) => [...next, ...prev])
-      setSelectedId(next[0].id)
-      toast.success(`${next.length} item${next.length === 1 ? '' : 's'} added`)
-    }
-  }, [])
+  // Upload a file to /api/upload as a streamed raw body. Reports
+  // progress with XHR so the operator sees a percentage for big videos.
+  const uploadOne = useCallback(
+    (f: File) =>
+      new Promise<MediaItem>((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        xhr.open('POST', '/api/upload', true)
+        xhr.setRequestHeader('Content-Type', f.type || 'application/octet-stream')
+        xhr.setRequestHeader('X-Filename', f.name)
+        xhr.setRequestHeader('X-File-Size', String(f.size))
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) setUploadPct(Math.round((e.loaded / e.total) * 100))
+        }
+        xhr.onload = () => {
+          try {
+            const data = JSON.parse(xhr.responseText || '{}')
+            if (xhr.status >= 200 && xhr.status < 300 && data.url) {
+              resolve({
+                id: `media-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                name: f.name,
+                url: data.url,
+                kind: data.kind || (f.type.startsWith('video/') ? 'video' : 'image'),
+              })
+            } else {
+              reject(new Error(data.error || `Upload failed (${xhr.status})`))
+            }
+          } catch (err) {
+            reject(err instanceof Error ? err : new Error(String(err)))
+          }
+        }
+        xhr.onerror = () => reject(new Error('Network error'))
+        xhr.send(f)
+      }),
+    []
+  )
 
-  const sendLive = useCallback(
-    (item: MediaItem) => {
-      const slide = {
-        id: `slide-media-${Date.now()}`,
-        type: 'media' as const,
-        title: item.name,
-        subtitle: '',
-        content: [],
-        mediaUrl: item.url,
-        mediaKind: item.kind,
+  const onFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || !files.length) return
+      const valid = Array.from(files).filter(
+        (f) => f.type.startsWith('image/') || f.type.startsWith('video/')
+      )
+      if (!valid.length) {
+        toast.error('Only image and video files are supported')
+        return
       }
-      const nextSlides = [...slides, slide]
-      setSlides(nextSlides)
-      const idx = nextSlides.length - 1
-      setPreviewSlideIndex(idx)
-      setLiveSlideIndex(idx)
-      setIsLive(true)
-      toast.success('Sent to live output')
+      // 3 GB cap matches the server-side guard.
+      const MAX = 3 * 1024 * 1024 * 1024
+      const accepted: File[] = []
+      for (const f of valid) {
+        if (f.size > MAX) {
+          toast.error(`${f.name} is larger than 3 GB`)
+          continue
+        }
+        accepted.push(f)
+      }
+      if (!accepted.length) return
+
+      setUploading(true)
+      const added: MediaItem[] = []
+      try {
+        for (const f of accepted) {
+          setUploadPct(0)
+          try {
+            const item = await uploadOne(f)
+            added.push(item)
+          } catch (err) {
+            toast.error(
+              `${f.name}: ${err instanceof Error ? err.message : 'Upload failed'}`
+            )
+          }
+        }
+      } finally {
+        setUploading(false)
+        setUploadPct(0)
+      }
+      if (added.length) {
+        setItems((prev) => [...added, ...prev])
+        setSelectedId(added[0].id)
+        setStagedItemId(null)
+        toast.success(`${added.length} item${added.length === 1 ? '' : 's'} uploaded`)
+      }
     },
-    [slides, setSlides, setLiveSlideIndex, setIsLive, setPreviewSlideIndex]
+    [uploadOne]
+  )
+
+  // Build a media slide from a library item. Reused by both the
+  // "preview" and "send live" flows so they stay perfectly in sync.
+  const makeSlide = useCallback(
+    (item: MediaItem) => ({
+      id: `slide-media-${item.id}-${Date.now()}`,
+      type: 'media' as const,
+      title: item.name,
+      subtitle: '',
+      content: [],
+      mediaUrl: item.url,
+      mediaKind: item.kind,
+    }),
+    []
+  )
+
+  // 1st click on an item → wipe the preview and replace it with the
+  // selected media (preview-only, not on air). 2nd click on the same
+  // item → push that media to the live display + secondary screen.
+  const onItemClick = useCallback(
+    (item: MediaItem) => {
+      setSelectedId(item.id)
+      if (stagedItemId !== item.id) {
+        // First click: stage it on the preview pane only.
+        const slide = makeSlide(item)
+        // Drop any prior preview and put just this slide in.
+        setSlides([slide])
+        setPreviewSlideIndex(0)
+        setLiveSlideIndex(-1)
+        setIsLive(false)
+        setStagedItemId(item.id)
+        toast.success('Replaced preview with selected media')
+      } else {
+        // Second click on the same item: send it live.
+        setLiveSlideIndex(0)
+        setIsLive(true)
+        toast.success('Sent to live output')
+      }
+    },
+    [
+      stagedItemId,
+      makeSlide,
+      setSlides,
+      setPreviewSlideIndex,
+      setLiveSlideIndex,
+      setIsLive,
+    ]
   )
 
   const remove = useCallback((id: string) => {
     setItems((prev) => prev.filter((m) => m.id !== id))
     setSelectedId((cur) => (cur === id ? null : cur))
+    setStagedItemId((cur) => (cur === id ? null : cur))
   }, [])
+
+  // Transport buttons — visible only while the Media column has a
+  // selection. Play/Pause control the in-card video preview; SkipBack
+  // and SkipForward step the live slide cursor (so an operator can
+  // walk through the schedule without leaving this column).
+  const onPlay = useCallback(() => {
+    const v = previewVideoRef.current
+    if (v) {
+      v.play().catch(() => {})
+      setIsPlaying(true)
+    }
+  }, [])
+  const onPause = useCallback(() => {
+    const v = previewVideoRef.current
+    if (v) {
+      v.pause()
+      setIsPlaying(false)
+    }
+  }, [])
+  const onSendBack = useCallback(() => {
+    if (!slides.length) return
+    const cur = liveSlideIndex >= 0 ? liveSlideIndex : previewSlideIndex
+    const next = Math.max(0, cur - 1)
+    setLiveSlideIndex(next)
+    setPreviewSlideIndex(next)
+    setIsLive(true)
+  }, [
+    slides.length,
+    liveSlideIndex,
+    previewSlideIndex,
+    setLiveSlideIndex,
+    setPreviewSlideIndex,
+    setIsLive,
+  ])
+  const onSendForward = useCallback(() => {
+    if (!slides.length) return
+    const cur = liveSlideIndex >= 0 ? liveSlideIndex : previewSlideIndex
+    const next = Math.min(slides.length - 1, cur + 1)
+    setLiveSlideIndex(next)
+    setPreviewSlideIndex(next)
+    setIsLive(true)
+  }, [
+    slides.length,
+    liveSlideIndex,
+    previewSlideIndex,
+    setLiveSlideIndex,
+    setPreviewSlideIndex,
+    setIsLive,
+  ])
 
   return (
     <Card
@@ -1022,13 +1172,88 @@ function MediaCard() {
           variant="secondary"
           className="h-6 px-2 text-[10px] gap-1"
           onClick={onPick}
+          disabled={uploading}
         >
-          <Upload className="h-3 w-3" /> Upload
+          <Upload className="h-3 w-3" />{' '}
+          {uploading ? `Uploading ${uploadPct}%` : 'Upload'}
         </Button>
         <span className="text-[9px] text-zinc-500 ml-auto">
-          Images / videos · ≤25 MB
+          Images / videos · up to 3 GB
         </span>
       </div>
+
+      {/* In-card preview of the selected item — purely a UX aid so the
+          operator can scrub a video before committing it to live. */}
+      {selectedItem && (
+        <div className="border-b border-zinc-800/70 bg-black aspect-video shrink-0">
+          {selectedItem.kind === 'video' ? (
+            <video
+              key={selectedItem.id}
+              ref={previewVideoRef}
+              src={selectedItem.url}
+              controls={false}
+              muted
+              playsInline
+              className="w-full h-full object-contain"
+              onPlay={() => setIsPlaying(true)}
+              onPause={() => setIsPlaying(false)}
+              onEnded={() => setIsPlaying(false)}
+            />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={selectedItem.url}
+              alt={selectedItem.name}
+              className="w-full h-full object-contain"
+            />
+          )}
+        </div>
+      )}
+
+      {/* Transport bar — only rendered when an item is selected, per
+          spec ("controls visible only when MEDIA column is active"). */}
+      {selectedItem && (
+        <div className="flex items-center justify-center gap-1 border-b border-zinc-800/70 px-2 py-1.5 shrink-0">
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-7 w-7 p-0"
+            onClick={onSendBack}
+            title="Send back (previous slide)"
+          >
+            <SkipBack className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-7 w-7 p-0"
+            onClick={onPlay}
+            disabled={selectedItem.kind !== 'video' || isPlaying}
+            title="Play"
+          >
+            <Play className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-7 w-7 p-0"
+            onClick={onPause}
+            disabled={selectedItem.kind !== 'video' || !isPlaying}
+            title="Pause"
+          >
+            <Pause className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-7 w-7 p-0"
+            onClick={onSendForward}
+            title="Send forward (next slide)"
+          >
+            <SkipForward className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 overflow-auto p-2">
         {items.length === 0 ? (
@@ -1039,23 +1264,29 @@ function MediaCard() {
             <Upload className="h-5 w-5 opacity-60" />
             <div>
               <div className="font-medium">Click to upload</div>
-              <div className="opacity-70 mt-0.5">Images or short videos</div>
+              <div className="opacity-70 mt-0.5">Images or videos (up to 3 GB)</div>
             </div>
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-1.5">
             {items.map((m) => {
               const active = m.id === selectedId
+              const staged = m.id === stagedItemId
               return (
                 <div
                   key={m.id}
-                  onClick={() => setSelectedId(m.id)}
+                  onClick={() => onItemClick(m)}
                   className={cn(
                     'group relative rounded border bg-zinc-950 overflow-hidden cursor-pointer transition-colors',
                     active
                       ? 'border-fuchsia-500/60 ring-1 ring-fuchsia-500/40'
                       : 'border-zinc-800 hover:border-zinc-700'
                   )}
+                  title={
+                    staged
+                      ? 'Click again to send to live'
+                      : 'Click to replace preview with this media'
+                  }
                 >
                   <div className="aspect-video bg-black flex items-center justify-center">
                     {m.kind === 'video' ? (
@@ -1063,6 +1294,7 @@ function MediaCard() {
                         src={m.url}
                         muted
                         playsInline
+                        preload="metadata"
                         className="w-full h-full object-contain"
                       />
                     ) : (
@@ -1080,10 +1312,13 @@ function MediaCard() {
                     ) : (
                       <ImageIcon className="h-2.5 w-2.5 text-fuchsia-300 shrink-0" />
                     )}
-                    <span className="text-[9px] text-zinc-200 truncate">
-                      {m.name}
-                    </span>
+                    <span className="text-[9px] text-zinc-200 truncate">{m.name}</span>
                   </div>
+                  {staged && (
+                    <div className="absolute top-1 left-1 text-[8px] uppercase tracking-wider font-bold px-1 py-0.5 rounded bg-amber-500/80 text-black">
+                      In Preview
+                    </div>
+                  )}
                   <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <Button
                       size="sm"
@@ -1105,17 +1340,15 @@ function MediaCard() {
         )}
       </div>
 
-      {selectedId && (
+      {selectedItem && (
         <div className="border-t border-zinc-800/70 px-2 py-1.5 shrink-0">
           <Button
             size="sm"
             className="w-full h-7 text-[10px] gap-1 bg-fuchsia-600 hover:bg-fuchsia-500"
-            onClick={() => {
-              const item = items.find((m) => m.id === selectedId)
-              if (item) sendLive(item)
-            }}
+            onClick={() => onItemClick(selectedItem)}
           >
-            <Send className="h-3 w-3" /> Send to Live
+            <Send className="h-3 w-3" />{' '}
+            {stagedItemId === selectedItem.id ? 'Send to Live' : 'Replace Preview'}
           </Button>
         </div>
       )}
