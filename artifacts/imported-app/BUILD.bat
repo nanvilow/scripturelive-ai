@@ -8,16 +8,6 @@ REM   2. NDI 5 SDK       ->  https://ndi.video/sdk (only if you
 REM                          want native NDI output)
 REM   3. (auto)          ->  pnpm is installed for you below
 REM ============================================================
-REM   What this does, top to bottom:
-REM     0/7 Verify Node 20+
-REM     1/7 Install / verify pnpm
-REM     2/7 Detect NDI SDK (warn-only)
-REM     3/7 Clean previous build artifacts
-REM     4/7 pnpm install (3 retries on flaky networks)
-REM     5/7 Generate Prisma client (3 retries)
-REM     6/7 Build the Next.js production bundle
-REM     7/7 Compile Electron main process + package signed installer
-REM ============================================================
 
 setlocal EnableDelayedExpansion
 title ScriptureLive AI - Build Windows Installer
@@ -25,17 +15,20 @@ color 0B
 cd /d "%~dp0"
 
 set "LOGFILE=%CD%\build-log.txt"
+set "FAIL_STEP="
 echo ScriptureLive AI build started %DATE% %TIME% > "%LOGFILE%"
 echo Working directory: %CD% >> "%LOGFILE%"
 echo. >> "%LOGFILE%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build
-echo   v0.3.0 - includes auto-scroll, sermon transcript cleanup,
-echo            mic input meter, strict audio meter and more.
+echo   ScriptureLive AI - One-click Windows Build  v0.3.1
 echo ================================================================
 echo   Full build log:   %LOGFILE%
+echo.
+echo   IMPORTANT: This window will STAY OPEN when finished or on
+echo   error. Do not close it. The build is silent for 5-10 minutes
+echo   between status lines - that is normal.
 echo ================================================================
 echo.
 
@@ -43,25 +36,15 @@ REM ---- Step 0: Verify Node.js -------------------------------------
 echo [0/7] Checking Node.js...
 where node >nul 2>nul
 if errorlevel 1 (
-  color 0C
-  echo.
-  echo ERROR: Node.js is not installed or not on PATH.
-  echo Install Node.js 20 LTS from https://nodejs.org then re-run this script.
-  echo.
-  pause
-  exit /b 1
+  set "FAIL_STEP=Node.js is not installed or not on PATH. Install Node 20 LTS from https://nodejs.org and re-run."
+  goto :DIE
 )
-for /f "tokens=*" %%v in ('node --version') do (
-  set "NODEVER=%%v"
-  echo       Node !NODEVER! OK
-)
-REM Node 20+ check (major version)
+for /f "tokens=*" %%v in ('node --version') do set "NODEVER=%%v"
+echo       Node !NODEVER! OK
 for /f "tokens=1 delims=." %%a in ("!NODEVER:v=!") do set "NODEMAJ=%%a"
 if !NODEMAJ! lss 20 (
   color 0E
-  echo       WARNING: Node 20 LTS or newer is recommended. You have !NODEVER!.
-  set /p CONT="Continue anyway? (y/N): "
-  if /I not "!CONT!"=="y" exit /b 1
+  echo       WARNING: Node 20+ is recommended. You have !NODEVER!.
   color 0B
 )
 
@@ -73,18 +56,13 @@ if errorlevel 1 (
   echo       pnpm not found. Installing globally with npm...
   call npm install -g pnpm@9 >> "%LOGFILE%" 2>&1
   if errorlevel 1 (
-    color 0C
-    echo.
-    echo ERROR: Failed to install pnpm. Run "npm install -g pnpm" manually.
-    echo See log: %LOGFILE%
-    pause
-    exit /b 1
+    set "FAIL_STEP=Failed to install pnpm. Run 'npm install -g pnpm' manually then re-run."
+    goto :DIE
   )
-) else (
-  for /f "tokens=*" %%v in ('pnpm --version') do echo       pnpm %%v OK
 )
+for /f "tokens=*" %%v in ('pnpm --version') do echo       pnpm %%v OK
 
-REM ---- Step 2: Verify NDI SDK -------------------------------------
+REM ---- Step 2: NDI SDK detection (warn only) ----------------------
 echo.
 echo [2/7] Checking NDI SDK...
 set "NDI_OK=0"
@@ -94,87 +72,43 @@ if "!NDI_OK!"=="1" (
   echo       NDI SDK found OK
 ) else (
   color 0E
-  echo       WARNING: NDI SDK not detected at the standard install path.
-  echo       Native NDI output will not work without it.
-  echo       Download free from https://ndi.video/sdk
-  echo.
-  set /p CONT="Continue without NDI? (y/N): "
-  if /I not "!CONT!"=="y" exit /b 1
+  echo       WARNING: NDI SDK not detected. Native NDI output will not work.
+  echo       Free download: https://ndi.video/sdk
+  echo       Continuing anyway in 5 seconds...
+  timeout /t 5 /nobreak >nul
   color 0B
 )
 
-REM ---- Step 3: Clean previous build artifacts ---------------------
+REM ---- Step 3: Clean previous build -------------------------------
 echo.
 echo [3/7] Cleaning previous build...
 if exist ".next"          rmdir /s /q ".next"          2>nul
 if exist "dist-electron"  rmdir /s /q "dist-electron"  2>nul
 if exist "release"        rmdir /s /q "release"        2>nul
-echo       Cleaned .next, dist-electron, release
+echo       Cleaned
 
-REM ---- Step 4: Install dependencies (with auto-retry) -------------
+REM ---- Step 4: Install dependencies -------------------------------
 echo.
-echo [4/7] Installing dependencies (this takes 3-5 minutes)...
-echo       Output is being captured to build-log.txt ...
-REM pnpm 10+ refuses to run install scripts unless explicitly approved.
-REM Without approval the Electron binary, Prisma engines, sharp and
-REM SWC native modules NEVER get downloaded, and Step 6/7 then dies
-REM with cryptic "module not found" errors. This pre-stages the
-REM approval so install scripts are allowed for the packages our
-REM build genuinely needs.
-echo       Configuring pnpm to allow native install scripts...
-call pnpm config set --location=project auto-install-peers true >> "%LOGFILE%" 2>&1
+echo [4/7] Installing dependencies (3-5 minutes, silent)...
+echo       Output captured to build-log.txt
+call pnpm config set --location=project auto-install-peers true       >> "%LOGFILE%" 2>&1
 call pnpm config set --location=project strict-peer-dependencies false >> "%LOGFILE%" 2>&1
 set INSTALL_TRY=0
 :RETRY_INSTALL
 set /a INSTALL_TRY+=1
-REM --no-frozen-lockfile: no committed lockfile in this distribution
-REM --config.confirmModulesPurge=false: don't pause to ask about
-REM   removing stale node_modules between attempts
-call pnpm install --no-frozen-lockfile --config.confirmModulesPurge=false >> "%LOGFILE%" 2>&1
+call pnpm install --no-frozen-lockfile >> "%LOGFILE%" 2>&1
 if errorlevel 1 (
   if !INSTALL_TRY! lss 3 (
-    echo       Attempt !INSTALL_TRY! failed (network glitch?), retrying in 5 seconds...
+    echo       Attempt !INSTALL_TRY! failed, retrying in 5s...
     timeout /t 5 /nobreak >nul
-    goto RETRY_INSTALL
+    goto :RETRY_INSTALL
   )
-  color 0C
-  echo.
-  echo ERROR: pnpm install failed after 3 attempts. See log: %LOGFILE%
-  echo Common cause: unstable internet. Try a different network and re-run.
-  pause
-  exit /b 1
+  set "FAIL_STEP=pnpm install failed after 3 tries. Common cause: unstable internet."
+  goto :DIE
 )
 echo       Dependencies installed OK
 
-REM ---- Step 4b: Sanity check that native binaries were fetched ----
-REM If pnpm silently skipped the Electron / Prisma / sharp install
-REM scripts, the next steps will fail far away from the root cause.
-REM Catch it here with a clear message instead.
-if not exist "node_modules\electron\dist\electron.exe" (
-  color 0E
-  echo       WARNING: electron binary missing - re-running install with explicit approval...
-  call pnpm rebuild electron >> "%LOGFILE%" 2>&1
-  if not exist "node_modules\electron\dist\electron.exe" (
-    color 0C
-    echo ERROR: Electron binary still missing after rebuild.
-    echo Likely cause: corporate firewall blocking github.com download.
-    echo See log: %LOGFILE%
-    start notepad "%LOGFILE%"
-    pause
-    exit /b 1
-  )
-  color 0B
-)
-if not exist "node_modules\.pnpm\node_modules\@prisma\engines" (
-  if not exist "node_modules\@prisma\engines" (
-    color 0E
-    echo       WARNING: Prisma engines missing - re-running install with explicit approval...
-    call pnpm rebuild prisma @prisma/engines @prisma/client >> "%LOGFILE%" 2>&1
-    color 0B
-  )
-)
-
-REM ---- Step 5: Generate Prisma client (with auto-retry) -----------
+REM ---- Step 5: Generate Prisma client -----------------------------
 echo.
 echo [5/7] Generating database client...
 set PRISMA_TRY=0
@@ -183,63 +117,36 @@ set /a PRISMA_TRY+=1
 call pnpm exec prisma generate >> "%LOGFILE%" 2>&1
 if errorlevel 1 (
   if !PRISMA_TRY! lss 3 (
-    echo       Attempt !PRISMA_TRY! failed (network glitch?), retrying in 5 seconds...
+    echo       Attempt !PRISMA_TRY! failed, retrying in 5s...
     timeout /t 5 /nobreak >nul
-    goto RETRY_PRISMA
+    goto :RETRY_PRISMA
   )
-  color 0C
-  echo ERROR: prisma generate failed after 3 attempts. See log: %LOGFILE%
-  echo Common cause: unstable internet downloading the Prisma engine.
-  pause
-  exit /b 1
+  set "FAIL_STEP=prisma generate failed after 3 tries. Common cause: firewall blocking Prisma engine download."
+  goto :DIE
 )
 echo       Prisma client OK
 
 REM ---- Step 6: Build Next.js bundle -------------------------------
 echo.
-echo [6/7] Building app bundle (2-4 minutes)...
-echo       Output is being captured to build-log.txt ...
+echo [6/7] Building app bundle (2-4 minutes, silent)...
 call pnpm run build >> "%LOGFILE%" 2>&1
 if errorlevel 1 (
-  color 0C
-  echo ERROR: Next.js build failed. See log: %LOGFILE%
-  start notepad "%LOGFILE%"
-  pause
-  exit /b 1
+  set "FAIL_STEP=Next.js build failed. See log."
+  goto :DIE
 )
 if not exist ".next\standalone" (
-  color 0C
-  echo ERROR: .next\standalone is missing after build.
-  echo This means next.config.ts is not set to "output: standalone".
-  pause
-  exit /b 1
+  set "FAIL_STEP=.next\standalone missing - next.config.ts must use output: standalone."
+  goto :DIE
 )
 echo       App bundle OK
 
-REM ---- Step 7: Compile Electron + package installer ---------------
+REM ---- Step 7: Package Windows installer --------------------------
 echo.
-echo [7/7] Packaging Windows installer (3-5 minutes)...
-echo       Output is being captured to build-log.txt ...
+echo [7/7] Packaging Windows installer (3-5 minutes, silent)...
 call pnpm package:win >> "%LOGFILE%" 2>&1
 if errorlevel 1 (
-  color 0C
-  echo.
-  echo ================================================================
-  echo ERROR: electron-builder failed.
-  echo ================================================================
-  echo The complete error message has been saved to:
-  echo    %LOGFILE%
-  echo.
-  echo Please open that file in Notepad and send me the LAST 50 lines.
-  echo Common causes:
-  echo   - Antivirus blocking files in release\
-  echo   - Path too long - move folder to C:\SL  (shorter name)
-  echo   - File Explorer open in release\ folder - close it
-  echo.
-  echo Opening the log now...
-  start notepad "%LOGFILE%"
-  pause
-  exit /b 1
+  set "FAIL_STEP=electron-builder failed. Common: antivirus locking release\, path too long, or Explorer open in release\."
+  goto :DIE
 )
 
 REM ---- Done -------------------------------------------------------
@@ -251,20 +158,51 @@ echo ================================================================
 echo.
 echo   Installer location:  %CD%\release\
 echo.
-echo   Files produced:
 for %%F in ("%CD%\release\*Setup*.exe") do (
   echo      %%~nxF   ^(%%~zF bytes^)
 )
 echo.
-echo   How to install on this PC:
+echo   How to install:
 echo     1. Double-click the .exe above
-echo     2. Windows SmartScreen may warn (the build is unsigned).
-echo        Click "More info" -^> "Run anyway"
-echo     3. Choose install folder when prompted
-echo     4. Launch "ScriptureLive AI" from the desktop or Start menu
+echo     2. SmartScreen warns ^(unsigned^) - More info -^> Run anyway
+echo     3. Choose install folder, click Install
+echo     4. Launch from desktop / Start menu
 echo.
-echo   Opening release folder...
 start "" "%CD%\release"
+goto :END_HOLD
+
+REM =================================================================
+REM  ERROR HANDLER - this is the ONLY exit path on failure.
+REM  Window MUST stay open so the user can read the error.
+REM =================================================================
+:DIE
+color 0C
 echo.
-pause
+echo ================================================================
+echo   BUILD FAILED
+echo ================================================================
+echo.
+echo   Reason: !FAIL_STEP!
+echo.
+echo   Full log:  %LOGFILE%
+echo   Opening log in Notepad...
+start "" notepad "%LOGFILE%"
+echo.
+echo   Send the LAST 50 lines of the log for help.
+echo.
+
+REM =================================================================
+REM  HOLD-THE-WINDOW handler. Both success and failure end here so
+REM  the cmd window can NEVER close on its own. Two pauses + an
+REM  infinite read loop guarantees it stays open even if the first
+REM  pause is consumed by a stray keystroke.
+REM =================================================================
+:END_HOLD
+echo.
+echo ================================================================
+echo   This window will stay open. Press any key to close it.
+echo ================================================================
+pause >nul
+pause >nul
 endlocal
+exit /b 0
