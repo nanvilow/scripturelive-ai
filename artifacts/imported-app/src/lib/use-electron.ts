@@ -13,6 +13,15 @@ export type NdiStatus = {
   captureMessage?: string
 }
 
+export type UpdateState =
+  | { status: 'idle' }
+  | { status: 'checking' }
+  | { status: 'available'; version: string; releaseNotes?: string; releaseName?: string }
+  | { status: 'not-available'; version: string }
+  | { status: 'downloading'; percent: number; transferred: number; total: number; bytesPerSecond: number }
+  | { status: 'downloaded'; version: string; releaseNotes?: string; releaseName?: string }
+  | { status: 'error'; message: string }
+
 export type ScriptureLiveDesktop = {
   isDesktop: true
   getInfo: () => Promise<{
@@ -23,6 +32,12 @@ export type ScriptureLiveDesktop = {
     ndiAvailable: boolean
     ndiUnavailableReason?: string
   }>
+  updater: {
+    getState: () => Promise<UpdateState>
+    check: () => Promise<UpdateState>
+    install: () => Promise<{ ok: boolean; error?: string }>
+    onState: (cb: (s: UpdateState) => void) => () => void
+  }
   ndi: {
     getStatus: () => Promise<NdiStatus>
     start: (opts: {
@@ -49,18 +64,12 @@ export type ScriptureLiveDesktop = {
   }
 }
 
-declare global {
-  interface Window {
-    scriptureLive?: ScriptureLiveDesktop
-  }
-}
-
 export function useDesktop(): ScriptureLiveDesktop | null {
   const [api, setApi] = useState<ScriptureLiveDesktop | null>(null)
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.scriptureLive?.isDesktop) {
-      setApi(window.scriptureLive)
-    }
+    if (typeof window === 'undefined') return
+    const bridge = (window as unknown as { scriptureLive?: ScriptureLiveDesktop }).scriptureLive
+    if (bridge?.isDesktop) setApi(bridge)
   }, [])
   return api
 }

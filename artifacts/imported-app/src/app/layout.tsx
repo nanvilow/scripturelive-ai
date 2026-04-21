@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { PathAwareToaster } from "@/components/ui/path-aware-toaster";
 import { GoogleFontsLink } from "@/components/google-fonts-link";
+import { UpdateBanner } from "@/components/update-banner";
 
 // NOTE: We intentionally do NOT use next/font/google here. The Electron
 // desktop build runs `next build` on the operator's machine which often
@@ -58,6 +59,7 @@ export default function RootLayout({
       >
         <GoogleFontsLink />
         {children}
+        <UpdateBanner />
         {/* Toasts are suppressed on /congregation, /presenter, and the
             NDI fan-out so display/output actions never appear on the
             audience screen. The operator console still sees toasts. */}
