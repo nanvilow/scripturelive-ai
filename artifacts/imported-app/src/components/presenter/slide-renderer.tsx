@@ -88,6 +88,29 @@ function SlideContent({
     )
   }
 
+  if (slide.type === 'media' && slide.mediaUrl) {
+    if (slide.mediaKind === 'video') {
+      return (
+        <video
+          src={slide.mediaUrl}
+          autoPlay
+          loop
+          muted
+          playsInline
+          className="absolute inset-0 w-full h-full object-contain bg-black"
+        />
+      )
+    }
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={slide.mediaUrl}
+        alt={slide.title || 'media'}
+        className="absolute inset-0 w-full h-full object-contain bg-black"
+      />
+    )
+  }
+
   if (slide.type === 'verse' || slide.type === 'lyrics') {
     const totalChars = slide.content.reduce((n, l) => n + l.length, 0)
     const contentCqi = pickContentCqi(baseCqi, totalChars, slide.content.length)

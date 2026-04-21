@@ -28,18 +28,17 @@ import {
   History,
   ListOrdered,
   BookOpen,
-  Sparkles,
   Eye,
   EyeOff,
   ChevronLeft,
   ChevronRight,
   Trash2,
   Plus,
+  Upload,
+  Film,
+  ImageIcon,
 } from 'lucide-react'
-import {
-  BibleLookupCompact,
-  SlideGeneratorCompact,
-} from '@/components/layout/library-compact'
+import { BibleLookupCompact } from '@/components/layout/library-compact'
 import { TopToolbar, TransportBar } from '@/components/layout/easyworship-shell'
 import {
   parseVerseReference,
@@ -917,20 +916,209 @@ function DetectedVersesCard() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// PARAPHRASE MATCHES (AI)
+// MEDIA — upload images / videos and push them straight to live
 // ──────────────────────────────────────────────────────────────────────
-function ParaphraseMatchesCard() {
+interface MediaItem {
+  id: string
+  name: string
+  url: string // data: URL so it travels through the SSE broadcast intact
+  kind: 'image' | 'video'
+}
+
+function MediaCard() {
+  const [items, setItems] = useState<MediaItem[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const { slides, setSlides, setLiveSlideIndex, setIsLive, setPreviewSlideIndex } =
+    useAppStore()
+
+  const onPick = useCallback(() => fileRef.current?.click(), [])
+
+  const onFiles = useCallback(async (files: FileList | null) => {
+    if (!files || !files.length) return
+    const next: MediaItem[] = []
+    for (const f of Array.from(files)) {
+      const isVideo = f.type.startsWith('video/')
+      const isImage = f.type.startsWith('image/')
+      if (!isVideo && !isImage) continue
+      // Cap at 8 MB — base64 inflates ~33%, so this keeps each SSE
+      // payload under ~11 MB which most reverse proxies tolerate.
+      // Larger clips should be served from a static URL instead.
+      if (f.size > 8 * 1024 * 1024) {
+        toast.error(`${f.name} is larger than 8 MB`)
+        continue
+      }
+      const url = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader()
+        r.onload = () => resolve(String(r.result || ''))
+        r.onerror = () => reject(r.error)
+        r.readAsDataURL(f)
+      })
+      next.push({
+        id: `media-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: f.name,
+        url,
+        kind: isVideo ? 'video' : 'image',
+      })
+    }
+    if (next.length) {
+      setItems((prev) => [...next, ...prev])
+      setSelectedId(next[0].id)
+      toast.success(`${next.length} item${next.length === 1 ? '' : 's'} added`)
+    }
+  }, [])
+
+  const sendLive = useCallback(
+    (item: MediaItem) => {
+      const slide = {
+        id: `slide-media-${Date.now()}`,
+        type: 'media' as const,
+        title: item.name,
+        subtitle: '',
+        content: [],
+        mediaUrl: item.url,
+        mediaKind: item.kind,
+      }
+      const nextSlides = [...slides, slide]
+      setSlides(nextSlides)
+      const idx = nextSlides.length - 1
+      setPreviewSlideIndex(idx)
+      setLiveSlideIndex(idx)
+      setIsLive(true)
+      toast.success('Sent to live output')
+    },
+    [slides, setSlides, setLiveSlideIndex, setIsLive, setPreviewSlideIndex]
+  )
+
+  const remove = useCallback((id: string) => {
+    setItems((prev) => prev.filter((m) => m.id !== id))
+    setSelectedId((cur) => (cur === id ? null : cur))
+  }, [])
+
   return (
     <Card
-      title="Paraphrase Matches (AI)"
+      title="Media"
       badge={
-        <Badge className="h-4 px-1.5 text-[9px] font-semibold bg-sky-500/15 text-sky-300 border border-sky-500/40 uppercase tracking-wider">
-          <Sparkles className="h-2.5 w-2.5 mr-1" /> Ready
+        <Badge className="h-4 px-1.5 text-[9px] font-semibold bg-fuchsia-500/15 text-fuchsia-300 border border-fuchsia-500/40 uppercase tracking-wider">
+          <ImageIcon className="h-2.5 w-2.5 mr-1" /> {items.length}
         </Badge>
       }
-      bodyClassName="overflow-hidden"
+      bodyClassName="overflow-hidden flex flex-col"
     >
-      <SlideGeneratorCompact />
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          onFiles(e.target.files)
+          if (fileRef.current) fileRef.current.value = ''
+        }}
+      />
+      <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-zinc-800/70 shrink-0">
+        <Button
+          size="sm"
+          variant="secondary"
+          className="h-6 px-2 text-[10px] gap-1"
+          onClick={onPick}
+        >
+          <Upload className="h-3 w-3" /> Upload
+        </Button>
+        <span className="text-[9px] text-zinc-500 ml-auto">
+          Images / videos · ≤25 MB
+        </span>
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-auto p-2">
+        {items.length === 0 ? (
+          <div
+            className="flex flex-col items-center justify-center h-full text-center text-[10px] text-zinc-500 gap-2 border border-dashed border-zinc-800 rounded cursor-pointer hover:border-zinc-700 hover:text-zinc-400 transition-colors py-6"
+            onClick={onPick}
+          >
+            <Upload className="h-5 w-5 opacity-60" />
+            <div>
+              <div className="font-medium">Click to upload</div>
+              <div className="opacity-70 mt-0.5">Images or short videos</div>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-1.5">
+            {items.map((m) => {
+              const active = m.id === selectedId
+              return (
+                <div
+                  key={m.id}
+                  onClick={() => setSelectedId(m.id)}
+                  className={cn(
+                    'group relative rounded border bg-zinc-950 overflow-hidden cursor-pointer transition-colors',
+                    active
+                      ? 'border-fuchsia-500/60 ring-1 ring-fuchsia-500/40'
+                      : 'border-zinc-800 hover:border-zinc-700'
+                  )}
+                >
+                  <div className="aspect-video bg-black flex items-center justify-center">
+                    {m.kind === 'video' ? (
+                      <video
+                        src={m.url}
+                        muted
+                        playsInline
+                        className="w-full h-full object-contain"
+                      />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={m.url}
+                        alt={m.name}
+                        className="w-full h-full object-contain"
+                      />
+                    )}
+                  </div>
+                  <div className="absolute inset-x-0 bottom-0 px-1.5 py-1 bg-gradient-to-t from-black/80 to-transparent flex items-center gap-1">
+                    {m.kind === 'video' ? (
+                      <Film className="h-2.5 w-2.5 text-fuchsia-300 shrink-0" />
+                    ) : (
+                      <ImageIcon className="h-2.5 w-2.5 text-fuchsia-300 shrink-0" />
+                    )}
+                    <span className="text-[9px] text-zinc-200 truncate">
+                      {m.name}
+                    </span>
+                  </div>
+                  <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="h-5 w-5 p-0"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        remove(m.id)
+                      }}
+                      title="Remove"
+                    >
+                      <Trash2 className="h-2.5 w-2.5" />
+                    </Button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {selectedId && (
+        <div className="border-t border-zinc-800/70 px-2 py-1.5 shrink-0">
+          <Button
+            size="sm"
+            className="w-full h-7 text-[10px] gap-1 bg-fuchsia-600 hover:bg-fuchsia-500"
+            onClick={() => {
+              const item = items.find((m) => m.id === selectedId)
+              if (item) sendLive(item)
+            }}
+          >
+            <Send className="h-3 w-3" /> Send to Live
+          </Button>
+        </div>
+      )}
     </Card>
   )
 }
@@ -1179,7 +1367,7 @@ export function LogosShell() {
         <div className="grid gap-2 min-h-0 grid-cols-3">
           <ChapterNavigatorCard />
           <DetectedVersesCard />
-          <ParaphraseMatchesCard />
+          <MediaCard />
         </div>
       </div>
 

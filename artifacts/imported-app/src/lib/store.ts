@@ -44,12 +44,16 @@ export interface BibleVerse {
 
 export interface Slide {
   id: string
-  type: 'title' | 'verse' | 'lyrics' | 'custom' | 'blank' | 'announcement'
+  type: 'title' | 'verse' | 'lyrics' | 'custom' | 'blank' | 'announcement' | 'media'
   title: string
   subtitle: string
   content: string[]
   background?: string
   notes?: string
+  // Media slides: full-bleed image or video that the operator uploads
+  // from the Media panel and sends straight to the live output.
+  mediaUrl?: string
+  mediaKind?: 'image' | 'video'
 }
 
 export interface SongSection {

@@ -674,21 +674,12 @@ export function SettingsView() {
             </Select>
           </div>
 
-          {/* WYSIWYG typography preview — every change above (font
-              size, alignment, shadow, family) is reflected here in
-              real time, with the same paragraph-flow rule the live
-              output uses, so labels and values always sit on the same
-              baseline. */}
-          <Separator className="my-2" />
-          <OutputPreview
-            mode="full"
-            label="Preview (Typography)"
-            sample={{
-              reference: 'Romans 8:34',
-              text:
-                'Who is he that condemneth? It is Christ that died, yea rather, that is risen again, who is even at the right hand of God, who also maketh intercession for us.',
-            }}
-          />
+          {/* Typography preview lives on the main console PreviewCard
+              now — every change above (font size, alignment, shadow,
+              family) is reflected there in real time, and the
+              broadcast-to-secondary-screen+NDI loop uses the same
+              renderer so what the operator sees is what the
+              congregation sees. */}
         </CardContent>
       </Card>
 

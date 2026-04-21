@@ -183,6 +183,14 @@ function render(s){
   var fontFam=resolveFont(st.fontFamily);
   var fontStyle='font-family:'+fontFam+';';
   var txt='';
+  if(slide.type==='media'&&slide.mediaUrl){
+    var mediaTag=slide.mediaKind==='video'
+      ? '<video src="'+slide.mediaUrl+'" autoplay loop muted playsinline style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000"></video>'
+      : '<img src="'+slide.mediaUrl+'" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000">';
+    $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:#000">'+mediaTag+'</div>';
+    $('output').classList.remove('hidden');
+    return;
+  }
   if(slide.type==='title'){
     txt='<div class="slide-title" style="font-size:'+fs.title+';'+sh+'">'+(slide.title||'')+'</div>'+(slide.subtitle?'<div class="slide-subtitle" style="font-size:'+fs.sub+';'+sh+'">'+slide.subtitle+'</div>':'');
   }else if(slide.content&&slide.content.length){
