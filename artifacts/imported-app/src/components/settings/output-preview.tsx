@@ -86,9 +86,15 @@ export function OutputPreview({
       )}
       <div
         className="relative w-full aspect-video bg-black overflow-hidden rounded-md ring-1 ring-border"
-        style={{ background: isLT && isBlack ? '#000' : bg, containerType: 'size' }}
+        style={{
+          // In lower-third mode the upper area must stay transparent
+          // (rendered as solid black) — theme colour and any custom
+          // background image are scoped to the rounded card below.
+          background: isLT ? '#000' : bg,
+          containerType: 'size',
+        }}
       >
-        {settings.customBackground && !(isLT && isBlack) && (
+        {settings.customBackground && !isLT && (
           <img
             src={settings.customBackground}
             alt=""
@@ -147,23 +153,36 @@ export function OutputPreview({
           >
             <div
               className={cn(
-                'w-full h-full max-w-[68rem] mx-auto flex flex-col justify-center text-white',
+                'relative w-full h-full max-w-[68rem] mx-auto flex flex-col justify-center text-white rounded-2xl shadow-[0_8px_28px_rgba(0,0,0,0.45)] overflow-hidden',
                 itemsClass,
                 textClass,
               )}
               style={{
-                // Lower-third bar is fully transparent so the operator
-                // sees only the slide / global background through it,
-                // matching the spec ("no solid box"). Text shadow keeps
-                // it readable on bright backgrounds.
-                background: 'transparent',
+                // Rounded "card" that holds the verses. Theme colour
+                // and (optionally) the custom background image render
+                // inside this box only — the upper area outside stays
+                // transparent per spec.
+                background: isBlack ? '#000' : bg,
                 padding: '3% 5%',
                 gap: '0.6cqh',
-                overflow: 'hidden',
                 fontFamily: fontStack,
                 textShadow: shadow,
               }}
             >
+              {settings.customBackground && !isBlack && (
+                <img
+                  src={settings.customBackground}
+                  alt=""
+                  className="absolute inset-0 w-full h-full object-cover opacity-40 rounded-2xl pointer-events-none"
+                />
+              )}
+              <div
+                className={cn(
+                  'relative z-10 w-full h-full flex flex-col justify-center',
+                  itemsClass,
+                  textClass,
+                )}
+              >
               {settings.showReferenceOnOutput !== false && (
                 <p
                   className="m-0 p-0 opacity-70 font-medium"
@@ -186,6 +205,7 @@ export function OutputPreview({
               >
                 {body}
               </p>
+              </div>
             </div>
           </div>
         )}
