@@ -121,7 +121,10 @@ export function DashboardView() {
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg overflow-hidden">
-                <img src="/logo.png" alt="" className="h-full w-full object-contain bg-transparent" />
+                <div className="h-full w-full rounded-full bg-white flex items-center justify-center overflow-hidden">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/logo.png" alt="" className="h-full w-full object-contain" />
+                </div>
               </div>
               <Badge variant="secondary" className="bg-primary/15 text-primary border-primary/20 text-xs">
                 Powered by WassMedia (+233246798526)

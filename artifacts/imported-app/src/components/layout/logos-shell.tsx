@@ -106,6 +106,51 @@ function Card({
   )
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// AUDIO METER — vertical level-bar shown beside Preview / Live frames
+// ──────────────────────────────────────────────────────────────────────
+// Visual indicator only (no real audio analysis hooked up). When the
+// corresponding speaker / headphone toggle is active we animate a
+// subtle bouncing level so it reads as "live audio passing through";
+// when muted we render a dim ladder so it still looks like a meter.
+function AudioMeter({ active, tone = 'green' }: { active: boolean; tone?: 'green' | 'red' | 'amber' }) {
+  const [level, setLevel] = useState(0.15)
+  useEffect(() => {
+    if (!active) {
+      setLevel(0.05)
+      return
+    }
+    let raf = 0
+    const tick = () => {
+      // Pseudo-random meter bounce — small, low frequency, no DSP.
+      setLevel(0.35 + Math.random() * 0.55)
+      raf = window.setTimeout(tick, 90 + Math.random() * 80) as unknown as number
+    }
+    tick()
+    return () => clearTimeout(raf)
+  }, [active])
+  const grad =
+    tone === 'red'
+      ? 'from-rose-500 via-rose-400 to-amber-400'
+      : tone === 'amber'
+        ? 'from-amber-500 via-amber-400 to-yellow-300'
+        : 'from-emerald-500 via-emerald-400 to-yellow-300'
+  return (
+    <div className="relative h-full w-2 rounded-sm bg-zinc-900/80 border border-zinc-800 overflow-hidden">
+      <div
+        className={cn('absolute bottom-0 left-0 right-0 bg-gradient-to-t transition-[height] duration-100 ease-out', grad)}
+        style={{ height: `${Math.round(level * 100)}%`, opacity: active ? 1 : 0.25 }}
+      />
+      {/* faint ladder ticks so it always reads as a meter, even idle */}
+      <div className="absolute inset-0 pointer-events-none flex flex-col justify-between py-0.5">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <span key={i} className="block h-px w-full bg-black/40" />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function Tab({
   active,
   onClick,
@@ -406,44 +451,49 @@ function PreviewCard() {
       }
       bodyClassName="bg-black flex flex-col"
     >
-      <div className="flex-1 min-h-0 flex items-center justify-center p-3 relative">
-        {/* Speaker toggle pinned to the LEFT edge of the preview
-            surface (mirrors the Wirecast preview-monitor button). On
-            = operator hears preview audio; off = preview is silent.
-            Audio is still processed regardless — this only affects
-            local audibility on the preview surface. */}
-        <button
-          type="button"
-          onClick={() => setPreviewAudio(!previewAudio)}
-          title={previewAudio ? 'Mute preview audio' : 'Monitor preview audio'}
-          className={cn(
-            'absolute left-1.5 top-1/2 -translate-y-1/2 z-20 h-7 w-7 rounded-md border flex items-center justify-center transition-colors',
-            previewAudio
-              ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
-              : 'bg-black/60 border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500',
-          )}
-        >
-          {previewAudio ? (
-            <Volume2 className="h-3.5 w-3.5" />
+      <div className="flex-1 min-h-0 flex items-stretch p-2 gap-2">
+        {/* LEFT audio rail — sits OUTSIDE the preview frame on the
+            left edge, exactly like the Wirecast reference. Stack:
+            VU meter on top, speaker toggle on the bottom. */}
+        <div className="w-7 shrink-0 flex flex-col items-center gap-1.5 py-1">
+          <div className="flex-1 min-h-0 w-full flex justify-center">
+            <AudioMeter active={previewAudio} tone="green" />
+          </div>
+          <button
+            type="button"
+            onClick={() => setPreviewAudio(!previewAudio)}
+            title={previewAudio ? 'Mute preview audio' : 'Monitor preview audio'}
+            className={cn(
+              'h-6 w-6 rounded-md border flex items-center justify-center transition-colors shrink-0',
+              previewAudio
+                ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                : 'bg-black/60 border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500',
+            )}
+          >
+            {previewAudio ? (
+              <Volume2 className="h-3 w-3" />
+            ) : (
+              <VolumeX className="h-3 w-3" />
+            )}
+          </button>
+        </div>
+        <div className="flex-1 min-w-0 flex items-center justify-center">
+          {previewSlide ? (
+            <div className="w-full max-w-full">
+              <SlideThumb
+                slide={previewSlide}
+                themeKey={previewSlide.background || settings.congregationScreenTheme}
+                size="lg"
+                settings={settings}
+              />
+            </div>
           ) : (
-            <VolumeX className="h-3.5 w-3.5" />
+            <div className="text-center text-[11px] text-zinc-600">
+              <BookOpen className="h-8 w-8 mx-auto opacity-30 mb-2" />
+              Nothing in preview yet
+            </div>
           )}
-        </button>
-        {previewSlide ? (
-          <div className="w-full max-w-full">
-            <SlideThumb
-              slide={previewSlide}
-              themeKey={previewSlide.background || settings.congregationScreenTheme}
-              size="lg"
-              settings={settings}
-            />
-          </div>
-        ) : (
-          <div className="text-center text-[11px] text-zinc-600">
-            <BookOpen className="h-8 w-8 mx-auto opacity-30 mb-2" />
-            Nothing in preview yet
-          </div>
-        )}
+        </div>
       </div>
       {/* Transport bar — rendered BELOW the preview surface so it
           mirrors a broadcast transport row (Back · Play · Pause ·
@@ -581,69 +631,29 @@ function LiveDisplayCard({
       }
       bodyClassName="bg-black"
     >
-      <div className="flex-1 min-h-0 flex items-center justify-center p-3 relative">
-        {/* Audio toggles pinned to the RIGHT edge of the live surface
-            (mirrors the Wirecast live-monitor cluster the user
-            referenced). Speaker = broadcast audio is hot (on/off);
-            Headphones = operator monitors live audio locally. They are
-            independent — broadcast can be hot while the operator is
-            silent (typical live-mix posture), or both on (operator
-            monitoring), or both off (everything muted). */}
-        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 z-20 flex flex-col gap-1.5">
-          <button
-            type="button"
-            onClick={() => setLiveBroadcastAudio(!liveBroadcastAudio)}
-            title={
-              liveBroadcastAudio
-                ? 'Mute broadcast audio'
-                : 'Send audio to broadcast'
-            }
-            className={cn(
-              'h-7 w-7 rounded-md border flex items-center justify-center transition-colors',
-              liveBroadcastAudio
-                ? 'bg-rose-500/20 border-rose-500/50 text-rose-300'
-                : 'bg-black/60 border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500',
-            )}
-          >
-            {liveBroadcastAudio ? (
-              <Volume2 className="h-3.5 w-3.5" />
-            ) : (
-              <VolumeX className="h-3.5 w-3.5" />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setLiveMonitorAudio(!liveMonitorAudio)}
-            title={
-              liveMonitorAudio
-                ? 'Stop monitoring live audio'
-                : 'Monitor live audio in your headphones'
-            }
-            className={cn(
-              'h-7 w-7 rounded-md border flex items-center justify-center transition-colors relative',
-              liveMonitorAudio
-                ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
-                : 'bg-black/60 border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500',
-            )}
-          >
-            <Headphones className="h-3.5 w-3.5" />
-            {!liveMonitorAudio && (
-              <span className="absolute inset-x-1 h-px bg-current rotate-45" />
-            )}
-          </button>
-        </div>
+      <div className="flex-1 min-h-0 flex items-stretch p-2 gap-2 relative">
+        <div className="flex-1 min-w-0 flex items-center justify-center relative">
         {/* Startup splash. While the operator hasn't put anything on
-            air yet (fresh session) we float the WassMedia logo over
-            the empty stage so both the operator's Live Display and the
-            congregation TV match. Disappears on the first cue. */}
+            air yet (fresh session) we render a transparent branded
+            text mark — pure white "Scripture AI" with the WassMedia
+            attribution underneath — so both the operator's Live
+            Display and the congregation TV match. Disappears on the
+            first cue. Style is intentionally text-only with NO logo
+            background, per the Live Display spec. */}
         {showStartupLogo && !hidden && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none bg-black">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/logo.png"
-              alt="WassMedia"
-              className="max-w-[42%] max-h-[42%] w-auto h-auto object-contain"
-            />
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center pointer-events-none bg-transparent text-white">
+            <div
+              className="font-bold tracking-tight"
+              style={{ fontSize: 'clamp(1rem, 5cqi, 3rem)', lineHeight: 1.1 }}
+            >
+              Scripture AI
+            </div>
+            <div
+              className="mt-2 opacity-80"
+              style={{ fontSize: 'clamp(0.55rem, 1.6cqi, 0.95rem)' }}
+            >
+              Powered By WassMedia (+233246798526)
+            </div>
           </div>
         )}
         {/* Always render the themed background, even when no scripture
@@ -813,6 +823,61 @@ function LiveDisplayCard({
             Output is hidden
           </div>
         )}
+        </div>
+        {/* RIGHT audio rail — sits OUTSIDE the live frame on the
+            right edge, exactly like the Wirecast reference. Stack:
+            VU meter on top, then the broadcast speaker, then the
+            operator headphone toggle. The meter tone follows whichever
+            of the two toggles is currently driving audio. */}
+        <div className="w-7 shrink-0 flex flex-col items-center gap-1.5 py-1">
+          <div className="flex-1 min-h-0 w-full flex justify-center">
+            <AudioMeter
+              active={liveBroadcastAudio || liveMonitorAudio}
+              tone={liveBroadcastAudio ? 'red' : liveMonitorAudio ? 'amber' : 'green'}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setLiveBroadcastAudio(!liveBroadcastAudio)}
+            title={
+              liveBroadcastAudio
+                ? 'Mute broadcast audio'
+                : 'Send audio to broadcast'
+            }
+            className={cn(
+              'h-6 w-6 rounded-md border flex items-center justify-center transition-colors shrink-0',
+              liveBroadcastAudio
+                ? 'bg-rose-500/20 border-rose-500/50 text-rose-300'
+                : 'bg-black/60 border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500',
+            )}
+          >
+            {liveBroadcastAudio ? (
+              <Volume2 className="h-3 w-3" />
+            ) : (
+              <VolumeX className="h-3 w-3" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setLiveMonitorAudio(!liveMonitorAudio)}
+            title={
+              liveMonitorAudio
+                ? 'Stop monitoring live audio'
+                : 'Monitor live audio in your headphones'
+            }
+            className={cn(
+              'h-6 w-6 rounded-md border flex items-center justify-center transition-colors relative shrink-0',
+              liveMonitorAudio
+                ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                : 'bg-black/60 border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500',
+            )}
+          >
+            <Headphones className="h-3 w-3" />
+            {!liveMonitorAudio && (
+              <span className="absolute inset-x-1 h-px bg-current rotate-45" />
+            )}
+          </button>
+        </div>
       </div>
 
       <div className="border-t border-zinc-800/60 px-3 py-2 flex items-center gap-3 bg-zinc-900/30 shrink-0">
@@ -1564,7 +1629,9 @@ function MediaCard() {
         setItems((prev) => [...added, ...prev])
         setSelectedId(added[0].id)
         setStagedItemId(null)
-        toast.success(`${added.length} item${added.length === 1 ? '' : 's'} uploaded`)
+        // Media-column notifications are intentionally suppressed —
+        // the operator already sees the new tile appear in the grid,
+        // a toast on top of that just adds noise during a live show.
       }
     },
     [uploadOne]
@@ -1601,7 +1668,8 @@ function MediaCard() {
         setLiveSlideIndex(-1)
         setIsLive(false)
         setStagedItemId(item.id)
-        toast.success('Replaced preview with selected media')
+        // Suppress notifications for media-column actions; the
+        // amber preview-frame ring already signals the change.
       } else {
         // Second click on the same item: send it live.
         setLiveSlideIndex(0)
@@ -1610,7 +1678,8 @@ function MediaCard() {
         // something on air; trip the flag so the secondary screen and
         // the operator's Live Display drop the splash from now on.
         setHasShownContent(true)
-        toast.success('Sent to live output')
+        // Suppress notifications for media-column actions; the red
+        // ON AIR ring on the live frame already signals the cue.
       }
     },
     [
@@ -1685,11 +1754,6 @@ function MediaCard() {
   return (
     <Card
       title="Media"
-      badge={
-        <Badge className="h-4 px-1.5 text-[9px] font-semibold bg-fuchsia-500/15 text-fuchsia-300 border border-fuchsia-500/40 uppercase tracking-wider">
-          <ImageIcon className="h-2.5 w-2.5 mr-1" /> {items.length}
-        </Badge>
-      }
       bodyClassName="overflow-hidden flex flex-col"
     >
       <input
@@ -2104,8 +2168,10 @@ export function LogosShell() {
           attribution is always visible to the operator without crowding
           the workspace cards. */}
       <footer className="flex h-7 items-center justify-center gap-2 border-t border-zinc-800 bg-zinc-950/80 shrink-0 select-none">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo.png" alt="" className="h-3.5 w-3.5 object-contain bg-transparent opacity-90" />
+        <div className="h-4 w-4 rounded-full bg-white flex items-center justify-center overflow-hidden shrink-0">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="" className="h-full w-full object-contain" />
+        </div>
         <span className="text-[10px] tracking-wide text-zinc-400">
           Powered by WassMedia (+233246798526)
         </span>

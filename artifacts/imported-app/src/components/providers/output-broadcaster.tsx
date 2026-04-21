@@ -50,7 +50,14 @@ export function OutputBroadcaster() {
 
     const buildPayload = () => {
       const s = useAppStore.getState()
-      const cur = s.liveSlideIndex >= 0 ? s.slides[s.liveSlideIndex] : null
+      const baseCur = s.liveSlideIndex >= 0 ? s.slides[s.liveSlideIndex] : null
+      // Stamp the current operator transport flag onto the live slide
+      // so the congregation route can call .play()/.pause() on the
+      // existing <video> element without rebuilding it (which would
+      // reset playback to t=0). Only video media slides care.
+      const cur = baseCur
+        ? { ...baseCur, mediaPaused: baseCur.type === 'media' && baseCur.mediaKind === 'video' ? !!s.mediaPaused : undefined }
+        : null
       const next = s.liveSlideIndex >= 0 && s.liveSlideIndex + 1 < s.slides.length
         ? s.slides[s.liveSlideIndex + 1]
         : null
