@@ -248,6 +248,14 @@ interface AppState {
   setPreviewVideoPlaying: (b: boolean) => void
   liveVideoPlaying: boolean
   setLiveVideoPlaying: (b: boolean) => void
+  // Real-signal audio levels (0..1) read from the Web Audio analyser
+  // attached to the actual <video> element on each surface. The
+  // AudioMeter in the operator console reads these so the bar tracks
+  // the true sound coming out of the source — no more random bounce
+  // when the video is silent.
+  audioLevelLive: number
+  audioLevelPreview: number
+  setAudioLevel: (surface: 'live' | 'preview', level: number) => void
 
   // Audio routing flags — Wirecast-style monitor controls.
   //   previewAudio       → speaker icon on the Preview pane.
@@ -509,6 +517,14 @@ export const useAppStore = create<AppState>()(
       setPreviewVideoPlaying: (b) => set({ previewVideoPlaying: b }),
       liveVideoPlaying: false,
       setLiveVideoPlaying: (b) => set({ liveVideoPlaying: b }),
+      audioLevelLive: 0,
+      audioLevelPreview: 0,
+      setAudioLevel: (surface, level) =>
+        set(
+          surface === 'live'
+            ? { audioLevelLive: level }
+            : { audioLevelPreview: level },
+        ),
 
       // Audio routing — see interface comments above for semantics.
       previewAudio: false,

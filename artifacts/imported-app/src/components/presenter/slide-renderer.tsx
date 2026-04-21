@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import type { Slide, AppSettings } from '@/lib/store'
 import { useAppStore } from '@/lib/store'
 import { getFontStack } from '@/lib/fonts'
+import { attachAnalyser, readLevel } from '@/lib/audio-level'
 
 // ──────────────────────────────────────────────────────────────────
 // Media slide rendering helpers
@@ -47,6 +48,7 @@ function MediaSlideContent({
   const globalIsLive = useAppStore((s) => s.isLive)
   const setPreviewVideoPlaying = useAppStore((s) => s.setPreviewVideoPlaying)
   const setLiveVideoPlaying = useAppStore((s) => s.setLiveVideoPlaying)
+  const setAudioLevel = useAppStore((s) => s.setAudioLevel)
   // Pick the right monitor flag for this surface. The Live thumb
   // listens to liveMonitorAudio (the headphone toggle); every other
   // surface (Preview, Schedule thumbs, mid-card preview) follows the
@@ -150,6 +152,44 @@ function MediaSlideContent({
       setFlag(false)
     }
   }, [isLive, setPreviewVideoPlaying, setLiveVideoPlaying, slide.mediaUrl])
+
+  // Real-signal audio meter — attach a Web Audio analyser to this
+  // <video> and stream the RMS level into the store at ~30 Hz so the
+  // operator's VU meter tracks the actual sound (not a random
+  // bounce). When the video is silent or paused, the level decays to
+  // 0 naturally because we read the live waveform every frame.
+  useEffect(() => {
+    if (slide.mediaKind !== 'video') return
+    const v = videoRef.current
+    if (!v) return
+    const surface: 'live' | 'preview' = isLive ? 'live' : 'preview'
+    let raf = 0
+    let lastWrite = 0
+    const an = attachAnalyser(v)
+    if (!an) {
+      // No Web Audio support — leave meter at idle (the playing flag
+      // path keeps the bar at 0 in this case).
+      setAudioLevel(surface, 0)
+      return
+    }
+    const tick = (t: number) => {
+      // Throttle to ~33 Hz to keep state churn modest.
+      if (t - lastWrite >= 30) {
+        lastWrite = t
+        // If the surface is paused or muted, force the meter to 0
+        // even if the analyser has residual signal (e.g. a fade-out
+        // tail) — the operator's bar should track *audible* output.
+        const muted = v.muted || v.paused || v.ended
+        setAudioLevel(surface, muted ? 0 : readLevel(an))
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => {
+      cancelAnimationFrame(raf)
+      setAudioLevel(surface, 0)
+    }
+  }, [isLive, slide.mediaKind, slide.mediaUrl, setAudioLevel])
 
   const inner =
     slide.mediaKind === 'video' ? (
