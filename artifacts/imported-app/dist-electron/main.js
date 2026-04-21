@@ -9,7 +9,54 @@ const node_child_process_1 = require("node:child_process");
 const node_net_1 = require("node:net");
 const node_fs_1 = __importDefault(require("node:fs"));
 const ndi_service_1 = require("./ndi-service");
+let logFilePath = '';
+function setupFileLogging() {
+    try {
+        const dir = electron_1.app.getPath('userData');
+        if (!node_fs_1.default.existsSync(dir))
+            node_fs_1.default.mkdirSync(dir, { recursive: true });
+        logFilePath = node_path_1.default.join(dir, 'launch.log');
+        const stream = node_fs_1.default.createWriteStream(logFilePath, { flags: 'w' });
+        const wrap = (orig, prefix) => (...args) => {
+            try {
+                const line = `[${new Date().toISOString()}] ${prefix} ` +
+                    args.map(a => (a instanceof Error ? `${a.message}\n${a.stack}` : typeof a === 'string' ? a : JSON.stringify(a))).join(' ') + '\n';
+                stream.write(line);
+            }
+            catch { /* ignore */ }
+            try {
+                orig(...args);
+            }
+            catch { /* ignore */ }
+        };
+        console.log = wrap(console.log.bind(console), 'LOG');
+        console.error = wrap(console.error.bind(console), 'ERR');
+        console.warn = wrap(console.warn.bind(console), 'WRN');
+        console.log('ScriptureLive AI starting', {
+            version: electron_1.app.getVersion(),
+            platform: process.platform,
+            arch: process.arch,
+            execPath: process.execPath,
+            resourcesPath: process.resourcesPath,
+            userData: dir,
+        });
+        process.on('uncaughtException', (err) => { console.error('uncaughtException', err); });
+        process.on('unhandledRejection', (err) => { console.error('unhandledRejection', err); });
+    }
+    catch (e) {
+        // best-effort: file logging optional
+    }
+}
+function fatalError(stage, err) {
+    const msg = err instanceof Error ? `${err.message}\n${err.stack || ''}` : String(err);
+    console.error(`[fatal:${stage}]`, msg);
+    try {
+        electron_1.dialog.showErrorBox('ScriptureLive AI failed to start', `Stage: ${stage}\n\n${msg}\n\nFull log saved to:\n${logFilePath}\n\nPlease send this log file to support.`);
+    }
+    catch { /* ignore */ }
+}
 const frame_capture_1 = require("./frame-capture");
+const updater_1 = require("./updater");
 const isDev = !electron_1.app.isPackaged;
 const ndi = new ndi_service_1.NdiService();
 let frameCapture = null;
@@ -80,25 +127,28 @@ async function startNextServer() {
         },
         stdio: 'pipe',
     });
-    nextProcess.stdout?.on('data', (b) => process.stdout.write(`[next] ${b}`));
-    nextProcess.stderr?.on('data', (b) => process.stderr.write(`[next:err] ${b}`));
+    nextProcess.stdout?.on('data', (b) => console.log(`[next] ${b.toString().trimEnd()}`));
+    nextProcess.stderr?.on('data', (b) => console.error(`[next:err] ${b.toString().trimEnd()}`));
     nextProcess.on('exit', (code) => {
-        if (code !== 0 && !electron_1.app.isReady())
-            electron_1.app.quit();
+        console.log(`[next] process exited with code ${code}`);
     });
     // Wait for server readiness
     const url = `http://127.0.0.1:${port}`;
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + 60_000;
+    let lastErr = null;
     while (Date.now() < deadline) {
         try {
             const res = await fetch(`${url}/api/output?format=json`);
             if (res.ok)
                 return url;
+            lastErr = new Error(`HTTP ${res.status}`);
         }
-        catch { /* not ready */ }
+        catch (e) {
+            lastErr = e;
+        }
         await new Promise((r) => setTimeout(r, 250));
     }
-    throw new Error('Next server failed to start');
+    throw new Error(`Next server failed to start within 60s. Last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
 }
 async function createMainWindow(url) {
     mainWindow = new electron_1.BrowserWindow({
@@ -153,7 +203,33 @@ function setupIpc() {
                 onFrame: (buf, w, h) => ndi.sendFrame(buf, w, h),
                 onStatus: (msg) => broadcastNdiStatus({ ...ndi.getStatus(), captureMessage: msg }),
             });
-            await frameCapture.start({ width: opts.width, height: opts.height, fps: opts.fps });
+            const layout = opts.layout === 'ndi' ? 'ndi' : 'mirror';
+            let capturePath = '/api/output/congregation';
+            let transparent = false;
+            if (layout === 'ndi') {
+                transparent = opts.transparent !== false;
+                const lt = opts.lowerThird || {};
+                const params = new URLSearchParams();
+                if (transparent)
+                    params.set('transparent', '1');
+                if (lt.enabled)
+                    params.set('lowerThird', '1');
+                if (lt.position === 'top')
+                    params.set('position', 'top');
+                if (lt.branding)
+                    params.set('branding', lt.branding.slice(0, 80));
+                if (lt.accent)
+                    params.set('accent', lt.accent.replace(/[^0-9a-fA-F]/g, '').slice(0, 6));
+                const qs = params.toString();
+                capturePath = '/api/output/ndi' + (qs ? `?${qs}` : '');
+            }
+            await frameCapture.start({
+                width: opts.width,
+                height: opts.height,
+                fps: opts.fps,
+                path: capturePath,
+                transparent,
+            });
             broadcastNdiStatus(ndi.getStatus());
             return { ok: true, status: ndi.getStatus() };
         }
@@ -187,16 +263,77 @@ function setupIpc() {
             return { ok: false, error: err instanceof Error ? err.message : String(err) };
         }
     }));
-    electron_1.ipcMain.handle('output:open-window', () => {
+    // List physical displays so the renderer can show a "send to which screen?" picker
+    electron_1.ipcMain.handle('output:list-displays', () => {
+        try {
+            const primary = electron_1.screen.getPrimaryDisplay();
+            return electron_1.screen.getAllDisplays().map((d, i) => ({
+                id: d.id,
+                label: d.label && d.label.length > 0 ? d.label : `Display ${i + 1}`,
+                primary: d.id === primary.id,
+                width: d.size.width,
+                height: d.size.height,
+            }));
+        }
+        catch {
+            return [];
+        }
+    });
+    electron_1.ipcMain.handle('output:open-window', (_e, opts) => {
         if (!appBaseUrl)
             return { ok: false, error: 'app not ready' };
+        let target = electron_1.screen.getPrimaryDisplay();
+        if (opts?.displayId !== undefined) {
+            const found = electron_1.screen.getAllDisplays().find((d) => d.id === opts.displayId);
+            if (found)
+                target = found;
+            else {
+                // Pick the first non-primary display if available
+                const others = electron_1.screen.getAllDisplays().filter((d) => d.id !== electron_1.screen.getPrimaryDisplay().id);
+                if (others[0])
+                    target = others[0];
+            }
+        }
+        else if (electron_1.screen.getAllDisplays().length > 1) {
+            // No explicit pick → prefer the first non-primary display so the
+            // operator's main monitor stays free for the console.
+            const others = electron_1.screen.getAllDisplays().filter((d) => d.id !== electron_1.screen.getPrimaryDisplay().id);
+            if (others[0])
+                target = others[0];
+        }
+        const { x, y, width, height } = target.bounds;
         const win = new electron_1.BrowserWindow({
-            width: 1280, height: 720, backgroundColor: '#000',
+            x, y, width, height,
+            backgroundColor: '#000',
             title: 'ScriptureLive — Congregation Display',
             autoHideMenuBar: true,
+            fullscreen: target.id !== electron_1.screen.getPrimaryDisplay().id,
         });
         win.removeMenu();
         win.loadURL(`${appBaseUrl}/api/output/congregation`);
+        return { ok: true };
+    });
+    // Stage-display window: shows current slide, next slide, sermon notes,
+    // countdown timer and clock for the speaker on a separate screen.
+    electron_1.ipcMain.handle('output:open-stage', (_e, opts) => {
+        if (!appBaseUrl)
+            return { ok: false, error: 'app not ready' };
+        let target = electron_1.screen.getPrimaryDisplay();
+        if (opts?.displayId !== undefined) {
+            const found = electron_1.screen.getAllDisplays().find((d) => d.id === opts.displayId);
+            if (found)
+                target = found;
+        }
+        const { x, y, width, height } = target.bounds;
+        const win = new electron_1.BrowserWindow({
+            x, y, width, height,
+            backgroundColor: '#000',
+            title: 'ScriptureLive — Stage Display',
+            autoHideMenuBar: true,
+            fullscreen: target.id !== electron_1.screen.getPrimaryDisplay().id,
+        });
+        win.removeMenu();
+        win.loadURL(`${appBaseUrl}/api/output/stage`);
         return { ok: true };
     });
     ndi.on('frame', (count) => {
@@ -207,16 +344,37 @@ function setupIpc() {
     });
 }
 electron_1.app.whenReady().then(async () => {
-    setupIpc();
+    setupFileLogging();
+    try {
+        setupIpc();
+    }
+    catch (err) {
+        fatalError('setupIpc', err);
+        electron_1.app.quit();
+        return;
+    }
     try {
         appBaseUrl = await startNextServer();
     }
     catch (err) {
-        console.error('[main] Failed to start Next server:', err);
+        fatalError('startNextServer', err);
         electron_1.app.quit();
         return;
     }
-    await createMainWindow(appBaseUrl);
+    try {
+        await createMainWindow(appBaseUrl);
+    }
+    catch (err) {
+        fatalError('createMainWindow', err);
+        electron_1.app.quit();
+        return;
+    }
+    try {
+        (0, updater_1.setupAutoUpdater)({ getMainWindow: () => mainWindow });
+    }
+    catch (err) {
+        console.error('[updater] init failed (non-fatal):', err);
+    }
 });
 electron_1.app.on('window-all-closed', async () => {
     try {

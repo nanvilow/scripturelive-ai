@@ -61,7 +61,7 @@ type NdiStartOptions = NdiServiceStartOptions & {
   }
 }
 import { FrameCapture } from './frame-capture'
-import { initAutoUpdater } from './updater'
+import { setupAutoUpdater } from './updater'
 
 const isDev = !app.isPackaged
 const ndi = new NdiService()
@@ -354,7 +354,7 @@ app.whenReady().then(async () => {
     fatalError('createMainWindow', err); app.quit(); return
   }
   try {
-    initAutoUpdater(() => mainWindow)
+    setupAutoUpdater({ getMainWindow: () => mainWindow })
   } catch (err) {
     console.error('[updater] init failed (non-fatal):', err)
   }

@@ -39,9 +39,28 @@ export type AppInfo = {
   ndiUnavailableReason?: string
 }
 
+export type UpdateState =
+  | { status: 'idle' }
+  | { status: 'checking' }
+  | { status: 'available'; version: string; releaseNotes?: string; releaseName?: string }
+  | { status: 'not-available'; version: string }
+  | { status: 'downloading'; percent: number; transferred: number; total: number; bytesPerSecond: number }
+  | { status: 'downloaded'; version: string; releaseNotes?: string; releaseName?: string }
+  | { status: 'error'; message: string }
+
 const api = {
   isDesktop: true as const,
   getInfo: (): Promise<AppInfo> => ipcRenderer.invoke('app:info'),
+  updater: {
+    getState: (): Promise<UpdateState> => ipcRenderer.invoke('updater:get-state'),
+    check: (): Promise<UpdateState> => ipcRenderer.invoke('updater:check'),
+    install: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('updater:install'),
+    onState: (cb: (s: UpdateState) => void): (() => void) => {
+      const handler = (_e: unknown, state: UpdateState) => cb(state)
+      ipcRenderer.on('updater:state', handler)
+      return () => { ipcRenderer.removeListener('updater:state', handler) }
+    },
+  },
   ndi: {
     getStatus: (): Promise<NdiStatus> => ipcRenderer.invoke('ndi:status'),
     start: (opts: NdiStartOptions): Promise<{ ok: boolean; status?: NdiStatus; error?: string }> =>
@@ -65,15 +84,6 @@ const api = {
       opts?: { displayId?: number },
     ): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('output:open-stage', opts),
-  },
-  updater: {
-    onStatus: (
-      cb: (status: { state: 'idle' | 'downloading' | 'ready'; version?: string; percent?: number; bytesPerSecond?: number }) => void,
-    ) => {
-      const handler = (_e: unknown, status: Parameters<typeof cb>[0]) => cb(status)
-      ipcRenderer.on('updater:status', handler)
-      return () => ipcRenderer.removeListener('updater:status', handler)
-    },
   },
 }
 
