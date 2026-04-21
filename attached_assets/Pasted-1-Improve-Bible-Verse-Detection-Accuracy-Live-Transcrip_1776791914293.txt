@@ -1,0 +1,69 @@
+1. Improve Bible Verse Detection Accuracy (Live Transcription)
+Task
+
+Enhance the detection system to ensure high accuracy before auto displaying verses live.
+
+Requirements
+Implement a confidence scoring system for detected Bible references
+Only allow auto live display when confidence is near 100%
+Add validation checks:
+Match against a structured Bible database (Book, Chapter, Verse)
+Handle variations in speech (e.g., “John three sixteen” vs “John 3:16”)
+Expected Behavior
+Verses are only pushed live when highly accurate
+Prevent incorrect or partial scripture from being displayed
+2. Add Accuracy Indicator Bar (Detected Verses UI)
+Task
+
+Display a visual accuracy indicator beside each detected verse.
+
+UI Requirements
+Add a small horizontal bar or indicator line next to detected verses
+The bar should dynamically reflect detection confidence
+Color Coding
+🟢 Green (Glow Effect) → 90% – 100% accuracy
+🟡 Yellow → 50% – 80% accuracy
+🔴 Red → 20% – 30% accuracy
+Additional Behavior
+Smooth animation when confidence updates
+Real-time updates as transcription improves
+3. Auto Display Logic with Accuracy Threshold
+Task
+
+Control when verses are automatically sent to Live Display.
+
+Requirements
+Auto-display ONLY when:
+Confidence level ≥ defined threshold (e.g., 90%+)
+If below threshold:
+Do NOT push to live
+Keep in preview/detected list only
+4. Performance Optimization for Fast Detection
+Task
+
+Ensure detection and UI updates are fast and responsive.
+
+Requirements
+Real-time processing with minimal delay
+Efficient parsing of speech-to-text output
+Debounce or stabilize results to avoid flickering updates
+5. Update GO LIVE Button Logic (Live Display Bottom)
+Task
+
+Modify GO LIVE button behavior to function as a toggle.
+
+New Logic
+First Click → Start Live Display
+Second Click (while live) → Stop Live Display
+UI Behavior
+Change button state when active:
+Highlight or change label (e.g., “STOP LIVE”)
+Ensure instant response without delay
+6. Testing & QA
+Verify
+✅ Only highly accurate verses go live automatically
+✅ Accuracy bar reflects correct confidence levels
+✅ Colors display correctly (Green, Yellow, Red)
+✅ No incorrect scripture is pushed live
+✅ Detection updates quickly without lag
+✅ GO LIVE button toggles properly

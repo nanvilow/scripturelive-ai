@@ -1299,23 +1299,67 @@ function DetectedVersesCard() {
               the live transcription on the left to begin.
             </div>
           ) : (
-            detectedVerses.map((v, i) => (
-              <div
-                key={`${v.reference}-${i}`}
-                onClick={() => sendDetected(v, false)}
-                onDoubleClick={() => sendDetected(v, true)}
-                className="rounded border border-zinc-800/70 bg-zinc-900/40 hover:border-emerald-500/40 hover:bg-zinc-900 px-2 py-1.5 cursor-pointer transition-colors select-none"
-                title="Click → schedule · Double-click → live"
-              >
-                <div className="flex items-center justify-between gap-2 mb-0.5">
-                  <span className="text-[10px] font-semibold text-emerald-300">
-                    {v.reference}
-                  </span>
-                  <span className="text-[9px] text-zinc-500 uppercase">{v.translation}</span>
+            detectedVerses.map((v, i) => {
+              // Accuracy bar — width and color reflect detection
+              // confidence. Green w/ glow ≥90% (auto-live eligible),
+              // yellow 50–89%, red 20–49%, dim otherwise. Smooth
+              // transitions on width and color so the bar visibly
+              // "fills in" as the speech engine refines its parse.
+              const pct = Math.round((v.confidence || 0) * 100)
+              const tier =
+                v.confidence >= 0.9
+                  ? 'green'
+                  : v.confidence >= 0.5
+                    ? 'yellow'
+                    : v.confidence >= 0.2
+                      ? 'red'
+                      : 'dim'
+              const barColor =
+                tier === 'green'
+                  ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.85)]'
+                  : tier === 'yellow'
+                    ? 'bg-yellow-400'
+                    : tier === 'red'
+                      ? 'bg-rose-500'
+                      : 'bg-zinc-600'
+              const labelColor =
+                tier === 'green'
+                  ? 'text-emerald-300'
+                  : tier === 'yellow'
+                    ? 'text-yellow-300'
+                    : tier === 'red'
+                      ? 'text-rose-300'
+                      : 'text-zinc-500'
+              return (
+                <div
+                  key={`${v.reference}-${i}`}
+                  onClick={() => sendDetected(v, false)}
+                  onDoubleClick={() => sendDetected(v, true)}
+                  className="rounded border border-zinc-800/70 bg-zinc-900/40 hover:border-emerald-500/40 hover:bg-zinc-900 px-2 py-1.5 cursor-pointer transition-colors select-none"
+                  title={`Click → schedule · Double-click → live · Detection accuracy: ${pct}%`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-0.5">
+                    <span className="text-[10px] font-semibold text-emerald-300">
+                      {v.reference}
+                    </span>
+                    <span className="text-[9px] text-zinc-500 uppercase">{v.translation}</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-300 line-clamp-2 leading-snug">{v.text}</p>
+                  {/* Accuracy bar */}
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <div className="flex-1 h-1 rounded-full bg-zinc-800/80 overflow-hidden">
+                      <div
+                        className={cn('h-full rounded-full transition-all duration-500 ease-out', barColor)}
+                        style={{ width: `${Math.max(4, pct)}%` }}
+                      />
+                    </div>
+                    <span className={cn('text-[9px] font-mono tabular-nums w-7 text-right transition-colors', labelColor)}>
+                      {pct}%
+                    </span>
+                  </div>
                 </div>
-                <p className="text-[11px] text-zinc-300 line-clamp-2 leading-snug">{v.text}</p>
-              </div>
-            ))
+              )
+            })
           )}
         </div>
       </div>
