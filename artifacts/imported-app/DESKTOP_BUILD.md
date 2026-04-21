@@ -75,7 +75,8 @@ Two ways to publish:
    keeping the original filenames (the manifest's `filename` field must match).
 2. Update `version` and `releaseNotes` in `public/downloads/manifest.json`.
 3. Restart the server. The download page will pick up size and availability
-   automatically from disk.
+   automatically from disk, and SHA-256 checksums will be computed on the
+   first request and cached in memory.
 
 ### Option B — host on GitHub Releases (recommended for large files)
 
@@ -89,7 +90,46 @@ Create a Release on GitHub, upload the three artifacts, then edit
 ```
 
 The `/api/download/*` endpoints will 302-redirect to GitHub instead of
-streaming local files.
+streaming local files. In external-host mode the API trusts whatever `size`
+and `sha256` values are in the manifest, so run the post-build script
+described below before committing.
+
+## Filling in size + SHA-256 on the download page
+
+The `/download` page shows each installer's exact byte size and SHA-256
+checksum so administrators can verify they have the genuine file. These
+values come from `public/downloads/manifest.json`.
+
+A small post-build script populates them automatically. It runs as the last
+step of `pnpm run package`, `pnpm run package:win`, and `pnpm run package:mac`,
+but you can also run it on its own:
+
+```bash
+cd artifacts/imported-app
+
+# After copying installers into public/downloads/ (Option A above), or
+# after electron-builder dropped them in release/, run:
+pnpm run downloads:manifest
+
+# In CI (e.g. after `download-artifact` puts the files in ./dist):
+node scripts/update-download-manifest.mjs --dir ./dist
+```
+
+The script looks for each manifest entry's `filename` in (in order):
+
+1. `artifacts/imported-app/public/downloads/`
+2. `artifacts/imported-app/release/` (electron-builder default output dir)
+3. `<cwd>/dist/` (the path used by `actions/download-artifact`)
+4. Any extra directories passed via `--dir <path>` (repeatable)
+
+For each match it writes back `size` (exact bytes) and `sha256` (lower-case
+hex). Entries with no matching file on disk are left untouched, so partially
+built releases don't lose previously known hashes.
+
+For Option A the API also recomputes the SHA-256 lazily on first request if
+the manifest is missing one (handy when you `cp` an installer into
+`public/downloads/` and forget to run the script). For Option B you must run
+the script — the API can't compute hashes for files it doesn't have.
 
 ## First-run notes
 
