@@ -163,66 +163,137 @@ function AudioMeter({
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// LIVE DISPLAY RESIZE HANDLE
+// LIVE DISPLAY INTERACTIVE SCALE CONTROL
 // ──────────────────────────────────────────────────────────────────────
-// Direct-manipulation scaling for the Live Display preview frame.
-// Drag the bottom-right corner to resize; the size slider in the
-// transport bar updates in lockstep. Hold Shift while dragging for
-// fine-grained 1% steps. Bounds match the slider (0.6 .. 1.0) so the
-// frame can never collapse to nothing or blow past the card edge.
+// Professional drag-to-scale for the Live Display preview frame:
+//   • Click → enter resize mode
+//   • Drag DOWN → grow, Drag UP → shrink (broadcast convention)
+//   • Drag horizontally too → averaged into the delta for diagonal feel
+//   • Hold Shift → fine 1% steps
+//   • Double-click → snap back to 100% (operator's "fit" reset)
+// The actual rendered scale eases toward the target via a separate
+// rAF loop in LiveDisplayCard — that's what makes the motion feel
+// cinematic instead of jumpy. Bounds 0.6..1.0 match the slider so
+// the frame can never collapse or blow past the card.
+const SIZE_MIN = 0.6
+const SIZE_MAX = 1.0
+
 function ResizeHandle({
   size,
   setSize,
+  onActiveChange,
 }: {
   size: number
   setSize: (n: number) => void
+  onActiveChange?: (active: boolean) => void
 }) {
   const startRef = useRef<{ x: number; y: number; size: number } | null>(null)
-  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+  const beginDrag = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.stopPropagation()
     ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
     startRef.current = { x: e.clientX, y: e.clientY, size }
+    onActiveChange?.(true)
   }
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const start = startRef.current
     if (!start) return
-    // Use the larger of horizontal/vertical displacement so dragging
-    // any direction away from the corner enlarges the frame, dragging
-    // toward the centre shrinks it. ~280 px of travel covers the full
-    // 60 → 100 % range; Shift slows that to ~700 px for fine control.
-    const dx = e.clientX - start.x
+    // Vertical-dominant: drag down increases scale (broadcast feel).
+    // Horizontal motion is folded in at half-weight so a diagonal drag
+    // toward the corner still grows the frame intuitively.
     const dy = e.clientY - start.y
-    const delta = (dx + dy) / 2
-    const sensitivity = e.shiftKey ? 700 : 280
-    const next = Math.max(0.6, Math.min(1.0, start.size + delta / sensitivity))
-    setSize(Math.round(next * 100) / 100)
+    const dx = e.clientX - start.x
+    const delta = dy + dx * 0.5
+    const sensitivity = e.shiftKey ? 700 : 260
+    const next = Math.max(
+      SIZE_MIN,
+      Math.min(SIZE_MAX, start.size + delta / sensitivity),
+    )
+    setSize(Math.round(next * 1000) / 1000)
   }
-  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+  const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!startRef.current) return
     startRef.current = null
     ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
+    onActiveChange?.(false)
+  }
+  // Double-click resets the frame to 100% — the "fit" preset most
+  // operators want when they've zoomed in to inspect a verse.
+  const onDoubleClick = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setSize(SIZE_MAX)
   }
   return (
     <div
       role="slider"
       aria-label="Resize Live Display"
-      aria-valuemin={60}
-      aria-valuemax={100}
+      aria-valuemin={Math.round(SIZE_MIN * 100)}
+      aria-valuemax={Math.round(SIZE_MAX * 100)}
       aria-valuenow={Math.round(size * 100)}
-      onPointerDown={onPointerDown}
+      onPointerDown={beginDrag}
       onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-      title={`Drag to resize · ${Math.round(size * 100)}% (Shift = fine)`}
-      className="absolute bottom-1 right-1 z-20 w-4 h-4 rounded-sm bg-sky-500/30 hover:bg-sky-400/60 border border-sky-400/70 cursor-nwse-resize touch-none flex items-end justify-end shadow-sm"
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onDoubleClick={onDoubleClick}
+      title={`Drag to resize · ${Math.round(size * 100)}% · double-click for 100% · Shift for fine`}
+      className="absolute -bottom-0.5 -right-0.5 z-20 w-5 h-5 rounded-sm bg-sky-500/40 hover:bg-sky-400/80 border border-sky-300 cursor-ns-resize touch-none flex items-end justify-end shadow-md"
       style={{ touchAction: 'none' }}
     >
-      {/* Corner grip lines — the standard Wirecast / OBS resize cue. */}
-      <svg viewBox="0 0 16 16" className="w-full h-full text-white/90 pointer-events-none">
-        <path d="M5 15 L15 5 M9 15 L15 9 M13 15 L15 13" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" />
+      {/* Corner grip lines — standard OBS / Wirecast resize cue. */}
+      <svg viewBox="0 0 16 16" className="w-full h-full text-white pointer-events-none">
+        <path
+          d="M4 15 L15 4 M8 15 L15 8 M12 15 L15 12"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          fill="none"
+          strokeLinecap="round"
+        />
       </svg>
     </div>
   )
+}
+
+// Smoothly eases a numeric value toward a moving target on every
+// animation frame — the "actual vs target" loop that gives the
+// scale control its broadcast-quality feel. Easing factor 0.22
+// reaches ~99% of the target inside about 18 frames (~300 ms at
+// 60 fps), which feels responsive but never jumpy. Stops calling
+// setState once it has settled, so it costs nothing while idle.
+function useEasedNumber(target: number, factor = 0.22): number {
+  const [value, setValue] = useState(target)
+  const valueRef = useRef(target)
+  const targetRef = useRef(target)
+  useEffect(() => {
+    targetRef.current = target
+  }, [target])
+  useEffect(() => {
+    let raf = 0
+    let alive = true
+    const tick = () => {
+      if (!alive) return
+      const cur = valueRef.current
+      const tgt = targetRef.current
+      const diff = tgt - cur
+      if (Math.abs(diff) < 0.0008) {
+        if (cur !== tgt) {
+          valueRef.current = tgt
+          setValue(tgt)
+        }
+      } else {
+        const next = cur + diff * factor
+        valueRef.current = next
+        setValue(next)
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => {
+      alive = false
+      cancelAnimationFrame(raf)
+    }
+  }, [factor])
+  return value
 }
 
 function Tab({
@@ -733,6 +804,14 @@ function LiveDisplayCard({
   const mediaPaused = useAppStore((s) => s.mediaPaused)
   const setMediaPaused = useAppStore((s) => s.setMediaPaused)
   const liveSlide = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
+  // Interactive Scale Control state. The slider / drag handle write
+  // to `size` (the TARGET); the displayed transform uses `actualSize`,
+  // which eases toward the target on every animation frame. That
+  // separation is what gives the resize a smooth, broadcast feel
+  // instead of the pixel-by-pixel jumpiness of binding the transform
+  // directly to pointer movement.
+  const actualSize = useEasedNumber(size)
+  const [resizing, setResizing] = useState(false)
   // Show the inline transport row only when the live slide is a
   // video — for everything else there is nothing to play or pause.
   const liveIsMediaVideo =
@@ -850,8 +929,15 @@ function LiveDisplayCard({
           if (!isLT) {
             return (
               <div
-                className="relative w-full max-w-full"
-                style={{ transform: `scale(${size})`, transformOrigin: 'center' }}
+                className={cn(
+                  'relative w-full max-w-full transition-shadow duration-150',
+                  resizing && 'ring-2 ring-sky-400/80 shadow-[0_0_0_2px_rgba(56,189,248,0.25)] rounded-sm',
+                )}
+                style={{
+                  transform: `scale(${actualSize})`,
+                  transformOrigin: 'center',
+                  willChange: 'transform',
+                }}
               >
                 <SlideThumb
                   slide={slide}
@@ -860,7 +946,15 @@ function LiveDisplayCard({
                   size="lg"
                   settings={settings}
                 />
-                <ResizeHandle size={size} setSize={setSize} />
+                {/* Live readout of the current scale while the operator
+                    is dragging — fades in only during the drag so it
+                    doesn't add visual noise the rest of the time. */}
+                {resizing && (
+                  <div className="absolute top-1 right-1 z-30 px-1.5 py-0.5 rounded bg-black/80 border border-sky-400/60 text-[10px] font-mono text-sky-200 tabular-nums pointer-events-none">
+                    {Math.round(size * 100)}%
+                  </div>
+                )}
+                <ResizeHandle size={size} setSize={setSize} onActiveChange={setResizing} />
               </div>
             )
           }
@@ -885,10 +979,22 @@ function LiveDisplayCard({
                   : []
           return (
             <div
-              className="relative w-full max-w-full"
-              style={{ transform: `scale(${size})`, transformOrigin: 'center' }}
+              className={cn(
+                'relative w-full max-w-full transition-shadow duration-150',
+                resizing && 'ring-2 ring-sky-400/80 shadow-[0_0_0_2px_rgba(56,189,248,0.25)] rounded-sm',
+              )}
+              style={{
+                transform: `scale(${actualSize})`,
+                transformOrigin: 'center',
+                willChange: 'transform',
+              }}
             >
-              <ResizeHandle size={size} setSize={setSize} />
+              {resizing && (
+                <div className="absolute top-1 right-1 z-30 px-1.5 py-0.5 rounded bg-black/80 border border-sky-400/60 text-[10px] font-mono text-sky-200 tabular-nums pointer-events-none">
+                  {Math.round(size * 100)}%
+                </div>
+              )}
+              <ResizeHandle size={size} setSize={setSize} onActiveChange={setResizing} />
               <div className="relative w-full aspect-video bg-black overflow-hidden ring-1 ring-zinc-800">
                 {/* lower-third uses the themed/custom background as
                     backdrop; lower-third-black uses pure black so the
