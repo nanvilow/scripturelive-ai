@@ -1,0 +1,119 @@
+1. Auto-Scroll in Live Transcription
+
+Priority: High
+
+Description:
+Live Transcription should automatically scroll as new text is generated, ensuring the latest transcription is always visible.
+
+Tasks:
+
+Implement auto-scroll behavior on new transcription update
+Ensure scroll follows latest line without manual input
+Allow optional “pause scroll” when user manually scrolls up
+
+Acceptance Criteria:
+
+New text automatically scrolls into view in real time
+User can still scroll up without losing control
+Auto-scroll resumes when user returns to bottom
+2. Fix Audio Bar False Activity in Live Display
+
+Priority: High
+
+Description:
+The audio level indicator is currently active even when no media is playing. It must only respond to active media audio.
+
+Tasks:
+
+Bind audio meter strictly to active media playback state
+Disable audio detection when no video/audio is playing
+Add proper “idle state” handling
+Ensure correct switching between Preview and Live sources
+
+Acceptance Criteria:
+
+Audio bar is inactive when nothing is playing
+Audio bar only reacts to actual media playback
+No false movement or noise detection in idle state
+3. Stop Preview Playback When Switching to Live Display
+
+Priority: High
+
+Description:
+When media is transferred from Preview to Live Display, Preview must immediately stop playback.
+
+Tasks:
+
+Detect transfer event (Preview → Live Display)
+Stop or pause Preview playback instantly
+Ensure no duplicate playback occurs
+Prevent background audio from Preview
+
+Acceptance Criteria:
+
+Only Live Display plays media after transfer
+Preview fully stops immediately on transfer
+No overlapping audio or video streams
+4. Improve Bible Phrase Recognition in Live Transcription
+
+Priority: High
+
+Description:
+Live Transcription currently fails to properly detect or organize Bible-related phrases used by speakers. It should be improved to recognize scripture references and common biblical phrases accurately.
+
+Tasks:
+
+Improve speech-to-text cleanup and structuring
+Add domain-specific language model tuning for Bible terminology
+Build phrase normalization for common biblical expressions
+Improve punctuation and sentence structuring
+
+Acceptance Criteria:
+
+Bible phrases are correctly transcribed and structured
+Reduced errors in religious terminology
+Clear, readable transcription output
+5. AI Bible Recognition & Real-Time Scripture Matching System
+
+Priority: High / Core Feature
+
+Description:
+Implement an AI-powered system that detects Bible phrases or scripture references in real time and automatically matches them to exact verses in the Bible.
+
+Tasks:
+
+Integrate Bible database (full scripture dataset)
+Build real-time phrase matching engine
+Use AI/NLP to detect partial or paraphrased scripture references
+Auto-suggest or display matching verses instantly
+Optimize for low-latency matching during live transcription
+Handle variations in wording (paraphrasing, dialect, partial quotes)
+
+Acceptance Criteria:
+
+System detects Bible verses even when partially quoted
+Correct scripture is matched and displayed in real time
+Works smoothly during live transcription without delay
+Supports multiple translations if configured
+6. Smart Transcription Enhancement Layer
+
+Priority: Medium (supports feature above)
+
+Description:
+Improve transcription intelligence to better understand context, especially in sermons.
+
+Tasks:
+
+Add contextual AI layer for sermon-style speech
+Improve entity recognition (names, places, scripture references)
+Enhance punctuation and sentence grouping
+
+Acceptance Criteria:
+
+Transcription reads naturally like structured sentences
+Better understanding of sermon context
+Reduced fragmented text output
+System-Level Notes
+Ensure all AI processing is optimized for real-time performance
+Prioritize low-latency response for live environments
+Maintain fallback mode if AI matching is unavailable

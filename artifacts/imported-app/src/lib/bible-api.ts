@@ -878,3 +878,98 @@ export function splitVerseIntoSlides(verse: BibleVerse, linesPerSlide: 2 | 4 = 2
 export function getBookNames(): string[] {
   return BOOK_NAMES
 }
+
+// ── Sermon-style transcript normalisation ────────────────────────────
+// Web Speech results come in lower-case and unpunctuated, with proper
+// nouns mangled ("god" / "jesus" / "matthew chapter five verse three").
+// This function takes a raw transcript and produces a much more
+// readable version: capitalised proper nouns, capitalised Bible book
+// names (incl. "1 John", "II Corinthians"), spelled-out chapter/verse
+// numbers folded into proper "Book 5:3" form, sentence-start
+// capitalisation, and a few common ASR mishears fixed ("hey men" →
+// "Amen", "the lord jesus crisis" → "the Lord Jesus Christ"). Pure
+// presentation — does NOT mutate the underlying store transcript so
+// detection logic stays untouched.
+const PROPER_NOUNS: Array<[RegExp, string]> = [
+  [/\bjesus\b/gi, 'Jesus'],
+  [/\bchrist\b/gi, 'Christ'],
+  [/\bjesus\s+christ\b/gi, 'Jesus Christ'],
+  [/\bthe\s+lord\b/gi, 'the Lord'],
+  [/\blord\s+(jesus|god)\b/gi, (_m, n) => `Lord ${n[0].toUpperCase()}${n.slice(1)}`],
+  [/\bgod\b/gi, 'God'],
+  [/\bholy\s+spirit\b/gi, 'Holy Spirit'],
+  [/\bholy\s+ghost\b/gi, 'Holy Ghost'],
+  [/\bfather\s+god\b/gi, 'Father God'],
+  [/\bson\s+of\s+god\b/gi, 'Son of God'],
+  [/\bson\s+of\s+man\b/gi, 'Son of Man'],
+  [/\bthe\s+father\b/gi, 'the Father'],
+  [/\bthe\s+son\b/gi, 'the Son'],
+  [/\bsatan\b/gi, 'Satan'],
+  [/\bthe\s+devil\b/gi, 'the Devil'],
+  [/\bmessiah\b/gi, 'Messiah'],
+  [/\b(?:savior|saviour)\b/gi, (m: string) => m[0].toUpperCase() + m.slice(1)],
+  [/\bgospel\b/gi, 'Gospel'],
+  [/\bbible\b/gi, 'Bible'],
+  [/\bscriptures?\b/gi, (m) => m[0].toUpperCase() + m.slice(1)],
+  [/\bword\s+of\s+god\b/gi, 'Word of God'],
+  [/\bkingdom\s+of\s+(god|heaven)\b/gi, (_m, n) => `Kingdom of ${n[0].toUpperCase()}${n.slice(1)}`],
+  // Disciples & key OT figures often spoken in sermons
+  [/\b(peter|paul|john|james|matthew|mark|luke|andrew|philip|thomas|judas|stephen|barnabas|timothy|titus|moses|aaron|joshua|david|solomon|abraham|isaac|jacob|joseph|noah|adam|eve|elijah|elisha|isaiah|jeremiah|ezekiel|daniel|jonah|samuel|saul|gideon|samson|ruth|esther|mary|martha|lazarus|herod|pilate)\b/gi,
+    (m) => m[0].toUpperCase() + m.slice(1).toLowerCase()],
+  [/\b(?:jerusalem|bethlehem|nazareth|galilee|judea|samaria|israel|egypt|babylon|rome|corinth|ephesus|antioch|damascus|jericho|gethsemane|calvary|golgotha|sinai|zion)\b/gi,
+    (m) => m[0].toUpperCase() + m.slice(1).toLowerCase()],
+  // Common ASR mishears in sermon contexts
+  [/\bhey\s+men\b/gi, 'Amen'],
+  [/\bay\s+men\b/gi, 'Amen'],
+  [/\bamen\b/gi, 'Amen'],
+  [/\bhallelujah\b/gi, 'Hallelujah'],
+  [/\balleluia\b/gi, 'Alleluia'],
+  [/\bcrisis\b(?=[^.!?]*\bjesus\b)/gi, 'Christ'], // "lord jesus crisis" → "Lord Jesus Christ"
+]
+
+// Fold spoken "chapter X verse Y" into compact "X:Y" so the readable
+// transcript looks like "John 3:16" instead of "john chapter three
+// verse sixteen". Reuses the spoken-number normaliser used for
+// reference detection so the styles stay in lock-step.
+function compactReferences(text: string, books: string[]): string {
+  // Build a once-per-call book regex
+  const bookPattern = books
+    .map((b) => b.replace(/\s+/g, '\\s+'))
+    .sort((a, b) => b.length - a.length)
+    .join('|')
+  const re = new RegExp(`\\b(${bookPattern})\\s+(?:chapter\\s+)?(\\d+)(?:\\s*[:.]\\s*|\\s+verse[s]?\\s+)(\\d+)(?:\\s*(?:to|-|through|and)\\s*(\\d+))?\\b`, 'gi')
+  return text.replace(re, (_m, b, c, v, v2) => {
+    const book = b
+      .toLowerCase()
+      .split(/\s+/)
+      .map((w: string) => w[0].toUpperCase() + w.slice(1))
+      .join(' ')
+    return v2 ? `${book} ${c}:${v}-${v2}` : `${book} ${c}:${v}`
+  })
+}
+
+export function normalizeTranscriptForDisplay(raw: string): string {
+  if (!raw) return ''
+  // First: collapse spoken numbers ("chapter three verse sixteen")
+  // into their digit form so the references compactor below can
+  // recognise them.
+  let s = normalizeSpokenNumbers(raw)
+  // Apply the proper-noun map. The map preserves intra-word casing
+  // (already-capped words pass through untouched).
+  for (const [re, repl] of PROPER_NOUNS) {
+    s = typeof repl === 'string'
+      ? s.replace(re, repl)
+      : s.replace(re, repl as (substring: string, ...args: unknown[]) => string)
+  }
+  // Compact "Book Chapter:Verse" wherever we can spot it.
+  s = compactReferences(s, BOOK_NAMES)
+  // Sentence-start capitalisation: first letter of the string and
+  // first letter after . ! ? gets uppercased. We do this AFTER
+  // proper-noun replacement so we don't double-process.
+  s = s.replace(/(^\s*|[.!?]\s+)([a-z])/g, (_m, gap, ch) => gap + ch.toUpperCase())
+  // "i" pronoun should always be capital.
+  s = s.replace(/\bi\b/g, 'I')
+  // Tidy spaces.
+  s = s.replace(/\s+/g, ' ').trim()
+  return s
+}
