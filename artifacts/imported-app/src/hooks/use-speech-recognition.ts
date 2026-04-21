@@ -40,7 +40,14 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const shouldKeepListeningRef = useRef(false)
   const manualStopRef = useRef(false)
   const restartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const healthCheckRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const fullTranscriptRef = useRef('')
+  // Track consecutive rapid restarts so we can back off when the
+  // browser repeatedly fails to keep the recognition stream alive
+  // (network blips, audio device wake, mid-sermon Wi-Fi hiccups).
+  // Resets to 0 on any successful `onstart`.
+  const consecutiveRestartsRef = useRef(0)
+  const lastStartAtRef = useRef(0)
   // Track the next index of `event.results` we still need to commit to the
   // running transcript. Web Speech keeps the same array across `onresult`
   // events with `continuous: true` + `interimResults: true`, so without this
@@ -130,39 +137,113 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       if (restartTimeoutRef.current) {
         clearTimeout(restartTimeoutRef.current)
       }
+      // Adaptive backoff: a clean restart 250 ms after `onend` is
+      // standard for Chrome's ~60 s recognition window. If the
+      // engine is bouncing (multiple restarts within ~1.5 s, e.g.
+      // transient network failure), back off geometrically up to
+      // 5 s so we don't hammer the API and instead let it recover.
+      const sinceLast = Date.now() - lastStartAtRef.current
+      if (sinceLast < 1500) {
+        consecutiveRestartsRef.current = Math.min(
+          consecutiveRestartsRef.current + 1,
+          6,
+        )
+      } else {
+        consecutiveRestartsRef.current = 0
+      }
+      const delay =
+        consecutiveRestartsRef.current === 0
+          ? 250
+          : Math.min(5000, 400 * 2 ** (consecutiveRestartsRef.current - 1))
+
       restartTimeoutRef.current = setTimeout(() => {
-        if (shouldKeepListeningRef.current && !manualStopRef.current) {
-          const SR = getSpeechRecognition()
-          if (SR) {
-            try {
-              const recognition = new SR()
-              recognition.continuous = true
-              recognition.interimResults = true
-              recognition.lang = 'en-US'
-              recognition.maxAlternatives = 1
+        if (!shouldKeepListeningRef.current || manualStopRef.current) return
+        // If the page is hidden, browsers throttle / kill recognition
+        // anyway — wait for visibilitychange to wake us instead of
+        // burning a restart attempt that will instantly end again.
+        if (typeof document !== 'undefined' && document.hidden) return
+        // No network → defer until the connection comes back.
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+        const SR = getSpeechRecognition()
+        if (!SR) return
+        try {
+          const recognition = new SR()
+          recognition.continuous = true
+          recognition.interimResults = true
+          recognition.lang = 'en-US'
+          recognition.maxAlternatives = 1
 
-              recognition.onstart = () => {
-                setIsListening(true)
-                setError(null)
-              }
+          recognition.onstart = () => {
+            setIsListening(true)
+            setError(null)
+            lastStartAtRef.current = Date.now()
+            // Successful start — clear the backoff streak so the next
+            // natural end triggers a quick 250 ms restart again.
+            consecutiveRestartsRef.current = 0
+          }
 
-              recognition.onresult = handleResult
-              recognition.onerror = handleError
-              recognition.onend = handleEnd
+          recognition.onresult = handleResult
+          recognition.onerror = handleError
+          recognition.onend = handleEnd
 
-              recognitionRef.current = recognition
-              recognition.start()
-            } catch (err) {
-              console.error('Failed to restart speech recognition:', err)
-            }
+          recognitionRef.current = recognition
+          recognition.start()
+        } catch (err) {
+          console.error('Failed to restart speech recognition:', err)
+          // Ensure we keep trying — schedule another attempt with the
+          // current backoff, capped above.
+          if (shouldKeepListeningRef.current && !manualStopRef.current) {
+            scheduleRestartRef.current()
           }
         }
-      }, 300)
+      }, delay)
     }
     return () => {
       if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current)
     }
-  }, [getSpeechRecognition])
+  }, [getSpeechRecognition, handleResult, handleError, handleEnd])
+
+  // ── Resilience hooks ──────────────────────────────────────────────
+  // Page becomes visible again, the browser comes back online, or a
+  // periodic health check notices the engine flatlined while the
+  // operator still has the mic toggled on → kick a restart so the
+  // transcript stream resumes without manual intervention.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const wake = () => {
+      if (
+        shouldKeepListeningRef.current &&
+        !manualStopRef.current &&
+        !isListening
+      ) {
+        scheduleRestartRef.current()
+      }
+    }
+    const onVisibility = () => {
+      if (!document.hidden) wake()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('online', wake)
+    healthCheckRef.current = setInterval(() => {
+      // If the operator wants the mic on but the engine has been off
+      // for >3 s without a manual stop, force a restart. This catches
+      // the edge case where Chrome silently drops the connection
+      // without firing `onend` (rare, but it happens on Wi-Fi flaps).
+      if (
+        shouldKeepListeningRef.current &&
+        !manualStopRef.current &&
+        !isListening &&
+        Date.now() - lastStartAtRef.current > 3000
+      ) {
+        scheduleRestartRef.current()
+      }
+    }, 2000)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('online', wake)
+      if (healthCheckRef.current) clearInterval(healthCheckRef.current)
+    }
+  }, [isListening])
 
   const startListening = useCallback((onResult?: (text: string) => void) => {
     if (typeof window !== 'undefined' && !window.isSecureContext) {
@@ -192,6 +273,8 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       recognition.onstart = () => {
         setIsListening(true)
         setError(null)
+        lastStartAtRef.current = Date.now()
+        consecutiveRestartsRef.current = 0
       }
 
       recognition.onresult = handleResult
@@ -204,8 +287,14 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       const msg = err instanceof Error ? err.message : 'Unknown error'
       setError(`Failed to start speech recognition: ${msg}`)
       setIsListening(false)
+      // If something went sideways at start (e.g. another tab grabbed
+      // the mic for a moment), schedule a backoff retry so the user
+      // doesn't have to click the mic button again.
+      if (shouldKeepListeningRef.current && !manualStopRef.current) {
+        scheduleRestartRef.current()
+      }
     }
-  }, [isSupported, getSpeechRecognition])
+  }, [isSupported, getSpeechRecognition, handleResult, handleError, handleEnd])
 
   const stopListening = useCallback(() => {
     manualStopRef.current = true

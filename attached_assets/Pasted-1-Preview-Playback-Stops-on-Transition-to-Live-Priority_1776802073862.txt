@@ -1,0 +1,114 @@
+1. Preview Playback Stops on Transition to Live
+
+Priority: High
+
+Description:
+When a video is moved from Preview to Live Display, playback in the Preview window should stop immediately.
+
+Tasks:
+
+Detect transition event (Preview → Live)
+Stop playback instance in Preview
+Ensure no background audio continues from Preview
+
+Acceptance Criteria:
+
+Video stops in Preview the moment it goes live
+No overlapping audio between Preview and Live
+Only Live Display outputs audio/video
+2. Fix Audio Meter Synchronization
+
+Priority: High
+
+Description:
+The audio level meter must accurately reflect the real-time audio from the currently playing video (Preview or Live).
+
+Tasks:
+
+Bind audio meter to actual audio output source
+Ensure correct source switching (Preview vs Live)
+Fix random/unsynced detection behavior
+Add smoothing if needed for visual accuracy
+
+Acceptance Criteria:
+
+Audio meter matches the actual sound output
+No false or random spikes when no audio is playing
+Correctly switches between Preview and Live sources
+3. Stabilize Live Transcription Connection
+
+Priority: High
+
+Description:
+The Live Transcription feature frequently disconnects and reconnects. It must be stabilized.
+
+Tasks:
+
+Investigate cause of disconnects (network, API, timeout)
+Implement persistent connection handling
+Add retry logic with controlled backoff
+Optimize streaming/transcription pipeline
+
+Acceptance Criteria:
+
+Transcription stays connected during continuous use
+No frequent disconnect/reconnect cycles
+Smooth, uninterrupted transcription flow
+4. Fix Media Fit & Aspect Ratio in Preview
+
+Priority: Medium
+
+Description:
+Media Fit and Aspect Ratio settings are not applying correctly in the Preview display.
+
+Tasks:
+
+Debug rendering pipeline for Preview
+Ensure transformations apply before rendering
+Sync Preview behavior with Live Display logic
+Validate all aspect ratio modes (fit, fill, stretch, etc.)
+
+Acceptance Criteria:
+
+Changes reflect instantly in Preview
+Preview matches what appears in Live Display
+All aspect ratio options work correctly
+5. Add “Clear Transcription” Button
+
+Priority: Medium
+
+Description:
+Add a button in the Live Transcription UI to clear all detected text.
+
+Tasks:
+
+Add UI button (Clear Transcription)
+Implement function to reset transcription state
+Ensure no impact on ongoing transcription session
+
+Acceptance Criteria:
+
+Button clears all displayed transcription instantly
+Transcription continues normally after clearing
+No app crash or lag when used
+6. Implement Layer Scaling (Transform Controls)
+
+Priority: Medium
+
+Description:
+Allow users to resize and scale layers using direct manipulation (drag controls).
+
+Tasks:
+
+Add transform handles (corners/edges)
+Implement drag-to-resize functionality
+Support proportional scaling (optional: Shift key)
+Ensure smooth interaction and real-time updates
+Maintain bounds and constraints
+
+Acceptance Criteria:
+
+Users can resize layers visually using mouse
+Scaling is smooth and responsive
+Layer updates reflect instantly in Preview and Live
+No distortion unless intended (based on settings)

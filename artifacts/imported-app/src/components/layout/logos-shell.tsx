@@ -123,32 +123,23 @@ function AudioMeter({
   active,
   playing,
   tone = 'green',
+  surface,
 }: {
   active: boolean
   playing: boolean
   tone?: 'green' | 'red' | 'amber'
+  surface: 'live' | 'preview'
 }) {
-  const [level, setLevel] = useState(0)
-  useEffect(() => {
-    // Idle path — no media playing OR audio not routed → bar sits at
-    // a steady low floor, no motion.
-    if (!active || !playing) {
-      setLevel(0)
-      return
-    }
-    // We don't attach Web Audio analysers (would need recreating the
-    // <video> graph and same-origin gating); instead we drive a small
-    // bounce that is gated on the real `playing` flag so it strictly
-    // tracks playback. The meter visibly pauses the moment the video
-    // pauses or ends.
-    let timer = 0
-    const tick = () => {
-      setLevel(0.35 + Math.random() * 0.55)
-      timer = window.setTimeout(tick, 90 + Math.random() * 80) as unknown as number
-    }
-    tick()
-    return () => clearTimeout(timer)
-  }, [active, playing])
+  // Read the real-signal level written by the slide-renderer's
+  // Web Audio analyser. The meter tracks the actual sound coming
+  // out of the surface — silent moments read 0, loud moments push
+  // toward 100% — so it can never spike when the video is silent.
+  const liveLevel = useAppStore((s) => s.audioLevelLive)
+  const previewLevel = useAppStore((s) => s.audioLevelPreview)
+  const raw = surface === 'live' ? liveLevel : previewLevel
+  // Gate behind the routing/playing flags so the bar never animates
+  // when the audio isn't reaching the operator.
+  const level = active && playing ? raw : 0
   const grad =
     tone === 'red'
       ? 'from-rose-500 via-rose-400 to-amber-400'
@@ -167,6 +158,69 @@ function AudioMeter({
           <span key={i} className="block h-px w-full bg-black/40" />
         ))}
       </div>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// LIVE DISPLAY RESIZE HANDLE
+// ──────────────────────────────────────────────────────────────────────
+// Direct-manipulation scaling for the Live Display preview frame.
+// Drag the bottom-right corner to resize; the size slider in the
+// transport bar updates in lockstep. Hold Shift while dragging for
+// fine-grained 1% steps. Bounds match the slider (0.6 .. 1.0) so the
+// frame can never collapse to nothing or blow past the card edge.
+function ResizeHandle({
+  size,
+  setSize,
+}: {
+  size: number
+  setSize: (n: number) => void
+}) {
+  const startRef = useRef<{ x: number; y: number; size: number } | null>(null)
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+    startRef.current = { x: e.clientX, y: e.clientY, size }
+  }
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const start = startRef.current
+    if (!start) return
+    // Use the larger of horizontal/vertical displacement so dragging
+    // any direction away from the corner enlarges the frame, dragging
+    // toward the centre shrinks it. ~280 px of travel covers the full
+    // 60 → 100 % range; Shift slows that to ~700 px for fine control.
+    const dx = e.clientX - start.x
+    const dy = e.clientY - start.y
+    const delta = (dx + dy) / 2
+    const sensitivity = e.shiftKey ? 700 : 280
+    const next = Math.max(0.6, Math.min(1.0, start.size + delta / sensitivity))
+    setSize(Math.round(next * 100) / 100)
+  }
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    startRef.current = null
+    ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
+  }
+  return (
+    <div
+      role="slider"
+      aria-label="Resize Live Display"
+      aria-valuemin={60}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(size * 100)}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      title={`Drag to resize · ${Math.round(size * 100)}% (Shift = fine)`}
+      className="absolute bottom-1 right-1 z-20 w-4 h-4 rounded-sm bg-sky-500/30 hover:bg-sky-400/60 border border-sky-400/70 cursor-nwse-resize touch-none flex items-end justify-end shadow-sm"
+      style={{ touchAction: 'none' }}
+    >
+      {/* Corner grip lines — the standard Wirecast / OBS resize cue. */}
+      <svg viewBox="0 0 16 16" className="w-full h-full text-white/90 pointer-events-none">
+        <path d="M5 15 L15 5 M9 15 L15 9 M13 15 L15 13" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" />
+      </svg>
     </div>
   )
 }
@@ -266,6 +320,20 @@ function LiveTranscriptionCard() {
       }
       actions={
         <div className="flex items-center gap-1">
+          {/* Clear Transcription — wipes the running transcript and
+              the detection break markers without stopping the mic.
+              Routes through the speech provider's `reset` command so
+              recognition stays connected and the next utterance starts
+              a fresh paragraph. */}
+          <Button
+            size="sm"
+            onClick={() => setSpeechCommand('reset')}
+            title="Clear transcription"
+            className="h-7 px-2 text-[10px] uppercase tracking-wider gap-1 font-semibold bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700"
+          >
+            <Trash2 className="h-3 w-3" />
+            Clear
+          </Button>
           <Button
             size="sm"
             onClick={toggleMic}
@@ -458,7 +526,7 @@ function PreviewCard() {
             VU meter on top, speaker toggle on the bottom. */}
         <div className="w-7 shrink-0 flex flex-col items-center gap-1.5 py-1">
           <div className="flex-1 min-h-0 w-full flex justify-center">
-            <AudioMeter active={previewAudio} playing={previewVideoPlaying} tone="green" />
+            <AudioMeter active={previewAudio} playing={previewVideoPlaying} tone="green" surface="preview" />
           </div>
           <button
             type="button"
@@ -782,7 +850,7 @@ function LiveDisplayCard({
           if (!isLT) {
             return (
               <div
-                className="w-full max-w-full"
+                className="relative w-full max-w-full"
                 style={{ transform: `scale(${size})`, transformOrigin: 'center' }}
               >
                 <SlideThumb
@@ -792,6 +860,7 @@ function LiveDisplayCard({
                   size="lg"
                   settings={settings}
                 />
+                <ResizeHandle size={size} setSize={setSize} />
               </div>
             )
           }
@@ -816,9 +885,10 @@ function LiveDisplayCard({
                   : []
           return (
             <div
-              className="w-full max-w-full"
+              className="relative w-full max-w-full"
               style={{ transform: `scale(${size})`, transformOrigin: 'center' }}
             >
+              <ResizeHandle size={size} setSize={setSize} />
               <div className="relative w-full aspect-video bg-black overflow-hidden ring-1 ring-zinc-800">
                 {/* lower-third uses the themed/custom background as
                     backdrop; lower-third-black uses pure black so the
@@ -924,6 +994,7 @@ function LiveDisplayCard({
               active={liveBroadcastAudio || liveMonitorAudio}
               playing={liveVideoPlaying}
               tone={liveBroadcastAudio ? 'red' : liveMonitorAudio ? 'amber' : 'green'}
+              surface="live"
             />
           </div>
           <button
