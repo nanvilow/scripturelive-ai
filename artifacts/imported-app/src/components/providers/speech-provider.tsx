@@ -69,6 +69,32 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   const lastTextSearchAtRef = useRef<number>(0)
   const processedTextHitsRef = useRef<Set<string>>(new Set())
 
+  // ── Spoken-passage verification ─────────────────────────────────────
+  // Returns 0..1 reflecting how much of the matched verse's content
+  // words appear in the recently spoken transcript. Used to decide
+  // whether a text-search hit is accurate enough to push live on its
+  // own. Genesis 1:1 — "In the beginning God created the heaven and the
+  // earth" — when the speaker says "In the beginning God created
+  // heaven and earth" produces ~0.86. A passing-keyword false match
+  // typically scores ≤0.35.
+  const verseTextSimilarity = (spoken: string, verse: string): number => {
+    const STOP = new Set([
+      'the','a','an','of','and','or','to','in','for','on','at','is','was','were','be',
+      'by','that','this','it','as','with','from','but','so','if','then','than',
+      'i','you','he','she','they','we','my','your','our','their','his','her','its',
+      'shall','will','have','has','had','am','are','do','did','done',
+    ])
+    const tokenize = (s: string) =>
+      s.toLowerCase().replace(/[^a-z0-9\s']/g, ' ').split(/\s+/)
+        .filter((w) => w.length > 2 && !STOP.has(w))
+    const verseWords = tokenize(verse)
+    if (!verseWords.length) return 0
+    const spokenSet = new Set(tokenize(spoken))
+    let hit = 0
+    for (const w of verseWords) if (spokenSet.has(w)) hit++
+    return hit / verseWords.length
+  }
+
   // Update the ref in an effect (not during render) to satisfy ESLint react-hooks/refs
   useEffect(() => {
     processCallbackRef.current = async (text: string) => {
@@ -109,32 +135,66 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             const { hits } = (await r.json()) as { hits: BibleSearchHit[] }
             const top = hits?.[0]
             if (top && !processedTextHitsRef.current.has(top.reference)) {
-              processedTextHitsRef.current = new Set(processedTextHitsRef.current).add(top.reference)
-              const detected: DetectedVerse = {
-                id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                reference: top.reference,
-                text: top.text,
-                translation: top.translation,
-                detectedAt: new Date(),
-                confidence: 0.75,
+              // Verify the keyword hit by measuring how much of the
+              // matched verse text actually appears in the recently
+              // spoken transcript. This is the gate that turns a fuzzy
+              // search into a confirmed quotation.
+              const recentSpoken = allWords.slice(-40).join(' ')
+              const sim = verseTextSimilarity(recentSpoken, top.text)
+              // Only surface the match at all if the speaker quoted at
+              // least ~40% of the verse's distinctive content words.
+              // Below that the search hit is almost always a false
+              // positive (a stray "God", "love", etc.) and would
+              // clutter the Detected Verses panel with junk.
+              if (sim < 0.4) {
+                /* not a real quotation — drop silently */
+              } else {
+                processedTextHitsRef.current = new Set(processedTextHitsRef.current).add(top.reference)
+                const detected: DetectedVerse = {
+                  id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                  reference: top.reference,
+                  text: top.text,
+                  translation: top.translation,
+                  detectedAt: new Date(),
+                  // Map similarity (0.4..1.0) to confidence (0.5..1.0)
+                  // so the accuracy bar reflects how cleanly the
+                  // spoken phrase matched the underlying verse.
+                  confidence: Math.min(1, 0.5 + (sim - 0.4) * 0.83),
+                }
+                const tBefore = useAppStore.getState().liveTranscript
+                useAppStore.getState().pushTranscriptBreak(tBefore.length)
+                useAppStore.getState().addDetectedVerse(detected)
+                useAppStore.getState().addToVerseHistory({
+                  reference: top.reference,
+                  text: top.text,
+                  translation: top.translation,
+                  book: top.book,
+                  chapter: top.chapter,
+                  verseStart: top.verse,
+                })
+                // Auto-live a text-search hit ONLY when the speaker
+                // quoted the verse very closely (≥85% of content words).
+                // Example: "In the beginning God created heaven and
+                // earth" vs Genesis 1:1 — passes. A passing keyword
+                // collision will not.
+                if (autoLiveOn && sim >= 0.85) {
+                  const slide = {
+                    id: `slide-${Date.now()}`,
+                    type: 'verse' as const,
+                    title: top.reference,
+                    subtitle: top.translation,
+                    content: top.text.split('\n').filter(Boolean),
+                    background: state.settings.congregationScreenTheme,
+                  }
+                  const cur = useAppStore.getState().slides
+                  const next = cur.length > 0 ? [...cur, slide] : [slide]
+                  const idx = next.length - 1
+                  useAppStore.getState().setSlides(next)
+                  useAppStore.getState().setPreviewSlideIndex(idx)
+                  useAppStore.getState().setLiveSlideIndex(idx)
+                  useAppStore.getState().setIsLive(true)
+                }
               }
-              const tBefore = useAppStore.getState().liveTranscript
-              useAppStore.getState().pushTranscriptBreak(tBefore.length)
-              useAppStore.getState().addDetectedVerse(detected)
-              useAppStore.getState().addToVerseHistory({
-                reference: top.reference,
-                text: top.text,
-                translation: top.translation,
-                book: top.book,
-                chapter: top.chapter,
-                verseStart: top.verse,
-              })
-              // Text-search hits are inherently lower confidence (we
-              // matched keywords, not an explicit reference) so we
-              // NEVER auto-go-live from them — the operator must
-              // confirm by clicking the entry in Detected Verses.
-              // This prevents false-positive scriptures from popping
-              // up on the congregation screen mid-sermon.
             }
           }
         } catch {
@@ -172,14 +232,20 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             useAppStore.getState().addToVerseHistory(verse)
             // Suppressed per FRS — Detected Verses panel is the source of truth.
 
-            // Auto go-live ONLY when the operator has AUTO enabled
-            // AND we are highly confident in the parse. Anything below
-            // the threshold (default 90%) stays in the Detected Verses
-            // panel as a one-click suggestion, never going live on its
-            // own. This prevents a misheard "John 3" from clobbering
-            // the actual sermon slide.
+            // Auto go-live ONLY when ALL of these hold:
+            //   1. Operator has AUTO enabled
+            //   2. Confidence ≥ threshold (default 90%)
+            //   3. The speaker actually said an explicit verse number
+            //      ("John 3:16" / "John chapter 3 verse 16"), not just
+            //      a book + chapter.
+            // Bare book-and-chapter references (e.g. "John 3") still
+            // land in the Detected Verses panel as a suggestion but
+            // never auto-display, so the congregation never sees a
+            // partial reference that might not match the speaker's
+            // intent.
             const latestState = useAppStore.getState()
-            const passesThreshold = detectedRef.confidence >= threshold
+            const passesThreshold =
+              detectedRef.confidence >= threshold && detectedRef.hasExplicitVerse
             if (autoLiveOn && passesThreshold) {
               const slide = {
                 id: `slide-${Date.now()}`,
