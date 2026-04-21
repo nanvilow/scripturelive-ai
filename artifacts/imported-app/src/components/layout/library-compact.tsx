@@ -70,9 +70,16 @@ export function BibleLookupCompact() {
   const inputRef = useRef<HTMLInputElement>(null)
   const versesRef = useRef<HTMLDivElement>(null)
 
-  // Load a chapter and optionally focus a specific verse.
+  // Load a chapter and optionally focus a specific verse. Returns
+  // the loaded chapter + focused verse number on success so callers
+  // (e.g. the "Enter twice to go live" gesture) can act on the
+  // freshly-loaded data without waiting for React state to settle.
   const loadChapter = useCallback(
-    async (book: string, chap: number, focusVerse?: number) => {
+    async (
+      book: string,
+      chap: number,
+      focusVerse?: number,
+    ): Promise<{ chapter: BibleChapter; focused: number } | null> => {
       setLoading(true)
       setError(null)
       setShowSuggest(false)
@@ -81,7 +88,7 @@ export function BibleLookupCompact() {
         if (!data || data.verses.length === 0) {
           setError('Chapter not found')
           setChapter(null)
-          return
+          return null
         }
         setChapter(data)
         const target = focusVerse && data.verses.find((v) => v.verse === focusVerse) ? focusVerse : data.verses[0].verse
@@ -103,13 +110,49 @@ export function BibleLookupCompact() {
           const el = versesRef.current?.querySelector<HTMLElement>(`[data-verse="${target}"]`)
           el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
         })
+        return { chapter: data, focused: target }
       } catch {
         setError('Lookup failed')
+        return null
       } finally {
         setLoading(false)
       }
     },
     [selectedTranslation, addToVerseHistory],
+  )
+
+  // Build a verse slide and stage it. `live=false` puts it in the
+  // operator preview only; `live=true` also flips Live Display +
+  // engages broadcast. Used by both the verse list (single/double
+  // click) and the search box (Enter / Enter-twice).
+  const stageVerse = useCallback(
+    (chap: BibleChapter, verseNum: number, live: boolean) => {
+      const v = chap.verses.find((x) => x.verse === verseNum)
+      if (!v) return
+      const reference = `${chap.book} ${chap.chapter}:${verseNum}`
+      const slide: Slide = {
+        id: `slide-${Date.now()}`,
+        type: 'verse',
+        title: reference,
+        subtitle: chap.translation,
+        content: v.text.split('\n').filter(Boolean),
+        background: settings.congregationScreenTheme,
+      }
+      addScheduleItem({
+        type: 'verse',
+        title: reference,
+        subtitle: chap.translation,
+        slides: [slide],
+      })
+      const s = useAppStore.getState()
+      s.setSlides([slide])
+      s.setPreviewSlideIndex(0)
+      if (live) {
+        s.setLiveSlideIndex(0)
+        s.setIsLive(true)
+      }
+    },
+    [addScheduleItem, settings.congregationScreenTheme],
   )
 
   // Reload current chapter when translation changes.
@@ -134,6 +177,17 @@ export function BibleLookupCompact() {
     [searchQuery, loadChapter],
   )
 
+  // Track the last Enter press so we can implement the
+  // "press Enter twice to go live" gesture per spec:
+  //   1st Enter on a query → load chapter + put focused verse in
+  //                          PREVIEW only (no broadcast).
+  //   2nd Enter on the same query → push that verse LIVE.
+  // We key by the trimmed query string and only count an Enter as
+  // "second" if it lands within ~1.5s, otherwise it's treated as a
+  // fresh first press (so an old idle query can't accidentally go
+  // live).
+  const lastEnterRef = useRef<{ query: string; at: number }>({ query: '', at: 0 })
+
   const goPrev = () => {
     if (!chapter) return
     const p = getPrevChapter(chapter.book, chapter.chapter)
@@ -145,38 +199,13 @@ export function BibleLookupCompact() {
     if (n) void loadChapter(n.book, n.chapter)
   }
 
+  // Thin wrapper kept for the inline verse-list onClick handlers.
+  // Single click → preview only (live=false), double click → live.
+  // Implementation lives in `stageVerse` so the search-box keyboard
+  // shortcut and the verse-list pointer events stay in lockstep.
   const sendVerse = (verseNum: number, live: boolean) => {
     if (!chapter) return
-    const v = chapter.verses.find((x) => x.verse === verseNum)
-    if (!v) return
-    const reference = `${chapter.book} ${chapter.chapter}:${verseNum}`
-    const slide: Slide = {
-      id: `slide-${Date.now()}`,
-      type: 'verse',
-      title: reference,
-      subtitle: chapter.translation,
-      content: v.text.split('\n').filter(Boolean),
-      background: settings.congregationScreenTheme,
-    }
-    addScheduleItem({
-      type: 'verse',
-      title: reference,
-      subtitle: chapter.translation,
-      slides: [slide],
-    })
-    if (live) {
-      // Replace the active slide deck with this verse so the broadcast
-      // effect (which reads slides[liveSlideIndex]) actually pushes the
-      // new verse to the congregation display instead of a stale entry.
-      const s = useAppStore.getState()
-      s.setSlides([slide])
-      s.setPreviewSlideIndex(0)
-      s.setLiveSlideIndex(0)
-      s.setIsLive(true)
-    }
-    // Notifications for routine display actions are intentionally
-    // suppressed per FRS — the live indicator pill in the toolbar is
-    // the source of truth.
+    stageVerse(chapter, verseNum, live)
   }
 
   const sendChapter = (live: boolean) => {
@@ -220,7 +249,7 @@ export function BibleLookupCompact() {
     }
   }
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const onKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (showSuggest && suggestions.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -237,15 +266,56 @@ export function BibleLookupCompact() {
         const sel = suggestions[highlight]
         setSearchQuery(sel.reference)
         setShowSuggest(false)
-        lookup(sel.reference)
+        // Treat picking a suggestion as the operator's "first Enter":
+        // load the chapter and stage the focused verse to PREVIEW.
+        const res = await lookupAndStage(sel.reference, false)
+        if (res) {
+          lastEnterRef.current = { query: sel.reference, at: Date.now() }
+        }
         return
       }
     }
     if (e.key === 'Enter') {
       e.preventDefault()
-      lookup()
+      const q = searchQuery.trim()
+      if (!q) return
+      const last = lastEnterRef.current
+      const isSecondPress =
+        last.query === q && Date.now() - last.at < 1500 && chapter !== null
+      if (isSecondPress) {
+        // Second Enter on the same query → push the focused verse
+        // straight to the Live Display.
+        const verseNum = activeVerse ?? chapter!.verses[0].verse
+        stageVerse(chapter!, verseNum, true)
+        // Reset so a third Enter doesn't keep retriggering.
+        lastEnterRef.current = { query: '', at: 0 }
+      } else {
+        // First Enter (or first after a long pause) → look up the
+        // chapter and stage the focused verse in PREVIEW only.
+        const res = await lookupAndStage(q, false)
+        if (res) {
+          lastEnterRef.current = { query: q, at: Date.now() }
+        }
+      }
     }
   }
+
+  // Combined helper: parse the query, load the chapter, and (on
+  // success) push the focused verse into the staging surface chosen
+  // by `live`. Returns the loaded result so callers can record state.
+  const lookupAndStage = useCallback(
+    async (q: string, live: boolean) => {
+      const parsed = parseVerseReference(q)
+      if (!parsed) {
+        setError('Try "John 3:16" or "Psalms 23"')
+        return null
+      }
+      const res = await loadChapter(parsed.book, parsed.chapter, parsed.verseStart)
+      if (res) stageVerse(res.chapter, res.focused, live)
+      return res
+    },
+    [loadChapter, stageVerse],
+  )
 
   return (
     <div className="flex flex-col h-full text-zinc-200">
