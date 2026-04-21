@@ -41,7 +41,22 @@ import {
   Pause,
   SkipBack,
   SkipForward,
+  Volume2,
+  VolumeX,
+  Headphones,
+  LayoutGrid,
+  List as ListIcon,
+  Rows3,
+  Grid3x3,
+  AlignJustify,
+  Check,
 } from 'lucide-react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { BibleLookupCompact } from '@/components/layout/library-compact'
 import { TopToolbar, TransportBar } from '@/components/layout/easyworship-shell'
 import {
@@ -255,6 +270,8 @@ function PreviewCard() {
     setIsLive,
     mediaPaused,
     setMediaPaused,
+    previewAudio,
+    setPreviewAudio,
   } = useAppStore()
   const previewSlide = slides[previewSlideIndex] || null
   const [navigating, setNavigating] = useState(false)
@@ -389,7 +406,29 @@ function PreviewCard() {
       }
       bodyClassName="bg-black flex flex-col"
     >
-      <div className="flex-1 min-h-0 flex items-center justify-center p-3">
+      <div className="flex-1 min-h-0 flex items-center justify-center p-3 relative">
+        {/* Speaker toggle pinned to the LEFT edge of the preview
+            surface (mirrors the Wirecast preview-monitor button). On
+            = operator hears preview audio; off = preview is silent.
+            Audio is still processed regardless — this only affects
+            local audibility on the preview surface. */}
+        <button
+          type="button"
+          onClick={() => setPreviewAudio(!previewAudio)}
+          title={previewAudio ? 'Mute preview audio' : 'Monitor preview audio'}
+          className={cn(
+            'absolute left-1.5 top-1/2 -translate-y-1/2 z-20 h-7 w-7 rounded-md border flex items-center justify-center transition-colors',
+            previewAudio
+              ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+              : 'bg-black/60 border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500',
+          )}
+        >
+          {previewAudio ? (
+            <Volume2 className="h-3.5 w-3.5" />
+          ) : (
+            <VolumeX className="h-3.5 w-3.5" />
+          )}
+        </button>
         {previewSlide ? (
           <div className="w-full max-w-full">
             <SlideThumb
@@ -480,7 +519,16 @@ function LiveDisplayCard({
   onSendLive: () => void
   onNext: () => void
 }) {
-  const { slides, liveSlideIndex, settings, hasShownContent } = useAppStore()
+  const {
+    slides,
+    liveSlideIndex,
+    settings,
+    hasShownContent,
+    liveBroadcastAudio,
+    setLiveBroadcastAudio,
+    liveMonitorAudio,
+    setLiveMonitorAudio,
+  } = useAppStore()
   const liveSlide = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
   // Show the centred WassMedia splash here too — exactly while the
   // operator is on a fresh session and hasn't sent anything yet. This
@@ -534,6 +582,56 @@ function LiveDisplayCard({
       bodyClassName="bg-black"
     >
       <div className="flex-1 min-h-0 flex items-center justify-center p-3 relative">
+        {/* Audio toggles pinned to the RIGHT edge of the live surface
+            (mirrors the Wirecast live-monitor cluster the user
+            referenced). Speaker = broadcast audio is hot (on/off);
+            Headphones = operator monitors live audio locally. They are
+            independent — broadcast can be hot while the operator is
+            silent (typical live-mix posture), or both on (operator
+            monitoring), or both off (everything muted). */}
+        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 z-20 flex flex-col gap-1.5">
+          <button
+            type="button"
+            onClick={() => setLiveBroadcastAudio(!liveBroadcastAudio)}
+            title={
+              liveBroadcastAudio
+                ? 'Mute broadcast audio'
+                : 'Send audio to broadcast'
+            }
+            className={cn(
+              'h-7 w-7 rounded-md border flex items-center justify-center transition-colors',
+              liveBroadcastAudio
+                ? 'bg-rose-500/20 border-rose-500/50 text-rose-300'
+                : 'bg-black/60 border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500',
+            )}
+          >
+            {liveBroadcastAudio ? (
+              <Volume2 className="h-3.5 w-3.5" />
+            ) : (
+              <VolumeX className="h-3.5 w-3.5" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setLiveMonitorAudio(!liveMonitorAudio)}
+            title={
+              liveMonitorAudio
+                ? 'Stop monitoring live audio'
+                : 'Monitor live audio in your headphones'
+            }
+            className={cn(
+              'h-7 w-7 rounded-md border flex items-center justify-center transition-colors relative',
+              liveMonitorAudio
+                ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                : 'bg-black/60 border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500',
+            )}
+          >
+            <Headphones className="h-3.5 w-3.5" />
+            {!liveMonitorAudio && (
+              <span className="absolute inset-x-1 h-px bg-current rotate-45" />
+            )}
+          </button>
+        </div>
         {/* Startup splash. While the operator hasn't put anything on
             air yet (fresh session) we float the WassMedia logo over
             the empty stage so both the operator's Live Display and the
@@ -1040,9 +1138,321 @@ interface MediaItem {
   name: string
   url: string // data: URL so it travels through the SSE broadcast intact
   kind: 'image' | 'video'
+  size?: number
 }
 
 type MediaFit = NonNullable<Slide['mediaFit']>
+
+// Media library view-mode catalogue. Order + labels mirror the
+// Windows Explorer "View" menu in the screenshot the user attached;
+// each mode pairs with a render branch in <MediaItemsView/>.
+type MediaViewModeId =
+  | 'large'
+  | 'medium'
+  | 'small'
+  | 'list'
+  | 'details'
+  | 'tiles'
+
+const MEDIA_VIEW_MODES: ReadonlyArray<{
+  id: MediaViewModeId
+  label: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  icon: any
+}> = [
+  { id: 'large', label: 'Large Icons', icon: LayoutGrid },
+  { id: 'medium', label: 'Medium Icons', icon: Grid3x3 },
+  { id: 'small', label: 'Small Icons', icon: Grid3x3 },
+  { id: 'list', label: 'List', icon: ListIcon },
+  { id: 'details', label: 'Details', icon: AlignJustify },
+  { id: 'tiles', label: 'Tiles', icon: Rows3 },
+]
+
+// Format a byte count for the Details / Tiles views. Best-effort —
+// we don't track real file sizes per upload, so the renderer falls
+// back to "—" if the value isn't known.
+function formatSize(n?: number): string {
+  if (!n || n <= 0) return '—'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+function MediaItemsView({
+  items,
+  mode,
+  selectedId,
+  stagedItemId,
+  onItemClick,
+  onRemove,
+}: {
+  items: MediaItem[]
+  mode: MediaViewModeId
+  selectedId: string | null
+  stagedItemId: string | null
+  onItemClick: (m: MediaItem) => void
+  onRemove: (id: string) => void
+}) {
+  // ── Thumb grid (Large / Medium / Small Icons) ────────────────────
+  // The three icon modes share one render branch and just swap the
+  // grid column count + thumbnail aspect / label visibility, exactly
+  // like Windows Explorer.
+  if (mode === 'large' || mode === 'medium' || mode === 'small') {
+    const cols =
+      mode === 'large' ? 'grid-cols-1' : mode === 'medium' ? 'grid-cols-2' : 'grid-cols-3'
+    const labelSize = mode === 'small' ? 'text-[8px]' : 'text-[9px]'
+    return (
+      <div className={cn('grid gap-1.5', cols)}>
+        {items.map((m) => {
+          const active = m.id === selectedId
+          const staged = m.id === stagedItemId
+          return (
+            <div
+              key={m.id}
+              onClick={() => onItemClick(m)}
+              className={cn(
+                'group relative rounded border bg-zinc-950 overflow-hidden cursor-pointer transition-colors',
+                active
+                  ? 'border-fuchsia-500/60 ring-1 ring-fuchsia-500/40'
+                  : 'border-zinc-800 hover:border-zinc-700',
+              )}
+              title={
+                staged
+                  ? 'Click again to send to live'
+                  : 'Click to replace preview with this media'
+              }
+            >
+              <div className="aspect-video bg-black flex items-center justify-center">
+                {m.kind === 'video' ? (
+                  <video
+                    src={m.url}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={m.url}
+                    alt={m.name}
+                    className="w-full h-full object-contain"
+                  />
+                )}
+              </div>
+              <div className="absolute inset-x-0 bottom-0 px-1.5 py-1 bg-gradient-to-t from-black/80 to-transparent flex items-center gap-1">
+                {m.kind === 'video' ? (
+                  <Film className="h-2.5 w-2.5 text-fuchsia-300 shrink-0" />
+                ) : (
+                  <ImageIcon className="h-2.5 w-2.5 text-fuchsia-300 shrink-0" />
+                )}
+                <span className={cn('text-zinc-200 truncate', labelSize)}>
+                  {m.name}
+                </span>
+              </div>
+              {staged && (
+                <div className="absolute top-1 left-1 text-[8px] uppercase tracking-wider font-bold px-1 py-0.5 rounded bg-amber-500/80 text-black">
+                  In Preview
+                </div>
+              )}
+              <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="h-5 w-5 p-0"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onRemove(m.id)
+                  }}
+                  title="Remove"
+                >
+                  <Trash2 className="h-2.5 w-2.5" />
+                </Button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  // ── Tiles ────────────────────────────────────────────────────────
+  // Mid-density mode: a square thumb on the left and a two-line
+  // label/kind block to the right. Useful when names are long.
+  if (mode === 'tiles') {
+    return (
+      <div className="flex flex-col gap-1">
+        {items.map((m) => {
+          const active = m.id === selectedId
+          const staged = m.id === stagedItemId
+          return (
+            <div
+              key={m.id}
+              onClick={() => onItemClick(m)}
+              className={cn(
+                'group relative flex items-center gap-2 rounded border bg-zinc-950 overflow-hidden cursor-pointer transition-colors p-1.5',
+                active
+                  ? 'border-fuchsia-500/60 ring-1 ring-fuchsia-500/40'
+                  : 'border-zinc-800 hover:border-zinc-700',
+              )}
+            >
+              <div className="w-12 h-12 shrink-0 bg-black flex items-center justify-center rounded overflow-hidden">
+                {m.kind === 'video' ? (
+                  <video
+                    src={m.url}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={m.url}
+                    alt={m.name}
+                    className="w-full h-full object-cover"
+                  />
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[10px] text-zinc-200 truncate font-medium">
+                  {m.name}
+                </div>
+                <div className="text-[9px] text-zinc-500 flex items-center gap-1">
+                  {m.kind === 'video' ? (
+                    <Film className="h-2.5 w-2.5 text-fuchsia-300" />
+                  ) : (
+                    <ImageIcon className="h-2.5 w-2.5 text-fuchsia-300" />
+                  )}
+                  {m.kind === 'video' ? 'Video' : 'Image'}
+                  {staged && (
+                    <span className="ml-1 px-1 rounded bg-amber-500/80 text-black uppercase tracking-wider font-bold text-[8px]">
+                      In Preview
+                    </span>
+                  )}
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="destructive"
+                className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onRemove(m.id)
+                }}
+                title="Remove"
+              >
+                <Trash2 className="h-2.5 w-2.5" />
+              </Button>
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  // ── List ─────────────────────────────────────────────────────────
+  // Compact one-line-per-item layout, no thumbnails. Mirrors the
+  // Explorer "List" mode.
+  if (mode === 'list') {
+    return (
+      <div className="flex flex-col">
+        {items.map((m) => {
+          const active = m.id === selectedId
+          const staged = m.id === stagedItemId
+          return (
+            <button
+              type="button"
+              key={m.id}
+              onClick={() => onItemClick(m)}
+              className={cn(
+                'group flex items-center gap-2 px-1.5 py-1 rounded text-left transition-colors',
+                active
+                  ? 'bg-fuchsia-500/15 text-fuchsia-200'
+                  : 'text-zinc-300 hover:bg-zinc-900',
+              )}
+            >
+              {m.kind === 'video' ? (
+                <Film className="h-3 w-3 text-fuchsia-300 shrink-0" />
+              ) : (
+                <ImageIcon className="h-3 w-3 text-fuchsia-300 shrink-0" />
+              )}
+              <span className="text-[10px] truncate flex-1">{m.name}</span>
+              {staged && (
+                <span className="text-[8px] uppercase tracking-wider font-bold px-1 rounded bg-amber-500/80 text-black">
+                  Preview
+                </span>
+              )}
+              <Trash2
+                className="h-3 w-3 text-zinc-500 hover:text-rose-400 opacity-0 group-hover:opacity-100"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onRemove(m.id)
+                }}
+              />
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
+
+  // ── Details ──────────────────────────────────────────────────────
+  // Table-style layout with Name / Type / Size columns.
+  return (
+    <div className="text-[10px]">
+      <div className="grid grid-cols-[1fr_5rem_4rem_1.25rem] gap-2 px-1.5 py-1 border-b border-zinc-800 text-zinc-500 uppercase tracking-wider text-[9px] font-semibold">
+        <span>Name</span>
+        <span>Type</span>
+        <span>Size</span>
+        <span></span>
+      </div>
+      {items.map((m) => {
+        const active = m.id === selectedId
+        const staged = m.id === stagedItemId
+        return (
+          <button
+            type="button"
+            key={m.id}
+            onClick={() => onItemClick(m)}
+            className={cn(
+              'group w-full grid grid-cols-[1fr_5rem_4rem_1.25rem] gap-2 px-1.5 py-1 items-center text-left transition-colors',
+              active
+                ? 'bg-fuchsia-500/15 text-fuchsia-200'
+                : 'text-zinc-300 hover:bg-zinc-900',
+            )}
+          >
+            <span className="flex items-center gap-1.5 truncate">
+              {m.kind === 'video' ? (
+                <Film className="h-3 w-3 text-fuchsia-300 shrink-0" />
+              ) : (
+                <ImageIcon className="h-3 w-3 text-fuchsia-300 shrink-0" />
+              )}
+              <span className="truncate">{m.name}</span>
+              {staged && (
+                <span className="text-[8px] uppercase tracking-wider font-bold px-1 rounded bg-amber-500/80 text-black shrink-0">
+                  Preview
+                </span>
+              )}
+            </span>
+            <span className="text-zinc-400 truncate">
+              {m.kind === 'video' ? 'Video' : 'Image'}
+            </span>
+            <span className="text-zinc-500 truncate">{formatSize(m.size)}</span>
+            <Trash2
+              className="h-3 w-3 text-zinc-500 hover:text-rose-400 opacity-0 group-hover:opacity-100"
+              onClick={(e) => {
+                e.stopPropagation()
+                onRemove(m.id)
+              }}
+            />
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 function MediaCard() {
   const [items, setItems] = useState<MediaItem[]>([])
@@ -1065,6 +1475,8 @@ function MediaCard() {
     setIsLive,
     setPreviewSlideIndex,
     setHasShownContent,
+    mediaViewMode,
+    setMediaViewMode,
   } = useAppStore()
 
   const selectedItem = items.find((m) => m.id === selectedId) || null
@@ -1093,6 +1505,7 @@ function MediaCard() {
                 name: f.name,
                 url: data.url,
                 kind: data.kind || (f.type.startsWith('video/') ? 'video' : 'image'),
+                size: f.size,
               })
             } else {
               reject(new Error(data.error || `Upload failed (${xhr.status})`))
@@ -1301,9 +1714,44 @@ function MediaCard() {
           <Upload className="h-3 w-3" />{' '}
           {uploading ? `Uploading ${uploadPct}%` : 'Upload'}
         </Button>
-        <span className="text-[9px] text-zinc-500 ml-auto">
-          Images / videos · up to 3 GB
-        </span>
+        {/* Windows-Explorer-style View menu. Six modes mirror the
+            screenshot the user provided. The selection is persisted
+            so each operator's preferred density survives a reload. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="h-6 px-2 text-[10px] gap-1 ml-auto"
+              title="Change view"
+            >
+              {(() => {
+                const Icon = MEDIA_VIEW_MODES.find((v) => v.id === mediaViewMode)?.icon ||
+                  LayoutGrid
+                return <Icon className="h-3 w-3" />
+              })()}
+              View
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[10rem]">
+            {MEDIA_VIEW_MODES.map((v) => {
+              const Icon = v.icon
+              return (
+                <DropdownMenuItem
+                  key={v.id}
+                  onClick={() => setMediaViewMode(v.id)}
+                  className="gap-2"
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span className="flex-1">{v.label}</span>
+                  {mediaViewMode === v.id && (
+                    <Check className="h-3.5 w-3.5 text-fuchsia-400" />
+                  )}
+                </DropdownMenuItem>
+              )
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* Per-item display options. Visible only when an item is
@@ -1368,75 +1816,14 @@ function MediaCard() {
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-1.5">
-            {items.map((m) => {
-              const active = m.id === selectedId
-              const staged = m.id === stagedItemId
-              return (
-                <div
-                  key={m.id}
-                  onClick={() => onItemClick(m)}
-                  className={cn(
-                    'group relative rounded border bg-zinc-950 overflow-hidden cursor-pointer transition-colors',
-                    active
-                      ? 'border-fuchsia-500/60 ring-1 ring-fuchsia-500/40'
-                      : 'border-zinc-800 hover:border-zinc-700'
-                  )}
-                  title={
-                    staged
-                      ? 'Click again to send to live'
-                      : 'Click to replace preview with this media'
-                  }
-                >
-                  <div className="aspect-video bg-black flex items-center justify-center">
-                    {m.kind === 'video' ? (
-                      <video
-                        src={m.url}
-                        muted
-                        playsInline
-                        preload="metadata"
-                        className="w-full h-full object-contain"
-                      />
-                    ) : (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={m.url}
-                        alt={m.name}
-                        className="w-full h-full object-contain"
-                      />
-                    )}
-                  </div>
-                  <div className="absolute inset-x-0 bottom-0 px-1.5 py-1 bg-gradient-to-t from-black/80 to-transparent flex items-center gap-1">
-                    {m.kind === 'video' ? (
-                      <Film className="h-2.5 w-2.5 text-fuchsia-300 shrink-0" />
-                    ) : (
-                      <ImageIcon className="h-2.5 w-2.5 text-fuchsia-300 shrink-0" />
-                    )}
-                    <span className="text-[9px] text-zinc-200 truncate">{m.name}</span>
-                  </div>
-                  {staged && (
-                    <div className="absolute top-1 left-1 text-[8px] uppercase tracking-wider font-bold px-1 py-0.5 rounded bg-amber-500/80 text-black">
-                      In Preview
-                    </div>
-                  )}
-                  <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      className="h-5 w-5 p-0"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        remove(m.id)
-                      }}
-                      title="Remove"
-                    >
-                      <Trash2 className="h-2.5 w-2.5" />
-                    </Button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+          <MediaItemsView
+            items={items}
+            mode={mediaViewMode}
+            selectedId={selectedId}
+            stagedItemId={stagedItemId}
+            onItemClick={onItemClick}
+            onRemove={remove}
+          />
         )}
       </div>
 
