@@ -36,7 +36,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     <div className="flex flex-col h-full">
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 py-5">
-        <img src="/logo.png" alt="ScriptureLive" className="w-9 h-9 rounded-lg object-cover" />
+        <img src="/logo.png" alt="ScriptureLive" className="w-9 h-9 rounded-lg object-contain bg-transparent" />
         <div className="leading-tight">
           <h1 className="text-base font-bold tracking-tight">ScriptureLive</h1>
           <p className="text-[10px] text-muted-foreground -mt-0.5">
@@ -80,7 +80,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       {/* Footer */}
       <Separator className="opacity-50" />
       <div className="px-4 py-3 flex items-center gap-2">
-        <img src="/logo.png" alt="" className="w-5 h-5 rounded object-cover opacity-80" />
+        <img src="/logo.png" alt="" className="w-5 h-5 object-contain bg-transparent opacity-90" />
         <p className="text-[10px] text-muted-foreground/80 leading-tight">
           Powered by WassMedia (+233246798526)
         </p>

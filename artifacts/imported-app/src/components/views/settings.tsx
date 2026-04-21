@@ -134,7 +134,7 @@ export function SettingsView() {
         <div className="relative flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex items-center gap-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="" className="h-11 w-11 rounded-xl object-cover ring-1 ring-border/60 shadow-sm" />
+            <img src="/logo.png" alt="" className="h-11 w-11 rounded-xl object-contain bg-transparent" />
             <div className="leading-tight">
               <h2 className="text-2xl font-bold text-foreground tracking-tight">Settings</h2>
               <p className="text-sm text-muted-foreground mt-0.5">

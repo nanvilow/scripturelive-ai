@@ -23,7 +23,7 @@ function AppContent() {
         <div className="flex items-center justify-between px-5 h-14 border-b border-zinc-800 bg-zinc-950/95 backdrop-blur shrink-0">
           <div className="flex items-center gap-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="" className="h-7 w-7 rounded-md object-cover ring-1 ring-zinc-800" />
+            <img src="/logo.png" alt="" className="h-7 w-7 rounded-md object-contain bg-transparent" />
             <div className="leading-tight">
               <h2 className="text-sm font-semibold text-zinc-100">Settings</h2>
               <p className="text-[10px] text-zinc-500">Configure ScriptureLive</p>
