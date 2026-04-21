@@ -113,22 +113,41 @@ function Card({
 // corresponding speaker / headphone toggle is active we animate a
 // subtle bouncing level so it reads as "live audio passing through";
 // when muted we render a dim ladder so it still looks like a meter.
-function AudioMeter({ active, tone = 'green' }: { active: boolean; tone?: 'green' | 'red' | 'amber' }) {
-  const [level, setLevel] = useState(0.15)
+// `active` controls the audio routing tint (lit vs dim ladder).
+// `playing` is the REAL signal — we only animate the meter when the
+// surface's <video> element is actually emitting frames AND audio is
+// routed. With nothing playing, the bar sits idle (zero motion) so
+// the operator never sees false activity.
+function AudioMeter({
+  active,
+  playing,
+  tone = 'green',
+}: {
+  active: boolean
+  playing: boolean
+  tone?: 'green' | 'red' | 'amber'
+}) {
+  const [level, setLevel] = useState(0)
   useEffect(() => {
-    if (!active) {
-      setLevel(0.05)
+    // Idle path — no media playing OR audio not routed → bar sits at
+    // a steady low floor, no motion.
+    if (!active || !playing) {
+      setLevel(0)
       return
     }
-    let raf = 0
+    // We don't attach Web Audio analysers (would need recreating the
+    // <video> graph and same-origin gating); instead we drive a small
+    // bounce that is gated on the real `playing` flag so it strictly
+    // tracks playback. The meter visibly pauses the moment the video
+    // pauses or ends.
+    let timer = 0
     const tick = () => {
-      // Pseudo-random meter bounce — small, low frequency, no DSP.
       setLevel(0.35 + Math.random() * 0.55)
-      raf = window.setTimeout(tick, 90 + Math.random() * 80) as unknown as number
+      timer = window.setTimeout(tick, 90 + Math.random() * 80) as unknown as number
     }
     tick()
-    return () => clearTimeout(raf)
-  }, [active])
+    return () => clearTimeout(timer)
+  }, [active, playing])
   const grad =
     tone === 'red'
       ? 'from-rose-500 via-rose-400 to-amber-400'
@@ -313,58 +332,15 @@ function PreviewCard() {
     setPreviewSlideIndex,
     setLiveSlideIndex,
     setIsLive,
-    mediaPaused,
-    setMediaPaused,
     previewAudio,
     setPreviewAudio,
   } = useAppStore()
+  const previewVideoPlaying = useAppStore((s) => s.previewVideoPlaying)
   const previewSlide = slides[previewSlideIndex] || null
   const [navigating, setNavigating] = useState(false)
-  // Transport visibility: the bar only makes sense for video media on
-  // the currently-selected preview slide. Operators step OTHER slide
-  // types with the main Live Display ◀ / ▶, so we hide the bar there
-  // to avoid double controls.
-  const isMediaVideo =
-    previewSlide?.type === 'media' && previewSlide?.mediaKind === 'video'
-
-  // Transport actions. Play/Pause flip the global `mediaPaused` flag —
-  // the slide-renderer effect calls .play()/.pause() on every mounted
-  // <video> in response, so the operator preview, the Live Display
-  // and the secondary screen all stay in lock-step. Back/Forward step
-  // the live cursor (mirroring the preview cursor) so the operator
-  // can walk through the schedule from the preview pane.
-  const onPlay = useCallback(() => setMediaPaused(false), [setMediaPaused])
-  const onPause = useCallback(() => setMediaPaused(true), [setMediaPaused])
-  const onSendBack = useCallback(() => {
-    if (!slides.length) return
-    const cur = liveSlideIndex >= 0 ? liveSlideIndex : previewSlideIndex
-    const next = Math.max(0, cur - 1)
-    setLiveSlideIndex(next)
-    setPreviewSlideIndex(next)
-    setIsLive(true)
-  }, [
-    slides.length,
-    liveSlideIndex,
-    previewSlideIndex,
-    setLiveSlideIndex,
-    setPreviewSlideIndex,
-    setIsLive,
-  ])
-  const onSendForward = useCallback(() => {
-    if (!slides.length) return
-    const cur = liveSlideIndex >= 0 ? liveSlideIndex : previewSlideIndex
-    const next = Math.min(slides.length - 1, cur + 1)
-    setLiveSlideIndex(next)
-    setPreviewSlideIndex(next)
-    setIsLive(true)
-  }, [
-    slides.length,
-    liveSlideIndex,
-    previewSlideIndex,
-    setLiveSlideIndex,
-    setPreviewSlideIndex,
-    setIsLive,
-  ])
+  // Transport bar was removed from Preview — see comment near the
+  // bottom of this card. Playback for the live video is now driven
+  // exclusively from the Live Display column.
 
   // ── Chapter navigation: parse the live preview slide's reference
   // (e.g. "John 6:6", "John 6:6-9", "John 6"), step to the adjacent
@@ -457,7 +433,7 @@ function PreviewCard() {
             VU meter on top, speaker toggle on the bottom. */}
         <div className="w-7 shrink-0 flex flex-col items-center gap-1.5 py-1">
           <div className="flex-1 min-h-0 w-full flex justify-center">
-            <AudioMeter active={previewAudio} tone="green" />
+            <AudioMeter active={previewAudio} playing={previewVideoPlaying} tone="green" />
           </div>
           <button
             type="button"
@@ -495,52 +471,9 @@ function PreviewCard() {
           )}
         </div>
       </div>
-      {/* Transport bar — rendered BELOW the preview surface so it
-          mirrors a broadcast transport row (Back · Play · Pause ·
-          Forward). Only visible for media-video previews; other slide
-          types are stepped from the Live Display column. */}
-      {isMediaVideo && (
-        <div className="flex items-center justify-center gap-1 border-t border-zinc-800/70 px-2 py-1.5 shrink-0">
-          <Button
-            size="sm"
-            variant="secondary"
-            className="h-7 w-7 p-0"
-            onClick={onSendBack}
-            title="Send back (previous slide)"
-          >
-            <SkipBack className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            className="h-7 w-7 p-0"
-            onClick={onPlay}
-            disabled={!mediaPaused}
-            title="Play"
-          >
-            <Play className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            className="h-7 w-7 p-0"
-            onClick={onPause}
-            disabled={mediaPaused}
-            title="Pause"
-          >
-            <Pause className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            className="h-7 w-7 p-0"
-            onClick={onSendForward}
-            title="Send forward (next slide)"
-          >
-            <SkipForward className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      )}
+      {/* Transport bar removed from Preview per spec — once a video
+          is sent Live the operator controls playback ONLY from the
+          Live Display column, and the Preview surface auto-pauses. */}
     </Card>
   )
 }
@@ -579,7 +512,14 @@ function LiveDisplayCard({
     liveMonitorAudio,
     setLiveMonitorAudio,
   } = useAppStore()
+  const liveVideoPlaying = useAppStore((s) => s.liveVideoPlaying)
+  const mediaPaused = useAppStore((s) => s.mediaPaused)
+  const setMediaPaused = useAppStore((s) => s.setMediaPaused)
   const liveSlide = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
+  // Show the inline transport row only when the live slide is a
+  // video — for everything else there is nothing to play or pause.
+  const liveIsMediaVideo =
+    liveSlide?.type === 'media' && liveSlide?.mediaKind === 'video'
   // Show the centred WassMedia splash here too — exactly while the
   // operator is on a fresh session and hasn't sent anything yet. This
   // is the operator's mirror of the congregation route's startup
@@ -643,13 +583,13 @@ function LiveDisplayCard({
         {showStartupLogo && !hidden && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center pointer-events-none bg-transparent text-white">
             <div
-              className="font-bold tracking-tight"
+              className="font-semibold tracking-tight opacity-40"
               style={{ fontSize: 'clamp(1rem, 5cqi, 3rem)', lineHeight: 1.1 }}
             >
               Scripture AI
             </div>
             <div
-              className="mt-2 opacity-80"
+              className="mt-2 opacity-30"
               style={{ fontSize: 'clamp(0.55rem, 1.6cqi, 0.95rem)' }}
             >
               Powered By WassMedia (+233246798526)
@@ -833,6 +773,7 @@ function LiveDisplayCard({
           <div className="flex-1 min-h-0 w-full flex justify-center">
             <AudioMeter
               active={liveBroadcastAudio || liveMonitorAudio}
+              playing={liveVideoPlaying}
               tone={liveBroadcastAudio ? 'red' : liveMonitorAudio ? 'amber' : 'green'}
             />
           </div>
@@ -912,6 +853,37 @@ function LiveDisplayCard({
           </Button>
         </div>
       </div>
+      {/* Live transport row — Pause/Play for the currently-on-air
+          video. Lives BELOW the Live Display body so the operator
+          interrupts the live feed from the same column they sent it
+          from. Hidden for non-video slides. */}
+      {liveIsMediaVideo && (
+        <div className="flex items-center justify-center gap-2 border-t border-zinc-800/70 px-2 py-1.5 shrink-0">
+          {mediaPaused ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              className="h-7 px-3 gap-1.5"
+              onClick={() => setMediaPaused(false)}
+              title="Resume live video"
+            >
+              <Play className="h-3.5 w-3.5" />
+              <span className="text-[10px] uppercase tracking-wider font-semibold">Play</span>
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="secondary"
+              className="h-7 px-3 gap-1.5"
+              onClick={() => setMediaPaused(true)}
+              title="Pause live video"
+            >
+              <Pause className="h-3.5 w-3.5" />
+              <span className="text-[10px] uppercase tracking-wider font-semibold">Pause</span>
+            </Button>
+          )}
+        </div>
+      )}
     </Card>
   )
 }

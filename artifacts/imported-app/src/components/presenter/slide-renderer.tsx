@@ -41,6 +41,12 @@ function MediaSlideContent({
   isLive?: boolean
 }) {
   const mediaPaused = useAppStore((s) => s.mediaPaused)
+  // When something is on air the Preview surface stops playing — the
+  // operator's preview must never compete for audio or distract from
+  // the Live Display. The Live surface is unaffected by this gate.
+  const globalIsLive = useAppStore((s) => s.isLive)
+  const setPreviewVideoPlaying = useAppStore((s) => s.setPreviewVideoPlaying)
+  const setLiveVideoPlaying = useAppStore((s) => s.setLiveVideoPlaying)
   // Pick the right monitor flag for this surface. The Live thumb
   // listens to liveMonitorAudio (the headphone toggle); every other
   // surface (Preview, Schedule thumbs, mid-card preview) follows the
@@ -54,18 +60,23 @@ function MediaSlideContent({
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const { objectFit, aspect } = resolveMediaPresentation(slide.mediaFit)
 
-  // Honour the operator's play/pause flag in real time. We don't
+  // The Preview surface must pause whenever something is on air — the
+  // operator should hear/see the Live Display only. The Live surface
+  // honours the explicit Pause button (mediaPaused) instead.
+  const shouldBePaused = isLive ? mediaPaused : (globalIsLive || mediaPaused)
+
+  // Honour the resolved play/pause state in real time. We never
   // remount the video — that would jump back to t=0 — so this just
   // calls play()/pause() on the live element.
   useEffect(() => {
     const v = videoRef.current
     if (!v) return
-    if (mediaPaused) {
+    if (shouldBePaused) {
       v.pause()
     } else {
       v.play().catch(() => {})
     }
-  }, [mediaPaused])
+  }, [shouldBePaused])
 
   // Reflect the audio toggle on the actual <video> element. We mount
   // muted so autoplay survives, then drop the mute the moment the
@@ -77,12 +88,40 @@ function MediaSlideContent({
     if (audible) v.volume = 1
   }, [audible])
 
+  // Wire the actual playback state of THIS video element to the
+  // store. The audio meters on the operator console read these flags
+  // so they only animate when audio is genuinely flowing — a real
+  // playing/paused signal, not a guess.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    const setFlag = isLive ? setLiveVideoPlaying : setPreviewVideoPlaying
+    const onPlaying = () => setFlag(true)
+    const onPaused = () => setFlag(false)
+    v.addEventListener('playing', onPlaying)
+    v.addEventListener('pause', onPaused)
+    v.addEventListener('ended', onPaused)
+    v.addEventListener('stalled', onPaused)
+    v.addEventListener('emptied', onPaused)
+    // Seed an initial reading.
+    setFlag(!v.paused && !v.ended && v.readyState > 2)
+    return () => {
+      v.removeEventListener('playing', onPlaying)
+      v.removeEventListener('pause', onPaused)
+      v.removeEventListener('ended', onPaused)
+      v.removeEventListener('stalled', onPaused)
+      v.removeEventListener('emptied', onPaused)
+      // Surface unmounting → meter must drop to idle.
+      setFlag(false)
+    }
+  }, [isLive, setPreviewVideoPlaying, setLiveVideoPlaying, slide.mediaUrl])
+
   const inner =
     slide.mediaKind === 'video' ? (
       <video
         ref={videoRef}
         src={slide.mediaUrl}
-        autoPlay={!mediaPaused}
+        autoPlay={!shouldBePaused}
         loop
         muted
         playsInline
