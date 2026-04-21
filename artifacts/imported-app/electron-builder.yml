@@ -102,8 +102,7 @@ dmg:
   # picks up from CSC_LINK. Combined with the notarization ticket stapled to
   # the inner .app, this gives Gatekeeper a clean install on first launch.
   sign: true
-publish:
-  - provider: github
-    owner: scripturelive
-    repo: scripturelive-desktop
-    releaseType: release
+# (Single `publish:` block lives at the top of this file. A second
+#  block here would silently override it under YAML merge semantics
+#  and point auto-update to the wrong GitHub repo, so it has been
+#  removed.)
