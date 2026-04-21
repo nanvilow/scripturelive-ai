@@ -1,0 +1,102 @@
+name: Check code-signing certificate expiry
+
+# Runs the cert-expiry check (.github/scripts/check-cert-expiry.sh) against the
+# Windows Authenticode (`WIN_CSC_LINK`) and Apple Developer ID (`MAC_CSC_LINK`)
+# secrets used by `release-desktop.yml`. Surfaces a workflow-level ::warning::
+# at <60 days remaining and a workflow-level ::error:: (failing the run, which
+# triggers the standard "workflow failed" email to repo admins) at <30 days.
+#
+# Triggers:
+#   * `schedule`         -- 09:00 UTC on the 1st of every month, so we always
+#                          have at least 30 days of warning before either cert
+#                          expires.
+#   * `workflow_dispatch` -- run on demand from the Actions tab.
+#   * `workflow_call`    -- invoked from `release-desktop.yml` so every release
+#                          also re-checks before publishing.
+#
+# A run is considered "failed" iff at least one configured cert is within
+# FAIL_DAYS of expiry. Missing secrets are treated as a notice (not a failure)
+# because the release pipeline is intentionally tolerant of unsigned builds
+# on forks; the dedicated job summary makes the unset state visible.
+
+on:
+  schedule:
+    - cron: "0 9 1 * *"
+  workflow_dispatch:
+  workflow_call:
+    # No inputs; secrets are inherited from the calling workflow via
+    # `secrets: inherit` so we don't have to enumerate them here.
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check certificate expiry
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check Windows Authenticode certificate
+        id: win
+        env:
+          CERT_LABEL: "Windows Authenticode (WIN_CSC_LINK)"
+          CERT_BASE64: ${{ secrets.WIN_CSC_LINK }}
+          CERT_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          WARN_DAYS: "60"
+          FAIL_DAYS: "30"
+        # Keep going even on failure so the macOS check below also runs and
+        # both states are visible in the same run; we re-check `outcome` at
+        # the end and fail the job there.
+        continue-on-error: true
+        run: bash .github/scripts/check-cert-expiry.sh
+
+      - name: Check macOS Developer ID certificate
+        id: mac
+        env:
+          CERT_LABEL: "Apple Developer ID (MAC_CSC_LINK)"
+          CERT_BASE64: ${{ secrets.MAC_CSC_LINK }}
+          CERT_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          WARN_DAYS: "60"
+          FAIL_DAYS: "30"
+        continue-on-error: true
+        run: bash .github/scripts/check-cert-expiry.sh
+
+      - name: Reminder about Apple app-specific password
+        # APPLE_APP_SPECIFIC_PASSWORD has no expiry date we can read, but Apple
+        # can revoke it at any time and it must be regenerated when the owning
+        # Apple ID password changes. Surface a notice so it stays on the radar
+        # whenever this workflow runs.
+        run: |
+          if [ -z "${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}" ]; then
+            echo "::notice title=Apple app-specific password not configured::Notarization will be skipped until APPLE_APP_SPECIFIC_PASSWORD is set."
+          else
+            echo "::notice title=Apple app-specific password reminder::This token cannot be checked programmatically. Re-issue it from https://appleid.apple.com whenever the owning Apple ID password is changed."
+          fi
+
+      - name: Write job summary
+        if: always()
+        env:
+          WIN_DAYS: ${{ steps.win.outputs.windows_authenticode_win_csc_link || 'error' }}
+          MAC_DAYS: ${{ steps.mac.outputs.apple_developer_id_mac_csc_link || 'error' }}
+          WIN_OUTCOME: ${{ steps.win.outcome }}
+          MAC_OUTCOME: ${{ steps.mac.outcome }}
+        run: |
+          {
+            echo "## Code-signing certificate expiry"
+            echo ""
+            echo "| Certificate | Days remaining | Step outcome |"
+            echo "| --- | --- | --- |"
+            echo "| Windows Authenticode (\`WIN_CSC_LINK\`) | ${WIN_DAYS} | ${WIN_OUTCOME} |"
+            echo "| Apple Developer ID (\`MAC_CSC_LINK\`) | ${MAC_DAYS} | ${MAC_OUTCOME} |"
+            echo ""
+            echo "Thresholds: warn <60 days, fail <30 days."
+            echo "Rotation guide: see \`.github/workflows/README.md\` → **Certificate expiry warnings & rotation**."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail run if any certificate is in the danger zone
+        if: steps.win.outcome == 'failure' || steps.mac.outcome == 'failure'
+        run: |
+          echo "::error::One or more code-signing certificates are expired or expire within 30 days. See the job summary and the annotations above."
+          exit 1
