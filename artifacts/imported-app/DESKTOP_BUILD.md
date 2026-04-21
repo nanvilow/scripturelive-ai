@@ -218,6 +218,18 @@ The same env vars are wired up in `.github/workflows/release-desktop.yml`.
 Add the certificates as repository secrets — see
 `.github/workflows/README.md` for the exact secret names and expected formats.
 
+### Certificate expiry monitoring
+
+Authenticode certificates expire every 1–3 years and Apple Developer ID
+certificates every 5 years; the `APPLE_APP_SPECIFIC_PASSWORD` token can also
+be revoked at any time. To make sure releases never silently start shipping
+unsigned again, a dedicated GitHub Actions workflow
+(`.github/workflows/check-cert-expiry.yml`) runs on the 1st of every month
+and on every release, warns at 60 days remaining, and fails (sending a
+workflow-failure email to repo admins) at 30 days remaining. Step-by-step
+rotation instructions for each secret live in
+`.github/workflows/README.md` → **Certificate expiry warnings & rotation**.
+
 ## How NDI is broadcast
 
 1. The desktop app starts the bundled Next.js server on a random local port.
