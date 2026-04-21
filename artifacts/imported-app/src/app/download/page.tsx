@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Apple, Download, Monitor, ShieldCheck, Sparkles, Wifi, ArrowLeft, Cpu, HardDrive, AlertTriangle } from 'lucide-react'
+import { Apple, Download, Monitor, ShieldCheck, Sparkles, Wifi, ArrowLeft, Cpu, HardDrive, AlertTriangle, Copy, Check, Fingerprint } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
@@ -29,6 +29,77 @@ function formatSize(bytes: number | null): string {
   if (!bytes) return '—'
   const mb = bytes / (1024 * 1024)
   return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(1)} MB`
+}
+
+function formatBytes(bytes: number | null): string {
+  if (!bytes) return ''
+  return `${bytes.toLocaleString()} bytes`
+}
+
+function shortHash(sha256: string): string {
+  return `${sha256.slice(0, 8)}…${sha256.slice(-8)}`
+}
+
+function ChecksumRow({ sha256 }: { sha256: string | null }) {
+  const [copied, setCopied] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  if (!sha256) {
+    return (
+      <div className="flex items-center justify-between rounded-md border border-dashed border-border/70 bg-muted/30 px-2 py-1.5 text-[11px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5">
+          <Fingerprint className="h-3 w-3" /> SHA-256
+        </span>
+        <span>pending build</span>
+      </div>
+    )
+  }
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(sha256)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // ignore — clipboard may be unavailable in some browsers/contexts
+    }
+  }
+  return (
+    <div className="rounded-md border border-border/70 bg-muted/40 px-2 py-1.5 text-[11px]">
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          aria-label={expanded ? 'Hide full SHA-256' : 'Show full SHA-256'}
+          className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <Fingerprint className="h-3 w-3" /> SHA-256
+          <span className="text-[10px] underline-offset-2 hover:underline">
+            {expanded ? '(hide)' : '(show full)'}
+          </span>
+        </button>
+        <span className="flex items-center gap-1.5">
+          {!expanded && (
+            <code className="font-mono text-foreground/90" title={sha256}>
+              {shortHash(sha256)}
+            </code>
+          )}
+          <button
+            type="button"
+            onClick={copy}
+            aria-label="Copy SHA-256 checksum"
+            className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-colors"
+          >
+            {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+          </button>
+        </span>
+      </div>
+      {expanded && (
+        <code className="mt-1.5 block break-all font-mono text-[10px] leading-relaxed text-foreground/90">
+          {sha256}
+        </code>
+      )}
+    </div>
+  )
 }
 
 function detectPlatform(): PlatformKey | null {
@@ -133,9 +204,18 @@ export default function DownloadPage() {
 
                 <div className="mt-auto space-y-3">
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span className="inline-flex items-center gap-1"><HardDrive className="h-3.5 w-3.5" /> {formatSize(file?.size ?? null)}</span>
+                    <span className="inline-flex items-center gap-1">
+                      <HardDrive className="h-3.5 w-3.5" />
+                      <span>{formatSize(file?.size ?? null)}</span>
+                      {file?.size ? (
+                        <span className="text-[10px] text-muted-foreground/70">
+                          ({formatBytes(file.size)})
+                        </span>
+                      ) : null}
+                    </span>
                     <span>v{manifest?.version ?? '—'}</span>
                   </div>
+                  <ChecksumRow sha256={file?.sha256 ?? null} />
                   <Button
                     asChild={available}
                     disabled={!available || loading}
@@ -163,6 +243,34 @@ export default function DownloadPage() {
               </div>
             )
           })}
+        </div>
+
+        {/* Verify your download */}
+        <div className="mt-8 rounded-xl border border-border bg-card p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <ShieldCheck className="h-4 w-4 text-emerald-400" />
+            <h3 className="font-semibold text-sm">Verify your download</h3>
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Each installer above shows its exact byte size and SHA-256 checksum. After downloading, run
+            the matching command on your machine and confirm the output equals the value shown on the card
+            (use the copy button next to the hash). This is especially important while the installers are
+            unsigned.
+          </p>
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+            <div>
+              <div className="font-semibold text-muted-foreground mb-1">Windows (PowerShell)</div>
+              <pre className="overflow-x-auto rounded-md border border-border bg-muted/40 p-2 font-mono">
+{`Get-FileHash .\\ScriptureLive*Setup-x64.exe -Algorithm SHA256`}
+              </pre>
+            </div>
+            <div>
+              <div className="font-semibold text-muted-foreground mb-1">macOS / Linux</div>
+              <pre className="overflow-x-auto rounded-md border border-border bg-muted/40 p-2 font-mono">
+{`shasum -a 256 ScriptureLive*.dmg`}
+              </pre>
+            </div>
+          </div>
         </div>
 
         {/* Install instructions */}

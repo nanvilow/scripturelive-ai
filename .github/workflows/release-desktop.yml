@@ -237,6 +237,12 @@ jobs:
           (cd . && for f in *; do shasum -a 256 "$f" >> SHA256SUMS.txt; done)
           cat SHA256SUMS.txt
 
+      - name: Update download manifest with sizes + SHA-256
+        run: |
+          node artifacts/imported-app/scripts/update-download-manifest.mjs --dir "$(pwd)/dist"
+          cp artifacts/imported-app/public/downloads/manifest.json dist/manifest.json
+          cat dist/manifest.json
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -247,3 +253,4 @@ jobs:
             dist/*.exe
             dist/*.dmg
             dist/SHA256SUMS.txt
+            dist/manifest.json
