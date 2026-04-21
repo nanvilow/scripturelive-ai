@@ -18,6 +18,8 @@ export interface OutputSlide {
   content: string[]
   background: string
   notes?: string
+  mediaUrl?: string
+  mediaKind?: 'image' | 'video'
 }
 
 export interface OutputState {
