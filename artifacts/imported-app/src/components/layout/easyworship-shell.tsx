@@ -40,6 +40,8 @@ import {
   X,
   Plus,
   RefreshCw,
+  Volume2,
+  VolumeX,
 } from 'lucide-react'
 
 import {
@@ -96,6 +98,81 @@ type DesktopApi = {
 
 // Browser-only screen list returned by the experimental Window Management API.
 type BrowserScreen = { id: string; label: string; primary: boolean; width: number; height: number; left: number; top: number }
+
+// ──────────────────────────────────────────────────────────────────────
+// Global master volume control
+// ──────────────────────────────────────────────────────────────────────
+// Lives in the toolbar so it's always reachable. Drives the
+// `globalVolume` / `globalMuted` flags in the store, which the slide
+// renderer multiplies into every <video>'s `volume` / `muted` props.
+function GlobalVolumeControl() {
+  const globalVolume = useAppStore((s) => s.globalVolume)
+  const setGlobalVolume = useAppStore((s) => s.setGlobalVolume)
+  const globalMuted = useAppStore((s) => s.globalMuted)
+  const setGlobalMuted = useAppStore((s) => s.setGlobalMuted)
+  const pct = Math.round(globalVolume * 100)
+  const effectivelyMuted = globalMuted || globalVolume === 0
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn(
+            'h-7 px-2 text-[11px] gap-1.5 border',
+            effectivelyMuted
+              ? 'bg-rose-500/15 text-rose-300 border-rose-700 hover:bg-rose-500/25'
+              : 'text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white',
+          )}
+          title="Master volume — affects every video on Preview, Live and the second display."
+        >
+          {effectivelyMuted ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
+          <span className="tabular-nums">{effectivelyMuted ? 'Muted' : `${pct}%`}</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[240px] p-3 bg-zinc-950 border-zinc-800">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+            Master Volume
+          </span>
+          <button
+            onClick={() => setGlobalMuted(!globalMuted)}
+            className={cn(
+              'inline-flex items-center gap-1 px-1.5 h-5 rounded text-[10px] font-semibold',
+              globalMuted
+                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                : 'bg-zinc-800 text-zinc-300 border border-zinc-700 hover:bg-zinc-700',
+            )}
+          >
+            {globalMuted ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
+            {globalMuted ? 'Unmute' : 'Mute'}
+          </button>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={pct}
+          onChange={(e) => {
+            const v = Number(e.target.value) / 100
+            setGlobalVolume(v)
+            if (globalMuted && v > 0) setGlobalMuted(false)
+          }}
+          className="w-full accent-sky-500"
+          aria-label="Master volume"
+        />
+        <div className="flex justify-between mt-1 text-[9px] text-zinc-500 tabular-nums">
+          <span>0</span>
+          <span>{pct}%</span>
+          <span>100</span>
+        </div>
+        <p className="mt-2 text-[9px] text-zinc-500 leading-snug">
+          Controls Preview, Live Display, second display and any media clip.
+        </p>
+      </PopoverContent>
+    </Popover>
+  )
+}
 
 export function TopToolbar({
   outputActive,
@@ -489,6 +566,14 @@ export function TopToolbar({
             )}
           </PopoverContent>
         </Popover>
+
+        {/* ── Global master volume / mute ─────────────────────────────
+            Single slider that controls every <video> in the app —
+            Preview, Live, secondary congregation screen and any
+            uploaded media clip. The mute toggle is independent of the
+            slider so the operator can silence everything and bring
+            the same level back with one click. */}
+        <GlobalVolumeControl />
 
         {/* ── Output Display picker ─────────────────────────────────────
             Always a popover. Lists every physical monitor in the desktop
@@ -1169,11 +1254,18 @@ export function TransportBar({
   const formatTime = (s: number) =>
     `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`
 
+  // Toggle behaviour: first click goes live, second click while on
+  // air STOPS live. One button, no hunting for the Clear control.
+  const onGoLiveToggle = () => {
+    if (isLive) onClearLive()
+    else onGoLive()
+  }
+
   return (
     <div className="flex items-center justify-between gap-3 px-3 h-14 border-t border-zinc-800 bg-zinc-950 shrink-0">
       <div className="flex items-center gap-1.5">
         <Button
-          onClick={onGoLive}
+          onClick={onGoLiveToggle}
           disabled={!slides.length}
           className={cn(
             'h-10 px-5 font-bold text-xs uppercase tracking-wider gap-1.5 shadow-lg',
@@ -1181,9 +1273,10 @@ export function TransportBar({
               ? 'bg-red-600 hover:bg-red-700 text-white shadow-red-600/30'
               : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20',
           )}
+          title={isLive ? 'Click to stop live broadcast' : 'Click to start live broadcast'}
         >
-          <Send className="h-4 w-4" />
-          {isLive ? 'Send to Live' : 'Go Live'}
+          {isLive ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+          {isLive ? 'Stop Live' : 'Go Live'}
           <kbd className="ml-1 px-1 py-0.5 rounded bg-black/30 text-[9px] font-mono normal-case tracking-normal">
             ⏎
           </kbd>
@@ -1399,7 +1492,10 @@ export function EasyWorshipShell() {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
-        goLive()
+        // Toggle: Enter while live STOPS live, matching the GO LIVE
+        // / STOP LIVE button so keyboard and mouse stay consistent.
+        if (useAppStore.getState().isLive) clearLive()
+        else goLive()
       } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
         e.preventDefault()
         if (previewSlideIndex < slides.length - 1) setPreviewSlideIndex(previewSlideIndex + 1)

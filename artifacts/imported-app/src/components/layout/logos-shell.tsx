@@ -50,6 +50,7 @@ import {
   Grid3x3,
   AlignJustify,
   Check,
+  Zap,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -211,6 +212,8 @@ function LiveTranscriptionCard() {
     transcriptBreaks,
     isLive,
   } = useAppStore()
+  const autoLive = useAppStore((s) => s.autoLive)
+  const setAutoLive = useAppStore((s) => s.setAutoLive)
 
   const toggleMic = () => {
     if (!speechSupported) {
@@ -262,19 +265,41 @@ function LiveTranscriptionCard() {
         </Badge>
       }
       actions={
-        <Button
-          size="sm"
-          onClick={toggleMic}
-          className={cn(
-            'h-7 px-2.5 text-[10px] uppercase tracking-wider gap-1.5 font-semibold',
-            isListening
-              ? 'bg-rose-600 hover:bg-rose-700 text-white'
-              : 'bg-sky-600 hover:bg-sky-700 text-white',
-          )}
-        >
-          {isListening ? <MicOff className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
-          {isListening ? 'Stop' : isLive ? 'Listening' : 'Detect Verses Now'}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            size="sm"
+            onClick={toggleMic}
+            className={cn(
+              'h-7 px-2.5 text-[10px] uppercase tracking-wider gap-1.5 font-semibold',
+              isListening
+                ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                : 'bg-sky-600 hover:bg-sky-700 text-white',
+            )}
+          >
+            {isListening ? <MicOff className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
+            {isListening ? 'Stop' : isLive ? 'Listening' : 'Detect Verses Now'}
+          </Button>
+          {/* AUTO Display: when ON, every detected scripture is auto-staged
+              and auto-sent to Live Display without an operator click. */}
+          <Button
+            size="sm"
+            onClick={() => setAutoLive(!autoLive)}
+            title={
+              autoLive
+                ? 'AUTO Display ON — detected verses go live automatically. Click to disable.'
+                : 'AUTO Display OFF — verses preview only. Click to auto-send to Live Display.'
+            }
+            className={cn(
+              'h-7 px-2 text-[10px] uppercase tracking-wider gap-1 font-semibold border',
+              autoLive
+                ? 'bg-amber-500 hover:bg-amber-400 text-black border-amber-300 shadow-md shadow-amber-500/30'
+                : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-700',
+            )}
+          >
+            <Zap className={cn('h-3 w-3', autoLive && 'fill-black')} />
+            Auto
+          </Button>
+        </div>
       }
     >
       <div className="flex-1 min-h-0 overflow-y-auto">
@@ -546,6 +571,10 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
     const el = findVideo()
     if (el && Number.isFinite(scrubValueRef.current)) {
       el.currentTime = scrubValueRef.current
+      // Push the scrubbed timestamp into the master clock so the
+      // other surfaces (Live / congregation) seek to match — this is
+      // what makes scrubbing while paused stay in sync everywhere.
+      try { useAppStore.getState().setMediaCurrentTime(scrubValueRef.current) } catch { /* ignore */ }
     }
     setScrubbing(false)
   }
@@ -2037,7 +2066,11 @@ export function LogosShell() {
   // Live Display panel-local state (UX only — does not change broadcast logic)
   const [displaySize, setDisplaySize] = useState(0.85)
   const [displayHidden, setDisplayHidden] = useState(false)
-  const [autoAdvance, setAutoAdvance] = useState(false)
+  // Auto-go-live mode is now a store flag so both the Live Display
+  // "AUTO" toggle and the new AUTO pill in Live Transcription drive
+  // the same state.
+  const autoAdvance = useAppStore((s) => s.autoLive)
+  const setAutoAdvance = useAppStore((s) => s.setAutoLive)
 
   // ── Auto-advance: when ON, every newly detected verse is sent straight
   // to the live output (and added to the schedule). Mirrors how Logos AI
@@ -2181,7 +2214,11 @@ export function LogosShell() {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
-        goLive()
+        // Toggle: Enter while on air STOPS live, mirroring the
+        // "GO LIVE / STOP LIVE" button so the keyboard and mouse
+        // paths agree.
+        if (isLive) clearLive()
+        else goLive()
       } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
         e.preventDefault()
         if (previewSlideIndex < slides.length - 1) setPreviewSlideIndex(previewSlideIndex + 1)
@@ -2196,7 +2233,7 @@ export function LogosShell() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [previewSlideIndex, slides.length, goLive, clearLive, goBlack, setPreviewSlideIndex])
+  }, [previewSlideIndex, slides.length, goLive, clearLive, goBlack, setPreviewSlideIndex, isLive])
 
   // Live Display transport (the inline ◀ Display ▶ row).
   // The arrows here step the *live* slide forward / backward through

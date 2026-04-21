@@ -56,6 +56,10 @@ function MediaSlideContent({
   // what trips the audio gate, satisfying autoplay policy.
   const previewAudio = useAppStore((s) => s.previewAudio)
   const liveMonitorAudio = useAppStore((s) => s.liveMonitorAudio)
+  const globalVolume = useAppStore((s) => s.globalVolume)
+  const globalMuted = useAppStore((s) => s.globalMuted)
+  const mediaCurrentTime = useAppStore((s) => s.mediaCurrentTime)
+  const setMediaCurrentTime = useAppStore((s) => s.setMediaCurrentTime)
   const audible = isLive ? liveMonitorAudio : previewAudio
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const { objectFit, aspect } = resolveMediaPresentation(slide.mediaFit)
@@ -67,26 +71,57 @@ function MediaSlideContent({
 
   // Honour the resolved play/pause state in real time. We never
   // remount the video — that would jump back to t=0 — so this just
-  // calls play()/pause() on the live element.
+  // calls play()/pause() on the live element. On every transition we
+  // also stamp the LIVE surface's currentTime into the store so other
+  // surfaces freeze / resume from the same exact frame.
   useEffect(() => {
     const v = videoRef.current
     if (!v) return
     if (shouldBePaused) {
       v.pause()
+      if (isLive) setMediaCurrentTime(v.currentTime)
     } else {
       v.play().catch(() => {})
     }
-  }, [shouldBePaused])
+  }, [shouldBePaused, isLive, setMediaCurrentTime])
 
-  // Reflect the audio toggle on the actual <video> element. We mount
-  // muted so autoplay survives, then drop the mute the moment the
-  // operator flips the speaker / headphone icon.
+  // ── Cross-surface playback sync ────────────────────────────────────
+  // Live surface is the master clock: every 500 ms while playing it
+  // writes its currentTime to the store. The Preview surface (and any
+  // other non-live surface) listens to that value and seeks to match
+  // when drift exceeds ~0.4 s. This keeps Preview, Live and the
+  // secondary congregation screen on the same frame, and means a
+  // pause / scrub on one display stops all of them at the same
+  // timestamp.
   useEffect(() => {
     const v = videoRef.current
     if (!v) return
-    v.muted = !audible
-    if (audible) v.volume = 1
-  }, [audible])
+    if (isLive) {
+      const tick = () => {
+        if (!v.paused && !v.ended) setMediaCurrentTime(v.currentTime)
+      }
+      const id = window.setInterval(tick, 500)
+      return () => window.clearInterval(id)
+    } else {
+      // Non-live surface: follow the master clock.
+      const drift = Math.abs(v.currentTime - mediaCurrentTime)
+      if (mediaCurrentTime > 0 && drift > 0.4) {
+        try { v.currentTime = mediaCurrentTime } catch { /* ignore seek errors */ }
+      }
+    }
+  }, [isLive, mediaCurrentTime, setMediaCurrentTime])
+
+  // Reflect the audio toggle on the actual <video> element. We mount
+  // muted so autoplay survives, then drop the mute the moment the
+  // operator flips the speaker / headphone icon. The global master
+  // volume / mute multiplies into every surface so a single toolbar
+  // slider raises or silences the whole production.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    v.muted = globalMuted || !audible
+    v.volume = Math.max(0, Math.min(1, globalVolume))
+  }, [audible, globalVolume, globalMuted])
 
   // Wire the actual playback state of THIS video element to the
   // store. The audio meters on the operator console read these flags
@@ -126,6 +161,7 @@ function MediaSlideContent({
         loop
         muted
         playsInline
+        preload="auto"
         className="w-full h-full bg-black"
         style={{ objectFit }}
       />

@@ -55,8 +55,15 @@ export function OutputBroadcaster() {
       // so the congregation route can call .play()/.pause() on the
       // existing <video> element without rebuilding it (which would
       // reset playback to t=0). Only video media slides care.
+      const isMediaVideo = !!(baseCur && baseCur.type === 'media' && baseCur.mediaKind === 'video')
       const cur = baseCur
-        ? { ...baseCur, mediaPaused: baseCur.type === 'media' && baseCur.mediaKind === 'video' ? !!s.mediaPaused : undefined }
+        ? {
+            ...baseCur,
+            mediaPaused: isMediaVideo ? !!s.mediaPaused : undefined,
+            // Broadcast the master clock so the secondary screen seeks
+            // to the same frame as Live whenever drift exceeds ~0.4s.
+            mediaCurrentTime: isMediaVideo ? s.mediaCurrentTime : undefined,
+          }
         : null
       const next = s.liveSlideIndex >= 0 && s.liveSlideIndex + 1 < s.slides.length
         ? s.slides[s.liveSlideIndex + 1]

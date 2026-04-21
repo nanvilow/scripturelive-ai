@@ -262,6 +262,13 @@ function render(s){
     if(slide.mediaKind==='video'&&canReuse){
       // Same source — just honour the transport flag, do not rebuild.
       try{
+        // Re-sync to the master clock if drift > 0.4s. This keeps the
+        // congregation screen on the same frame as the operator's Live
+        // pane after a pause / scrub.
+        if(typeof slide.mediaCurrentTime==='number'&&slide.mediaCurrentTime>0){
+          var drift=Math.abs((existingVid.currentTime||0)-slide.mediaCurrentTime);
+          if(drift>0.4){try{existingVid.currentTime=slide.mediaCurrentTime;}catch(e){}}
+        }
         if(slide.mediaPaused){existingVid.pause();}
         else{var p=existingVid.play();if(p&&p.catch)p.catch(function(){});}
       }catch(e){}
@@ -271,7 +278,7 @@ function render(s){
       return;
     }
     var mediaTag=slide.mediaKind==='video'
-      ? '<video id="liveVideo" src="'+slide.mediaUrl+'" '+(slide.mediaPaused?'':'autoplay ')+'loop muted playsinline style="'+mediaStyle+'"></video>'
+      ? '<video id="liveVideo" src="'+slide.mediaUrl+'" '+(slide.mediaPaused?'':'autoplay ')+'loop muted playsinline preload="auto" style="'+mediaStyle+'"></video>'
       : '<img src="'+slide.mediaUrl+'" alt="" style="'+mediaStyle+'">';
     var inner=ar
       ? '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#000"><div style="aspect-ratio:'+ar+';max-width:100%;max-height:100%;width:100%">'+mediaTag+'</div></div>'
@@ -281,6 +288,13 @@ function render(s){
     if(slide.mediaKind==='video'){
       window.__liveVideoEl=$('liveVideo');
       window.__liveVideoKey=liveKey;
+      // Seed the new <video> with the current master clock so a
+      // freshly-opened secondary screen joins on the right frame.
+      if(window.__liveVideoEl&&typeof slide.mediaCurrentTime==='number'&&slide.mediaCurrentTime>0){
+        var seedSeek=function(){try{window.__liveVideoEl.currentTime=slide.mediaCurrentTime;}catch(e){}};
+        if(window.__liveVideoEl.readyState>=1){seedSeek();}
+        else{window.__liveVideoEl.addEventListener('loadedmetadata',seedSeek,{once:true});}
+      }
       if(slide.mediaPaused&&window.__liveVideoEl){try{window.__liveVideoEl.pause();}catch(e){}}
     }else{
       window.__liveVideoEl=null;window.__liveVideoKey='';

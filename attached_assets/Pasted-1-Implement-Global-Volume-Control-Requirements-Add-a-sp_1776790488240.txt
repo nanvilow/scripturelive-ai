@@ -1,0 +1,88 @@
+1. Implement Global Volume Control
+
+Requirements
+Add a speaker/volume icon with:
+Volume up / down slider
+Mute / unmute
+Volume must control all sound sources in the app, including:
+Preview video
+Live Display
+Second Display
+Media uploads
+Any system sounds / alerts
+Expected Behavior
+Adjusting the slider changes audio in real time
+All video panels must respond to the same volume level
+Volume setting should remain synced across the app
+
+2. Fix Video Sync Across Displays
+
+Currently, when pausing from Live Display, the videos are not aligned by seconds and play differently.
+
+Fix Required
+Synchronize playback timing between:
+Live Display
+Second Display
+All displays must use the same playback timestamp
+Pause / Play on one display must affect all others instantly
+Expected Behavior
+If paused at 00:15, all displays pause exactly at 00:15
+Resume continues from the same exact timestamp everywhere
+No drift or delay between screens
+
+3. Improve GO LIVE Button Behavior
+
+Update GO LIVE button logic.
+
+Required Behavior
+First click → Start live display
+Second click while live → Stop live display
+Toggle Logic
+Button should act as a toggle switch
+Label may optionally change:
+GO LIVE → when inactive
+STOP LIVE → when active
+
+4. Fix MEDIA Upload Issue
+
+Sometimes uploaded videos from the MEDIA section do not appear.
+
+Fix Required
+Resolve upload rendering issue
+Ensure uploaded video always loads into:
+Preview
+Media library
+Live display queue (if needed)
+Checks
+Validate supported formats
+Fix failed preview rendering
+Improve upload refresh logic
+
+5. Add AUTO Display Icon
+
+Add an AUTO Display icon/button next to the Detect Verses Now icon.
+
+Functionality
+When enabled, detected scripture or selected content should automatically go live
+No manual click required
+Expected Behavior
+Auto-send selected verse/content to Live Display
+Toggle ON/OFF mode
+
+6. Smooth Video Playback Across All Displays
+
+Optimize playback performance.
+
+Areas
+Preview
+Live Display
+Second Display
+Fix Required
+Remove lag
+Remove frame drops
+Prevent buffering delays
+Ensure seamless switching between displays
+Expected Result
+Smooth playback
+Same frame progression across all screens
+No stutter during transitions

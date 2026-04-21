@@ -272,6 +272,31 @@ interface AppState {
   liveMonitorAudio: boolean
   setLiveMonitorAudio: (b: boolean) => void
 
+  // Global master volume (0..1) and master mute. Multiplies into every
+  // <video> element across Preview, Live and the secondary screen so a
+  // single slider on the toolbar can raise / lower / silence the whole
+  // production. `globalMuted` is an explicit toggle independent of the
+  // slider position so the operator can mute and un-mute without
+  // losing their level.
+  globalVolume: number
+  setGlobalVolume: (v: number) => void
+  globalMuted: boolean
+  setGlobalMuted: (b: boolean) => void
+
+  // When on, every newly detected verse is auto-staged AND auto-sent
+  // live without a manual click. Replaces the previously component-local
+  // `autoAdvance` flag so both the Live Transcription pill and the
+  // Live Display "AUTO" button drive the same state.
+  autoLive: boolean
+  setAutoLive: (b: boolean) => void
+
+  // Last sampled `currentTime` from the LIVE media <video>. Other
+  // surfaces (Preview pane, secondary congregation screen) read this
+  // value and seek to it whenever it drifts more than ~0.4s, so a
+  // pause / scrub on Live freezes every screen at the same frame.
+  mediaCurrentTime: number
+  setMediaCurrentTime: (t: number) => void
+
   // Media library view mode. Mirrors the Windows Explorer "View"
   // menu options the user requested: Large Icons / Medium Icons /
   // Small Icons / List / Details / Tiles. Persisted so each operator
@@ -485,6 +510,17 @@ export const useAppStore = create<AppState>()(
       setLiveBroadcastAudio: (b) => set({ liveBroadcastAudio: b }),
       liveMonitorAudio: false,
       setLiveMonitorAudio: (b) => set({ liveMonitorAudio: b }),
+
+      globalVolume: 1,
+      setGlobalVolume: (v) => set({ globalVolume: Math.max(0, Math.min(1, v)) }),
+      globalMuted: false,
+      setGlobalMuted: (b) => set({ globalMuted: b }),
+
+      autoLive: false,
+      setAutoLive: (b) => set({ autoLive: b }),
+
+      mediaCurrentTime: 0,
+      setMediaCurrentTime: (t) => set({ mediaCurrentTime: Math.max(0, t) }),
 
       // Media library view density. Defaults to a comfortable middle
       // ground; user pick is persisted via partialize below.
