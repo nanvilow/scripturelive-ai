@@ -12,3 +12,9 @@ id = "1YUI1AF80Yrq8AhXUoIFy"
 uri = "file://downloads/ScriptureLive-AI-source-v0.3.0.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.3.0 — Windows source + BUILD.bat"
+
+[[outputs]]
+id = "6U4oMGkBIyDnn7U4NF0MD"
+uri = "file://downloads/ScriptureLive-AI-source-v0.3.1.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.3.1 — fixed pnpm 10 install issue"

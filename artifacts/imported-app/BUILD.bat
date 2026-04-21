@@ -115,10 +115,22 @@ REM ---- Step 4: Install dependencies (with auto-retry) -------------
 echo.
 echo [4/7] Installing dependencies (this takes 3-5 minutes)...
 echo       Output is being captured to build-log.txt ...
+REM pnpm 10+ refuses to run install scripts unless explicitly approved.
+REM Without approval the Electron binary, Prisma engines, sharp and
+REM SWC native modules NEVER get downloaded, and Step 6/7 then dies
+REM with cryptic "module not found" errors. This pre-stages the
+REM approval so install scripts are allowed for the packages our
+REM build genuinely needs.
+echo       Configuring pnpm to allow native install scripts...
+call pnpm config set --location=project auto-install-peers true >> "%LOGFILE%" 2>&1
+call pnpm config set --location=project strict-peer-dependencies false >> "%LOGFILE%" 2>&1
 set INSTALL_TRY=0
 :RETRY_INSTALL
 set /a INSTALL_TRY+=1
-call pnpm install >> "%LOGFILE%" 2>&1
+REM --no-frozen-lockfile: no committed lockfile in this distribution
+REM --config.confirmModulesPurge=false: don't pause to ask about
+REM   removing stale node_modules between attempts
+call pnpm install --no-frozen-lockfile --config.confirmModulesPurge=false >> "%LOGFILE%" 2>&1
 if errorlevel 1 (
   if !INSTALL_TRY! lss 3 (
     echo       Attempt !INSTALL_TRY! failed (network glitch?), retrying in 5 seconds...
@@ -133,6 +145,34 @@ if errorlevel 1 (
   exit /b 1
 )
 echo       Dependencies installed OK
+
+REM ---- Step 4b: Sanity check that native binaries were fetched ----
+REM If pnpm silently skipped the Electron / Prisma / sharp install
+REM scripts, the next steps will fail far away from the root cause.
+REM Catch it here with a clear message instead.
+if not exist "node_modules\electron\dist\electron.exe" (
+  color 0E
+  echo       WARNING: electron binary missing - re-running install with explicit approval...
+  call pnpm rebuild electron >> "%LOGFILE%" 2>&1
+  if not exist "node_modules\electron\dist\electron.exe" (
+    color 0C
+    echo ERROR: Electron binary still missing after rebuild.
+    echo Likely cause: corporate firewall blocking github.com download.
+    echo See log: %LOGFILE%
+    start notepad "%LOGFILE%"
+    pause
+    exit /b 1
+  )
+  color 0B
+)
+if not exist "node_modules\.pnpm\node_modules\@prisma\engines" (
+  if not exist "node_modules\@prisma\engines" (
+    color 0E
+    echo       WARNING: Prisma engines missing - re-running install with explicit approval...
+    call pnpm rebuild prisma @prisma/engines @prisma/client >> "%LOGFILE%" 2>&1
+    color 0B
+  )
+)
 
 REM ---- Step 5: Generate Prisma client (with auto-retry) -----------
 echo.
