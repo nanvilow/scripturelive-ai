@@ -120,6 +120,7 @@ function MediaSlideContent({
     slide.mediaKind === 'video' ? (
       <video
         ref={videoRef}
+        data-surface={isLive ? 'live' : 'preview'}
         src={slide.mediaUrl}
         autoPlay={!shouldBePaused}
         loop

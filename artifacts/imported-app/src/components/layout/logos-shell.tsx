@@ -273,7 +273,7 @@ function LiveTranscriptionCard() {
           )}
         >
           {isListening ? <MicOff className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
-          {isListening ? 'Stop' : isLive ? 'Listening' : 'Go Live'}
+          {isListening ? 'Stop' : isLive ? 'Listening' : 'Detect Verses Now'}
         </Button>
       }
     >
@@ -290,7 +290,7 @@ function LiveTranscriptionCard() {
           {paragraphs.length === 0 && !liveInterimTranscript && (
             <div className="text-center py-6 text-[11px] text-zinc-600">
               <Mic className="h-7 w-7 mx-auto opacity-40 mb-2" />
-              Tap <span className="text-sky-300 font-semibold">Go Live</span> to start
+              Tap <span className="text-sky-300 font-semibold">Detect Verses Now</span> to start
               transcribing the speaker. Detected scripture references will fill
               the right-hand panels.
             </div>
@@ -471,10 +471,126 @@ function PreviewCard() {
           )}
         </div>
       </div>
-      {/* Transport bar removed from Preview per spec — once a video
-          is sent Live the operator controls playback ONLY from the
-          Live Display column, and the Preview surface auto-pauses. */}
+      {/* Preview transport — Play / Pause + scrubbable seek bar. Only
+          rendered for media-video preview slides; controls the actual
+          <video data-surface="preview"> element so scrubs apply
+          immediately. Live Display has its own dedicated Pause row
+          below its body. */}
+      {previewSlide?.type === 'media' && previewSlide?.mediaKind === 'video' && (
+        <VideoTransport surface="preview" />
+      )}
     </Card>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// VIDEO TRANSPORT (shared — Preview + Live)
+// ──────────────────────────────────────────────────────────────────────
+// Renders Play/Pause + a scrubbable seek bar bound to the actual
+// <video data-surface={surface}> element on the named surface. Polls
+// playback state on a rAF loop so the seek bar stays in sync with the
+// real element without round-tripping through React state on every
+// `timeupdate`. Scrubs apply directly to the element via .currentTime
+// — no store side-effects — so the operator can scrub the preview
+// without disturbing what's already on air.
+function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
+  const [duration, setDuration] = useState(0)
+  const [current, setCurrent] = useState(0)
+  const [paused, setPaused] = useState(true)
+  const [scrubbing, setScrubbing] = useState(false)
+  const scrubValueRef = useRef(0)
+
+  // Find the live <video> element for this surface and poll its
+  // playback state. We re-query on every tick because slides can swap
+  // (different mediaUrl → React mounts a new <video>), and we want
+  // the controls to follow the freshest element.
+  useEffect(() => {
+    let raf = 0
+    const tick = () => {
+      const el = document.querySelector<HTMLVideoElement>(
+        `video[data-surface="${surface}"]`,
+      )
+      if (el) {
+        if (Number.isFinite(el.duration)) setDuration(el.duration || 0)
+        if (!scrubbing) setCurrent(el.currentTime || 0)
+        setPaused(el.paused)
+      } else {
+        setDuration(0)
+        setCurrent(0)
+        setPaused(true)
+      }
+      raf = window.requestAnimationFrame(tick)
+    }
+    raf = window.requestAnimationFrame(tick)
+    return () => window.cancelAnimationFrame(raf)
+  }, [surface, scrubbing])
+
+  const findVideo = () =>
+    document.querySelector<HTMLVideoElement>(`video[data-surface="${surface}"]`)
+
+  const onPlay = () => {
+    const el = findVideo()
+    if (!el) return
+    el.play().catch(() => {})
+  }
+  const onPause = () => {
+    const el = findVideo()
+    if (!el) return
+    el.pause()
+  }
+  const onScrubInput = (v: number) => {
+    scrubValueRef.current = v
+    setCurrent(v)
+  }
+  const onScrubCommit = () => {
+    const el = findVideo()
+    if (el && Number.isFinite(scrubValueRef.current)) {
+      el.currentTime = scrubValueRef.current
+    }
+    setScrubbing(false)
+  }
+
+  const fmt = (s: number) => {
+    if (!Number.isFinite(s) || s < 0) s = 0
+    const m = Math.floor(s / 60)
+    const ss = Math.floor(s % 60)
+    return `${m}:${ss.toString().padStart(2, '0')}`
+  }
+
+  return (
+    <div className="flex items-center gap-2 border-t border-zinc-800/70 px-2 py-1.5 shrink-0">
+      <Button
+        size="sm"
+        variant="secondary"
+        className="h-7 w-7 p-0 shrink-0"
+        onClick={paused ? onPlay : onPause}
+        title={paused ? 'Play' : 'Pause'}
+      >
+        {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+      </Button>
+      <span className="text-[10px] font-mono text-zinc-400 w-9 text-right tabular-nums">
+        {fmt(current)}
+      </span>
+      <input
+        type="range"
+        min={0}
+        max={Math.max(duration, 0.01)}
+        step={0.05}
+        value={current}
+        onMouseDown={() => setScrubbing(true)}
+        onTouchStart={() => setScrubbing(true)}
+        onChange={(e) => onScrubInput(Number(e.target.value))}
+        onMouseUp={onScrubCommit}
+        onTouchEnd={onScrubCommit}
+        onBlur={onScrubCommit}
+        className="flex-1 h-1.5 accent-sky-500 cursor-pointer"
+        title="Scrub"
+        disabled={duration <= 0}
+      />
+      <span className="text-[10px] font-mono text-zinc-500 w-9 tabular-nums">
+        {fmt(duration)}
+      </span>
+    </div>
   )
 }
 
@@ -843,10 +959,10 @@ function LiveDisplayCard({
           </Button>
           <Button
             onClick={onSendLive}
-            className="h-7 px-3 text-[10px] uppercase tracking-wider font-semibold bg-sky-600 hover:bg-sky-700 text-white gap-1.5"
+            className="h-7 px-3 text-[10px] uppercase tracking-wider font-semibold bg-rose-600 hover:bg-rose-700 text-white gap-1.5"
           >
             <Send className="h-3 w-3" />
-            Display
+            Go Live
           </Button>
           <Button variant="ghost" size="icon" onClick={onNext} className="h-7 w-7 text-zinc-300 hover:text-white border border-zinc-800">
             <ChevronRight className="h-3.5 w-3.5" />
@@ -907,23 +1023,33 @@ function ScriptureFeedCard() {
     addScheduleItem,
   } = useAppStore()
 
-  const sendVerseToSchedule = (v: typeof verseHistory[number]) => {
+  // Build the slide for a history verse and load it into the deck.
+  // `live=false` → only the preview cursor moves (operator stages).
+  // `live=true`  → also flips the live cursor + Live mode (on air).
+  // The verse is also recorded in the schedule for later recall, so
+  // we don't lose history just because the operator clicked through
+  // it from the History pane.
+  const sendVerseFromHistory = (v: typeof verseHistory[number], live: boolean) => {
+    const slide: Slide = {
+      id: `slide-${Date.now()}`,
+      type: 'verse',
+      title: v.reference,
+      subtitle: v.translation,
+      content: (v.text || '').split('\n').filter(Boolean),
+      background: settings.congregationScreenTheme,
+    }
     addScheduleItem({
       type: 'verse',
       title: v.reference,
       subtitle: v.translation,
-      slides: [
-        {
-          id: `slide-${Date.now()}`,
-          type: 'verse',
-          title: v.reference,
-          subtitle: v.translation,
-          content: (v.text || '').split('\n').filter(Boolean),
-          background: settings.congregationScreenTheme,
-        },
-      ],
+      slides: [slide],
     })
-    // Toast suppressed per FRS — output/schedule actions stay silent.
+    setSlides([slide])
+    setPreviewSlideIndex(0)
+    if (live) {
+      setLiveSlideIndex(0)
+      setIsLive(true)
+    }
   }
 
   return (
@@ -948,9 +1074,10 @@ function ScriptureFeedCard() {
               verseHistory.map((v, i) => (
                 <button
                   key={`${v.reference}-${i}`}
-                  onClick={() => sendVerseToSchedule(v)}
-                  className="w-full text-left rounded border border-zinc-800/70 bg-zinc-900/40 hover:border-sky-500/40 hover:bg-zinc-900 px-2 py-1.5 transition-colors group"
-                  title="Click to add to schedule"
+                  onClick={() => sendVerseFromHistory(v, false)}
+                  onDoubleClick={() => sendVerseFromHistory(v, true)}
+                  className="w-full text-left rounded border border-zinc-800/70 bg-zinc-900/40 hover:border-sky-500/40 hover:bg-zinc-900 px-2 py-1.5 transition-colors group select-none"
+                  title="Click → Preview · Double-click → Go Live"
                 >
                   <div className="flex items-center justify-between gap-2 mb-0.5">
                     <span className="text-[10px] font-semibold text-sky-300 truncate">{v.reference}</span>
