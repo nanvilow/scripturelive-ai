@@ -239,6 +239,16 @@ interface AppState {
   mediaPaused: boolean
   setMediaPaused: (b: boolean) => void
 
+  // Real-time playback signals from the actual <video> elements on
+  // the Preview and Live surfaces. Used by the audio meters so they
+  // only animate when audio is genuinely playing — never as a
+  // pseudo-random "looks alive" effect. Updated via the video
+  // element's own play/pause/ended/stalled events.
+  previewVideoPlaying: boolean
+  setPreviewVideoPlaying: (b: boolean) => void
+  liveVideoPlaying: boolean
+  setLiveVideoPlaying: (b: boolean) => void
+
   // Audio routing flags — Wirecast-style monitor controls.
   //   previewAudio       → speaker icon on the Preview pane.
   //                        ON = the operator hears preview audio.
@@ -463,6 +473,10 @@ export const useAppStore = create<AppState>()(
       setHasShownContent: (b) => set({ hasShownContent: b }),
       mediaPaused: false,
       setMediaPaused: (b) => set({ mediaPaused: b }),
+      previewVideoPlaying: false,
+      setPreviewVideoPlaying: (b) => set({ previewVideoPlaying: b }),
+      liveVideoPlaying: false,
+      setLiveVideoPlaying: (b) => set({ liveVideoPlaying: b }),
 
       // Audio routing — see interface comments above for semantics.
       previewAudio: false,
