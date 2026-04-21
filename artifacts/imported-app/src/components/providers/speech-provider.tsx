@@ -3,7 +3,7 @@
 import { useEffect, useCallback, useRef } from 'react'
 import { useSpeechRecognition } from '@/hooks/use-speech-recognition'
 import { useAppStore } from '@/lib/store'
-import { detectVersesInText, fetchBibleVerse } from '@/lib/bible-api'
+import { detectVersesInTextWithScore, fetchBibleVerse } from '@/lib/bible-api'
 import type { BibleSearchHit } from '@/lib/bible-api'
 import type { DetectedVerse } from '@/lib/store'
 import { toast } from 'sonner'
@@ -74,8 +74,11 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     processCallbackRef.current = async (text: string) => {
       if (!text.trim()) return
 
-      const references = detectVersesInText(text)
+      const detectedRefs = detectVersesInTextWithScore(text)
+      const references = detectedRefs.map((r) => r.reference)
       const state = useAppStore.getState()
+      const autoLiveOn = state.autoLive || state.settings.autoGoLiveOnDetection
+      const threshold = state.autoLiveThreshold ?? 0.9
 
       // ── Voice text detection ─────────────────────────────────────────
       // When the speaker quotes a passage (e.g. "In the beginning God
@@ -126,24 +129,12 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                 chapter: top.chapter,
                 verseStart: top.verse,
               })
-              // Suppressed per FRS — Detected Verses panel is the source of truth.
-              if (state.settings.autoGoLiveOnDetection) {
-                const slide = {
-                  id: `slide-${Date.now()}`,
-                  type: 'verse' as const,
-                  title: top.reference,
-                  subtitle: top.translation,
-                  content: top.text.split('\n').filter(Boolean),
-                  background: state.settings.congregationScreenTheme,
-                }
-                const cur = useAppStore.getState().slides
-                const next = cur.length > 0 ? [...cur, slide] : [slide]
-                const idx = next.length - 1
-                useAppStore.getState().setSlides(next)
-                useAppStore.getState().setPreviewSlideIndex(idx)
-                useAppStore.getState().setLiveSlideIndex(idx)
-                useAppStore.getState().setIsLive(true)
-              }
+              // Text-search hits are inherently lower confidence (we
+              // matched keywords, not an explicit reference) so we
+              // NEVER auto-go-live from them — the operator must
+              // confirm by clicking the entry in Detected Verses.
+              // This prevents false-positive scriptures from popping
+              // up on the congregation screen mid-sermon.
             }
           }
         } catch {
@@ -151,7 +142,8 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      for (const ref of references) {
+      for (const detectedRef of detectedRefs) {
+        const ref = detectedRef.reference
         if (processedRefsRef.current.has(ref)) continue
         processedRefsRef.current = new Set(processedRefsRef.current).add(ref)
 
@@ -172,7 +164,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               text: verse.text,
               translation: state.selectedTranslation,
               detectedAt: new Date(),
-              confidence: 0.9,
+              confidence: detectedRef.confidence,
             }
 
             useAppStore.getState().addDetectedVerse(detected)
@@ -180,9 +172,15 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             useAppStore.getState().addToVerseHistory(verse)
             // Suppressed per FRS — Detected Verses panel is the source of truth.
 
-            // Auto go-live if enabled (read latest state to avoid stale closures)
+            // Auto go-live ONLY when the operator has AUTO enabled
+            // AND we are highly confident in the parse. Anything below
+            // the threshold (default 90%) stays in the Detected Verses
+            // panel as a one-click suggestion, never going live on its
+            // own. This prevents a misheard "John 3" from clobbering
+            // the actual sermon slide.
             const latestState = useAppStore.getState()
-            if (latestState.settings.autoGoLiveOnDetection) {
+            const passesThreshold = detectedRef.confidence >= threshold
+            if (autoLiveOn && passesThreshold) {
               const slide = {
                 id: `slide-${Date.now()}`,
                 type: 'verse' as const,

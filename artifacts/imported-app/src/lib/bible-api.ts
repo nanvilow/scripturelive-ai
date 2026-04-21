@@ -250,22 +250,195 @@ export function parseVerseReference(input: string): {
   return null
 }
 
-export function detectVersesInText(text: string): string[] {
-  const references: string[] = []
-  for (const pattern of VERSE_PATTERNS) {
-    let match
+// ──────────────────────────────────────────────
+// Spelled-out number normalization
+// ──────────────────────────────────────────────
+// Speech-to-text often produces "John three sixteen" instead of
+// "John 3:16". We pre-process the transcript to convert spelled-out
+// numbers into digits so the regex patterns above can lock on.
+const NUM_WORDS: Record<string, number> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
+  seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+  thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
+  eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40,
+  fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+  hundred: 100,
+}
+
+function wordsToNumber(parts: string[]): number | null {
+  let total = 0
+  let current = 0
+  let used = false
+  for (const raw of parts) {
+    const w = raw.toLowerCase()
+    if (w === 'and') continue
+    if (!(w in NUM_WORDS)) return null
+    used = true
+    const v = NUM_WORDS[w]
+    if (v === 100) {
+      current = (current || 1) * 100
+    } else if (v >= 20) {
+      current += v
+    } else {
+      current += v
+    }
+  }
+  total += current
+  return used ? total : null
+}
+
+/**
+ * Replace spoken number sequences with their digit equivalents.
+ * Examples:
+ *   "John three sixteen"          → "John 3 16"
+ *   "Romans eight twenty eight"   → "Romans 8 28"
+ *   "first Corinthians thirteen four" → "1 Corinthians 13 4"
+ *
+ * We greedily group consecutive number words (chunks separated by
+ * non-number words), convert each chunk, and emit the digits with a
+ * single space so the patterns above ("Book chapter verse" w/o colon)
+ * still match. Ordinal "first/second/third" prefix to a book is also
+ * normalized so "first John" → "1 John".
+ */
+function normalizeSpokenNumbers(text: string): string {
+  if (!text) return text
+  // Ordinal prefixes for book numbers
+  let t = text
+    .replace(/\b(first|1st)\s+/gi, '1 ')
+    .replace(/\b(second|2nd)\s+/gi, '2 ')
+    .replace(/\b(third|3rd)\s+/gi, '3 ')
+
+  // Walk through tokens, collapsing runs of number-words into digits.
+  const tokens = t.split(/(\s+)/)
+  const out: string[] = []
+  let buf: string[] = []
+  const flush = () => {
+    if (!buf.length) return
+    const n = wordsToNumber(buf)
+    if (n != null && n > 0 && n < 200) {
+      out.push(String(n))
+    } else {
+      out.push(buf.join(' '))
+    }
+    buf = []
+  }
+  for (const tk of tokens) {
+    if (/^\s+$/.test(tk)) {
+      if (buf.length) {
+        // keep building if next token is also a number-word
+        continue
+      }
+      out.push(tk)
+      continue
+    }
+    const w = tk.toLowerCase().replace(/[.,!?;:]+$/, '')
+    if (w in NUM_WORDS || w === 'and' && buf.length) {
+      buf.push(tk.replace(/[.,!?;:]+$/, ''))
+    } else {
+      flush()
+      // re-emit a space if the previous token we just flushed dropped one
+      if (out.length && !/\s$/.test(out[out.length - 1])) out.push(' ')
+      out.push(tk)
+    }
+  }
+  flush()
+  return out.join('')
+}
+
+// ──────────────────────────────────────────────
+// Verse detection (with confidence score)
+// ──────────────────────────────────────────────
+export interface DetectedReference {
+  reference: string
+  book: string
+  chapter: number
+  verseStart: number
+  verseEnd?: number
+  /** 0..1 confidence the reference is real and accurate. */
+  confidence: number
+  /** True if the speaker said an explicit verse number (e.g. "3:16"). */
+  hasExplicitVerse: boolean
+  /** The matched substring from the original (or normalized) text. */
+  matched: string
+}
+
+function scoreReference(opts: {
+  bookFull: boolean
+  hasExplicitVerse: boolean
+  hasContextWord: boolean
+  fromSpokenNumbers: boolean
+  chapter: number
+  verseStart: number
+  book: string
+}): number {
+  const maxChapter = BOOK_CHAPTER_COUNTS[opts.book]
+  // Hard fail: chapter beyond the book's range.
+  if (maxChapter && opts.chapter > maxChapter) return 0
+
+  let s = 0.55 // baseline for a parsed match
+  if (opts.bookFull) s += 0.18           // full book name vs abbreviation
+  if (opts.hasExplicitVerse) s += 0.22   // explicit "3:16" / "verse 16"
+  if (opts.hasContextWord) s += 0.08     // "scripture", "the bible says", etc.
+  if (opts.fromSpokenNumbers) s -= 0.05  // small penalty for STT-derived nums
+  // Cap at 1.0
+  return Math.max(0, Math.min(1, s))
+}
+
+const CONTEXT_WORDS = /(scripture|bible|verse|chapter|gospel|epistle|psalm|read\s+from|turn\s+to|open\s+to|word\s+of\s+god)/i
+
+export function detectVersesInTextWithScore(rawText: string): DetectedReference[] {
+  if (!rawText) return []
+  const normalized = normalizeSpokenNumbers(rawText)
+  const wasNormalized = normalized !== rawText
+  const hasContext = CONTEXT_WORDS.test(rawText)
+
+  const seen = new Map<string, DetectedReference>()
+  for (let pi = 0; pi < VERSE_PATTERNS.length; pi++) {
+    const pattern = VERSE_PATTERNS[pi]
     const regex = new RegExp(pattern.source, pattern.flags)
-    while ((match = regex.exec(text)) !== null) {
-      const book = normalizeBookName(match[1])
-      if (book) {
-        const chapter = parseInt(match[2])
-        const verseStart = match[3] ? parseInt(match[3]) : 1
-        const verseEnd = match[4] ? parseInt(match[4]) : undefined
-        references.push(formatReference(book, chapter, verseStart, verseEnd))
+    let match: RegExpExecArray | null
+    while ((match = regex.exec(normalized)) !== null) {
+      const bookRaw = match[1]
+      const book = normalizeBookName(bookRaw)
+      if (!book) continue
+      const chapter = parseInt(match[2])
+      if (!chapter || chapter < 1) continue
+      const verseStart = match[3] ? parseInt(match[3]) : 1
+      const verseEnd = match[4] ? parseInt(match[4]) : undefined
+      const reference = formatReference(book, chapter, verseStart, verseEnd)
+      const hasExplicitVerse = !!match[3]
+      // Heuristic: full-name patterns are pi 0, 2, 4, 5; abbreviated are 1, 3.
+      const bookFull = pi === 0 || pi === 2 || pi === 4 || pi === 5
+      const confidence = scoreReference({
+        bookFull,
+        hasExplicitVerse,
+        hasContextWord: hasContext,
+        fromSpokenNumbers: wasNormalized,
+        chapter,
+        verseStart,
+        book,
+      })
+      if (confidence === 0) continue
+      const prev = seen.get(reference)
+      if (!prev || confidence > prev.confidence) {
+        seen.set(reference, {
+          reference,
+          book,
+          chapter,
+          verseStart,
+          verseEnd,
+          confidence,
+          hasExplicitVerse,
+          matched: match[0],
+        })
       }
     }
   }
-  return [...new Set(references)]
+  return [...seen.values()].sort((a, b) => b.confidence - a.confidence)
+}
+
+export function detectVersesInText(text: string): string[] {
+  return detectVersesInTextWithScore(text).map((r) => r.reference)
 }
 
 // ──────────────────────────────────────────────

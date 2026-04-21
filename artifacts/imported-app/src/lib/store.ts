@@ -290,6 +290,13 @@ interface AppState {
   autoLive: boolean
   setAutoLive: (b: boolean) => void
 
+  // Minimum confidence (0..1) required for a detected verse to be
+  // *automatically* sent to the Live Display when AUTO is on. Verses
+  // below the threshold still appear in the Detected Verses list
+  // (preview only) so the operator can review and send manually.
+  autoLiveThreshold: number
+  setAutoLiveThreshold: (t: number) => void
+
   // Last sampled `currentTime` from the LIVE media <video>. Other
   // surfaces (Preview pane, secondary congregation screen) read this
   // value and seek to it whenever it drifts more than ~0.4s, so a
@@ -518,6 +525,12 @@ export const useAppStore = create<AppState>()(
 
       autoLive: false,
       setAutoLive: (b) => set({ autoLive: b }),
+
+      // 0.9 = 90%. Verses below this never auto-go-live; they only
+      // appear in the Detected Verses panel as preview suggestions.
+      autoLiveThreshold: 0.9,
+      setAutoLiveThreshold: (t) =>
+        set({ autoLiveThreshold: Math.max(0, Math.min(1, t)) }),
 
       mediaCurrentTime: 0,
       setMediaCurrentTime: (t) => set({ mediaCurrentTime: Math.max(0, t) }),
