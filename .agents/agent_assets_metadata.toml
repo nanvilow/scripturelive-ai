@@ -6,3 +6,9 @@ id = "gA4tqXpeR7fNj5WWphXWM"
 uri = "file://.local/downloads/scripturelive-windows-buildable.zip"
 type = "unspecified"
 title = "ScriptureLive v0.2.2 — with auto-retry for flaky internet"
+
+[[outputs]]
+id = "1YUI1AF80Yrq8AhXUoIFy"
+uri = "file://downloads/ScriptureLive-AI-source-v0.3.0.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.3.0 — Windows source + BUILD.bat"
