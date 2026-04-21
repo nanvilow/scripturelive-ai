@@ -331,7 +331,9 @@ export function TopToolbar({
     <header className="flex h-12 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-3 shrink-0">
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
-          <Image src="/logo.png" alt="ScriptureLive" width={28} height={28} className="object-contain bg-transparent" style={{ height: 'auto', width: 'auto', maxWidth: 28, maxHeight: 28 }} />
+          <div className="h-7 w-7 rounded-full bg-white flex items-center justify-center overflow-hidden shrink-0">
+            <Image src="/logo.png" alt="ScriptureLive" width={28} height={28} className="object-contain" style={{ height: 'auto', width: 'auto', maxWidth: 28, maxHeight: 28 }} />
+          </div>
           <div className="leading-tight">
             <h1 className="text-xs font-bold text-zinc-100 tracking-tight">ScriptureLive AI</h1>
             <p className="text-[9px] text-zinc-500 tracking-wide">Powered by WassMedia (+233246798526)</p>
@@ -364,10 +366,26 @@ export function TopToolbar({
 
       <div className="flex items-center gap-2">
         {isLive && (
-          <Badge className="bg-red-600 text-white border-0 gap-1 h-6 text-[10px] font-bold tracking-wider animate-pulse">
+          // Click the badge to hard-stop ALL live transmission. Pulls
+          // the live slide index back to "nothing on air", flips
+          // isLive off, and disables the output broadcast so the
+          // congregation TV / NDI feed instantly cuts. This is a
+          // panic-stop / "kill the program out" affordance and is
+          // intentionally one click.
+          <button
+            type="button"
+            onClick={() => {
+              const st = useAppStore.getState()
+              st.setLiveSlideIndex(-1)
+              st.setIsLive(false)
+              st.setOutputEnabled(false)
+            }}
+            title="Click to stop all live transmission"
+            className="inline-flex items-center gap-1 h-6 px-2 rounded-md bg-red-600 hover:bg-red-700 text-white border-0 text-[10px] font-bold tracking-wider animate-pulse cursor-pointer transition-colors"
+          >
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-white" />
             ON AIR
-          </Badge>
+          </button>
         )}
 
         <Select value={selectedTranslation} onValueChange={(v) => setSelectedTranslation(v)}>

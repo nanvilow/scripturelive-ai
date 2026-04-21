@@ -21,6 +21,11 @@ export interface OutputSlide {
   mediaUrl?: string
   mediaKind?: 'image' | 'video'
   mediaFit?: 'fit' | 'fill' | 'stretch' | '16:9' | '4:3'
+  // Operator transport state for video media. When true the
+  // congregation renderer must call .pause() on the live <video>
+  // element WITHOUT rebuilding it (which would jump back to t=0),
+  // so video, broadcast and operator preview stay frame-accurate.
+  mediaPaused?: boolean
 }
 
 export interface OutputState {

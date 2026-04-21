@@ -140,8 +140,18 @@ function applyRatio(r){
   else if(r==='21:9')o.classList.add('ratio-21x9');
 }
 
+// Drop the cached live <video> reference whenever the renderer is
+// about to take a path that does NOT keep the same video on screen
+// (clear, non-media slide, or a media slide whose source/kind/fit
+// changed). Without this reset, a stale detached node could later
+// satisfy the reuse guard and skip a needed DOM rebuild.
+function dropLiveVideoCache(){
+  window.__liveVideoEl=null;
+  window.__liveVideoKey='';
+}
+
 function render(s){
-  if(!s){$('output').innerHTML='';$('output').classList.add('hidden');lastRenderKey='';return}
+  if(!s){$('output').innerHTML='';$('output').classList.add('hidden');lastRenderKey='';dropLiveVideoCache();return}
   // When the operator hits "Disconnect secondary screen" the broadcaster
   // sends type:'clear'. Honor it as a true blank (black) frame so the
   // congregation TV goes dark instead of showing the themed background.
@@ -151,11 +161,15 @@ function render(s){
     // congregation sees the WassMedia mark rather than a dead screen.
     // The flag flips false the first time a slide is broadcast and
     // never comes back.
+    dropLiveVideoCache();
     if(s.showStartupLogo){
       var lkey='__logo__';
       if(lkey===lastRenderKey)return;
       lastRenderKey=lkey;
-      $('output').innerHTML='<img src="/logo.png" alt="WassMedia" style="max-width:42%;max-height:42%;width:auto;height:auto;object-fit:contain;display:block">';
+      // Pure-white wordmark on a transparent (#000) backdrop —
+      // matches the operator's Live Display splash and the spec
+      // calling for a logo-less Live Display intro.
+      $('output').innerHTML='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;color:#fff;text-align:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif"><div style="font-size:clamp(2rem,7vmin,7rem);font-weight:800;letter-spacing:-.01em;line-height:1.05">Scripture AI</div><div style="margin-top:1.4vmin;font-size:clamp(.85rem,1.8vmin,1.6rem);opacity:.85;font-weight:500">Powered By WassMedia (+233246798526)</div></div>';
       $('output').style.background='#000';
       $('output').classList.remove('hidden');
       return;
@@ -167,6 +181,14 @@ function render(s){
     $('output').style.background='#000';
     $('output').classList.remove('hidden');
     return;
+  }
+  // Anything below here that ISN'T a media-video render path will
+  // either rebuild the DOM or replace it; in all those cases the
+  // previously cached <video> ref is now stale, so invalidate it
+  // pre-emptively. The media-video branch will re-populate the
+  // cache if it actually mounts a video.
+  if(!(s.slide&&s.slide.type==='media'&&s.slide.mediaKind==='video'&&s.slide.mediaUrl)){
+    dropLiveVideoCache();
   }
   // Reset any prior forced-black background on normal renders.
   $('output').style.background='';
@@ -221,14 +243,48 @@ function render(s){
     else if(mf==='16:9'){of='contain';ar='16/9';}
     else if(mf==='4:3'){of='contain';ar='4/3';}
     var mediaStyle='width:100%;height:100%;object-fit:'+of+';background:#000;display:block';
+    // Reuse path: if the SAME media URL is already mounted, we only
+    // toggle play/pause on the live <video> element instead of
+    // tearing down the DOM. Rebuilding would seek the video back to
+    // t=0 every time the operator paused/resumed, which would
+    // desync video / broadcast / preview. We key the cached element
+    // by mediaUrl + kind + fit so any one of them changing forces
+    // a fresh mount.
+    var liveKey='media|'+slide.mediaKind+'|'+slide.mediaUrl+'|'+mf;
+    var existingVid=window.__liveVideoEl;
+    var existingKey=window.__liveVideoKey;
+    // Hard guard: only reuse if the cached node is actually still in
+    // the live document AND is a real <video>. Otherwise rebuild.
+    var canReuse=!!(existingVid
+      && existingKey===liveKey
+      && existingVid.tagName==='VIDEO'
+      && (typeof existingVid.isConnected==='boolean' ? existingVid.isConnected : document.body.contains(existingVid)));
+    if(slide.mediaKind==='video'&&canReuse){
+      // Same source — just honour the transport flag, do not rebuild.
+      try{
+        if(slide.mediaPaused){existingVid.pause();}
+        else{var p=existingVid.play();if(p&&p.catch)p.catch(function(){});}
+      }catch(e){}
+      // Keep render-key in sync so the next non-transport change still
+      // triggers a real rebuild.
+      try{lastRenderKey=JSON.stringify({sl:slide,dm:s.displayMode,st:s.settings});}catch(e){}
+      return;
+    }
     var mediaTag=slide.mediaKind==='video'
-      ? '<video src="'+slide.mediaUrl+'" autoplay loop muted playsinline style="'+mediaStyle+'"></video>'
+      ? '<video id="liveVideo" src="'+slide.mediaUrl+'" '+(slide.mediaPaused?'':'autoplay ')+'loop muted playsinline style="'+mediaStyle+'"></video>'
       : '<img src="'+slide.mediaUrl+'" alt="" style="'+mediaStyle+'">';
     var inner=ar
       ? '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#000"><div style="aspect-ratio:'+ar+';max-width:100%;max-height:100%;width:100%">'+mediaTag+'</div></div>'
       : mediaTag;
     $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:#000">'+inner+'</div>';
     $('output').classList.remove('hidden');
+    if(slide.mediaKind==='video'){
+      window.__liveVideoEl=$('liveVideo');
+      window.__liveVideoKey=liveKey;
+      if(slide.mediaPaused&&window.__liveVideoEl){try{window.__liveVideoEl.pause();}catch(e){}}
+    }else{
+      window.__liveVideoEl=null;window.__liveVideoKey='';
+    }
     return;
   }
   if(slide.type==='title'){
