@@ -3,7 +3,7 @@
 import { useEffect, useCallback, useRef } from 'react'
 import { useSpeechRecognition } from '@/hooks/use-speech-recognition'
 import { useAppStore } from '@/lib/store'
-import { detectVersesInTextWithScore, fetchBibleVerse } from '@/lib/bible-api'
+import { detectVersesInTextWithScore, fetchBibleVerse, PREACHER_ATTRIBUTION } from '@/lib/bible-api'
 import type { BibleSearchHit } from '@/lib/bible-api'
 import type { DetectedVerse } from '@/lib/store'
 import { toast } from 'sonner'
@@ -117,15 +117,30 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       // match, so a too-long phrase often returns no hits).
       const STOPWORDS = new Set(['the','a','an','of','and','or','to','in','for','on','at','is','was','were','be','by','that','this','it','as','with','from','but','so','if','then','than','i','you','he','she','they','we','my','your','our','their','his','her','its','what','when','where','how','why'])
       const allWords = text.trim().toLowerCase().split(/\s+/)
-      const tailWords = allWords.slice(-14)
-      const keywords = tailWords.filter((w) => !STOPWORDS.has(w) && w.length > 2).slice(-6)
+      // Use a longer tail when a preacher attribution is present —
+      // the actual quotation usually starts AFTER phrases like
+      // "Jesus said" / "Paul tells us in Romans" / "the Word of God
+      // tells us", so we need enough downstream words to match it.
+      const recentText = allWords.slice(-40).join(' ')
+      const hasAttribution = PREACHER_ATTRIBUTION.test(recentText)
+      const tailWords = allWords.slice(hasAttribution ? -22 : -14)
+      const keywords = tailWords
+        .filter((w) => !STOPWORDS.has(w) && w.length > 2)
+        .slice(hasAttribution ? -10 : -6)
       const tail = keywords.join(' ')
       const now = Date.now()
+      // Lower the trigger bar when an attribution phrase is detected
+      // — the preacher has clearly signalled scripture is coming, so
+      // we should search even with a short tail. Throttle is also
+      // tighter so the match lands during the same breath.
+      const minKeywords = hasAttribution ? 2 : 3
+      const minWords = hasAttribution ? 3 : 4
+      const throttle = hasAttribution ? 500 : 800
       if (
         references.length === 0 &&
-        allWords.length >= 4 &&
-        keywords.length >= 3 &&
-        now - lastTextSearchAtRef.current > 800
+        allWords.length >= minWords &&
+        keywords.length >= minKeywords &&
+        now - lastTextSearchAtRef.current > throttle
       ) {
         lastTextSearchAtRef.current = now
         try {
@@ -133,33 +148,45 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           const r = await fetch(`/api/bible?${params.toString()}`)
           if (r.ok) {
             const { hits } = (await r.json()) as { hits: BibleSearchHit[] }
-            const top = hits?.[0]
+            // Pick the candidate that the spoken text most closely
+            // matches — not just the first keyword hit. Bolls returns
+            // hits in keyword-frequency order, but for paraphrases the
+            // best lexical match isn't always #1. Re-rank by content-
+            // word overlap with the recent transcript.
+            const recentSpoken = recentText
+            type Ranked = { hit: BibleSearchHit; sim: number }
+            const ranked: Ranked[] = (hits || [])
+              .map((h) => ({ hit: h, sim: verseTextSimilarity(recentSpoken, h.text) }))
+              .sort((a, b) => b.sim - a.sim)
+            const best = ranked[0]
+            const top = best?.hit
+            const sim = best?.sim ?? 0
             if (top && !processedTextHitsRef.current.has(top.reference)) {
-              // Verify the keyword hit by measuring how much of the
-              // matched verse text actually appears in the recently
-              // spoken transcript. This is the gate that turns a fuzzy
-              // search into a confirmed quotation.
-              const recentSpoken = allWords.slice(-40).join(' ')
-              const sim = verseTextSimilarity(recentSpoken, top.text)
-              // Only surface the match at all if the speaker quoted at
-              // least ~40% of the verse's distinctive content words.
-              // Below that the search hit is almost always a false
-              // positive (a stray "God", "love", etc.) and would
-              // clutter the Detected Verses panel with junk.
-              if (sim < 0.4) {
+              // Threshold is relaxed to 0.32 when an attribution
+              // phrase preceded the candidate — paraphrasing styles
+              // ("the Word of God tells us that we are more than
+              // conquerors" vs Romans 8:37) often only share 35-40%
+              // of content words but the attribution makes it a
+              // confident match. Cold matches still need 0.4 to
+              // avoid flooding the panel with junk.
+              const minSim = hasAttribution ? 0.32 : 0.4
+              if (sim < minSim) {
                 /* not a real quotation — drop silently */
               } else {
                 processedTextHitsRef.current = new Set(processedTextHitsRef.current).add(top.reference)
+                // Attribution phrases give a small confidence bonus
+                // since the speaker explicitly framed the line as
+                // scripture — that's strong evidence even when the
+                // word-overlap is moderate.
+                const baseConf = Math.min(1, 0.5 + (sim - minSim) * 0.83)
+                const confidence = hasAttribution ? Math.min(1, baseConf + 0.08) : baseConf
                 const detected: DetectedVerse = {
                   id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                   reference: top.reference,
                   text: top.text,
                   translation: top.translation,
                   detectedAt: new Date(),
-                  // Map similarity (0.4..1.0) to confidence (0.5..1.0)
-                  // so the accuracy bar reflects how cleanly the
-                  // spoken phrase matched the underlying verse.
-                  confidence: Math.min(1, 0.5 + (sim - 0.4) * 0.83),
+                  confidence,
                 }
                 const tBefore = useAppStore.getState().liveTranscript
                 useAppStore.getState().pushTranscriptBreak(tBefore.length)
