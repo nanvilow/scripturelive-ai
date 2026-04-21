@@ -636,6 +636,8 @@ function LiveDisplayCard({
   onPrev,
   onSendLive,
   onNext,
+  isLive,
+  onClearLive,
 }: {
   size: number
   setSize: (n: number) => void
@@ -646,6 +648,8 @@ function LiveDisplayCard({
   onPrev: () => void
   onSendLive: () => void
   onNext: () => void
+  isLive: boolean
+  onClearLive: () => void
 }) {
   const {
     slides,
@@ -986,12 +990,22 @@ function LiveDisplayCard({
           <Button variant="ghost" size="icon" onClick={onPrev} className="h-7 w-7 text-zinc-300 hover:text-white border border-zinc-800">
             <ChevronLeft className="h-3.5 w-3.5" />
           </Button>
+          {/* GO LIVE / STOP LIVE — toggle. While LIVE the button
+              flips to a muted "Stop Live" with a Square icon so the
+              operator can kill the live feed from the same spot they
+              started it. */}
           <Button
-            onClick={onSendLive}
-            className="h-7 px-3 text-[10px] uppercase tracking-wider font-semibold bg-rose-600 hover:bg-rose-700 text-white gap-1.5"
+            onClick={isLive ? onClearLive : onSendLive}
+            title={isLive ? 'Stop the live output' : 'Send this slide to the live output'}
+            className={cn(
+              'h-7 px-3 text-[10px] uppercase tracking-wider font-semibold text-white gap-1.5 transition-colors',
+              isLive
+                ? 'bg-zinc-700 hover:bg-zinc-600 border border-rose-500/60'
+                : 'bg-rose-600 hover:bg-rose-700',
+            )}
           >
-            <Send className="h-3 w-3" />
-            Go Live
+            {isLive ? <Square className="h-3 w-3 fill-white" /> : <Send className="h-3 w-3" />}
+            {isLive ? 'Stop Live' : 'Go Live'}
           </Button>
           <Button variant="ghost" size="icon" onClick={onNext} className="h-7 w-7 text-zinc-300 hover:text-white border border-zinc-800">
             <ChevronRight className="h-3.5 w-3.5" />
@@ -2323,6 +2337,8 @@ export function LogosShell() {
             onPrev={onPrev}
             onSendLive={onSendLive}
             onNext={onNext}
+            isLive={isLive}
+            onClearLive={clearLive}
           />
           <ScriptureFeedCard />
         </div>
