@@ -33,8 +33,24 @@ function resolveMediaPresentation(fit: Slide['mediaFit']): {
   }
 }
 
-function MediaSlideContent({ slide }: { slide: Slide }) {
+function MediaSlideContent({
+  slide,
+  isLive = false,
+}: {
+  slide: Slide
+  isLive?: boolean
+}) {
   const mediaPaused = useAppStore((s) => s.mediaPaused)
+  // Pick the right monitor flag for this surface. The Live thumb
+  // listens to liveMonitorAudio (the headphone toggle); every other
+  // surface (Preview, Schedule thumbs, mid-card preview) follows the
+  // Preview speaker toggle. Browser autoplay still requires us to
+  // mount the element initially muted — the effect below unmutes it
+  // once the user has flipped a toggle, so the operator's gesture is
+  // what trips the audio gate, satisfying autoplay policy.
+  const previewAudio = useAppStore((s) => s.previewAudio)
+  const liveMonitorAudio = useAppStore((s) => s.liveMonitorAudio)
+  const audible = isLive ? liveMonitorAudio : previewAudio
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const { objectFit, aspect } = resolveMediaPresentation(slide.mediaFit)
 
@@ -50,6 +66,16 @@ function MediaSlideContent({ slide }: { slide: Slide }) {
       v.play().catch(() => {})
     }
   }, [mediaPaused])
+
+  // Reflect the audio toggle on the actual <video> element. We mount
+  // muted so autoplay survives, then drop the mute the moment the
+  // operator flips the speaker / headphone icon.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    v.muted = !audible
+    if (audible) v.volume = 1
+  }, [audible])
 
   const inner =
     slide.mediaKind === 'video' ? (
@@ -127,12 +153,13 @@ function pickContentCqi(base: number, totalChars: number, lineCount: number): nu
 }
 
 function SlideContent({
-  slide, theme, large, settings,
+  slide, theme, large, settings, isLive = false,
 }: {
   slide: Slide
   theme: { accent: string }
   large: boolean
-  settings: Pick<AppSettings, 'fontSize' | 'fontFamily' | 'textShadow' | 'showReferenceOnOutput' | 'textScale'>
+  settings: Pick<AppSettings, 'fontSize' | 'fontFamily' | 'textShadow' | 'showReferenceOnOutput' | 'textScale' | 'textAlign'>
+  isLive?: boolean
 }) {
   // Resolve the actual CSS font-family stack from the central registry
   // — every renderer (this component, OutputPreview, and the
@@ -171,7 +198,7 @@ function SlideContent({
 
   if (slide.type === 'media' && slide.mediaUrl) {
     return (
-      <MediaSlideContent slide={slide} />
+      <MediaSlideContent slide={slide} isLive={isLive} />
     )
   }
 
@@ -293,7 +320,7 @@ export function SlideThumb({
           large ? 'p-4 md:p-8' : 'p-1.5',
         )}
       >
-        <SlideContent slide={slide} theme={theme} large={large} settings={settings} />
+        <SlideContent slide={slide} theme={theme} large={large} settings={settings} isLive={isLive} />
       </div>
       {label && (
         <div className="absolute top-1 left-1 z-10">

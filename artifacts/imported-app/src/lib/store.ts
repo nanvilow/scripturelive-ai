@@ -238,6 +238,38 @@ interface AppState {
   // meaningful when the active slide is a media video.
   mediaPaused: boolean
   setMediaPaused: (b: boolean) => void
+
+  // Audio routing flags — Wirecast-style monitor controls.
+  //   previewAudio       → speaker icon on the Preview pane.
+  //                        ON = the operator hears preview audio.
+  //                        OFF = preview is silent (audio still
+  //                        processed; just not audible locally).
+  //   liveBroadcastAudio → speaker icon on the Live pane.
+  //                        ON = audio is hot on the broadcast feed
+  //                        (but not audible to the operator unless
+  //                        liveMonitorAudio is also on).
+  //                        OFF = broadcast feed muted.
+  //   liveMonitorAudio   → headphone icon on the Live pane.
+  //                        ON = the operator hears the live audio
+  //                        through their selected output device.
+  //                        OFF = operator does not hear the live feed.
+  // None of these are persisted — every session starts in a known
+  // safe state (preview silent, broadcast hot, monitor off).
+  previewAudio: boolean
+  setPreviewAudio: (b: boolean) => void
+  liveBroadcastAudio: boolean
+  setLiveBroadcastAudio: (b: boolean) => void
+  liveMonitorAudio: boolean
+  setLiveMonitorAudio: (b: boolean) => void
+
+  // Media library view mode. Mirrors the Windows Explorer "View"
+  // menu options the user requested: Large Icons / Medium Icons /
+  // Small Icons / List / Details / Tiles. Persisted so each operator
+  // gets their preferred density next time they launch the console.
+  mediaViewMode: 'large' | 'medium' | 'small' | 'list' | 'details' | 'tiles'
+  setMediaViewMode: (
+    m: 'large' | 'medium' | 'small' | 'list' | 'details' | 'tiles',
+  ) => void
 }
 
 const defaultSettings: AppSettings = {
@@ -431,6 +463,19 @@ export const useAppStore = create<AppState>()(
       setHasShownContent: (b) => set({ hasShownContent: b }),
       mediaPaused: false,
       setMediaPaused: (b) => set({ mediaPaused: b }),
+
+      // Audio routing — see interface comments above for semantics.
+      previewAudio: false,
+      setPreviewAudio: (b) => set({ previewAudio: b }),
+      liveBroadcastAudio: true,
+      setLiveBroadcastAudio: (b) => set({ liveBroadcastAudio: b }),
+      liveMonitorAudio: false,
+      setLiveMonitorAudio: (b) => set({ liveMonitorAudio: b }),
+
+      // Media library view density. Defaults to a comfortable middle
+      // ground; user pick is persisted via partialize below.
+      mediaViewMode: 'medium',
+      setMediaViewMode: (m) => set({ mediaViewMode: m }),
     }),
     {
       name: 'scripturelive-settings',
@@ -440,6 +485,7 @@ export const useAppStore = create<AppState>()(
         schedule: state.schedule,
         activeLibraryTab: state.activeLibraryTab,
         sermonNotes: state.sermonNotes,
+        mediaViewMode: state.mediaViewMode,
       }),
     }
   )
