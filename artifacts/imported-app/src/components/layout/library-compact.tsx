@@ -1039,13 +1039,29 @@ export function MediaLibraryCompact() {
     }
   }, [])
 
-  const persist = (next: MediaItem[]) => {
-    setItems(next)
+  // Try to persist a snapshot to localStorage. Large videos may
+  // exceed the per-origin quota; in that case the items still live in
+  // React state so they show in the grid for the rest of the session.
+  const tryPersist = (snapshot: MediaItem[]) => {
     try {
-      localStorage.setItem(MEDIA_KEY, JSON.stringify(next))
+      localStorage.setItem(MEDIA_KEY, JSON.stringify(snapshot))
     } catch {
-      toast.error('Storage full — try removing old media')
+      // Quota / serialization failed — keep working in-memory.
     }
+  }
+
+  // FIX: previously this called `setItems([next, ...items])` from
+  // inside an async FileReader callback, so multiple concurrent
+  // uploads each captured the SAME stale `items` snapshot and
+  // overwrote each other — the last reader to finish "won" and the
+  // others silently disappeared from the grid. Always use a
+  // functional updater so every upload sees the latest list.
+  const addMediaItem = (next: MediaItem) => {
+    setItems((prev) => {
+      const out = [next, ...prev]
+      tryPersist(out)
+      return out
+    })
   }
 
   const handleFiles = (files: FileList | null) => {
@@ -1054,24 +1070,32 @@ export function MediaLibraryCompact() {
       const isImage = file.type.startsWith('image/')
       const isVideo = file.type.startsWith('video/')
       if (!isImage && !isVideo) {
-        toast.error(`Unsupported: ${file.name}`)
+        toast.error(`Unsupported file type: ${file.name}`)
         return
       }
-      if (file.size > 8 * 1024 * 1024) {
-        toast.error(`${file.name} is over 8 MB — too large for in-browser storage`)
+      // Generous in-memory cap. Browsers comfortably handle this for
+      // a single live-production session; very large clips simply
+      // won't survive a page reload but they DO appear immediately
+      // in Preview / Live Display, which is what operators expect.
+      const MAX = 200 * 1024 * 1024 // 200 MB
+      if (file.size > MAX) {
+        toast.error(`${file.name} is over 200 MB — too large to load`)
         return
       }
       const reader = new FileReader()
       reader.onload = () => {
         const dataUrl = reader.result as string
-        const next: MediaItem = {
+        if (!dataUrl) {
+          toast.error(`Empty file: ${file.name}`)
+          return
+        }
+        addMediaItem({
           id: `media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           name: file.name,
           dataUrl,
           kind: isImage ? 'image' : 'video',
-        }
-        persist([next, ...items])
-        toast.success(`${file.name} uploaded`)
+        })
+        toast.success(`${file.name} added`)
       }
       reader.onerror = () => toast.error(`Could not read ${file.name}`)
       reader.readAsDataURL(file)
@@ -1079,7 +1103,11 @@ export function MediaLibraryCompact() {
   }
 
   const removeItem = (id: string) => {
-    persist(items.filter((m) => m.id !== id))
+    setItems((prev) => {
+      const out = prev.filter((m) => m.id !== id)
+      tryPersist(out)
+      return out
+    })
   }
 
   const addToSchedule = (m: MediaItem) => {
