@@ -384,7 +384,20 @@ function scoreReference(opts: {
   return Math.max(0, Math.min(1, s))
 }
 
-const CONTEXT_WORDS = /(scripture|bible|verse|chapter|gospel|epistle|psalm|read\s+from|turn\s+to|open\s+to|word\s+of\s+god)/i
+// Phrases preachers actually say that signal "scripture is coming".
+// Far broader than the original "the Bible says" list — covers
+// general-authority style ("Scripture makes us understand"), apostolic
+// attribution ("Paul tells us in", "John writes"), red-letter quotation
+// ("Jesus said", "Christ declared", "the Lord spoke"), prophetic
+// framing ("Thus saith the Lord"), and the call-and-response openers
+// ("the Word of God tells us", "the Bible declares").
+const CONTEXT_WORDS = /(scripture|bible|verse|chapter|gospel|epistle|psalm|word\s+of\s+god|read\s+from|turn\s+to|open\s+(?:your\s+bibles?\s+)?to|let\s+us\s+(?:look|turn|read)|jesus\s+(?:said|says|spoke|declared|tells?\s+us)|christ\s+(?:said|declared|spoke)|the\s+lord\s+(?:said|says|spoke|declared)|paul\s+(?:tells|writes|says|teaches|addresses)|peter\s+(?:tells|writes|says)|john\s+(?:tells|writes|says)|moses\s+(?:said|wrote|tells)|david\s+(?:said|wrote|sings)|the\s+(?:bible|word|scripture)s?\s+(?:says?|tells?|declares?|teaches?|reveals?|reminds?|promises?|warns?|makes?\s+(?:us\s+)?understand)|thus\s+sa(?:ith|ys)\s+the\s+lord|it\s+is\s+written|as\s+it\s+is\s+written|remember\s+(?:what\s+)?jesus|the\s+prophet\s+\w+\s+(?:said|wrote))/i
+
+// Quick test for preacher attribution phrases — used to bias the
+// fuzzy text-search engine in speech-provider so paraphrases and
+// hidden-citation styles ("Remember, Jesus spoke these words…")
+// still land on the right verse even without an explicit reference.
+export const PREACHER_ATTRIBUTION = /\b(jesus\s+(?:said|says|spoke|declared|tells?\s+us)|christ\s+(?:said|declared|spoke)|the\s+lord\s+(?:said|says|spoke|declared)|paul\s+(?:tells|writes|says|teaches|addresses)|peter\s+(?:tells|writes|says)|john\s+(?:tells|writes|says)|moses\s+(?:said|wrote)|the\s+(?:bible|word|scripture)s?\s+(?:says?|tells?|declares?|teaches?|reveals?|reminds?|promises?|warns?|makes?\s+(?:us\s+)?understand)|thus\s+sa(?:ith|ys)\s+the\s+lord|it\s+is\s+written|as\s+it\s+is\s+written|remember\s+(?:what\s+)?jesus|word\s+of\s+god\s+tells?\s+us)\b/i
 
 export function detectVersesInTextWithScore(rawText: string): DetectedReference[] {
   if (!rawText) return []

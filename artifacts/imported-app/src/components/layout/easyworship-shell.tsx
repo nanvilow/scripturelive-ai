@@ -202,6 +202,78 @@ export function TopToolbar({
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([])
   const [micPermission, setMicPermission] = useState<'granted' | 'denied' | 'prompt' | 'unknown'>('unknown')
 
+  // ── Live mic-input level meter ──────────────────────────────────────
+  // A continuously-running RMS reader on the chosen microphone so the
+  // operator can SEE that the selected mic is actually picking up
+  // sound. Without this, the only feedback that the mic works is the
+  // transcript appearing — which is too slow when troubleshooting on
+  // stage. Acquired once per device change and torn down cleanly so
+  // we never leak a mic stream.
+  const [micLevel, setMicLevel] = useState(0)
+  const micStreamRef = useRef<MediaStream | null>(null)
+  const micCtxRef = useRef<AudioContext | null>(null)
+  useEffect(() => {
+    if (typeof window === 'undefined' || micPermission !== 'granted') return
+    let cancelled = false
+    let raf = 0
+    const run = async () => {
+      try {
+        const constraints: MediaStreamConstraints = selectedMicrophoneId
+          ? { audio: { deviceId: { exact: selectedMicrophoneId } } }
+          : { audio: true }
+        const stream = await navigator.mediaDevices.getUserMedia(constraints)
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop())
+          return
+        }
+        micStreamRef.current = stream
+        const Ctor =
+          (window as unknown as { AudioContext?: typeof AudioContext }).AudioContext ||
+          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+        if (!Ctor) return
+        const ctx = new Ctor()
+        micCtxRef.current = ctx
+        const src = ctx.createMediaStreamSource(stream)
+        const an = ctx.createAnalyser()
+        an.fftSize = 512
+        an.smoothingTimeConstant = 0.55
+        src.connect(an)
+        const buf = new Uint8Array(an.fftSize)
+        const tick = () => {
+          if (cancelled) return
+          an.getByteTimeDomainData(buf)
+          let sum = 0
+          for (let i = 0; i < buf.length; i++) {
+            const v = (buf[i] - 128) / 128
+            sum += v * v
+          }
+          // Mic levels are typically tiny (RMS 0.02–0.15 for normal
+          // speech) so we scale up generously and clamp.
+          const rms = Math.sqrt(sum / buf.length)
+          setMicLevel(Math.min(1, rms * 6))
+          raf = requestAnimationFrame(tick)
+        }
+        raf = requestAnimationFrame(tick)
+      } catch {
+        /* mic unavailable — leave meter at zero */
+      }
+    }
+    run()
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(raf)
+      if (micStreamRef.current) {
+        micStreamRef.current.getTracks().forEach((t) => t.stop())
+        micStreamRef.current = null
+      }
+      if (micCtxRef.current) {
+        micCtxRef.current.close().catch(() => {})
+        micCtxRef.current = null
+      }
+      setMicLevel(0)
+    }
+  }, [selectedMicrophoneId, micPermission])
+
   const desktop: DesktopApi | undefined = (typeof window !== 'undefined'
     ? ((window as unknown as { electron?: DesktopApi; scriptureLive?: DesktopApi }).electron
       ?? (window as unknown as { scriptureLive?: DesktopApi }).scriptureLive)
@@ -490,7 +562,12 @@ export function TopToolbar({
               className="h-7 px-2 text-[11px] gap-1.5 border text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white max-w-[160px]"
               title="Choose which connected microphone to use for live transcription."
             >
-              <Mic className="h-3 w-3 shrink-0" />
+              <Mic
+                className={cn(
+                  'h-3 w-3 shrink-0 transition-colors',
+                  micLevel > 0.04 ? 'text-emerald-400' : 'text-zinc-400',
+                )}
+              />
               <span className="truncate">
                 {(() => {
                   if (selectedMicrophoneId) {
@@ -499,6 +576,38 @@ export function TopToolbar({
                   }
                   return 'Default Mic'
                 })()}
+              </span>
+              {/* Live mic-input level — 6 LED ladder. Lights from
+                  green → amber → red as input gets louder so the
+                  operator can verify the chosen mic is actually
+                  receiving audio without waiting for a transcript. */}
+              <span
+                className="flex items-end gap-[2px] h-3 ml-0.5 shrink-0"
+                aria-label={`Mic input level ${Math.round(micLevel * 100)}%`}
+                title={micPermission === 'granted'
+                  ? `Mic input · ${Math.round(micLevel * 100)}%`
+                  : 'Allow microphone access to see input level'}
+              >
+                {Array.from({ length: 6 }).map((_, i) => {
+                  const threshold = (i + 1) / 6
+                  const lit = micLevel >= threshold - 0.08
+                  const color = i >= 5
+                    ? 'bg-rose-400'
+                    : i >= 3
+                      ? 'bg-amber-400'
+                      : 'bg-emerald-400'
+                  return (
+                    <span
+                      key={i}
+                      className={cn(
+                        'w-[2px] rounded-sm transition-opacity duration-75',
+                        color,
+                        lit ? 'opacity-100' : 'opacity-15',
+                      )}
+                      style={{ height: `${4 + i * 1.4}px` }}
+                    />
+                  )
+                })}
               </span>
               <ChevronDown className="h-3 w-3 opacity-60 shrink-0" />
             </Button>

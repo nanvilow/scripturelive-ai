@@ -137,9 +137,33 @@ function AudioMeter({
   const liveLevel = useAppStore((s) => s.audioLevelLive)
   const previewLevel = useAppStore((s) => s.audioLevelPreview)
   const raw = surface === 'live' ? liveLevel : previewLevel
-  // Gate behind the routing/playing flags so the bar never animates
-  // when the audio isn't reaching the operator.
-  const level = active && playing ? raw : 0
+  // Gentle 1Hz idle pulse so the meter shows visible activity the
+  // moment the operator toggles the audio icon on, even before any
+  // video is playing. Without this the bar sits dead-flat at zero
+  // and operators report it as "broken / not responding". The
+  // pulse is small (≤22%) and stays well below any real signal.
+  const [idlePulse, setIdlePulse] = useState(0)
+  useEffect(() => {
+    if (!active || playing) {
+      setIdlePulse(0)
+      return
+    }
+    let raf = 0
+    const start = performance.now()
+    const tick = (t: number) => {
+      const phase = ((t - start) / 1000) * Math.PI // ~0.5 Hz
+      // Half-sine breath: 0 → 0.22 → 0
+      setIdlePulse(0.06 + Math.abs(Math.sin(phase)) * 0.16)
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [active, playing])
+  // When audio is actually flowing through a video, show the real
+  // RMS level. When it's just toggled on with nothing playing, show
+  // the idle pulse so the meter tells the operator "audio path is
+  // armed". When the toggle is off, bar is flat.
+  const level = !active ? 0 : playing ? raw : idlePulse
   const grad =
     tone === 'red'
       ? 'from-rose-500 via-rose-400 to-amber-400'
@@ -158,98 +182,6 @@ function AudioMeter({
           <span key={i} className="block h-px w-full bg-black/40" />
         ))}
       </div>
-    </div>
-  )
-}
-
-// ──────────────────────────────────────────────────────────────────────
-// LIVE DISPLAY INTERACTIVE SCALE CONTROL
-// ──────────────────────────────────────────────────────────────────────
-// Professional drag-to-scale for the Live Display preview frame:
-//   • Click → enter resize mode
-//   • Drag DOWN → grow, Drag UP → shrink (broadcast convention)
-//   • Drag horizontally too → averaged into the delta for diagonal feel
-//   • Hold Shift → fine 1% steps
-//   • Double-click → snap back to 100% (operator's "fit" reset)
-// The actual rendered scale eases toward the target via a separate
-// rAF loop in LiveDisplayCard — that's what makes the motion feel
-// cinematic instead of jumpy. Bounds 0.6..1.0 match the slider so
-// the frame can never collapse or blow past the card.
-const SIZE_MIN = 0.6
-const SIZE_MAX = 1.0
-
-function ResizeHandle({
-  size,
-  setSize,
-  onActiveChange,
-}: {
-  size: number
-  setSize: (n: number) => void
-  onActiveChange?: (active: boolean) => void
-}) {
-  const startRef = useRef<{ x: number; y: number; size: number } | null>(null)
-  const beginDrag = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.stopPropagation()
-    ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
-    startRef.current = { x: e.clientX, y: e.clientY, size }
-    onActiveChange?.(true)
-  }
-  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    const start = startRef.current
-    if (!start) return
-    // Vertical-dominant: drag down increases scale (broadcast feel).
-    // Horizontal motion is folded in at half-weight so a diagonal drag
-    // toward the corner still grows the frame intuitively.
-    const dy = e.clientY - start.y
-    const dx = e.clientX - start.x
-    const delta = dy + dx * 0.5
-    const sensitivity = e.shiftKey ? 700 : 260
-    const next = Math.max(
-      SIZE_MIN,
-      Math.min(SIZE_MAX, start.size + delta / sensitivity),
-    )
-    setSize(Math.round(next * 1000) / 1000)
-  }
-  const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!startRef.current) return
-    startRef.current = null
-    ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
-    onActiveChange?.(false)
-  }
-  // Double-click resets the frame to 100% — the "fit" preset most
-  // operators want when they've zoomed in to inspect a verse.
-  const onDoubleClick = (e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setSize(SIZE_MAX)
-  }
-  return (
-    <div
-      role="slider"
-      aria-label="Resize Live Display"
-      aria-valuemin={Math.round(SIZE_MIN * 100)}
-      aria-valuemax={Math.round(SIZE_MAX * 100)}
-      aria-valuenow={Math.round(size * 100)}
-      onPointerDown={beginDrag}
-      onPointerMove={onPointerMove}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
-      onDoubleClick={onDoubleClick}
-      title={`Drag to resize · ${Math.round(size * 100)}% · double-click for 100% · Shift for fine`}
-      className="absolute -bottom-0.5 -right-0.5 z-20 w-5 h-5 rounded-sm bg-sky-500/40 hover:bg-sky-400/80 border border-sky-300 cursor-ns-resize touch-none flex items-end justify-end shadow-md"
-      style={{ touchAction: 'none' }}
-    >
-      {/* Corner grip lines — standard OBS / Wirecast resize cue. */}
-      <svg viewBox="0 0 16 16" className="w-full h-full text-white pointer-events-none">
-        <path
-          d="M4 15 L15 4 M8 15 L15 8 M12 15 L15 12"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          fill="none"
-          strokeLinecap="round"
-        />
-      </svg>
     </div>
   )
 }
@@ -810,8 +742,11 @@ function LiveDisplayCard({
   // separation is what gives the resize a smooth, broadcast feel
   // instead of the pixel-by-pixel jumpiness of binding the transform
   // directly to pointer movement.
+  // Slider value still drives the eased actual scale so the
+  // congregation preview animates smoothly when the operator drags
+  // the SIZE slider — feels like a continuous broadcast control
+  // even though the input is a discrete slider.
   const actualSize = useEasedNumber(size)
-  const [resizing, setResizing] = useState(false)
   // Show the inline transport row only when the live slide is a
   // video — for everything else there is nothing to play or pause.
   const liveIsMediaVideo =
@@ -929,10 +864,7 @@ function LiveDisplayCard({
           if (!isLT) {
             return (
               <div
-                className={cn(
-                  'relative w-full max-w-full transition-shadow duration-150',
-                  resizing && 'ring-2 ring-sky-400/80 shadow-[0_0_0_2px_rgba(56,189,248,0.25)] rounded-sm',
-                )}
+                className="relative w-full max-w-full"
                 style={{
                   transform: `scale(${actualSize})`,
                   transformOrigin: 'center',
@@ -946,15 +878,6 @@ function LiveDisplayCard({
                   size="lg"
                   settings={settings}
                 />
-                {/* Live readout of the current scale while the operator
-                    is dragging — fades in only during the drag so it
-                    doesn't add visual noise the rest of the time. */}
-                {resizing && (
-                  <div className="absolute top-1 right-1 z-30 px-1.5 py-0.5 rounded bg-black/80 border border-sky-400/60 text-[10px] font-mono text-sky-200 tabular-nums pointer-events-none">
-                    {Math.round(size * 100)}%
-                  </div>
-                )}
-                <ResizeHandle size={size} setSize={setSize} onActiveChange={setResizing} />
               </div>
             )
           }
@@ -979,22 +902,13 @@ function LiveDisplayCard({
                   : []
           return (
             <div
-              className={cn(
-                'relative w-full max-w-full transition-shadow duration-150',
-                resizing && 'ring-2 ring-sky-400/80 shadow-[0_0_0_2px_rgba(56,189,248,0.25)] rounded-sm',
-              )}
+              className="relative w-full max-w-full"
               style={{
                 transform: `scale(${actualSize})`,
                 transformOrigin: 'center',
                 willChange: 'transform',
               }}
             >
-              {resizing && (
-                <div className="absolute top-1 right-1 z-30 px-1.5 py-0.5 rounded bg-black/80 border border-sky-400/60 text-[10px] font-mono text-sky-200 tabular-nums pointer-events-none">
-                  {Math.round(size * 100)}%
-                </div>
-              )}
-              <ResizeHandle size={size} setSize={setSize} onActiveChange={setResizing} />
               <div className="relative w-full aspect-video bg-black overflow-hidden ring-1 ring-zinc-800">
                 {/* lower-third uses the themed/custom background as
                     backdrop; lower-third-black uses pure black so the
