@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { PathAwareToaster } from "@/components/ui/path-aware-toaster";
-import { googleFontsHref } from "@/lib/fonts";
+import { GoogleFontsLink } from "@/components/google-fonts-link";
 
 // NOTE: We intentionally do NOT use next/font/google here. The Electron
 // desktop build runs `next build` on the operator's machine which often
@@ -46,16 +46,17 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <head>
-        {/* Pre-load every web font in the typography registry so any
-            font the operator picks renders identically on the editor,
-            the operator preview cards, and the secondary screen. */}
+        {/* Preconnect hints are static so they're safe in SSR head.
+            The actual Google Fonts <link> is added client-side by
+            <GoogleFontsLink /> below to avoid a hydration mismatch
+            with the dev-tools script Replit injects into <head>. */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link rel="stylesheet" href={googleFontsHref} />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
+        <GoogleFontsLink />
         {children}
         {/* Toasts are suppressed on /congregation, /presenter, and the
             NDI fan-out so display/output actions never appear on the
