@@ -257,6 +257,17 @@ export default function DownloadPage() {
             (use the copy button next to the hash). This is especially important while the installers are
             unsigned.
           </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+            <span>Verifying multiple installers? Grab a single file:</span>
+            <a
+              href="/api/download/checksums"
+              download="SHA256SUMS.txt"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1 font-mono text-foreground hover:bg-muted transition-colors"
+            >
+              <Download className="h-3 w-3" /> SHA256SUMS.txt
+            </a>
+            <span>then run <code className="rounded bg-muted px-1 font-mono">sha256sum -c SHA256SUMS.txt</code> next to the installers.</span>
+          </div>
           <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
             <div>
               <div className="font-semibold text-muted-foreground mb-1">Windows (PowerShell)</div>
