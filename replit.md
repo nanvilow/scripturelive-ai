@@ -1,5 +1,17 @@
 # Workspace
 
+## User Preferences (STANDING RULES — never skip)
+
+- **After EVERY fix / version bump, build and present a fresh ZIP** of
+  `artifacts/imported-app/` so the user can download it and run
+  `BUILD.bat` on their Windows PC. Naming convention:
+  `exports/ScriptureLive-AI-v<version>-source.zip`. Exclude
+  `node_modules`, `.next`, `dist-electron`, `release`, `.turbo`, `.git`,
+  `*.tsbuildinfo`, `build-log.txt`. Always use the `present_asset` tool
+  to surface the zip — never assume the user will find it on their own.
+- Bump the `BUILD.bat` banner version string to match the current
+  `package.json` version on every release.
+
 ## Overview
 
 pnpm workspace monorepo using TypeScript. Each package manages its own dependencies. The root preview now runs an imported Next.js app named "Imported App" from `artifacts/imported-app`.
