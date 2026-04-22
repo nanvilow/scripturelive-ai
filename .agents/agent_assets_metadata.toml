@@ -48,3 +48,9 @@ id = "8eA2-shKWdxho-EKVQyua"
 uri = "file://downloads/ScriptureLive-AI-source-v0.3.6.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.3.6 — NDI install with 3 fallback strategies + inline error dump"
+
+[[outputs]]
+id = "s0mvUyDxhSCzqa1YKR9Ck"
+uri = "file://downloads/ScriptureLive-AI-source-v0.3.7.zip"
+type = "unspecified"
+title = "ScriptureLive AI source v0.3.7 (NDI from GitHub master)"
