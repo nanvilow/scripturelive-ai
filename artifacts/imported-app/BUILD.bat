@@ -29,7 +29,7 @@ echo. >> "%SL_LOG%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build  v0.4.4
+echo   ScriptureLive AI - One-click Windows Build  v0.4.5
 echo ================================================================
 echo   Full build log:   %SL_LOG%
 echo.
@@ -195,6 +195,19 @@ if errorlevel 1 (
   goto :DIE
 )
 echo       Dependencies installed OK
+
+REM ---- Step 4a: Patch @electron/node-gyp for VS Build Tools 2026 --
+REM @electron/node-gyp v10.x has a hard-coded VS version map that
+REM only knows 2017/2019/2022. VS 2026 reports as version 18 and
+REM is rejected as "unknown version". This script adds 18 -> 2022.
+echo.
+echo [4a/7] Patching @electron/node-gyp to recognize VS 2026...
+call node "scripts\patch-node-gyp-vs2026.js" >> "%SL_LOG%" 2>&1
+if errorlevel 1 (
+  set "FAIL_STEP=node-gyp patch script failed - see log."
+  goto :DIE
+)
+echo       node-gyp patched OK
 
 REM ---- Step 4b: Install grandiose (NDI native module) -------------
 REM IMPORTANT FACTS (verified 2026-04):
