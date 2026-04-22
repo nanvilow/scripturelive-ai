@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, screen, dialog, session } from 'electron'
+import { app, BrowserWindow, Menu, MenuItemConstructorOptions, ipcMain, shell, screen, dialog, session } from 'electron'
 import path from 'node:path'
 import { spawn, ChildProcess } from 'node:child_process'
 import { createServer } from 'node:net'
@@ -61,7 +61,7 @@ type NdiStartOptions = NdiServiceStartOptions & {
   }
 }
 import { FrameCapture } from './frame-capture'
-import { setupAutoUpdater } from './updater'
+import { setupAutoUpdater, runManualCheck, getUpdateState, openReleasesPage } from './updater'
 
 const isDev = !app.isPackaged
 const ndi = new NdiService()
@@ -181,13 +181,159 @@ async function createMainWindow(url: string) {
     title: 'ScriptureLive AI',
     autoHideMenuBar: true,
   })
-  mainWindow.removeMenu()
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
     shell.openExternal(target)
     return { action: 'deny' }
   })
   await mainWindow.loadURL(url)
   mainWindow.on('closed', () => { mainWindow = null })
+}
+
+async function showDialog(opts: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
+  const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+  return parent ? dialog.showMessageBox(parent, opts) : dialog.showMessageBox(opts)
+}
+
+async function handleManualUpdateCheck() {
+  if (!app.isPackaged) {
+    await showDialog({
+      type: 'info',
+      title: 'Check for Updates',
+      message: 'Updates are disabled in development builds.',
+      detail: `You're running ScriptureLive AI ${app.getVersion()} from source.`,
+      buttons: ['OK'],
+      defaultId: 0,
+    })
+    return
+  }
+
+  const existing = getUpdateState()
+  if (existing.status === 'downloading') {
+    await showDialog({
+      type: 'info',
+      title: 'Check for Updates',
+      message: 'An update is already downloading.',
+      detail: `Download is ${Math.round(existing.percent)}% complete. You'll be prompted to restart when it's ready.`,
+      buttons: ['OK'],
+    })
+    return
+  }
+  if (existing.status === 'downloaded') {
+    const choice = await showDialog({
+      type: 'info',
+      title: 'Check for Updates',
+      message: `Update ready to install`,
+      detail: `Version ${existing.version} has been downloaded. Restart now to install it.`,
+      buttons: ['Restart now', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+    })
+    if (choice.response === 0) {
+      const { autoUpdater } = await import('electron-updater')
+      setImmediate(() => autoUpdater.quitAndInstall(false, true))
+    }
+    return
+  }
+
+  // Drive the same code path as the `updater:check` IPC handler.
+  const state = await runManualCheck()
+  if (state.status === 'not-available') {
+    await showDialog({
+      type: 'info',
+      title: 'Check for Updates',
+      message: "You're up to date",
+      detail: `ScriptureLive AI ${app.getVersion()} is the latest version.`,
+      buttons: ['OK'],
+    })
+  } else if (state.status === 'available') {
+    await showDialog({
+      type: 'info',
+      title: 'Check for Updates',
+      message: 'Update available',
+      detail: `Version ${state.version} is downloading in the background. You'll be prompted to restart when it's ready.`,
+      buttons: ['OK'],
+    })
+  } else if (state.status === 'downloading') {
+    await showDialog({
+      type: 'info',
+      title: 'Check for Updates',
+      message: 'Update available',
+      detail: `An update is downloading in the background (${Math.round(state.percent)}%). You'll be prompted to restart when it's ready.`,
+      buttons: ['OK'],
+    })
+  } else if (state.status === 'downloaded') {
+    const choice = await showDialog({
+      type: 'info',
+      title: 'Check for Updates',
+      message: 'Update ready to install',
+      detail: `Version ${state.version} has been downloaded. Restart now to install it.`,
+      buttons: ['Restart now', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+    })
+    if (choice.response === 0) {
+      const { autoUpdater } = await import('electron-updater')
+      setImmediate(() => autoUpdater.quitAndInstall(false, true))
+    }
+  } else if (state.status === 'error') {
+    const choice = await showDialog({
+      type: 'warning',
+      title: 'Check for Updates',
+      message: "Couldn't check for updates",
+      detail: `${state.message}\n\nYou can download the latest installer from the releases page instead.`,
+      buttons: ['Open releases page', 'OK'],
+      defaultId: 1,
+      cancelId: 1,
+    })
+    if (choice.response === 0) openReleasesPage()
+  }
+}
+
+function buildAppMenu() {
+  const isMac = process.platform === 'darwin'
+  const checkForUpdatesItem: MenuItemConstructorOptions = {
+    label: 'Check for Updates…',
+    click: () => { void handleManualUpdateCheck() },
+  }
+
+  const template: MenuItemConstructorOptions[] = []
+
+  if (isMac) {
+    template.push({
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        checkForUpdatesItem,
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    })
+  }
+
+  template.push(
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        ...(isMac ? [] : [checkForUpdatesItem, { type: 'separator' } as MenuItemConstructorOptions]),
+        {
+          label: 'View Releases on GitHub',
+          click: () => { openReleasesPage() },
+        },
+      ],
+    },
+  )
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
 function broadcastNdiStatus(status: NdiStatus) {
@@ -406,6 +552,11 @@ app.whenReady().then(async () => {
     console.error('[permissions] failed to wire permission handlers (non-fatal):', err)
   }
 
+  try {
+    buildAppMenu()
+  } catch (err) {
+    console.error('[menu] init failed (non-fatal):', err)
+  }
   try {
     setupIpc()
   } catch (err) {
