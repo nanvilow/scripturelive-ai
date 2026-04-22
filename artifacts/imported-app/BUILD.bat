@@ -29,7 +29,7 @@ echo. >> "%SL_LOG%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build  v0.4.5
+echo   ScriptureLive AI - One-click Windows Build  v0.4.6
 echo ================================================================
 echo   Full build log:   %SL_LOG%
 echo.
