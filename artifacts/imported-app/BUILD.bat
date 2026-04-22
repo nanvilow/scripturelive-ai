@@ -29,7 +29,7 @@ echo. >> "%LOGFILE%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build  v0.3.9
+echo   ScriptureLive AI - One-click Windows Build  v0.4.0
 echo ================================================================
 echo   Full build log:   %LOGFILE%
 echo.
@@ -96,22 +96,54 @@ if "!PY_OK!"=="0" (
   goto :DIE
 )
 
-REM --- 2c: Visual Studio Build Tools 2022 with C++ workload --------
+REM --- 2c: Visual Studio Build Tools (any version, 2017+) ----------
 REM We use vswhere (ships with VS 2017+) to detect any installation
-REM that has the VC++ tools component.
+REM that has the VC++ tools component AND we capture its install
+REM path so we can call vcvars64.bat later (Step 4a).
 set "VSWHERE=%PROGRAMFILES(X86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 set "VS_OK=0"
+set "VS_INSTALL="
 if exist "!VSWHERE!" (
   for /f "usebackq tokens=*" %%i in (`"!VSWHERE!" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2^>nul`) do (
-    if not "%%i"=="" set "VS_OK=1"
+    if not "%%i"=="" (
+      set "VS_OK=1"
+      set "VS_INSTALL=%%i"
+    )
   )
 )
 if "!VS_OK!"=="1" (
-  echo       Visual Studio C++ Build Tools OK
+  echo       Visual Studio C++ Build Tools OK at !VS_INSTALL!
 ) else (
-  set "FAIL_STEP=Visual Studio Build Tools 2022 with 'Desktop development with C++' workload is required to compile the NDI native module. Download the FREE installer from https://visualstudio.microsoft.com/visual-cpp-build-tools/ - in the installer, check 'Desktop development with C++' - install ^(~5 GB^) - reboot - then re-run BUILD.bat."
+  set "FAIL_STEP=Visual Studio Build Tools (2022 or 2026) with 'Desktop development with C++' workload is required. Download free from https://visualstudio.microsoft.com/visual-cpp-build-tools/ - tick 'Desktop development with C++' - install ^(~5 GB^) - reboot - re-run BUILD.bat."
   goto :DIE
 )
+
+REM --- 2d: Enter the VS Build environment (vcvars64.bat) -----------
+REM CRITICAL: this is the entire reason every previous build failed.
+REM
+REM node-gyp's PowerShell-based VS detection only knows VS 2017/2019/
+REM 2022 (versionYear values 15/16/17). VS 2026 reports as version 18
+REM and is rejected as "unsupported version: 18". By calling
+REM vcvars64.bat ourselves, we set VCINSTALLDIR/INCLUDE/LIB/PATH the
+REM way Microsoft's own build automation does. node-gyp then sees
+REM "running in VS Command Prompt" and skips its broken auto-detect,
+REM using the active environment directly. VS 2026's MSBuild is
+REM fully backward-compatible with the VS2022 toolset format.
+set "VCVARS=!VS_INSTALL!\VC\Auxiliary\Build\vcvars64.bat"
+if not exist "!VCVARS!" (
+  set "FAIL_STEP=Found VS at !VS_INSTALL! but vcvars64.bat is missing - the C++ workload is incomplete. Open Visual Studio Installer, click Modify on Build Tools, tick 'Desktop development with C++' (with all default sub-components), apply."
+  goto :DIE
+)
+echo       Loading VS C++ env from vcvars64.bat...
+call "!VCVARS!" >> "%LOGFILE%" 2>&1
+if not defined VCINSTALLDIR (
+  set "FAIL_STEP=vcvars64.bat ran but VCINSTALLDIR is not set. Re-install VS Build Tools and reboot."
+  goto :DIE
+)
+REM Force gyp to assume VS2022 layout (works for VS2022 AND VS2026).
+set "GYP_MSVS_VERSION=2022"
+set "npm_config_msvs_version=2022"
+echo       VS env loaded. VCINSTALLDIR=!VCINSTALLDIR!
 
 REM ---- Step 3: Clean previous build -------------------------------
 echo.
@@ -168,25 +200,9 @@ REM requires git.exe to be installed; the tarball URL just uses
 REM HTTPS so it works on any machine.
 set "GRANDIOSE_URL=https://codeload.github.com/Streampunk/grandiose/tar.gz/refs/heads/master"
 
-REM ── CRITICAL: install upstream node-gyp@12 globally and force
-REM    npm + electron-rebuild to use it.
-REM    The @electron/node-gyp fork bundled with @electron/rebuild
-REM    is v10 and only knows VS 2017/2019/2022. Users on VS 2026
-REM    (released 2026) get "unsupported version: 18" and the build
-REM    dies. node-gyp@12 has explicit VS 2026 support.
-echo       Installing node-gyp 12 ^(needed for VS 2022 AND VS 2026^)...
-call npm install -g node-gyp@12 >> "%LOGFILE%" 2>&1
-if errorlevel 1 (
-  color 0E
-  echo       WARNING: could not install node-gyp@12 globally - falling back to bundled.
-  color 0B
-) else (
-  for /f "delims=" %%g in ('npm prefix -g') do set "NPM_GLOBAL=%%g"
-  if exist "!NPM_GLOBAL!\node_modules\node-gyp\bin\node-gyp.js" (
-    set "npm_config_node_gyp=!NPM_GLOBAL!\node_modules\node-gyp\bin\node-gyp.js"
-    echo       node-gyp 12 path: !npm_config_node_gyp!
-  )
-)
+REM (Step 2d already set up the VS environment with vcvars64.bat,
+REM  GYP_MSVS_VERSION=2022, and npm_config_msvs_version=2022. node-gyp
+REM  will now skip its broken VS detection and use the active env.)
 
 REM --- Strategy 1: install + native build in one shot --------------
 echo       [strategy 1/2] npm install grandiose tarball + source build...
