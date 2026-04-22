@@ -54,3 +54,9 @@ id = "VbnHraBwPzwW_ST9nVARs"
 uri = "file://downloads/ScriptureLive-AI-FULL-PROJECT.zip"
 type = "unspecified"
 title = "ScriptureLive AI — Full project (entire monorepo, 871 files, 148 MB)"
+
+[[outputs]]
+id = "ETumINq2whR-7zIFUg2X7"
+uri = "file://downloads/ScriptureLive-AI-source-v0.4.5.zip"
+type = "unspecified"
+title = "ScriptureLive AI source v0.4.5 (patches node-gyp to accept VS 2026)"
