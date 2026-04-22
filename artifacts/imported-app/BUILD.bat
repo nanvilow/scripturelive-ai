@@ -4,9 +4,16 @@ REM ScriptureLive AI - One-click Windows installer builder
 REM ============================================================
 REM Prerequisites (install ONCE before running this script):
 REM   1. Node.js 20 LTS  ->  https://nodejs.org   (REQUIRED)
-REM   2. NDI 5 SDK       ->  https://ndi.video/sdk (only if you
-REM                          want native NDI output)
-REM   3. (auto)          ->  pnpm is installed for you below
+REM   2. NDI 5 or 6 SDK  ->  https://ndi.video/sdk
+REM      (only if you want native NDI output - not strictly
+REM       required because grandiose ships its own NDI libs,
+REM       but recommended for the NDI Tools / Studio Monitor)
+REM   3. Visual Studio Build Tools 2022 with "Desktop
+REM      development with C++" workload  (REQUIRED for NDI)
+REM      https://visualstudio.microsoft.com/visual-cpp-build-tools/
+REM   4. Python 3.x on PATH              (REQUIRED for NDI)
+REM      https://www.python.org/downloads/
+REM   5. (auto)          ->  pnpm is installed for you below
 REM ============================================================
 
 setlocal EnableDelayedExpansion
@@ -22,7 +29,7 @@ echo. >> "%LOGFILE%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build  v0.3.6
+echo   ScriptureLive AI - One-click Windows Build  v0.3.7
 echo ================================================================
 echo   Full build log:   %LOGFILE%
 echo.
@@ -62,21 +69,48 @@ if errorlevel 1 (
 )
 for /f "tokens=*" %%v in ('pnpm --version') do echo       pnpm %%v OK
 
-REM ---- Step 2: NDI SDK detection (warn only) ----------------------
+REM ---- Step 2: NDI build prerequisites (Python + VS Build Tools) --
 echo.
-echo [2/7] Checking NDI SDK...
+echo [2/7] Checking NDI build prerequisites...
+
+REM --- 2a: NDI SDK (warn only - grandiose ships its own libs) ------
 set "NDI_OK=0"
 if exist "%PROGRAMFILES%\NDI\NDI 5 SDK\Bin\x64\Processing.NDI.Lib.x64.dll" set "NDI_OK=1"
 if exist "%PROGRAMFILES%\NDI\NDI 6 SDK\Bin\x64\Processing.NDI.Lib.x64.dll" set "NDI_OK=1"
 if "!NDI_OK!"=="1" (
   echo       NDI SDK found OK
 ) else (
-  color 0E
-  echo       WARNING: NDI SDK not detected. Native NDI output will not work.
-  echo       Free download: https://ndi.video/sdk
-  echo       Continuing anyway in 5 seconds...
-  timeout /t 5 /nobreak >nul
-  color 0B
+  echo       NDI SDK not found ^(OK - grandiose ships its own NDI libs^)
+)
+
+REM --- 2b: Python 3.x (REQUIRED for grandiose source compile) ------
+set "PY_OK=0"
+where python >nul 2>nul
+if not errorlevel 1 (
+  for /f "tokens=*" %%v in ('python --version 2^>^&1') do set "PYVER=%%v"
+  echo       !PYVER! OK
+  set "PY_OK=1"
+)
+if "!PY_OK!"=="0" (
+  set "FAIL_STEP=Python 3.x is required to compile the NDI native module. Install from https://www.python.org/downloads/ - tick 'Add Python to PATH' - then re-run BUILD.bat."
+  goto :DIE
+)
+
+REM --- 2c: Visual Studio Build Tools 2022 with C++ workload --------
+REM We use vswhere (ships with VS 2017+) to detect any installation
+REM that has the VC++ tools component.
+set "VSWHERE=%PROGRAMFILES(X86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+set "VS_OK=0"
+if exist "!VSWHERE!" (
+  for /f "usebackq tokens=*" %%i in (`"!VSWHERE!" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2^>nul`) do (
+    if not "%%i"=="" set "VS_OK=1"
+  )
+)
+if "!VS_OK!"=="1" (
+  echo       Visual Studio C++ Build Tools OK
+) else (
+  set "FAIL_STEP=Visual Studio Build Tools 2022 with 'Desktop development with C++' workload is required to compile the NDI native module. Download the FREE installer from https://visualstudio.microsoft.com/visual-cpp-build-tools/ - in the installer, check 'Desktop development with C++' - install ^(~5 GB^) - reboot - then re-run BUILD.bat."
+  goto :DIE
 )
 
 REM ---- Step 3: Clean previous build -------------------------------
@@ -94,22 +128,12 @@ echo       Output captured to build-log.txt
 call pnpm config set --location=project auto-install-peers true       >> "%LOGFILE%" 2>&1
 call pnpm config set --location=project strict-peer-dependencies false >> "%LOGFILE%" 2>&1
 
-REM ── CRITICAL: tell prebuild-install to fetch the ELECTRON prebuild
-REM    of grandiose, not the Node.js prebuild. The host Node version
-REM    (whatever you have installed) is irrelevant — at runtime
-REM    grandiose is loaded by Electron's own bundled Node ABI. Without
-REM    these env vars, prebuild-install picks up your host Node (e.g.
-REM    Node 24), can't find a matching prebuild, falls back to a
-REM    source compile, fails because Visual Studio Build Tools aren't
-REM    installed, and pnpm SILENTLY skips grandiose because it's in
-REM    optionalDependencies. Result: the installed app says
-REM    "NDI runtime not detected" forever.
+REM Tell node-gyp to build for Electron's bundled Node ABI, not host Node.
 set "npm_config_runtime=electron"
 set "npm_config_target=33.2.1"
 set "npm_config_disturl=https://electronjs.org/headers"
 set "npm_config_arch=x64"
 set "npm_config_target_arch=x64"
-set "npm_config_build_from_source=false"
 
 set INSTALL_TRY=0
 :RETRY_INSTALL
@@ -126,81 +150,62 @@ if errorlevel 1 (
 )
 echo       Dependencies installed OK
 
-REM ---- Step 4b: Install grandiose (NDI) ---------------------------
-REM grandiose is intentionally NOT in package.json — pnpm 10 silently
-REM excludes optional native modules whose engines/cpu/os don't match
-REM the host (e.g. Node 24). We install it ourselves, with multiple
-REM fallback strategies, and DUMP the real error to the console if
-REM all of them fail so the user doesn't have to go hunt the log.
+REM ---- Step 4b: Install grandiose (NDI native module) -------------
+REM IMPORTANT FACTS (verified 2026-04):
+REM   * grandiose on npm is ABANDONED at v0.0.4 with the OLD API
+REM   * the API our ndi-service.ts uses lives ONLY on the GitHub
+REM     master branch (v0.1.0-unreleased)
+REM   * master uses pkg-prebuilds: tries a prebuilt binary first,
+REM     falls back to node-gyp rebuild (compile from source)
+REM   * grandiose ships its OWN NDI .dll/.lib/.h - no NDI SDK needed
+REM     for compile, only Python + VS Build Tools (verified above)
 echo.
-echo [4b/7] Installing NDI native module (grandiose)...
-where npm >nul 2>nul
-if errorlevel 1 (
-  color 0E
-  echo       WARNING: npm not found - skipping NDI install.
-  color 0B
-  goto :SKIP_GRANDIOSE
-)
+echo [4b/7] Installing NDI native module (grandiose) from GitHub...
+echo       This compiles a small C++ module - takes 1-2 minutes.
 
-REM --- Strategy 1: npm install with the prebuilt binary fetch ------
-echo       [strategy 1/3] npm install grandiose@3.0.5 (prebuilt binary)...
+REM --- Strategy 1: install + native build in one shot --------------
+echo       [strategy 1/2] npm install github:Streampunk/grandiose...
 echo. >> "%LOGFILE%"
-echo === GRANDIOSE STRATEGY 1: npm install >> "%LOGFILE%"
-call npm install grandiose@3.0.5 --no-save --no-package-lock --legacy-peer-deps --foreground-scripts >> "%LOGFILE%" 2>&1
+echo === GRANDIOSE STRATEGY 1: github master + source build >> "%LOGFILE%"
+call npm install github:Streampunk/grandiose --no-save --no-package-lock --legacy-peer-deps --foreground-scripts --build-from-source >> "%LOGFILE%" 2>&1
 if exist "node_modules\grandiose\build\Release\grandiose.node" goto :GRANDIOSE_OK
-if exist "node_modules\grandiose\prebuilds" goto :TRY_PREBUILD_INSTALL
 
-REM --- Strategy 2: install JS only, then fetch binary explicitly ---
-echo       [strategy 2/3] npm install --ignore-scripts then prebuild-install...
+REM --- Strategy 2: install JS only, then electron-rebuild ----------
+echo       [strategy 2/2] reinstall --ignore-scripts then electron-rebuild...
 echo. >> "%LOGFILE%"
-echo === GRANDIOSE STRATEGY 2: ignore-scripts + prebuild-install >> "%LOGFILE%"
-call npm install grandiose@3.0.5 --no-save --no-package-lock --legacy-peer-deps --ignore-scripts >> "%LOGFILE%" 2>&1
+echo === GRANDIOSE STRATEGY 2: ignore-scripts + electron-rebuild >> "%LOGFILE%"
+call npm install github:Streampunk/grandiose --no-save --no-package-lock --legacy-peer-deps --ignore-scripts >> "%LOGFILE%" 2>&1
 if not exist "node_modules\grandiose\package.json" goto :GRANDIOSE_FAIL
-:TRY_PREBUILD_INSTALL
-pushd "node_modules\grandiose"
-call npx --yes prebuild-install --runtime=electron --target=33.2.1 --arch=x64 --platform=win32 >> "%LOGFILE%" 2>&1
-popd
-if exist "node_modules\grandiose\build\Release\grandiose.node" goto :GRANDIOSE_OK
-
-REM --- Strategy 3: rebuild from source against Electron via @electron/rebuild
-echo       [strategy 3/3] electron-rebuild from source...
-echo. >> "%LOGFILE%"
-echo === GRANDIOSE STRATEGY 3: electron-rebuild from source >> "%LOGFILE%"
 call pnpm exec electron-rebuild -f -w grandiose --module-dir . >> "%LOGFILE%" 2>&1
 if exist "node_modules\grandiose\build\Release\grandiose.node" goto :GRANDIOSE_OK
 
 :GRANDIOSE_FAIL
-color 0E
+color 0C
 echo.
-echo ----------------------------------------------------------------
-echo   NDI install FAILED. Last 30 lines of grandiose error log:
-echo ----------------------------------------------------------------
-powershell -NoProfile -Command "Get-Content -Tail 30 '%LOGFILE%' | ForEach-Object { Write-Host $_ }"
-echo ----------------------------------------------------------------
+echo ================================================================
+echo   NDI native module BUILD FAILED. Last 40 lines of error log:
+echo ================================================================
+powershell -NoProfile -Command "Get-Content -Tail 40 '%LOGFILE%' | ForEach-Object { Write-Host $_ }"
+echo ================================================================
 echo   Full log: %LOGFILE%
 echo.
-echo   COMMON FIXES for this exact error:
-echo     1. Install Visual Studio Build Tools 2022 with the
-echo        "Desktop development with C++" workload, then re-run.
-echo        https://visualstudio.microsoft.com/visual-cpp-build-tools/
-echo     2. Make sure Python 3.x is on PATH:  python --version
-echo     3. Confirm the NDI 5/6 SDK is installed (the build script
-echo        already verified this in step 2). If the SDK headers are
-echo        in a non-default folder, set NDI_SDK_DIR to that folder.
-echo     4. If you are on Node 24, try installing Node 20 LTS
-echo        (https://nodejs.org/en/download) and re-run. grandiose's
-echo        prebuilt binaries are most reliable on Node 20.
+echo   Both Python and VS Build Tools were detected, so the most
+echo   likely causes are:
+echo     * VS Build Tools is installed but missing the C++ workload.
+echo       Re-open the Visual Studio Installer, click Modify on
+echo       "Build Tools 2022", and tick "Desktop development with C++".
+echo     * Python is installed but node-gyp picks the wrong version.
+echo       Run:  npm config set python "C:\Path\To\python.exe"
+echo     * Antivirus/Defender blocked the .node file. Try excluding
+echo       this folder from real-time scanning and re-run.
 echo.
-echo   The build will continue WITHOUT native NDI. Output windows,
-echo   transcription, and the rest of the app will still work.
-color 0B
-goto :SKIP_GRANDIOSE
+set "FAIL_STEP=NDI native module compile failed. See log above."
+goto :DIE
 
 :GRANDIOSE_OK
 color 0A
-echo       grandiose installed and binary present OK
+echo       grandiose compiled and binary present OK
 color 0B
-:SKIP_GRANDIOSE
 
 REM ---- Step 5: Generate Prisma client -----------------------------
 echo.
@@ -285,12 +290,6 @@ echo.
 echo   Send the LAST 50 lines of the log for help.
 echo.
 
-REM =================================================================
-REM  HOLD-THE-WINDOW handler. Both success and failure end here so
-REM  the cmd window can NEVER close on its own. Two pauses + an
-REM  infinite read loop guarantees it stays open even if the first
-REM  pause is consumed by a stray keystroke.
-REM =================================================================
 :END_HOLD
 echo.
 echo ================================================================
