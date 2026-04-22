@@ -60,3 +60,9 @@ id = "ETumINq2whR-7zIFUg2X7"
 uri = "file://downloads/ScriptureLive-AI-source-v0.4.5.zip"
 type = "unspecified"
 title = "ScriptureLive AI source v0.4.5 (patches node-gyp to accept VS 2026)"
+
+[[outputs]]
+id = "HVyB_Sbgxe5YOwb_uH82r"
+uri = "file://downloads/ScriptureLive-AI-SLIM.zip"
+type = "unspecified"
+title = "ScriptureLive AI — Slim project (source only, 312 files, 3.5 MB)"
