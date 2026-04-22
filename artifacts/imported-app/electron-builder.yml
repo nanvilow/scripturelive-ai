@@ -29,19 +29,19 @@ files:
   - "!node_modules/fsevents/**/*"
   - "!node_modules/.pnpm/fsevents@*/**/*"
 asarUnpack:
-  # grandiose ships native .node binaries that MUST live on the real
-  # filesystem (not inside an asar) so Electron can load them at runtime.
-  # We unpack BOTH the hoisted top-level path AND the pnpm-isolated
-  # path because pnpm 10's default linker stores the real files under
-  # node_modules/.pnpm/ and only symlinks them into node_modules/.
-  - "node_modules/grandiose/**/*"
-  - "node_modules/.pnpm/grandiose@*/**/*"
-  - "node_modules/.pnpm/grandiose@*/node_modules/grandiose/**/*"
-# Skip electron-builder's automatic `npm rebuild` step. The native modules
-# we actually ship at runtime (`grandiose` for NDI) ship with prebuilds or
-# are built once during `pnpm install`. Re-running node-gyp here forces
-# every Windows user to install Python + Visual Studio Build Tools, which
-# we don't want for a one-click installer.
+  # koffi ships native .node binaries that MUST live on the real
+  # filesystem (not inside an asar) so Electron can dlopen them at runtime.
+  # We unpack BOTH the hoisted top-level path AND the pnpm-isolated path
+  # because pnpm 10 stores the real files under node_modules/.pnpm/ and
+  # only symlinks them into node_modules/.
+  - "node_modules/koffi/**/*"
+  - "node_modules/.pnpm/koffi@*/**/*"
+  - "node_modules/.pnpm/koffi@*/node_modules/koffi/**/*"
+# Skip electron-builder's automatic `npm rebuild` step. We have ZERO
+# native modules that need compiling — koffi (the only native dep we
+# ship) bundles precompiled win32-x64 binaries inside its npm tarball.
+# Disabling rebuild eliminates the need for Python / Visual Studio
+# Build Tools / node-gyp on the user's machine entirely.
 npmRebuild: false
 buildDependenciesFromSource: false
 extraResources:

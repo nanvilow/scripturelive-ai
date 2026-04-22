@@ -78,3 +78,9 @@ id = "d74IwPsqsbFkX2TwpJxAs"
 uri = "file://downloads/ScriptureLive-AI-source-v0.4.7.zip"
 type = "unspecified"
 title = "ScriptureLive-AI-source-v0.4.7.zip"
+
+[[outputs]]
+id = "OeVqkZY7oFeX4KgUffdhq"
+uri = "file://downloads/ScriptureLive-AI-source-v0.5.0.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.0 source (no C++ toolchain needed)"

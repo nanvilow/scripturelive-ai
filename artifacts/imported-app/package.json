@@ -1,6 +1,6 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.4.7",
+  "version": "0.5.0",
   "private": true,
   "main": "dist-electron/main.js",
   "pnpm": {
@@ -13,6 +13,7 @@
       "electron-winstaller",
       "es5-ext",
       "esbuild",
+      "koffi",
       "prisma",
       "sharp",
       "unrs-resolver"
@@ -103,12 +104,12 @@
     "z-ai-web-dev-sdk": "^0.0.17",
     "zod": "^4.0.2",
     "zustand": "^5.0.6",
-    "electron-updater": "^6.3.9"
+    "electron-updater": "^6.3.9",
+    "koffi": "^2.16.1"
   },
-  "_grandiose_note": "grandiose (NDI) is intentionally NOT listed in dependencies or optionalDependencies — pnpm 10 silently skips optional native modules whose engines/cpu/os constraints don't exactly match the host (e.g. on Node 24 hosts, the user gets 'failed compatibility check. Excluding it'). Instead BUILD.bat installs grandiose directly with npm using Electron-ABI env vars, then runs @electron/rebuild. This guarantees the .node binary actually lands in node_modules/grandiose/ and works at runtime.",
+  "_ndi_note": "NDI output is implemented via koffi (FFI) calling directly into Processing.NDI.Lib.x64.dll from the user's NDI Tools/Runtime install. koffi ships a precompiled win32-x64 .node binary inside its npm tarball, so there is NO node-gyp / Visual Studio Build Tools / electron-rebuild step. The runtime DLL is located at app start by walking NDI_RUNTIME_DIR_V6 / V5 / V4 env vars and the standard NDI install path. See electron/ndi-service.ts.",
   "devDependencies": {
     "@electron/notarize": "^2.5.0",
-    "@electron/rebuild": "^3.7.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^22",
     "@types/react": "^19",
