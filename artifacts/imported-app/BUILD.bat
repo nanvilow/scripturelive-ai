@@ -29,7 +29,7 @@ echo. >> "%LOGFILE%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build  v0.3.8
+echo   ScriptureLive AI - One-click Windows Build  v0.3.9
 echo ================================================================
 echo   Full build log:   %LOGFILE%
 echo.
@@ -167,6 +167,26 @@ REM Use HTTPS tarball, NOT github:user/repo - the github: syntax
 REM requires git.exe to be installed; the tarball URL just uses
 REM HTTPS so it works on any machine.
 set "GRANDIOSE_URL=https://codeload.github.com/Streampunk/grandiose/tar.gz/refs/heads/master"
+
+REM ── CRITICAL: install upstream node-gyp@12 globally and force
+REM    npm + electron-rebuild to use it.
+REM    The @electron/node-gyp fork bundled with @electron/rebuild
+REM    is v10 and only knows VS 2017/2019/2022. Users on VS 2026
+REM    (released 2026) get "unsupported version: 18" and the build
+REM    dies. node-gyp@12 has explicit VS 2026 support.
+echo       Installing node-gyp 12 ^(needed for VS 2022 AND VS 2026^)...
+call npm install -g node-gyp@12 >> "%LOGFILE%" 2>&1
+if errorlevel 1 (
+  color 0E
+  echo       WARNING: could not install node-gyp@12 globally - falling back to bundled.
+  color 0B
+) else (
+  for /f "delims=" %%g in ('npm prefix -g') do set "NPM_GLOBAL=%%g"
+  if exist "!NPM_GLOBAL!\node_modules\node-gyp\bin\node-gyp.js" (
+    set "npm_config_node_gyp=!NPM_GLOBAL!\node_modules\node-gyp\bin\node-gyp.js"
+    echo       node-gyp 12 path: !npm_config_node_gyp!
+  )
+)
 
 REM --- Strategy 1: install + native build in one shot --------------
 echo       [strategy 1/2] npm install grandiose tarball + source build...

@@ -12,3 +12,9 @@ id = "Q0kULFb7Mo--gw2e0oQpQ"
 uri = "file://downloads/ScriptureLive-AI-source-v0.3.8.zip"
 type = "unspecified"
 title = "ScriptureLive AI source v0.3.8 (NDI via HTTPS tarball - no git needed)"
+
+[[outputs]]
+id = "i3JQDYhenCRN_xFFHPjtO"
+uri = "file://downloads/ScriptureLive-AI-source-v0.3.9.zip"
+type = "unspecified"
+title = "ScriptureLive AI source v0.3.9 (node-gyp 12 for VS 2026 support)"
