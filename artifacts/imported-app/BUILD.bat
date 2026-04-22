@@ -29,7 +29,7 @@ echo. >> "%SL_LOG%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build  v0.4.6
+echo   ScriptureLive AI - One-click Windows Build  v0.4.7
 echo ================================================================
 echo   Full build log:   %SL_LOG%
 echo.
@@ -181,6 +181,14 @@ set "npm_config_disturl=https://electronjs.org/headers"
 set "npm_config_arch=x64"
 set "npm_config_target_arch=x64"
 
+REM CRITICAL: Suppress ALL postinstall/native-build scripts during install.
+REM Native modules (@parcel/watcher, grandiose) call node-gyp in postinstall.
+REM node-gyp ships its own copy of @electron/node-gyp with the broken VS
+REM version map. If postinstall fires BEFORE we re-apply the patch, the
+REM rebuild blows up with "unsupported version: 18". So we install with
+REM scripts disabled, patch, then call electron-rebuild ourselves.
+set "npm_config_ignore_scripts=true"
+
 set INSTALL_TRY=0
 :RETRY_INSTALL
 set /a INSTALL_TRY+=1
@@ -231,20 +239,32 @@ REM (Step 2d already set up the VS environment with vcvars64.bat,
 REM  GYP_MSVS_VERSION=2022, and npm_config_msvs_version=2022. node-gyp
 REM  will now skip its broken VS detection and use the active env.)
 
-REM --- Strategy 1: install + native build in one shot --------------
-echo       [strategy 1/2] npm install grandiose tarball + source build...
+REM --- Single strategy: install JS only, re-patch, electron-rebuild ALL
+REM Why one path now: we set npm_config_ignore_scripts=true above, so no
+REM install will EVER fire its own native rebuild. We control the build
+REM in one place: install grandiose JS files, re-apply the VS-2026 patch
+REM (the new install may have brought in a fresh unpatched node-gyp), then
+REM call electron-rebuild on every native module so they all compile with
+REM the patched node-gyp in a single pass.
+echo       [step 1/3] installing grandiose tarball (JS only, no scripts)...
 echo. >> "%SL_LOG%"
-echo === GRANDIOSE STRATEGY 1: tarball + source build >> "%SL_LOG%"
-call npm install "!GRANDIOSE_URL!" --no-save --no-package-lock --legacy-peer-deps --foreground-scripts --build-from-source >> "%SL_LOG%" 2>&1
-if exist "node_modules\grandiose\build\Release\grandiose.node" goto :GRANDIOSE_OK
-
-REM --- Strategy 2: install JS only, then electron-rebuild ----------
-echo       [strategy 2/2] reinstall --ignore-scripts then electron-rebuild...
-echo. >> "%SL_LOG%"
-echo === GRANDIOSE STRATEGY 2: ignore-scripts + electron-rebuild >> "%SL_LOG%"
+echo === GRANDIOSE: install JS files >> "%SL_LOG%"
 call npm install "!GRANDIOSE_URL!" --no-save --no-package-lock --legacy-peer-deps --ignore-scripts >> "%SL_LOG%" 2>&1
 if not exist "node_modules\grandiose\package.json" goto :GRANDIOSE_FAIL
-call pnpm exec electron-rebuild -f -w grandiose --module-dir . >> "%SL_LOG%" 2>&1
+
+echo       [step 2/3] re-applying VS-2026 patch to fresh node-gyp copies...
+echo. >> "%SL_LOG%"
+echo === GRANDIOSE: re-patch node-gyp >> "%SL_LOG%"
+call node "scripts\patch-node-gyp-vs2026.js" >> "%SL_LOG%" 2>&1
+if errorlevel 1 (
+  set "FAIL_STEP=node-gyp re-patch failed - see log."
+  goto :DIE
+)
+
+echo       [step 3/3] electron-rebuild all native modules (1-3 minutes)...
+echo. >> "%SL_LOG%"
+echo === GRANDIOSE: electron-rebuild -f >> "%SL_LOG%"
+call pnpm exec electron-rebuild -f --module-dir . >> "%SL_LOG%" 2>&1
 if exist "node_modules\grandiose\build\Release\grandiose.node" goto :GRANDIOSE_OK
 
 :GRANDIOSE_FAIL

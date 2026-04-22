@@ -72,3 +72,9 @@ id = "QIscSNlx50-knUYK612wm"
 uri = "file://downloads/ScriptureLive-AI-source-v0.4.6.zip"
 type = "unspecified"
 title = "ScriptureLive-AI-source-v0.4.6.zip"
+
+[[outputs]]
+id = "d74IwPsqsbFkX2TwpJxAs"
+uri = "file://downloads/ScriptureLive-AI-source-v0.4.7.zip"
+type = "unspecified"
+title = "ScriptureLive-AI-source-v0.4.7.zip"
