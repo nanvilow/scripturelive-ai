@@ -2,20 +2,19 @@
 /*
  * patch-node-gyp-vs2026.js
  *
- * @electron/node-gyp v10.x has a hard-coded VS version map:
- *   { '15': 2017, '16': 2019, '17': 2022 }
- * Visual Studio Build Tools 2026 reports as version "18", which is not
- * in that map, so versionYear comes back undefined and node-gyp bails
- * with "could not find a version of Visual Studio 2017 or newer to use",
- * EVEN when GYP_MSVS_VERSION=2022 is set and the VS Command Prompt is
- * already loaded via vcvars64.bat.
+ * @electron/node-gyp v10.x has a hard-coded version map in
+ * lib/find-visualstudio.js (function getVersionInfo) that only knows
+ * versionMajor 15/16/17. VS Build Tools 2026 reports versionMajor 18
+ * and is rejected as "unsupported version: 18", which makes
+ * versionYear undefined and aborts the whole compile.
  *
- * This script walks node_modules/, finds every find-visualstudio.js
- * shipped by node-gyp / @electron/node-gyp, and adds an "18" -> 2022
- * mapping so VS 2026 builds with the VS2022 toolset format (which is
- * what its own MSBuild emits anyway).
+ * This script finds every find-visualstudio.js shipped under
+ * node_modules/ and inserts an additional `if (ret.versionMajor === 18)
+ * { ret.versionYear = 2022; return ret }` clause before the unsupported-
+ * version log line. VS 2026's MSBuild is backward-compatible with the
+ * VS 2022 toolset, so 18 -> 2022 is the correct mapping.
  *
- * Idempotent: safe to run repeatedly. Prints what it patched.
+ * Idempotent: re-running is a no-op once patched.
  */
 
 const fs = require('fs');
@@ -42,53 +41,58 @@ function findFiles(start) {
 
 function patch(file) {
   let src = fs.readFileSync(file, 'utf8');
-  if (src.includes(SENTINEL)) return { file, status: 'already-patched' };
-
-  let changed = false;
-
-  // Pattern A: object literal map { '15': 2017, '16': 2019, '17': 2022 }
-  // Match the '17' entry (with various quote/whitespace) and append '18'.
-  const objRe = /(['"])17\1\s*:\s*(['"]?)2022\2\s*,?/;
-  if (objRe.test(src)) {
-    src = src.replace(objRe, (m, q1, q2) => `${q1}17${q1}: ${q2}2022${q2}, ${q1}18${q1}: ${q2}2022${q2}, ${SENTINEL}`);
-    changed = true;
+  if (src.includes(SENTINEL)) {
+    return { file, status: 'already-patched' };
   }
 
-  // Pattern B: array of [regex, year] tuples [ /^17\./, 2022 ]
-  const arrRe = /\[\s*\/\^17\\\.\s*\/\s*,\s*2022\s*\]/;
-  if (arrRe.test(src)) {
-    src = src.replace(arrRe, m => `${m}, [/^18\\./, 2022] ${SENTINEL}`);
-    changed = true;
+  // Pattern: ES6 class style (@electron/node-gyp v10.x)
+  //   if (ret.versionMajor === 17) {
+  //     ret.versionYear = 2022
+  //     return ret
+  //   }
+  //   this.log.silly('- unsupported version:', ret.versionMajor)
+  const re1 = /(if\s*\(\s*ret\.versionMajor\s*===\s*17\s*\)\s*\{\s*\n\s*ret\.versionYear\s*=\s*2022\s*\n\s*return\s+ret\s*\n\s*\})/;
+  if (re1.test(src)) {
+    src = src.replace(re1, (m) =>
+      `${m}\n    ${SENTINEL}\n    if (ret.versionMajor === 18) {\n      ret.versionYear = 2022\n      return ret\n    }`);
+    fs.writeFileSync(file, src);
+    return { file, status: 'patched', pattern: 'es6-class' };
   }
 
-  // Pattern C: switch / case statements
-  const caseRe = /case\s+(['"])17\1\s*:[^\n]*\n/;
-  if (caseRe.test(src)) {
-    src = src.replace(caseRe, m => `${m}      case '18': versionYear = 2022; break; ${SENTINEL}\n`);
-    changed = true;
+  // Pattern: prototype style (legacy node-gyp v9.x)
+  //   } else if (parseFloat(parts[0]) === 17) {
+  //     ret.versionYear = 2022
+  //   }
+  // OR object map style.
+  const re2 = /(parseFloat\([^)]+\)\s*===\s*17\s*\)\s*\{\s*\n\s*ret\.versionYear\s*=\s*2022\s*\n\s*\})/;
+  if (re2.test(src)) {
+    src = src.replace(re2, (m) =>
+      `${m} else if (parseFloat(parts[0]) === 18) {\n      ret.versionYear = 2022 ${SENTINEL}\n    }`);
+    fs.writeFileSync(file, src);
+    return { file, status: 'patched', pattern: 'prototype' };
   }
 
-  // Pattern D: defensive fallback - intercept getVersionYear / similar.
-  // If none of the above matched, inject a guard at the TOP of the file
-  // that monkey-patches the resulting object before the rest of the
-  // module runs. This is a last-resort safety net.
-  if (!changed) {
-    // Find the "unsupported version:" log line - the major variable
-    // is always logged just before. Insert a normalizer.
-    const guardRe = /(\bif\s*\(\s*!\s*versionYear\s*\)\s*\{)/;
-    if (guardRe.test(src)) {
-      src = src.replace(guardRe, `if (!versionYear && (major === '18' || major === 18)) versionYear = 2022; ${SENTINEL}\n  $1`);
-      changed = true;
+  // Pattern: object literal map { 15: 2017, 16: 2019, 17: 2022 }
+  const re3 = /(['"]?17['"]?\s*:\s*['"]?2022['"]?)/;
+  if (re3.test(src)) {
+    src = src.replace(re3, `$1, 18: 2022 ${SENTINEL}`);
+    fs.writeFileSync(file, src);
+    return { file, status: 'patched', pattern: 'object-map' };
+  }
+
+  // Diagnostics: dump the area around versionMajor / versionYear / 2022
+  const lines = src.split('\n');
+  const interesting = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (/versionMajor|versionYear|2022|2019|2017/.test(lines[i])) {
+      interesting.push(`  L${i + 1}: ${lines[i]}`);
     }
   }
-
-  if (!changed) {
-    return { file, status: 'no-pattern-matched',
-             snippet: src.split('\n').slice(0, 40).join('\n') };
-  }
-
-  fs.writeFileSync(file, src);
-  return { file, status: 'patched' };
+  return {
+    file,
+    status: 'no-pattern-matched',
+    snippet: interesting.slice(0, 40).join('\n'),
+  };
 }
 
 const files = findFiles(ROOT);
@@ -101,7 +105,7 @@ for (const f of files) {
   const rel = path.relative(process.cwd(), f);
   if (r.status === 'patched') {
     patched++;
-    console.log(`  PATCHED  ${rel}`);
+    console.log(`  PATCHED  (${r.pattern})  ${rel}`);
   } else if (r.status === 'already-patched') {
     already++;
     console.log(`  skip     ${rel} (already patched)`);
@@ -109,7 +113,7 @@ for (const f of files) {
     failed++;
     console.log(`  WARN     ${rel} (${r.status})`);
     if (r.snippet) {
-      console.log(`  --- first 40 lines for diagnosis ---`);
+      console.log(`  --- versionYear-related lines for diagnosis ---`);
       console.log(r.snippet);
       console.log(`  --- end snippet ---`);
     }
@@ -117,7 +121,4 @@ for (const f of files) {
 }
 
 console.log(`[patch-node-gyp-vs2026] done. patched=${patched} already=${already} failed=${failed}`);
-
-// Exit 0 even if some files didn't match - the build can still succeed
-// if at least the @electron/node-gyp instance was patched.
 process.exit(0);
