@@ -90,3 +90,9 @@ id = "3knsE5qIqgP1-y-pT1cI2"
 uri = "file://release/scripturelive-ai-source-v0.5.1.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.1 — One-click NDI source"
+
+[[outputs]]
+id = "h5GJ_2E1evM1QPSwixgxD"
+uri = "file://release/scripturelive-ai-source-v0.5.2.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.2 — Round logo, kiosk output, speech fix"

@@ -64,6 +64,24 @@ import { FrameCapture } from './frame-capture'
 import { setupAutoUpdater, runManualCheck, getUpdateState, openReleasesPage } from './updater'
 
 const isDev = !app.isPackaged
+
+// ── Chromium command-line flags ───────────────────────────────────
+// Best-effort flags to coax Web Speech / mic capture into working in
+// the packaged app. These are applied BEFORE app.whenReady so they
+// take effect during Chromium init.
+//
+// Note: Web Speech API in Electron is inherently limited because
+// Google's speech-to-text endpoint requires a Google API key that's
+// only baked into Chrome — packaged Electron builds will hit
+// `network` errors. The renderer-side hook now detects this and
+// shows a clear actionable error instead of bouncing on/off forever.
+app.commandLine.appendSwitch('enable-features', 'WebSpeechAPI,SpeechSynthesisAPI,WebRTC-Audio-Red-For-Opus')
+app.commandLine.appendSwitch('enable-speech-dispatcher')
+// Auto-grant getUserMedia for the bundled origin so the mic doesn't
+// need a per-session prompt the user has to click through.
+app.commandLine.appendSwitch('use-fake-ui-for-media-stream')
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+
 const ndi = new NdiService()
 let frameCapture: FrameCapture | null = null
 let mainWindow: BrowserWindow | null = null
@@ -431,52 +449,121 @@ function setupIpc() {
     }
   })
 
-  ipcMain.handle('output:open-window', (_e, opts?: { displayId?: number }) => {
-    if (!appBaseUrl) return { ok: false, error: 'app not ready' }
+  // ── Hardened kiosk-style output window factory ─────────────────
+  // Goal: the output window must look and behave EXACTLY like a vMix /
+  // Wirecast / EasyWorship secondary output — not a browser. That means:
+  //   - true fullscreen kiosk on whatever display we land on (primary OR
+  //     secondary), no taskbar, no title bar, no menu, no chrome
+  //   - no right-click context menu (no "Inspect Element" giveaway)
+  //   - no dev-tools shortcuts (F12, Ctrl+Shift+I/J/C, Ctrl+U)
+  //   - no scrollbars, no text selection, no user zoom
+  //   - cursor auto-hides after idle so projectors don't show a pointer
+  //   - black backdrop so any letterboxed slide blends into the wall
+  //   - Esc cleanly closes the window for the operator
+  function createKioskOutput(opts: { displayId?: number; path: string; title: string }) {
     let target = screen.getPrimaryDisplay()
-    if (opts?.displayId !== undefined) {
+    if (opts.displayId !== undefined) {
       const found = screen.getAllDisplays().find((d) => d.id === opts.displayId)
       if (found) target = found
-      else {
-        // Pick the first non-primary display if available
-        const others = screen.getAllDisplays().filter((d) => d.id !== screen.getPrimaryDisplay().id)
-        if (others[0]) target = others[0]
-      }
     } else if (screen.getAllDisplays().length > 1) {
       // No explicit pick → prefer the first non-primary display so the
-      // operator's main monitor stays free for the console.
+      // operator's main console monitor stays free for the operator UI.
       const others = screen.getAllDisplays().filter((d) => d.id !== screen.getPrimaryDisplay().id)
       if (others[0]) target = others[0]
     }
     const { x, y, width, height } = target.bounds
-    // Frameless / chromeless / kiosk-style output window — looks like
-    // vMix/Wirecast secondary output, NOT a browser. Always fullscreen
-    // when sent to a non-primary display so it covers the projector
-    // edge-to-edge with no taskbar visible. Press Esc to exit fullscreen.
-    const isSecondary = target.id !== screen.getPrimaryDisplay().id
+
     const win = new BrowserWindow({
       x, y, width, height,
       backgroundColor: '#000',
-      title: 'ScriptureLive — Congregation Display',
+      title: opts.title,
       frame: false,
       autoHideMenuBar: true,
-      fullscreen: isSecondary,
-      kiosk: isSecondary,
-      simpleFullscreen: isSecondary,
+      // ALWAYS fullscreen + kiosk, even on the primary display. This is
+      // what stops it from "looking like a browser window" — no chrome
+      // of any kind, no taskbar peek, no resize handles.
+      fullscreen: true,
+      kiosk: true,
+      simpleFullscreen: true,
+      // (Cursor hiding is handled below via CSS injection — Electron's
+      // BrowserWindow doesn't expose a cross-platform autoHideCursor.)
+      // Stay above the operator console so a click on the console doesn't
+      // bring the projector behind it.
+      alwaysOnTop: target.id !== screen.getPrimaryDisplay().id,
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
+        // Disable devtools entirely on production output windows.
+        devTools: false,
       },
     })
     win.removeMenu()
     win.setMenuBarVisibility(false)
+
+    // Block dev-tools / view-source / reload key combos. The operator
+    // should never accidentally open the inspector mid-service.
     win.webContents.on('before-input-event', (event, input) => {
-      if (input.type === 'keyDown' && input.key === 'Escape') {
+      if (input.type !== 'keyDown') return
+      const key = input.key
+      // Esc → close the output cleanly.
+      if (key === 'Escape') {
         event.preventDefault()
         try { win.close() } catch { /* ignore */ }
+        return
+      }
+      // Block F12, Ctrl+Shift+I/J/C, Ctrl+U, Ctrl+R, F5, Ctrl+P
+      const ctrl = input.control || input.meta
+      const shift = input.shift
+      if (
+        key === 'F12' ||
+        key === 'F5' ||
+        (ctrl && shift && (key === 'I' || key === 'i' || key === 'J' || key === 'j' || key === 'C' || key === 'c')) ||
+        (ctrl && (key === 'U' || key === 'u' || key === 'R' || key === 'r' || key === 'P' || key === 'p'))
+      ) {
+        event.preventDefault()
       }
     })
-    win.loadURL(`${appBaseUrl}/api/output/congregation`)
+
+    // Block the right-click "Inspect Element" menu entirely.
+    win.webContents.on('context-menu', (e) => e.preventDefault())
+
+    // Inject CSS that strips scrollbars, text selection, and the
+    // browser cursor. This is what kills the last bit of "browser feel" —
+    // even if the page has its own scrollbar or selection styles, this
+    // wins because it's an !important on the documentElement.
+    win.webContents.on('did-finish-load', () => {
+      win.webContents.insertCSS(`
+        html, body {
+          margin: 0 !important;
+          padding: 0 !important;
+          overflow: hidden !important;
+          background: #000 !important;
+          cursor: none !important;
+          user-select: none !important;
+          -webkit-user-select: none !important;
+        }
+        ::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
+        * { cursor: none !important; }
+      `).catch(() => { /* ignore — page may have unloaded */ })
+    })
+
+    // Lock pinch-zoom and Ctrl+wheel zoom.
+    win.webContents.setVisualZoomLevelLimits(1, 1).catch(() => { /* ignore */ })
+    win.webContents.on('zoom-changed', () => {
+      win.webContents.setZoomFactor(1)
+    })
+
+    win.loadURL(`${appBaseUrl}${opts.path}`)
+    return win
+  }
+
+  ipcMain.handle('output:open-window', (_e, opts?: { displayId?: number }) => {
+    if (!appBaseUrl) return { ok: false, error: 'app not ready' }
+    createKioskOutput({
+      displayId: opts?.displayId,
+      path: '/api/output/congregation',
+      title: 'ScriptureLive — Congregation Display',
+    })
     return { ok: true }
   })
 
@@ -484,32 +571,11 @@ function setupIpc() {
   // countdown timer and clock for the speaker on a separate screen.
   ipcMain.handle('output:open-stage', (_e, opts?: { displayId?: number }) => {
     if (!appBaseUrl) return { ok: false, error: 'app not ready' }
-    let target = screen.getPrimaryDisplay()
-    if (opts?.displayId !== undefined) {
-      const found = screen.getAllDisplays().find((d) => d.id === opts.displayId)
-      if (found) target = found
-    }
-    const { x, y, width, height } = target.bounds
-    const isSecondary = target.id !== screen.getPrimaryDisplay().id
-    const win = new BrowserWindow({
-      x, y, width, height,
-      backgroundColor: '#000',
+    createKioskOutput({
+      displayId: opts?.displayId,
+      path: '/api/output/stage',
       title: 'ScriptureLive — Stage Display',
-      frame: false,
-      autoHideMenuBar: true,
-      fullscreen: isSecondary,
-      kiosk: isSecondary,
-      simpleFullscreen: isSecondary,
     })
-    win.removeMenu()
-    win.setMenuBarVisibility(false)
-    win.webContents.on('before-input-event', (event, input) => {
-      if (input.type === 'keyDown' && input.key === 'Escape') {
-        event.preventDefault()
-        try { win.close() } catch { /* ignore */ }
-      }
-    })
-    win.loadURL(`${appBaseUrl}/api/output/stage`)
     return { ok: true }
   })
 
