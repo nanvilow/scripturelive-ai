@@ -29,7 +29,7 @@ echo. >> "%SL_LOG%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build  v0.4.2
+echo   ScriptureLive AI - One-click Windows Build  v0.4.3 (verbose)
 echo ================================================================
 echo   Full build log:   %SL_LOG%
 echo.
@@ -148,6 +148,9 @@ REM Force gyp to assume VS2022 layout (works for VS2022 AND VS2026).
 set "GYP_MSVS_VERSION=2022"
 set "npm_config_msvs_version=2022"
 echo       VS env loaded. VCINSTALLDIR=!VCINSTALLDIR!
+echo       VS env loaded. VCINSTALLDIR=!VCINSTALLDIR! >> "%SL_LOG%"
+echo POST-VCVARS-OK > "%~dp0sl_trace.txt"
+@echo on
 
 REM ---- Step 3: Clean previous build -------------------------------
 echo.
