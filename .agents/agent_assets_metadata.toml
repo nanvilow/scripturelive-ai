@@ -6,3 +6,9 @@ id = "s0mvUyDxhSCzqa1YKR9Ck"
 uri = "file://downloads/ScriptureLive-AI-source-v0.3.7.zip"
 type = "unspecified"
 title = "ScriptureLive AI source v0.3.7 (NDI from GitHub master)"
+
+[[outputs]]
+id = "Q0kULFb7Mo--gw2e0oQpQ"
+uri = "file://downloads/ScriptureLive-AI-source-v0.3.8.zip"
+type = "unspecified"
+title = "ScriptureLive AI source v0.3.8 (NDI via HTTPS tarball - no git needed)"
