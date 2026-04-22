@@ -268,6 +268,84 @@ export default function DownloadPage() {
             </a>
             <span>then run <code className="rounded bg-muted px-1 font-mono">sha256sum -c SHA256SUMS.txt</code> next to the installers.</span>
           </div>
+
+          {/* End-to-end verification: a detached minisign signature on the
+              manifest + checksums file lets admins verify the chain even if
+              the page itself is compromised — the public key is published
+              out-of-band on this site and the GitHub README, so an attacker
+              who swaps both an installer and its hash on the page still can't
+              forge a signature without the maintainer's private key. */}
+          {manifest?.externalReleaseUrl && (
+            <div className="mt-4 rounded-md border border-border/70 bg-muted/30 p-3">
+              <div className="flex items-center gap-2 mb-2 text-[11px] font-semibold text-foreground">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+                Verify the manifest itself (advanced)
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                The hashes above are only as trustworthy as this page. For an
+                end-to-end check, fetch the signed{' '}
+                <code className="rounded bg-muted px-1 font-mono">manifest.json</code>{' '}
+                and its detached{' '}
+                <code className="rounded bg-muted px-1 font-mono">.minisig</code>{' '}
+                signature from the GitHub Release, plus our public key (also
+                pinned in the GitHub README), and verify with{' '}
+                <a
+                  href="https://jedisct1.github.io/minisign/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-foreground"
+                >
+                  minisign
+                </a>:
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                <a
+                  href={`${manifest.externalReleaseUrl}/manifest.json`}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 font-mono hover:bg-muted transition-colors"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Download className="h-3 w-3" /> manifest.json
+                </a>
+                <a
+                  href={`${manifest.externalReleaseUrl}/manifest.json.minisig`}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 font-mono hover:bg-muted transition-colors"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Download className="h-3 w-3" /> manifest.json.minisig
+                </a>
+                <a
+                  href={`${manifest.externalReleaseUrl}/SHA256SUMS.txt.minisig`}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 font-mono hover:bg-muted transition-colors"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Download className="h-3 w-3" /> SHA256SUMS.txt.minisig
+                </a>
+                <a
+                  href="/downloads/minisign.pub"
+                  download="scripturelive-minisign.pub"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 font-mono hover:bg-muted transition-colors"
+                >
+                  <Download className="h-3 w-3" /> minisign.pub
+                </a>
+              </div>
+              <pre className="mt-2 overflow-x-auto rounded-md border border-border bg-muted/40 p-2 font-mono text-[11px] leading-relaxed">
+{`# one-time: install minisign (brew install minisign / apt install minisign / scoop install minisign)
+minisign -Vm manifest.json -p scripturelive-minisign.pub
+minisign -Vm SHA256SUMS.txt -p scripturelive-minisign.pub
+# then trust the SHA-256 lines and verify each installer:
+sha256sum -c SHA256SUMS.txt`}
+              </pre>
+              <p className="mt-2 text-[10px] text-muted-foreground leading-snug">
+                Cross-check the public-key fingerprint against the copy
+                pinned in the project's GitHub repo README — that out-of-band
+                channel is what makes the chain tamper-evident. (If you got
+                here from a link in that README, you've already done it.)
+              </p>
+            </div>
+          )}
           <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
             <div>
               <div className="font-semibold text-muted-foreground mb-1">Windows (PowerShell)</div>
