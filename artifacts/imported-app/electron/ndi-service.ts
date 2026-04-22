@@ -12,6 +12,11 @@ import * as path from 'node:path'
  *   * No C++ toolchain on the user's machine
  *   * No node-gyp / electron-rebuild / VS toolset version dance
  *   * Works against any NDI 5/6 runtime install
+ *
+ * The sender broadcasts on the LAN via mDNS automatically (NDI does this
+ * inside NDIlib_send_create) - any vMix / Wirecast / OBS / NDI Studio
+ * Monitor instance on the same subnet will discover the source by name
+ * with no manual configuration.
  */
 
 export type NdiStartOptions = {
@@ -85,7 +90,9 @@ type NdiBindings = {
   send_create: (settings: unknown) => unknown
   send_destroy: (instance: unknown) => void
   send_send_video_v2: (instance: unknown, frame: unknown) => void
+  send_send_audio_v3: (instance: unknown, frame: unknown) => void
   videoFrameType: unknown
+  audioFrameType: unknown
   sendCreateType: unknown
   koffi: KoffiAPI
 }
@@ -149,6 +156,21 @@ export class NdiService extends EventEmitter {
         timestamp: 'int64',
       })
 
+      // NDIlib_audio_frame_v3_t — float32 planar PCM (the only format the
+      // NDI runtime accepts for v3 audio sends). 48kHz / 2ch is the
+      // canonical NDI broadcast format.
+      const NDIlib_audio_frame_v3_t = koffi.struct('NDIlib_audio_frame_v3_t', {
+        sample_rate: 'int32',
+        no_channels: 'int32',
+        no_samples: 'int32',
+        timecode: 'int64',
+        FourCC: 'uint32', // NDIlib_FourCC_audio_type_FLTP = 'FLTP'
+        p_data: 'void *',
+        channel_stride_in_bytes: 'int32',
+        p_metadata: 'string',
+        timestamp: 'int64',
+      })
+
       // ─── Function bindings ───────────────────────────────────
       // The NDI runtime DLL exports these symbols directly (v3.5+).
       const initialize = lib.func('bool NDIlib_initialize()') as () => boolean
@@ -161,6 +183,9 @@ export class NdiService extends EventEmitter {
       ) => void
       const send_send_video_v2 = lib.func(
         'void NDIlib_send_send_video_v2(void *p_instance, const NDIlib_video_frame_v2_t *p_video_data)',
+      ) as (instance: unknown, frame: unknown) => void
+      const send_send_audio_v3 = lib.func(
+        'void NDIlib_send_send_audio_v3(void *p_instance, const NDIlib_audio_frame_v3_t *p_audio_data)',
       ) as (instance: unknown, frame: unknown) => void
 
       // Boot the NDI runtime once. This call is cheap and idempotent.
@@ -176,7 +201,9 @@ export class NdiService extends EventEmitter {
         send_create,
         send_destroy,
         send_send_video_v2,
+        send_send_audio_v3,
         videoFrameType: NDIlib_video_frame_v2_t,
+        audioFrameType: NDIlib_audio_frame_v3_t,
         sendCreateType: NDIlib_send_create_t,
         koffi,
       }
@@ -208,6 +235,10 @@ export class NdiService extends EventEmitter {
     const settings = {
       p_ndi_name: opts.name || 'ScriptureLive',
       p_groups: null as unknown as string,
+      // clock_video = true makes NDIlib_send_send_video_v2 block to pace
+      // frames at the declared frame rate. This is what gives NDI its
+      // famously stable, low-jitter output even when our compositor
+      // delivers frames slightly early or late.
       clock_video: true,
       clock_audio: false,
     }
@@ -250,17 +281,49 @@ export class NdiService extends EventEmitter {
         frame_rate_D: 1000,
         picture_aspect_ratio: width / height,
         frame_format_type: FRAME_FORMAT_PROGRESSIVE,
-        timecode: 0n as unknown as number,
+        timecode: BigInt(0) as unknown as number,
         p_data: bgraBuffer,
         line_stride_in_bytes: width * 4,
         p_metadata: null as unknown as string,
-        timestamp: 0n as unknown as number,
+        timestamp: BigInt(0) as unknown as number,
       }
       this.bindings.send_send_video_v2(this.senderInstance, frame)
       this.status.frameCount += 1
       if (this.status.frameCount % 30 === 0) {
         this.emit('frame', this.status.frameCount)
       }
+    } catch (err) {
+      this.emit('error', err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  /**
+   * Push a Float32 PCM audio buffer to the NDI sender.
+   *
+   * @param planar - Float32Array of length `numChannels * samplesPerChannel`
+   *                 in PLANAR layout: [...ch0, ...ch1]. NDI v3 audio is
+   *                 always planar float32, never interleaved.
+   * @param sampleRate - typically 48000
+   * @param numChannels - typically 2 (stereo)
+   * @param samplesPerChannel - frames per channel
+   */
+  sendAudio(planar: Float32Array, sampleRate: number, numChannels: number, samplesPerChannel: number): void {
+    if (!this.senderInstance || !this.bindings) return
+    try {
+      const FOURCC_FLTP = 0x50544c46 // 'FLTP' little-endian = Float32 planar
+      const buf = Buffer.from(planar.buffer, planar.byteOffset, planar.byteLength)
+      const frame = {
+        sample_rate: sampleRate,
+        no_channels: numChannels,
+        no_samples: samplesPerChannel,
+        timecode: BigInt(0) as unknown as number,
+        FourCC: FOURCC_FLTP,
+        p_data: buf,
+        channel_stride_in_bytes: samplesPerChannel * 4, // 4 bytes per float
+        p_metadata: null as unknown as string,
+        timestamp: BigInt(0) as unknown as number,
+      }
+      this.bindings.send_send_audio_v3(this.senderInstance, frame)
     } catch (err) {
       this.emit('error', err instanceof Error ? err.message : String(err))
     }

@@ -577,6 +577,40 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error('[updater] init failed (non-fatal):', err)
   }
+
+  // ── Auto-start NDI sender ─────────────────────────────────────
+  // The whole point of "one-click NDI" is that the user shouldn't have
+  // to click anything. As soon as the app is up and the NDI runtime is
+  // present, fire up the sender on its own with sensible defaults so
+  // the source appears in vMix / Wirecast / OBS / NDI Studio Monitor
+  // immediately on the LAN. The user can stop it from the NDI panel
+  // if they don't want it.
+  if (ndi.isAvailable()) {
+    try {
+      await ndi.start({ name: 'ScriptureLive AI', width: 1920, height: 1080, fps: 30 })
+      frameCapture = new FrameCapture({
+        baseUrl: appBaseUrl,
+        onFrame: (buf, w, h) => ndi.sendFrame(buf, w, h),
+        onStatus: (msg) => broadcastNdiStatus({ ...ndi.getStatus(), captureMessage: msg }),
+      })
+      await frameCapture.start({
+        width: 1920,
+        height: 1080,
+        fps: 30,
+        path: '/api/output/congregation',
+        transparent: false,
+      })
+      broadcastNdiStatus(ndi.getStatus())
+      console.log('[ndi] auto-started sender "ScriptureLive AI" @ 1080p30')
+    } catch (err) {
+      console.error('[ndi] auto-start failed (non-fatal):', err)
+      try { if (frameCapture) await frameCapture.stop() } catch { /* ignore */ }
+      frameCapture = null
+      try { await ndi.stop() } catch { /* ignore */ }
+    }
+  } else {
+    console.log('[ndi] runtime not detected — sender not auto-started:', ndi.unavailableReason())
+  }
 })
 
 app.on('window-all-closed', async () => {
