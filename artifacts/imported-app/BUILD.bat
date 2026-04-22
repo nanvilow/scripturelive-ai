@@ -29,7 +29,7 @@ echo. >> "%SL_LOG%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build  v0.4.3 (verbose)
+echo   ScriptureLive AI - One-click Windows Build  v0.4.4
 echo ================================================================
 echo   Full build log:   %SL_LOG%
 echo.
@@ -137,9 +137,16 @@ if not exist "!VCVARS!" (
 echo       Loading VS C++ env from vcvars64.bat...
 REM Save our log path BEFORE vcvars (it may clobber any var it likes).
 set "_SAVE_SL_LOG=%SL_LOG%"
-call "!VCVARS!" >> "%SL_LOG%" 2>&1
-REM Restore in case vcvars overwrote it.
+REM CRITICAL: do NOT redirect vcvars to our main log. vcvars spawns
+REM helper processes that inherit and HOLD the file handle, locking
+REM build-log.txt for the rest of the build (every >> fails with
+"The process cannot access the file because it is being used by another process").
+REM Use a throwaway temp file, then concat into main log after.
+set "_VCVARS_TMP=%~dp0vcvars-out.tmp"
+call "!VCVARS!" > "%_VCVARS_TMP%" 2>&1
 set "SL_LOG=%_SAVE_SL_LOG%"
+type "%_VCVARS_TMP%" >> "%SL_LOG%" 2>nul
+del /q "%_VCVARS_TMP%" 2>nul
 if not defined VCINSTALLDIR (
   set "FAIL_STEP=vcvars64.bat ran but VCINSTALLDIR is not set. Re-install VS Build Tools and reboot."
   goto :DIE
