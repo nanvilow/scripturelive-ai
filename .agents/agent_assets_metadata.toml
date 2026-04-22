@@ -2,54 +2,6 @@ uploads = []
 generated = []
 
 [[outputs]]
-id = "gA4tqXpeR7fNj5WWphXWM"
-uri = "file://.local/downloads/scripturelive-windows-buildable.zip"
-type = "unspecified"
-title = "ScriptureLive v0.2.2 — with auto-retry for flaky internet"
-
-[[outputs]]
-id = "1YUI1AF80Yrq8AhXUoIFy"
-uri = "file://downloads/ScriptureLive-AI-source-v0.3.0.zip"
-type = "unspecified"
-title = "ScriptureLive AI v0.3.0 — Windows source + BUILD.bat"
-
-[[outputs]]
-id = "6U4oMGkBIyDnn7U4NF0MD"
-uri = "file://downloads/ScriptureLive-AI-source-v0.3.1.zip"
-type = "unspecified"
-title = "ScriptureLive AI v0.3.1 — build script no longer closes window"
-
-[[outputs]]
-id = "7m6ml5_oVubbVYwI8lh-w"
-uri = "file://downloads/ScriptureLive-AI-source-v0.3.2.zip"
-type = "unspecified"
-title = "ScriptureLive AI v0.3.2 — icon, NDI, transcription mic, native output window"
-
-[[outputs]]
-id = "gYefwjEOxDWRvXeCcrCZk"
-uri = "file://downloads/ScriptureLive-AI-source-v0.3.3.zip"
-type = "unspecified"
-title = "ScriptureLive AI v0.3.3 — NDI packaging fix + native output windows"
-
-[[outputs]]
-id = "d7xjP1jk0DOONHeCdDsXX"
-uri = "file://downloads/ScriptureLive-AI-source-v0.3.4.zip"
-type = "unspecified"
-title = "ScriptureLive AI v0.3.4 — NDI builds against Electron ABI (fixes Node 24 compat)"
-
-[[outputs]]
-id = "x7vpEalO5_Du8U7xgdzF6"
-uri = "file://downloads/ScriptureLive-AI-source-v0.3.5.zip"
-type = "unspecified"
-title = "ScriptureLive AI v0.3.5 — NDI install fix (npm bypass for grandiose)"
-
-[[outputs]]
-id = "8eA2-shKWdxho-EKVQyua"
-uri = "file://downloads/ScriptureLive-AI-source-v0.3.6.zip"
-type = "unspecified"
-title = "ScriptureLive AI v0.3.6 — NDI install with 3 fallback strategies + inline error dump"
-
-[[outputs]]
 id = "s0mvUyDxhSCzqa1YKR9Ck"
 uri = "file://downloads/ScriptureLive-AI-source-v0.3.7.zip"
 type = "unspecified"
