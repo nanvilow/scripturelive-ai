@@ -30,3 +30,9 @@ id = "Fs2j5UC4kSpjGDIIMS8Zy"
 uri = "file://downloads/ScriptureLive-AI-source-v0.4.1.zip"
 type = "unspecified"
 title = "ScriptureLive AI source v0.4.1 (renamed log var so vcvars can't clobber it)"
+
+[[outputs]]
+id = "xplU7H5ruHykRiQUyMNGJ"
+uri = "file://downloads/ScriptureLive-AI-source-v0.4.2.zip"
+type = "unspecified"
+title = "ScriptureLive AI source v0.4.2 (fixed Windows line endings)"
