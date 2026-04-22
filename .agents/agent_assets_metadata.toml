@@ -24,3 +24,9 @@ id = "7OPOBnMvUAAxaiGipPl6k"
 uri = "file://downloads/ScriptureLive-AI-source-v0.4.0.zip"
 type = "unspecified"
 title = "ScriptureLive AI source v0.4.0 (vcvars64 fix - the real one)"
+
+[[outputs]]
+id = "Fs2j5UC4kSpjGDIIMS8Zy"
+uri = "file://downloads/ScriptureLive-AI-source-v0.4.1.zip"
+type = "unspecified"
+title = "ScriptureLive AI source v0.4.1 (renamed log var so vcvars can't clobber it)"
