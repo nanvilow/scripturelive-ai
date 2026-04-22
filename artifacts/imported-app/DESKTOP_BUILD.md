@@ -131,6 +131,41 @@ the manifest is missing one (handy when you `cp` an installer into
 `public/downloads/` and forget to run the script). For Option B you must run
 the script — the API can't compute hashes for files it doesn't have.
 
+### Bulk verification with `SHA256SUMS.txt`
+
+Admins rolling out the installers to a fleet usually want to verify several
+files at once instead of copy-pasting hashes from the page. The `/download`
+page shows a **Download SHA256SUMS.txt** link in the *Verify your download*
+panel that hits a small generated route:
+
+- `GET /api/download/checksums` → `text/plain` attachment named
+  `SHA256SUMS.txt`, in the standard `<sha256>  <filename>` format that
+  `sha256sum -c` expects (two spaces, one entry per line).
+- In Option A (local host) the route walks the files actually present in
+  `public/downloads/` and computes hashes from disk, memoizing each result
+  by path+size+mtime so unchanged files are hashed at most once per process.
+- In Option B (external host, e.g. GitHub Releases) the route trusts the
+  hashes already in `manifest.json` — make sure you ran
+  `pnpm run downloads:manifest` against the built artifacts before
+  committing.
+
+Workflow on the receiving machine:
+
+```bash
+# Download all three installers + the checksums file into the same folder
+curl -O https://your-host/api/download/win-x64
+curl -O https://your-host/api/download/mac-arm64
+curl -O https://your-host/api/download/mac-x64
+curl -O https://your-host/api/download/checksums  # → SHA256SUMS.txt
+
+sha256sum -c SHA256SUMS.txt   # Linux / Git-Bash on Windows
+shasum -a 256 -c SHA256SUMS.txt   # macOS
+```
+
+Lines for installers that aren't on disk yet are omitted (with a `# Note:`
+comment in the header listing the missing filenames) so partially built
+releases still produce a valid checksum file for whatever is available.
+
 ## First-run notes
 
 - **Windows**: a signed installer (Authenticode) installs cleanly. An unsigned installer triggers SmartScreen — click "More info" → "Run anyway".
