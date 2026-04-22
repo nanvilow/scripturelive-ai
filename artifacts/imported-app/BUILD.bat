@@ -29,7 +29,7 @@ echo. >> "%LOGFILE%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build  v0.3.7
+echo   ScriptureLive AI - One-click Windows Build  v0.3.8
 echo ================================================================
 echo   Full build log:   %LOGFILE%
 echo.
@@ -163,18 +163,23 @@ echo.
 echo [4b/7] Installing NDI native module (grandiose) from GitHub...
 echo       This compiles a small C++ module - takes 1-2 minutes.
 
+REM Use HTTPS tarball, NOT github:user/repo - the github: syntax
+REM requires git.exe to be installed; the tarball URL just uses
+REM HTTPS so it works on any machine.
+set "GRANDIOSE_URL=https://codeload.github.com/Streampunk/grandiose/tar.gz/refs/heads/master"
+
 REM --- Strategy 1: install + native build in one shot --------------
-echo       [strategy 1/2] npm install github:Streampunk/grandiose...
+echo       [strategy 1/2] npm install grandiose tarball + source build...
 echo. >> "%LOGFILE%"
-echo === GRANDIOSE STRATEGY 1: github master + source build >> "%LOGFILE%"
-call npm install github:Streampunk/grandiose --no-save --no-package-lock --legacy-peer-deps --foreground-scripts --build-from-source >> "%LOGFILE%" 2>&1
+echo === GRANDIOSE STRATEGY 1: tarball + source build >> "%LOGFILE%"
+call npm install "!GRANDIOSE_URL!" --no-save --no-package-lock --legacy-peer-deps --foreground-scripts --build-from-source >> "%LOGFILE%" 2>&1
 if exist "node_modules\grandiose\build\Release\grandiose.node" goto :GRANDIOSE_OK
 
 REM --- Strategy 2: install JS only, then electron-rebuild ----------
 echo       [strategy 2/2] reinstall --ignore-scripts then electron-rebuild...
 echo. >> "%LOGFILE%"
 echo === GRANDIOSE STRATEGY 2: ignore-scripts + electron-rebuild >> "%LOGFILE%"
-call npm install github:Streampunk/grandiose --no-save --no-package-lock --legacy-peer-deps --ignore-scripts >> "%LOGFILE%" 2>&1
+call npm install "!GRANDIOSE_URL!" --no-save --no-package-lock --legacy-peer-deps --ignore-scripts >> "%LOGFILE%" 2>&1
 if not exist "node_modules\grandiose\package.json" goto :GRANDIOSE_FAIL
 call pnpm exec electron-rebuild -f -w grandiose --module-dir . >> "%LOGFILE%" 2>&1
 if exist "node_modules\grandiose\build\Release\grandiose.node" goto :GRANDIOSE_OK
