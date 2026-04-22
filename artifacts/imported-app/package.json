@@ -1,6 +1,6 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "private": true,
   "main": "dist-electron/main.js",
   "pnpm": {
@@ -105,9 +105,7 @@
     "zustand": "^5.0.6",
     "electron-updater": "^6.3.9"
   },
-  "optionalDependencies": {
-    "grandiose": "^3.0.5"
-  },
+  "_grandiose_note": "grandiose (NDI) is intentionally NOT listed in dependencies or optionalDependencies — pnpm 10 silently skips optional native modules whose engines/cpu/os constraints don't exactly match the host (e.g. on Node 24 hosts, the user gets 'failed compatibility check. Excluding it'). Instead BUILD.bat installs grandiose directly with npm using Electron-ABI env vars, then runs @electron/rebuild. This guarantees the .node binary actually lands in node_modules/grandiose/ and works at runtime.",
   "devDependencies": {
     "@electron/notarize": "^2.5.0",
     "@electron/rebuild": "^3.7.1",
