@@ -21,17 +21,17 @@ title ScriptureLive AI - Build Windows Installer
 color 0B
 cd /d "%~dp0"
 
-set "LOGFILE=%CD%\build-log.txt"
+set "SL_LOG=%CD%\build-log.txt"
 set "FAIL_STEP="
-echo ScriptureLive AI build started %DATE% %TIME% > "%LOGFILE%"
-echo Working directory: %CD% >> "%LOGFILE%"
-echo. >> "%LOGFILE%"
+echo ScriptureLive AI build started %DATE% %TIME% > "%SL_LOG%"
+echo Working directory: %CD% >> "%SL_LOG%"
+echo. >> "%SL_LOG%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build  v0.4.0
+echo   ScriptureLive AI - One-click Windows Build  v0.4.1
 echo ================================================================
-echo   Full build log:   %LOGFILE%
+echo   Full build log:   %SL_LOG%
 echo.
 echo   IMPORTANT: This window will STAY OPEN when finished or on
 echo   error. Do not close it. The build is silent for 5-10 minutes
@@ -61,7 +61,7 @@ echo [1/7] Checking pnpm...
 where pnpm >nul 2>nul
 if errorlevel 1 (
   echo       pnpm not found. Installing globally with npm...
-  call npm install -g pnpm@9 >> "%LOGFILE%" 2>&1
+  call npm install -g pnpm@9 >> "%SL_LOG%" 2>&1
   if errorlevel 1 (
     set "FAIL_STEP=Failed to install pnpm. Run 'npm install -g pnpm' manually then re-run."
     goto :DIE
@@ -135,7 +135,11 @@ if not exist "!VCVARS!" (
   goto :DIE
 )
 echo       Loading VS C++ env from vcvars64.bat...
-call "!VCVARS!" >> "%LOGFILE%" 2>&1
+REM Save our log path BEFORE vcvars (it may clobber any var it likes).
+set "_SAVE_SL_LOG=%SL_LOG%"
+call "!VCVARS!" >> "%SL_LOG%" 2>&1
+REM Restore in case vcvars overwrote it.
+set "SL_LOG=%_SAVE_SL_LOG%"
 if not defined VCINSTALLDIR (
   set "FAIL_STEP=vcvars64.bat ran but VCINSTALLDIR is not set. Re-install VS Build Tools and reboot."
   goto :DIE
@@ -157,8 +161,8 @@ REM ---- Step 4: Install dependencies -------------------------------
 echo.
 echo [4/7] Installing dependencies (3-5 minutes, silent)...
 echo       Output captured to build-log.txt
-call pnpm config set --location=project auto-install-peers true       >> "%LOGFILE%" 2>&1
-call pnpm config set --location=project strict-peer-dependencies false >> "%LOGFILE%" 2>&1
+call pnpm config set --location=project auto-install-peers true       >> "%SL_LOG%" 2>&1
+call pnpm config set --location=project strict-peer-dependencies false >> "%SL_LOG%" 2>&1
 
 REM Tell node-gyp to build for Electron's bundled Node ABI, not host Node.
 set "npm_config_runtime=electron"
@@ -170,7 +174,7 @@ set "npm_config_target_arch=x64"
 set INSTALL_TRY=0
 :RETRY_INSTALL
 set /a INSTALL_TRY+=1
-call pnpm install --no-frozen-lockfile >> "%LOGFILE%" 2>&1
+call pnpm install --no-frozen-lockfile >> "%SL_LOG%" 2>&1
 if errorlevel 1 (
   if !INSTALL_TRY! lss 3 (
     echo       Attempt !INSTALL_TRY! failed, retrying in 5s...
@@ -206,18 +210,18 @@ REM  will now skip its broken VS detection and use the active env.)
 
 REM --- Strategy 1: install + native build in one shot --------------
 echo       [strategy 1/2] npm install grandiose tarball + source build...
-echo. >> "%LOGFILE%"
-echo === GRANDIOSE STRATEGY 1: tarball + source build >> "%LOGFILE%"
-call npm install "!GRANDIOSE_URL!" --no-save --no-package-lock --legacy-peer-deps --foreground-scripts --build-from-source >> "%LOGFILE%" 2>&1
+echo. >> "%SL_LOG%"
+echo === GRANDIOSE STRATEGY 1: tarball + source build >> "%SL_LOG%"
+call npm install "!GRANDIOSE_URL!" --no-save --no-package-lock --legacy-peer-deps --foreground-scripts --build-from-source >> "%SL_LOG%" 2>&1
 if exist "node_modules\grandiose\build\Release\grandiose.node" goto :GRANDIOSE_OK
 
 REM --- Strategy 2: install JS only, then electron-rebuild ----------
 echo       [strategy 2/2] reinstall --ignore-scripts then electron-rebuild...
-echo. >> "%LOGFILE%"
-echo === GRANDIOSE STRATEGY 2: ignore-scripts + electron-rebuild >> "%LOGFILE%"
-call npm install "!GRANDIOSE_URL!" --no-save --no-package-lock --legacy-peer-deps --ignore-scripts >> "%LOGFILE%" 2>&1
+echo. >> "%SL_LOG%"
+echo === GRANDIOSE STRATEGY 2: ignore-scripts + electron-rebuild >> "%SL_LOG%"
+call npm install "!GRANDIOSE_URL!" --no-save --no-package-lock --legacy-peer-deps --ignore-scripts >> "%SL_LOG%" 2>&1
 if not exist "node_modules\grandiose\package.json" goto :GRANDIOSE_FAIL
-call pnpm exec electron-rebuild -f -w grandiose --module-dir . >> "%LOGFILE%" 2>&1
+call pnpm exec electron-rebuild -f -w grandiose --module-dir . >> "%SL_LOG%" 2>&1
 if exist "node_modules\grandiose\build\Release\grandiose.node" goto :GRANDIOSE_OK
 
 :GRANDIOSE_FAIL
@@ -226,9 +230,9 @@ echo.
 echo ================================================================
 echo   NDI native module BUILD FAILED. Last 40 lines of error log:
 echo ================================================================
-powershell -NoProfile -Command "Get-Content -Tail 40 '%LOGFILE%' | ForEach-Object { Write-Host $_ }"
+powershell -NoProfile -Command "Get-Content -Tail 40 '%SL_LOG%' | ForEach-Object { Write-Host $_ }"
 echo ================================================================
-echo   Full log: %LOGFILE%
+echo   Full log: %SL_LOG%
 echo.
 echo   Both Python and VS Build Tools were detected, so the most
 echo   likely causes are:
@@ -254,7 +258,7 @@ echo [5/7] Generating database client...
 set PRISMA_TRY=0
 :RETRY_PRISMA
 set /a PRISMA_TRY+=1
-call pnpm exec prisma generate >> "%LOGFILE%" 2>&1
+call pnpm exec prisma generate >> "%SL_LOG%" 2>&1
 if errorlevel 1 (
   if !PRISMA_TRY! lss 3 (
     echo       Attempt !PRISMA_TRY! failed, retrying in 5s...
@@ -269,7 +273,7 @@ echo       Prisma client OK
 REM ---- Step 6: Build Next.js bundle -------------------------------
 echo.
 echo [6/7] Building app bundle (2-4 minutes, silent)...
-call pnpm run build >> "%LOGFILE%" 2>&1
+call pnpm run build >> "%SL_LOG%" 2>&1
 if errorlevel 1 (
   set "FAIL_STEP=Next.js build failed. See log."
   goto :DIE
@@ -283,7 +287,7 @@ echo       App bundle OK
 REM ---- Step 7: Package Windows installer --------------------------
 echo.
 echo [7/7] Packaging Windows installer (3-5 minutes, silent)...
-call pnpm package:win >> "%LOGFILE%" 2>&1
+call pnpm package:win >> "%SL_LOG%" 2>&1
 if errorlevel 1 (
   set "FAIL_STEP=electron-builder failed. Common: antivirus locking release\, path too long, or Explorer open in release\."
   goto :DIE
@@ -324,9 +328,9 @@ echo ================================================================
 echo.
 echo   Reason: !FAIL_STEP!
 echo.
-echo   Full log:  %LOGFILE%
+echo   Full log:  %SL_LOG%
 echo   Opening log in Notepad...
-start "" notepad "%LOGFILE%"
+start "" notepad "%SL_LOG%"
 echo.
 echo   Send the LAST 50 lines of the log for help.
 echo.
