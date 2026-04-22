@@ -362,9 +362,8 @@ function pollOnce(){
       if(j.state.timestamp&&j.state.timestamp<=lastPolled)return;
       lastPolled=j.state.timestamp||Date.now();
       render(j.state);
-      $('status').classList.add('connected','visible');
-      $('status-text').textContent='Connected (poll)';
-      setTimeout(function(){$('status').classList.remove('visible')},2000);
+      // Silent: SSE already showed the "Connected" badge. Re-toasting
+      // every poll cycle was distracting the operator (item #8).
     })
     .catch(function(){});
 }

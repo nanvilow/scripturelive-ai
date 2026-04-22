@@ -2,7 +2,14 @@
 
 import { useEffect, useCallback, useRef } from 'react'
 import { useSpeechRecognition } from '@/hooks/use-speech-recognition'
+import { useWhisperSpeechRecognition } from '@/hooks/use-whisper-speech-recognition'
 import { useAppStore } from '@/lib/store'
+
+// Detected once at module load — userAgent is stable for the session,
+// so React's Rules of Hooks are satisfied (we always call BOTH engine
+// hooks in the same order; we just only drive ONE of them).
+const IS_ELECTRON =
+  typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)
 import { detectVersesInTextWithScore, fetchBibleVerse, PREACHER_ATTRIBUTION } from '@/lib/bible-api'
 import type { BibleSearchHit } from '@/lib/bible-api'
 import type { DetectedVerse } from '@/lib/store'
@@ -17,6 +24,12 @@ import { toast } from 'sonner'
  * even when the user is on a different page/tab.
  */
 export function SpeechProvider({ children }: { children: React.ReactNode }) {
+  // Always call BOTH hooks in the same order — Rules of Hooks. We
+  // pick which one drives the store based on IS_ELECTRON, which is
+  // computed once at module load and never changes during a session.
+  const browserEngine = useSpeechRecognition()
+  const whisperEngine = useWhisperSpeechRecognition()
+  const active = IS_ELECTRON ? whisperEngine : browserEngine
   const {
     transcript: hookTranscript,
     interimTranscript: hookInterim,
@@ -26,7 +39,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     startListening,
     stopListening,
     resetTranscript,
-  } = useSpeechRecognition()
+  } = active
 
   // Store actions for syncing
   const setLiveTranscript = useAppStore((s) => s.setLiveTranscript)
@@ -305,6 +318,14 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     processCallbackRef.current(text)
   }, [])
 
+  // Keep the global mic-id mirror in sync so the Whisper engine can
+  // see it (it's hookless and reads window.__selectedMicrophoneId).
+  const selectedMicId = useAppStore((s) => s.selectedMicrophoneId)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    ;(window as unknown as { __selectedMicrophoneId?: string | null }).__selectedMicrophoneId = selectedMicId
+  }, [selectedMicId])
+
   // ── Handle speech commands from store (start / stop / reset) ───────
   useEffect(() => {
     if (speechCommand === 'start') {
@@ -313,13 +334,14 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       // Browsers' Web Speech API doesn't expose deviceId directly, but
       // acquiring the chosen input device prompts the OS / browser to route
       // recognition through it. We then immediately release the stream so we
-      // don't hold the mic open in parallel.
+      // don't hold the mic open in parallel. The Whisper engine reads the
+      // device id from window.__selectedMicrophoneId itself.
       const chosenId = useAppStore.getState().selectedMicrophoneId
       const beginRecognition = () => {
         startListening(stableProcessCallback)
         setSpeechCommand(null)
       }
-      if (chosenId && typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+      if (!IS_ELECTRON && chosenId && typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
         navigator.mediaDevices
           .getUserMedia({ audio: { deviceId: { exact: chosenId } } })
           .then((stream) => {
