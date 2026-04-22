@@ -7,7 +7,7 @@ copyright: ScriptureLive AI
 # so no extra config is required.
 publish:
   - provider: github
-    owner: wassmedia
+    owner: nanvilow
     repo: scripturelive-ai
     releaseType: release
 directories:

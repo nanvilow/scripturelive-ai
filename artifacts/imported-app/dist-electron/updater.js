@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.setupAutoUpdater = setupAutoUpdater;
 exports.openReleasesPage = openReleasesPage;
+exports.runManualCheck = runManualCheck;
+exports.getUpdateState = getUpdateState;
 const electron_1 = require("electron");
 const electron_updater_1 = require("electron-updater");
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
@@ -103,6 +105,18 @@ function setupAutoUpdater(opts) {
 }
 /** Open the GitHub releases page so the user can grab the latest installer manually. */
 function openReleasesPage() {
-    electron_1.shell.openExternal('https://github.com/wassmedia/scripturelive-ai/releases/latest');
+    electron_1.shell.openExternal('https://github.com/nanvilow/scripturelive-ai/releases/latest');
+}
+/**
+ * Run an update check on demand (e.g. from the Help menu) and return the
+ * resulting state so callers can surface a one-shot dialog/toast.
+ */
+async function runManualCheck() {
+    await safeCheck();
+    return currentState;
+}
+/** Read the latest cached state without triggering a network check. */
+function getUpdateState() {
+    return currentState;
 }
 //# sourceMappingURL=updater.js.map
