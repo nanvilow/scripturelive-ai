@@ -134,7 +134,7 @@ export function setupAutoUpdater(opts: { getMainWindow: () => BrowserWindow | nu
 
 /** Open the GitHub releases page so the user can grab the latest installer manually. */
 export function openReleasesPage(): void {
-  shell.openExternal('https://github.com/wassmedia/scripturelive-ai/releases/latest')
+  shell.openExternal('https://github.com/nanvilow/scripturelive-ai/releases/latest')
 }
 
 /**

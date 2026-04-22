@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -58,6 +91,22 @@ function fatalError(stage, err) {
 const frame_capture_1 = require("./frame-capture");
 const updater_1 = require("./updater");
 const isDev = !electron_1.app.isPackaged;
+// ── Chromium command-line flags ───────────────────────────────────
+// Best-effort flags to coax Web Speech / mic capture into working in
+// the packaged app. These are applied BEFORE app.whenReady so they
+// take effect during Chromium init.
+//
+// Note: Web Speech API in Electron is inherently limited because
+// Google's speech-to-text endpoint requires a Google API key that's
+// only baked into Chrome — packaged Electron builds will hit
+// `network` errors. The renderer-side hook now detects this and
+// shows a clear actionable error instead of bouncing on/off forever.
+electron_1.app.commandLine.appendSwitch('enable-features', 'WebSpeechAPI,SpeechSynthesisAPI,WebRTC-Audio-Red-For-Opus');
+electron_1.app.commandLine.appendSwitch('enable-speech-dispatcher');
+// Auto-grant getUserMedia for the bundled origin so the mic doesn't
+// need a per-session prompt the user has to click through.
+electron_1.app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
+electron_1.app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 const ndi = new ndi_service_1.NdiService();
 let frameCapture = null;
 let mainWindow = null;
@@ -157,21 +206,166 @@ async function createMainWindow(url) {
         minWidth: 1024,
         minHeight: 640,
         backgroundColor: '#0a0a0a',
+        icon: process.platform === 'win32'
+            ? node_path_1.default.join(process.resourcesPath, 'app', '.next', 'standalone', 'public', 'icon-512.png')
+            : undefined,
         webPreferences: {
             preload: node_path_1.default.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
             sandbox: false,
+            // Allow the renderer to use the microphone for live transcription
+            // (Web Speech API + getUserMedia). Without these the Electron
+            // session denies the request silently and the transcription panel
+            // sits idle even when the user grants OS-level mic permission.
+            webSecurity: true,
         },
         title: 'ScriptureLive AI',
+        autoHideMenuBar: true,
     });
-    mainWindow.removeMenu();
     mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
         electron_1.shell.openExternal(target);
         return { action: 'deny' };
     });
     await mainWindow.loadURL(url);
     mainWindow.on('closed', () => { mainWindow = null; });
+}
+async function showDialog(opts) {
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    return parent ? electron_1.dialog.showMessageBox(parent, opts) : electron_1.dialog.showMessageBox(opts);
+}
+async function handleManualUpdateCheck() {
+    if (!electron_1.app.isPackaged) {
+        await showDialog({
+            type: 'info',
+            title: 'Check for Updates',
+            message: 'Updates are disabled in development builds.',
+            detail: `You're running ScriptureLive AI ${electron_1.app.getVersion()} from source.`,
+            buttons: ['OK'],
+            defaultId: 0,
+        });
+        return;
+    }
+    const existing = (0, updater_1.getUpdateState)();
+    if (existing.status === 'downloading') {
+        await showDialog({
+            type: 'info',
+            title: 'Check for Updates',
+            message: 'An update is already downloading.',
+            detail: `Download is ${Math.round(existing.percent)}% complete. You'll be prompted to restart when it's ready.`,
+            buttons: ['OK'],
+        });
+        return;
+    }
+    if (existing.status === 'downloaded') {
+        const choice = await showDialog({
+            type: 'info',
+            title: 'Check for Updates',
+            message: `Update ready to install`,
+            detail: `Version ${existing.version} has been downloaded. Restart now to install it.`,
+            buttons: ['Restart now', 'Later'],
+            defaultId: 0,
+            cancelId: 1,
+        });
+        if (choice.response === 0) {
+            const { autoUpdater } = await Promise.resolve().then(() => __importStar(require('electron-updater')));
+            setImmediate(() => autoUpdater.quitAndInstall(false, true));
+        }
+        return;
+    }
+    // Drive the same code path as the `updater:check` IPC handler.
+    const state = await (0, updater_1.runManualCheck)();
+    if (state.status === 'not-available') {
+        await showDialog({
+            type: 'info',
+            title: 'Check for Updates',
+            message: "You're up to date",
+            detail: `ScriptureLive AI ${electron_1.app.getVersion()} is the latest version.`,
+            buttons: ['OK'],
+        });
+    }
+    else if (state.status === 'available') {
+        await showDialog({
+            type: 'info',
+            title: 'Check for Updates',
+            message: 'Update available',
+            detail: `Version ${state.version} is downloading in the background. You'll be prompted to restart when it's ready.`,
+            buttons: ['OK'],
+        });
+    }
+    else if (state.status === 'downloading') {
+        await showDialog({
+            type: 'info',
+            title: 'Check for Updates',
+            message: 'Update available',
+            detail: `An update is downloading in the background (${Math.round(state.percent)}%). You'll be prompted to restart when it's ready.`,
+            buttons: ['OK'],
+        });
+    }
+    else if (state.status === 'downloaded') {
+        const choice = await showDialog({
+            type: 'info',
+            title: 'Check for Updates',
+            message: 'Update ready to install',
+            detail: `Version ${state.version} has been downloaded. Restart now to install it.`,
+            buttons: ['Restart now', 'Later'],
+            defaultId: 0,
+            cancelId: 1,
+        });
+        if (choice.response === 0) {
+            const { autoUpdater } = await Promise.resolve().then(() => __importStar(require('electron-updater')));
+            setImmediate(() => autoUpdater.quitAndInstall(false, true));
+        }
+    }
+    else if (state.status === 'error') {
+        const choice = await showDialog({
+            type: 'warning',
+            title: 'Check for Updates',
+            message: "Couldn't check for updates",
+            detail: `${state.message}\n\nYou can download the latest installer from the releases page instead.`,
+            buttons: ['Open releases page', 'OK'],
+            defaultId: 1,
+            cancelId: 1,
+        });
+        if (choice.response === 0)
+            (0, updater_1.openReleasesPage)();
+    }
+}
+function buildAppMenu() {
+    const isMac = process.platform === 'darwin';
+    const checkForUpdatesItem = {
+        label: 'Check for Updates…',
+        click: () => { void handleManualUpdateCheck(); },
+    };
+    const template = [];
+    if (isMac) {
+        template.push({
+            label: electron_1.app.name,
+            submenu: [
+                { role: 'about' },
+                checkForUpdatesItem,
+                { type: 'separator' },
+                { role: 'services' },
+                { type: 'separator' },
+                { role: 'hide' },
+                { role: 'hideOthers' },
+                { role: 'unhide' },
+                { type: 'separator' },
+                { role: 'quit' },
+            ],
+        });
+    }
+    template.push({ role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' }, {
+        role: 'help',
+        submenu: [
+            ...(isMac ? [] : [checkForUpdatesItem, { type: 'separator' }]),
+            {
+                label: 'View Releases on GitHub',
+                click: () => { (0, updater_1.openReleasesPage)(); },
+            },
+        ],
+    });
+    electron_1.Menu.setApplicationMenu(electron_1.Menu.buildFromTemplate(template));
 }
 function broadcastNdiStatus(status) {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -279,24 +473,27 @@ function setupIpc() {
             return [];
         }
     });
-    electron_1.ipcMain.handle('output:open-window', (_e, opts) => {
-        if (!appBaseUrl)
-            return { ok: false, error: 'app not ready' };
+    // ── Hardened kiosk-style output window factory ─────────────────
+    // Goal: the output window must look and behave EXACTLY like a vMix /
+    // Wirecast / EasyWorship secondary output — not a browser. That means:
+    //   - true fullscreen kiosk on whatever display we land on (primary OR
+    //     secondary), no taskbar, no title bar, no menu, no chrome
+    //   - no right-click context menu (no "Inspect Element" giveaway)
+    //   - no dev-tools shortcuts (F12, Ctrl+Shift+I/J/C, Ctrl+U)
+    //   - no scrollbars, no text selection, no user zoom
+    //   - cursor auto-hides after idle so projectors don't show a pointer
+    //   - black backdrop so any letterboxed slide blends into the wall
+    //   - Esc cleanly closes the window for the operator
+    function createKioskOutput(opts) {
         let target = electron_1.screen.getPrimaryDisplay();
-        if (opts?.displayId !== undefined) {
+        if (opts.displayId !== undefined) {
             const found = electron_1.screen.getAllDisplays().find((d) => d.id === opts.displayId);
             if (found)
                 target = found;
-            else {
-                // Pick the first non-primary display if available
-                const others = electron_1.screen.getAllDisplays().filter((d) => d.id !== electron_1.screen.getPrimaryDisplay().id);
-                if (others[0])
-                    target = others[0];
-            }
         }
         else if (electron_1.screen.getAllDisplays().length > 1) {
             // No explicit pick → prefer the first non-primary display so the
-            // operator's main monitor stays free for the console.
+            // operator's main console monitor stays free for the operator UI.
             const others = electron_1.screen.getAllDisplays().filter((d) => d.id !== electron_1.screen.getPrimaryDisplay().id);
             if (others[0])
                 target = others[0];
@@ -305,12 +502,91 @@ function setupIpc() {
         const win = new electron_1.BrowserWindow({
             x, y, width, height,
             backgroundColor: '#000',
-            title: 'ScriptureLive — Congregation Display',
+            title: opts.title,
+            frame: false,
             autoHideMenuBar: true,
-            fullscreen: target.id !== electron_1.screen.getPrimaryDisplay().id,
+            // ALWAYS fullscreen + kiosk, even on the primary display. This is
+            // what stops it from "looking like a browser window" — no chrome
+            // of any kind, no taskbar peek, no resize handles.
+            fullscreen: true,
+            kiosk: true,
+            simpleFullscreen: true,
+            // (Cursor hiding is handled below via CSS injection — Electron's
+            // BrowserWindow doesn't expose a cross-platform autoHideCursor.)
+            // Stay above the operator console so a click on the console doesn't
+            // bring the projector behind it.
+            alwaysOnTop: target.id !== electron_1.screen.getPrimaryDisplay().id,
+            webPreferences: {
+                contextIsolation: true,
+                nodeIntegration: false,
+                // Disable devtools entirely on production output windows.
+                devTools: false,
+            },
         });
         win.removeMenu();
-        win.loadURL(`${appBaseUrl}/api/output/congregation`);
+        win.setMenuBarVisibility(false);
+        // Block dev-tools / view-source / reload key combos. The operator
+        // should never accidentally open the inspector mid-service.
+        win.webContents.on('before-input-event', (event, input) => {
+            if (input.type !== 'keyDown')
+                return;
+            const key = input.key;
+            // Esc → close the output cleanly.
+            if (key === 'Escape') {
+                event.preventDefault();
+                try {
+                    win.close();
+                }
+                catch { /* ignore */ }
+                return;
+            }
+            // Block F12, Ctrl+Shift+I/J/C, Ctrl+U, Ctrl+R, F5, Ctrl+P
+            const ctrl = input.control || input.meta;
+            const shift = input.shift;
+            if (key === 'F12' ||
+                key === 'F5' ||
+                (ctrl && shift && (key === 'I' || key === 'i' || key === 'J' || key === 'j' || key === 'C' || key === 'c')) ||
+                (ctrl && (key === 'U' || key === 'u' || key === 'R' || key === 'r' || key === 'P' || key === 'p'))) {
+                event.preventDefault();
+            }
+        });
+        // Block the right-click "Inspect Element" menu entirely.
+        win.webContents.on('context-menu', (e) => e.preventDefault());
+        // Inject CSS that strips scrollbars, text selection, and the
+        // browser cursor. This is what kills the last bit of "browser feel" —
+        // even if the page has its own scrollbar or selection styles, this
+        // wins because it's an !important on the documentElement.
+        win.webContents.on('did-finish-load', () => {
+            win.webContents.insertCSS(`
+        html, body {
+          margin: 0 !important;
+          padding: 0 !important;
+          overflow: hidden !important;
+          background: #000 !important;
+          cursor: none !important;
+          user-select: none !important;
+          -webkit-user-select: none !important;
+        }
+        ::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
+        * { cursor: none !important; }
+      `).catch(() => { });
+        });
+        // Lock pinch-zoom and Ctrl+wheel zoom.
+        win.webContents.setVisualZoomLevelLimits(1, 1).catch(() => { });
+        win.webContents.on('zoom-changed', () => {
+            win.webContents.setZoomFactor(1);
+        });
+        win.loadURL(`${appBaseUrl}${opts.path}`);
+        return win;
+    }
+    electron_1.ipcMain.handle('output:open-window', (_e, opts) => {
+        if (!appBaseUrl)
+            return { ok: false, error: 'app not ready' };
+        createKioskOutput({
+            displayId: opts?.displayId,
+            path: '/api/output/congregation',
+            title: 'ScriptureLive — Congregation Display',
+        });
         return { ok: true };
     });
     // Stage-display window: shows current slide, next slide, sermon notes,
@@ -318,22 +594,11 @@ function setupIpc() {
     electron_1.ipcMain.handle('output:open-stage', (_e, opts) => {
         if (!appBaseUrl)
             return { ok: false, error: 'app not ready' };
-        let target = electron_1.screen.getPrimaryDisplay();
-        if (opts?.displayId !== undefined) {
-            const found = electron_1.screen.getAllDisplays().find((d) => d.id === opts.displayId);
-            if (found)
-                target = found;
-        }
-        const { x, y, width, height } = target.bounds;
-        const win = new electron_1.BrowserWindow({
-            x, y, width, height,
-            backgroundColor: '#000',
+        createKioskOutput({
+            displayId: opts?.displayId,
+            path: '/api/output/stage',
             title: 'ScriptureLive — Stage Display',
-            autoHideMenuBar: true,
-            fullscreen: target.id !== electron_1.screen.getPrimaryDisplay().id,
         });
-        win.removeMenu();
-        win.loadURL(`${appBaseUrl}/api/output/stage`);
         return { ok: true };
     });
     ndi.on('frame', (count) => {
@@ -345,6 +610,40 @@ function setupIpc() {
 }
 electron_1.app.whenReady().then(async () => {
     setupFileLogging();
+    // ── Permissions ────────────────────────────────────────────────
+    // Auto-grant the renderer the permissions it needs to behave like
+    // a real desktop production tool — microphone (live transcription),
+    // media playback (preview/live videos), display capture (NDI frame
+    // grabber). Without this the Electron Chromium silently denies
+    // mic access even after the user clicks Allow at the OS level,
+    // which is why transcription stays dead in the packaged app.
+    try {
+        const allowed = new Set([
+            'media',
+            'mediaKeySystem',
+            'audioCapture',
+            'videoCapture',
+            'display-capture',
+            'fullscreen',
+            'clipboard-read',
+            'clipboard-sanitized-write',
+        ]);
+        electron_1.session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => {
+            cb(allowed.has(permission));
+        });
+        electron_1.session.defaultSession.setPermissionCheckHandler((_wc, permission) => allowed.has(permission));
+        // Skip the device-chooser modal (default mic / default camera).
+        electron_1.session.defaultSession.setDevicePermissionHandler(() => true);
+    }
+    catch (err) {
+        console.error('[permissions] failed to wire permission handlers (non-fatal):', err);
+    }
+    try {
+        buildAppMenu();
+    }
+    catch (err) {
+        console.error('[menu] init failed (non-fatal):', err);
+    }
     try {
         setupIpc();
     }
@@ -374,6 +673,48 @@ electron_1.app.whenReady().then(async () => {
     }
     catch (err) {
         console.error('[updater] init failed (non-fatal):', err);
+    }
+    // ── Auto-start NDI sender ─────────────────────────────────────
+    // The whole point of "one-click NDI" is that the user shouldn't have
+    // to click anything. As soon as the app is up and the NDI runtime is
+    // present, fire up the sender on its own with sensible defaults so
+    // the source appears in vMix / Wirecast / OBS / NDI Studio Monitor
+    // immediately on the LAN. The user can stop it from the NDI panel
+    // if they don't want it.
+    if (ndi.isAvailable()) {
+        try {
+            await ndi.start({ name: 'ScriptureLive AI', width: 1920, height: 1080, fps: 30 });
+            frameCapture = new frame_capture_1.FrameCapture({
+                baseUrl: appBaseUrl,
+                onFrame: (buf, w, h) => ndi.sendFrame(buf, w, h),
+                onStatus: (msg) => broadcastNdiStatus({ ...ndi.getStatus(), captureMessage: msg }),
+            });
+            await frameCapture.start({
+                width: 1920,
+                height: 1080,
+                fps: 30,
+                path: '/api/output/congregation',
+                transparent: false,
+            });
+            broadcastNdiStatus(ndi.getStatus());
+            console.log('[ndi] auto-started sender "ScriptureLive AI" @ 1080p30');
+        }
+        catch (err) {
+            console.error('[ndi] auto-start failed (non-fatal):', err);
+            try {
+                if (frameCapture)
+                    await frameCapture.stop();
+            }
+            catch { /* ignore */ }
+            frameCapture = null;
+            try {
+                await ndi.stop();
+            }
+            catch { /* ignore */ }
+        }
+    }
+    else {
+        console.log('[ndi] runtime not detected — sender not auto-started:', ndi.unavailableReason());
     }
 });
 electron_1.app.on('window-all-closed', async () => {
