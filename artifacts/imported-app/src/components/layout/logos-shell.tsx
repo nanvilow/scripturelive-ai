@@ -1074,22 +1074,10 @@ function LiveDisplayCard({
         </div>
       </div>
 
-      <div className="border-t border-zinc-800/60 px-3 py-2 flex items-center gap-3 bg-zinc-900/30 shrink-0">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <span className="text-[9px] uppercase tracking-widest text-zinc-500 font-semibold">Size</span>
-          <input
-            type="range"
-            min={0.6}
-            max={1.0}
-            step={0.05}
-            value={size}
-            onChange={(e) => setSize(Number(e.target.value))}
-            className="flex-1 h-1 accent-sky-500"
-          />
-          <span className="text-[10px] font-mono text-zinc-400 tabular-nums w-8 text-right">
-            {Math.round(size * 100)}%
-          </span>
-        </div>
+      <div className="border-t border-zinc-800/60 px-3 py-2 flex items-center justify-end gap-3 bg-zinc-900/30 shrink-0">
+        {/* Size slider removed (item #10) — operators kept dragging it
+            by accident and shrinking the live output mid-service. The
+            preview always renders at the natural slide aspect now. */}
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="icon" onClick={onPrev} className="h-7 w-7 text-zinc-300 hover:text-white border border-zinc-800">
             <ChevronLeft className="h-3.5 w-3.5" />

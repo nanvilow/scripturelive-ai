@@ -31,7 +31,6 @@ import {
   Image as LogoIcon,
   Wifi,
   ExternalLink,
-  Trash2,
   ChevronUp,
   ChevronDown,
   Clock,
@@ -53,6 +52,7 @@ import {
   MediaLibraryCompact,
 } from '@/components/layout/library-compact'
 import { NdiOutputPanel } from '@/components/views/ndi-output-panel'
+import { useNdi } from '@/lib/use-electron'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { MonitorPlay } from 'lucide-react'
 
@@ -174,6 +174,95 @@ function GlobalVolumeControl() {
   )
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// NDI single-toggle button
+// ──────────────────────────────────────────────────────────────────────
+// One click = start or stop the NDI sender. Glowing red dot means ON
+// AIR (visible from across the room). All advanced controls live in
+// the small caret-popover next to it / the Settings page. Replaces
+// the old multi-step popover that operators kept missing during a
+// service.
+function NdiToggleButton() {
+  const { desktop, status, available } = useNdi()
+  const setNdiConnected = useAppStore((s) => s.setNdiConnected)
+  const updateSettings = useAppStore((s) => s.updateSettings)
+  const [busy, setBusy] = useState(false)
+  const isRunning = !!status?.running
+
+  // Mirror real NDI state into the store so other panels (status pills
+  // etc.) reflect the truth from the desktop bridge, not optimistic
+  // UI flags.
+  useEffect(() => {
+    setNdiConnected(isRunning)
+  }, [isRunning, setNdiConnected])
+
+  const handleToggle = useCallback(async () => {
+    if (!desktop) {
+      toast.info('NDI requires the desktop app — install ScriptureLive AI for Windows')
+      return
+    }
+    if (available === false) {
+      toast.error('NDI runtime missing — install NDI Tools from ndi.video/tools')
+      return
+    }
+    setBusy(true)
+    try {
+      if (isRunning) {
+        const r = await desktop.ndi.stop()
+        if (!r.ok) toast.error(r.error || 'Failed to stop NDI')
+        else {
+          updateSettings({ outputDestination: 'window' })
+          toast.success('NDI output stopped')
+        }
+      } else {
+        const r = await desktop.ndi.start({
+          name: 'ScriptureLive AI',
+          width: 1920, height: 1080, fps: 30,
+        })
+        if (!r.ok) toast.error(r.error || 'Failed to start NDI')
+        else toast.success('Broadcasting on the LAN as "ScriptureLive AI"')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }, [desktop, available, isRunning, updateSettings])
+
+  const unavailable = !desktop || available === false
+
+  return (
+    <Button
+      onClick={handleToggle}
+      disabled={busy}
+      variant="ghost"
+      size="sm"
+      className={cn(
+        'h-7 px-2.5 text-[11px] gap-1.5 border font-semibold transition-colors',
+        isRunning
+          ? 'bg-red-600/20 text-red-200 border-red-600 hover:bg-red-600/30'
+          : unavailable
+            ? 'text-zinc-500 border-zinc-800 hover:bg-zinc-800'
+            : 'text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white',
+      )}
+      title={
+        isRunning
+          ? 'NDI is ON AIR — click to stop sending to vMix / OBS / Wirecast'
+          : unavailable
+            ? 'NDI requires the desktop app + NDI runtime'
+            : 'Click to broadcast the live output to vMix / OBS / Wirecast over NDI'
+      }
+    >
+      <Radio className={cn('h-3 w-3', isRunning && 'text-red-300')} />
+      NDI
+      {isRunning && (
+        <span
+          className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse"
+          style={{ boxShadow: '0 0 8px 2px rgba(239,68,68,0.85), 0 0 16px 4px rgba(239,68,68,0.45)' }}
+        />
+      )}
+    </Button>
+  )
+}
+
 export function TopToolbar({
   outputActive,
   toggleOutput,
@@ -186,10 +275,6 @@ export function TopToolbar({
     setSelectedTranslation,
     isLive,
     setCurrentView,
-    schedule,
-    clearSchedule,
-    ndiConnected,
-    setNdiConnected,
     selectedMicrophoneId,
     setSelectedMicrophoneId,
     updateSettings,
@@ -489,28 +574,6 @@ export function TopToolbar({
           </div>
         </div>
 
-        <div className="h-6 w-px bg-zinc-800 mx-1" />
-
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-white gap-1"
-            onClick={() => {
-              if (schedule.length === 0) {
-                toast.info('Schedule is already empty')
-                return
-              }
-              if (window.confirm(`Clear all ${schedule.length} item(s) from the schedule?`)) {
-                clearSchedule()
-                toast.success('Schedule cleared')
-              }
-            }}
-          >
-            <Trash2 className="h-3 w-3" />
-            Clear Schedule
-          </Button>
-        </div>
       </div>
 
       <div className="flex items-center gap-2">
@@ -676,13 +739,10 @@ export function TopToolbar({
           </PopoverContent>
         </Popover>
 
-        {/* ── Global master volume / mute ─────────────────────────────
-            Single slider that controls every <video> in the app —
-            Preview, Live, secondary congregation screen and any
-            uploaded media clip. The mute toggle is independent of the
-            slider so the operator can silence everything and bring
-            the same level back with one click. */}
-        <GlobalVolumeControl />
+        {/* Master volume moved out of the toolbar — it now lives inside
+            the Live Display panel, beside the slide it actually
+            controls. Less top-bar clutter; closer to the audio it
+            governs. Operators asked for this (item #11). */}
 
         {/* ── Output Display picker ─────────────────────────────────────
             Always a popover. Lists every physical monitor in the desktop
@@ -886,52 +946,28 @@ export function TopToolbar({
           </PopoverContent>
         </Popover>
 
-        {/* NDI inline popover (built-in, like EasyWorship) */}
+        {/* NDI single-toggle. Click = start/stop. The whole popover-of-
+            settings is gone; the only thing operators do mid-service is
+            kill or restart the sender, and a single big button (with a
+            glowing red dot when ON AIR) is exactly that. Advanced
+            settings live in the Settings page. */}
+        <NdiToggleButton />
         <Popover>
           <PopoverTrigger asChild>
             <Button
               variant="ghost"
               size="sm"
-              className={cn(
-                'h-7 px-2 text-[11px] gap-1.5 border',
-                ndiConnected
-                  ? 'bg-emerald-600/20 text-emerald-300 border-emerald-700 hover:bg-emerald-600/30'
-                  : 'text-zinc-300 border-zinc-800 hover:bg-zinc-800',
-              )}
-              title="Send the live output to vMix / Wirecast / OBS over NDI on your local network."
+              className="h-7 w-6 px-0 text-[11px] border text-zinc-400 border-zinc-800 hover:bg-zinc-800 hover:text-white"
+              title="Advanced NDI settings (source name, status)"
             >
-              <Radio className="h-3 w-3" />
-              NDI
-              {ndiConnected && (
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
-              )}
+              <ChevronDown className="h-3 w-3" />
             </Button>
           </PopoverTrigger>
           <PopoverContent
             align="end"
-            className="w-[420px] p-0 bg-zinc-950 border-zinc-800 max-h-[80vh] overflow-y-auto"
+            className="w-[420px] p-3 bg-zinc-950 border-zinc-800 max-h-[80vh] overflow-y-auto"
           >
-            {/* NDI disconnect: stops the NDI sender and forces the
-                output destination back to the local window so vMix /
-                Wirecast / OBS no longer see the feed. Mirrors the
-                "Stop NDI Output" command in those apps. */}
-            {ndiConnected && (
-              <button
-                onClick={() => {
-                  setNdiConnected(false)
-                  updateSettings({ outputDestination: 'window' })
-                  toast.success('NDI output disconnected')
-                }}
-                className="w-full text-left px-3 py-2 rounded-none bg-rose-500/15 border-b border-rose-500/40 text-[11px] text-rose-200 hover:bg-rose-500/25 flex items-center gap-2"
-              >
-                <Radio className="h-3.5 w-3.5" />
-                <span className="flex-1 font-medium">Disconnect NDI output</span>
-                <span className="text-[9px] uppercase tracking-wider opacity-70">Stop sender</span>
-              </button>
-            )}
-            <div className="p-3">
-              <NdiOutputPanel />
-            </div>
+            <NdiOutputPanel />
           </PopoverContent>
         </Popover>
 
@@ -1317,6 +1353,10 @@ function OutputPanel() {
               </span>
             )}
           </div>
+          {/* Master volume — moved here from the top toolbar so it sits
+              next to the slide whose audio it actually controls. Same
+              control as before, just relocated for a calmer top bar. */}
+          <GlobalVolumeControl />
         </div>
         <div className="flex-1 min-h-0 p-3 flex items-center justify-center bg-black">
           {liveSlide ? (
@@ -1418,14 +1458,6 @@ export function TransportBar({
           <LogoIcon className="h-3.5 w-3.5" />
           Logo
         </Button>
-      </div>
-
-      <div className="flex items-center gap-3 text-[10px] text-zinc-400">
-        <span className="hidden md:inline">
-          <kbd className="px-1 py-0.5 rounded bg-zinc-800 font-mono">⏎</kbd> Live ·{' '}
-          <kbd className="px-1 py-0.5 rounded bg-zinc-800 font-mono">←→</kbd> Nav ·{' '}
-          <kbd className="px-1 py-0.5 rounded bg-zinc-800 font-mono">Esc</kbd> Clear
-        </span>
       </div>
 
       <div className="flex items-center gap-3">
