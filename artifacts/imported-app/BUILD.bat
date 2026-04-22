@@ -22,7 +22,7 @@ echo. >> "%LOGFILE%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build  v0.3.4
+echo   ScriptureLive AI - One-click Windows Build  v0.3.5
 echo ================================================================
 echo   Full build log:   %LOGFILE%
 echo.
@@ -126,34 +126,50 @@ if errorlevel 1 (
 )
 echo       Dependencies installed OK
 
-REM ---- Step 4b: Force-install + rebuild grandiose against Electron --
-REM grandiose is optionalDependencies. If the Electron prebuild fetch
-REM above didn't run for any reason, install it explicitly NOW with the
-REM right env vars, then run @electron/rebuild as a final fallback to
-REM compile against Electron's Node ABI. Without this the packaged app
-REM ships with no NDI support.
-if not exist "node_modules\grandiose\package.json" (
-  echo       grandiose missing - installing with Electron prebuild target...
-  call pnpm add grandiose@^3 --save-optional >> "%LOGFILE%" 2>&1
-)
-if exist "node_modules\grandiose\package.json" (
-  echo       grandiose installed - rebuilding against Electron ABI...
-  call pnpm exec electron-rebuild -f -w grandiose --module-dir . >> "%LOGFILE%" 2>&1
-  if errorlevel 1 (
-    color 0E
-    echo       WARNING: electron-rebuild failed. NDI may not work in the packaged app.
-    echo       This usually means Visual Studio Build Tools 2022 are missing.
-    echo       Install: https://visualstudio.microsoft.com/visual-cpp-build-tools/
-    color 0B
-  ) else (
-    echo       grandiose rebuilt against Electron OK
-  )
-) else (
+REM ---- Step 4b: Install grandiose (NDI) directly with npm ---------
+REM IMPORTANT: grandiose is intentionally NOT in package.json's
+REM dependencies/optionalDependencies. pnpm 10 SILENTLY EXCLUDES any
+REM optional dep that fails its compatibility check (engines/cpu/os).
+REM On a Node 24 host, pnpm's log line is the smoking gun:
+REM   "info: grandiose@^3.0.5 is an optional dependency and failed
+REM    compatibility check. Excluding it from installation."
+REM and node_modules/grandiose is never created. The result is that the
+REM packaged app's NDI panel shows "runtime not detected" forever.
+REM We bypass pnpm entirely and install grandiose with npm, which does
+REM NOT do the optional-compat exclusion. The Electron-ABI env vars
+REM make prebuild-install fetch the binary built for Electron 33's
+REM Node ABI, not the host Node ABI.
+echo.
+echo [4b/7] Installing NDI native module (grandiose)...
+where npm >nul 2>nul
+if errorlevel 1 (
   color 0E
-  echo       WARNING: grandiose could not be installed. NDI will be disabled in the build.
-  echo       Check the log for the exact pnpm error.
+  echo       WARNING: npm not found - skipping NDI install. NDI will not work.
   color 0B
+  goto :SKIP_GRANDIOSE
 )
+call npm install grandiose@3.0.5 --no-save --no-package-lock --omit=dev --ignore-scripts=false --foreground-scripts >> "%LOGFILE%" 2>&1
+if not exist "node_modules\grandiose\package.json" (
+  color 0E
+  echo       WARNING: npm could not install grandiose. NDI will be disabled.
+  echo       Check the log for the exact npm error.
+  color 0B
+  goto :SKIP_GRANDIOSE
+)
+echo       grandiose downloaded - rebuilding against Electron ABI...
+call pnpm exec electron-rebuild -f -w grandiose --module-dir . >> "%LOGFILE%" 2>&1
+if errorlevel 1 (
+  color 0E
+  echo       WARNING: electron-rebuild failed. The prebuilt binary may
+  echo       still work if it matches Electron's Node ABI. If NDI fails
+  echo       at runtime, install Visual Studio Build Tools 2022 from
+  echo       https://visualstudio.microsoft.com/visual-cpp-build-tools/
+  echo       and re-run this script.
+  color 0B
+) else (
+  echo       grandiose rebuilt against Electron OK
+)
+:SKIP_GRANDIOSE
 
 REM ---- Step 5: Generate Prisma client -----------------------------
 echo.
