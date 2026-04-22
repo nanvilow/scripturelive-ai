@@ -48,3 +48,9 @@ id = "kDfPpdq2SQ28UQEqsWxeH"
 uri = "file://downloads/ScriptureLive-AI-source-v0.4.4.zip"
 type = "unspecified"
 title = "ScriptureLive AI source v0.4.4 (fixed log file lock from vcvars helpers)"
+
+[[outputs]]
+id = "VbnHraBwPzwW_ST9nVARs"
+uri = "file://downloads/ScriptureLive-AI-FULL-PROJECT.zip"
+type = "unspecified"
+title = "ScriptureLive AI — Full project (entire monorepo, 871 files, 148 MB)"
