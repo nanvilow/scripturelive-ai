@@ -36,3 +36,9 @@ id = "d7xjP1jk0DOONHeCdDsXX"
 uri = "file://downloads/ScriptureLive-AI-source-v0.3.4.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.3.4 — NDI builds against Electron ABI (fixes Node 24 compat)"
+
+[[outputs]]
+id = "x7vpEalO5_Du8U7xgdzF6"
+uri = "file://downloads/ScriptureLive-AI-source-v0.3.5.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.3.5 — NDI install fix (npm bypass for grandiose)"
