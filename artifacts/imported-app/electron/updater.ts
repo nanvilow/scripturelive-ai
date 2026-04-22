@@ -136,3 +136,17 @@ export function setupAutoUpdater(opts: { getMainWindow: () => BrowserWindow | nu
 export function openReleasesPage(): void {
   shell.openExternal('https://github.com/wassmedia/scripturelive-ai/releases/latest')
 }
+
+/**
+ * Run an update check on demand (e.g. from the Help menu) and return the
+ * resulting state so callers can surface a one-shot dialog/toast.
+ */
+export async function runManualCheck(): Promise<UpdateState> {
+  await safeCheck()
+  return currentState
+}
+
+/** Read the latest cached state without triggering a network check. */
+export function getUpdateState(): UpdateState {
+  return currentState
+}
