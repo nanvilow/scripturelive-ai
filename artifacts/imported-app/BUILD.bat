@@ -22,7 +22,7 @@ echo. >> "%LOGFILE%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build  v0.3.2
+echo   ScriptureLive AI - One-click Windows Build  v0.3.3
 echo ================================================================
 echo   Full build log:   %LOGFILE%
 echo.
@@ -107,6 +107,29 @@ if errorlevel 1 (
   goto :DIE
 )
 echo       Dependencies installed OK
+
+REM ---- Step 4b: Verify grandiose (NDI) actually installed --------
+REM grandiose is in optionalDependencies so pnpm will SILENTLY skip it
+REM if the prebuild download fails. If that happens the packaged app
+REM ships without NDI support and the Native NDI panel shows
+REM "runtime not detected". Force-install it now if missing so the
+REM problem is loud at build time, not at run time.
+if not exist "node_modules\grandiose\package.json" (
+  echo       grandiose NDI module missing - reinstalling explicitly...
+  call pnpm add grandiose@^3 >> "%LOGFILE%" 2>&1
+  if errorlevel 1 (
+    color 0E
+    echo       WARNING: grandiose install failed. Native NDI will not work in the build.
+    color 0B
+  )
+)
+if exist "node_modules\grandiose\package.json" (
+  echo       grandiose NDI module OK
+) else (
+  color 0E
+  echo       WARNING: NDI module unavailable - install will not have native NDI.
+  color 0B
+)
 
 REM ---- Step 5: Generate Prisma client -----------------------------
 echo.
