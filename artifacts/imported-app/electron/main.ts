@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, screen, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, screen, dialog, session } from 'electron'
 import path from 'node:path'
 import { spawn, ChildProcess } from 'node:child_process'
 import { createServer } from 'node:net'
@@ -164,13 +164,22 @@ async function createMainWindow(url: string) {
     minWidth: 1024,
     minHeight: 640,
     backgroundColor: '#0a0a0a',
+    icon: process.platform === 'win32'
+      ? path.join(process.resourcesPath, 'app', '.next', 'standalone', 'public', 'icon-512.png')
+      : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // Allow the renderer to use the microphone for live transcription
+      // (Web Speech API + getUserMedia). Without these the Electron
+      // session denies the request silently and the transcription panel
+      // sits idle even when the user grants OS-level mic permission.
+      webSecurity: true,
     },
     title: 'ScriptureLive AI',
+    autoHideMenuBar: true,
   })
   mainWindow.removeMenu()
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
@@ -294,14 +303,33 @@ function setupIpc() {
       if (others[0]) target = others[0]
     }
     const { x, y, width, height } = target.bounds
+    // Frameless / chromeless / kiosk-style output window — looks like
+    // vMix/Wirecast secondary output, NOT a browser. Always fullscreen
+    // when sent to a non-primary display so it covers the projector
+    // edge-to-edge with no taskbar visible. Press Esc to exit fullscreen.
+    const isSecondary = target.id !== screen.getPrimaryDisplay().id
     const win = new BrowserWindow({
       x, y, width, height,
       backgroundColor: '#000',
       title: 'ScriptureLive — Congregation Display',
+      frame: false,
       autoHideMenuBar: true,
-      fullscreen: target.id !== screen.getPrimaryDisplay().id,
+      fullscreen: isSecondary,
+      kiosk: isSecondary,
+      simpleFullscreen: isSecondary,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
     })
     win.removeMenu()
+    win.setMenuBarVisibility(false)
+    win.webContents.on('before-input-event', (event, input) => {
+      if (input.type === 'keyDown' && input.key === 'Escape') {
+        event.preventDefault()
+        try { win.close() } catch { /* ignore */ }
+      }
+    })
     win.loadURL(`${appBaseUrl}/api/output/congregation`)
     return { ok: true }
   })
@@ -316,14 +344,25 @@ function setupIpc() {
       if (found) target = found
     }
     const { x, y, width, height } = target.bounds
+    const isSecondary = target.id !== screen.getPrimaryDisplay().id
     const win = new BrowserWindow({
       x, y, width, height,
       backgroundColor: '#000',
       title: 'ScriptureLive — Stage Display',
+      frame: false,
       autoHideMenuBar: true,
-      fullscreen: target.id !== screen.getPrimaryDisplay().id,
+      fullscreen: isSecondary,
+      kiosk: isSecondary,
+      simpleFullscreen: isSecondary,
     })
     win.removeMenu()
+    win.setMenuBarVisibility(false)
+    win.webContents.on('before-input-event', (event, input) => {
+      if (input.type === 'keyDown' && input.key === 'Escape') {
+        event.preventDefault()
+        try { win.close() } catch { /* ignore */ }
+      }
+    })
     win.loadURL(`${appBaseUrl}/api/output/stage`)
     return { ok: true }
   })
@@ -338,6 +377,35 @@ function setupIpc() {
 
 app.whenReady().then(async () => {
   setupFileLogging()
+
+  // ── Permissions ────────────────────────────────────────────────
+  // Auto-grant the renderer the permissions it needs to behave like
+  // a real desktop production tool — microphone (live transcription),
+  // media playback (preview/live videos), display capture (NDI frame
+  // grabber). Without this the Electron Chromium silently denies
+  // mic access even after the user clicks Allow at the OS level,
+  // which is why transcription stays dead in the packaged app.
+  try {
+    const allowed = new Set([
+      'media',
+      'mediaKeySystem',
+      'audioCapture',
+      'videoCapture',
+      'display-capture',
+      'fullscreen',
+      'clipboard-read',
+      'clipboard-sanitized-write',
+    ])
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => {
+      cb(allowed.has(permission))
+    })
+    session.defaultSession.setPermissionCheckHandler((_wc, permission) => allowed.has(permission))
+    // Skip the device-chooser modal (default mic / default camera).
+    session.defaultSession.setDevicePermissionHandler(() => true)
+  } catch (err) {
+    console.error('[permissions] failed to wire permission handlers (non-fatal):', err)
+  }
+
   try {
     setupIpc()
   } catch (err) {

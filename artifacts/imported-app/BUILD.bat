@@ -22,7 +22,7 @@ echo. >> "%LOGFILE%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build  v0.3.1
+echo   ScriptureLive AI - One-click Windows Build  v0.3.2
 echo ================================================================
 echo   Full build log:   %LOGFILE%
 echo.

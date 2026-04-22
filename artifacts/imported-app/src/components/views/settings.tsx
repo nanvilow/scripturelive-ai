@@ -450,8 +450,11 @@ export function SettingsView() {
       {/* Native NDI (desktop app) */}
       <NdiOutputPanel />
 
-      {/* NDI / Output Setup Guide */}
-      <Card className="bg-card border-border">
+      {/* Setup guide intentionally removed — NDI is one-click via the
+          panel above. No external NDI Tools install or browser
+          screen-capture step is needed in the desktop app. */}
+      {false && (
+      <Card className="bg-card border-border hidden">
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
             <MonitorSpeaker className="h-5 w-5 text-primary" />
@@ -563,6 +566,7 @@ export function SettingsView() {
           </Card>
         </CardContent>
       </Card>
+      )}
 
       {/* Appearance Settings — controls on the left, live typography
           preview on the right (per the spec: the preview lives next to
