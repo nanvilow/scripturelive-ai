@@ -168,6 +168,26 @@ owning Apple ID password is rotated.
 4. Trigger a workflow_dispatch run of `release-desktop.yml` against a recent
    tag and confirm the macOS package step prints `notarization successful`.
 
+## Signing the download manifest
+
+The release pipeline also produces a detached
+[minisign](https://jedisct1.github.io/minisign/) signature for the published
+`manifest.json` and `SHA256SUMS.txt`, so admins can verify the
+installer-hash chain end-to-end even if the web host serving `/download` is
+later compromised. The maintainer-held public key lives at
+`artifacts/imported-app/public/downloads/minisign.pub` (and should be mirrored
+into the GitHub project README so users have an out-of-band channel to
+cross-check the fingerprint).
+
+| Secret name         | Required? | Value                                                                                          |
+| ------------------- | --------- | ---------------------------------------------------------------------------------------------- |
+| `MINISIGN_KEY`      | optional  | Base64 of your `minisign.key` private key: `base64 -w 0 minisign.key`. Leave unset to skip signing entirely (release proceeds without `.minisig` sidecars; build logs a `::notice::`). |
+| `MINISIGN_PASSWORD` | optional  | Password for an encrypted minisign key. Omit when the key was generated passwordless via `minisign -G -W`. |
+
+Full setup, key-rotation, and end-user verification instructions live in
+`artifacts/imported-app/DESKTOP_BUILD.md` →
+**End-to-end verification with `minisign`**.
+
 ## Caveats
 
 - The NDI SDK download is fetched from <https://downloads.ndi.tv> at build

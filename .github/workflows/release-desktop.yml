@@ -258,14 +258,83 @@ jobs:
           cp artifacts/imported-app/public/downloads/manifest.json dist/manifest.json
           cat dist/manifest.json
 
+      # ---- Sign the manifest + checksums with minisign so security-conscious
+      # admins can verify the chain end-to-end (the displayed SHA-256s on
+      # /download are only as trustworthy as the host serving them; a detached
+      # signature lets users verify against a maintainer-held key whose public
+      # half is published out-of-band — see public/downloads/minisign.pub and
+      # the README in this directory).
+      #
+      # Gracefully skipped when MINISIGN_KEY is not configured: the release
+      # still ships, just without .minisig sidecars (mirrors the unsigned-
+      # installer fallback for CSC_LINK above).
+      - name: Sign manifest + checksums (minisign)
+        id: sign_manifest
+        env:
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MINISIGN_KEY:-}" ]; then
+            echo "::notice::MINISIGN_KEY secret not set — manifest.json and SHA256SUMS.txt will be published without .minisig sidecars. See .github/workflows/README.md → 'Signing the download manifest' for setup."
+            exit 0
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends minisign
+
+          # MINISIGN_KEY is the base64-encoded contents of a minisign.key file
+          # (i.e. `base64 -w 0 minisign.key`). Decode to a tmpfile we discard.
+          KEY_FILE="$(mktemp)"
+          trap 'rm -f "$KEY_FILE"' EXIT
+          printf '%s' "$MINISIGN_KEY" | base64 -d > "$KEY_FILE"
+
+          # The signature's trusted-comment includes the tag so a stolen
+          # signature can't be silently re-used to authenticate a different
+          # release's manifest.
+          COMMENT="ScriptureLive AI ${TAG} — manifest signature"
+
+          for f in manifest.json SHA256SUMS.txt; do
+            echo "Signing dist/$f"
+            if [ -n "${MINISIGN_PASSWORD:-}" ]; then
+              # Encrypted key — feed password via stdin.
+              printf '%s\n' "$MINISIGN_PASSWORD" \
+                | minisign -S -s "$KEY_FILE" -t "$COMMENT" -m "dist/$f"
+            else
+              # Unencrypted key (generated with `minisign -G -W`).
+              minisign -S -s "$KEY_FILE" -t "$COMMENT" -m "dist/$f" < /dev/null
+            fi
+          done
+
+          ls -la dist/*.minisig
+
+          # Self-verify with the committed public key so a mismatch (e.g. the
+          # repo's published pubkey was rotated but the secret wasn't) fails
+          # the release immediately instead of shipping signatures users can't
+          # actually verify.
+          PUB="artifacts/imported-app/public/downloads/minisign.pub"
+          if [ -f "$PUB" ]; then
+            for f in manifest.json SHA256SUMS.txt; do
+              echo "Verifying dist/$f against $PUB"
+              minisign -V -p "$PUB" -m "dist/$f"
+            done
+          else
+            echo "::warning::No public key at $PUB — skipping self-verify. Commit the public half of MINISIGN_KEY there so /download can advertise it."
+          fi
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.name }}
           name: ScriptureLive AI ${{ steps.tag.outputs.name }}
           generate_release_notes: true
+          # Globbing the .minisig files (rather than listing each one) means
+          # the release still publishes cleanly when the sign-manifest step
+          # was skipped — the glob just matches nothing and softprops/action-
+          # gh-release happily ignores it.
           files: |
             dist/*.exe
             dist/*.dmg
             dist/SHA256SUMS.txt
             dist/manifest.json
+            dist/*.minisig

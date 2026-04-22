@@ -131,6 +131,85 @@ the manifest is missing one (handy when you `cp` an installer into
 `public/downloads/` and forget to run the script). For Option B you must run
 the script — the API can't compute hashes for files it doesn't have.
 
+### End-to-end verification with `minisign`
+
+The SHA-256 hashes shown on `/download` and inside `SHA256SUMS.txt` are only
+trustworthy if the channel that delivered them is. An attacker who compromises
+the web host could swap an installer **and** rewrite its hash in the same
+request. To close that gap, the release pipeline produces a detached
+[minisign](https://jedisct1.github.io/minisign/) signature for both
+`manifest.json` and `SHA256SUMS.txt` using a maintainer-held key whose public
+half is published out-of-band (in this repo at
+`artifacts/imported-app/public/downloads/minisign.pub`, mirrored on the
+GitHub README) so admins can verify the chain end-to-end.
+
+Each GitHub Release publishes:
+
+- `manifest.json` + `manifest.json.minisig`
+- `SHA256SUMS.txt` + `SHA256SUMS.txt.minisig`
+- `*.exe` / `*.dmg` (the installers themselves)
+
+The `/download` page surfaces the signature URLs and a copy-pasteable verify
+snippet in its **Verify your download** panel whenever
+`externalReleaseUrl` is set in `manifest.json`.
+
+#### One-time setup (maintainers)
+
+1. Generate a keypair on a trusted machine. Either encrypted (recommended) or
+   passwordless:
+
+   ```bash
+   # encrypted (you will be prompted for a password)
+   minisign -G -p scripturelive-minisign.pub -s scripturelive-minisign.key
+   # OR passwordless (simpler in CI, no MINISIGN_PASSWORD secret needed)
+   minisign -G -W -p scripturelive-minisign.pub -s scripturelive-minisign.key
+   ```
+
+2. Commit **only the public half** to the repo so `/download` and the README
+   can advertise it:
+
+   ```bash
+   cp scripturelive-minisign.pub artifacts/imported-app/public/downloads/minisign.pub
+   ```
+
+   Also paste the `minisign.pub` contents into the project's GitHub README so
+   security-conscious admins have a second, independent copy to cross-check
+   the fingerprint against.
+
+3. Base64-encode the **private** key and add it as a repo secret:
+
+   ```bash
+   base64 -w 0 scripturelive-minisign.key   # → contents go into MINISIGN_KEY
+   ```
+
+   Add `MINISIGN_KEY` (and `MINISIGN_PASSWORD` if you generated an encrypted
+   key) under **Settings → Secrets and variables → Actions**. Store the raw
+   `.key` file in a password manager — losing it means rotating the public key
+   and asking users to re-trust the new one.
+
+#### How users verify
+
+```bash
+# install minisign once: brew install minisign  /  apt install minisign
+# (Windows users: scoop install minisign)
+
+# fetch from the GitHub Release for the version you downloaded
+curl -O https://github.com/<org>/<repo>/releases/download/v0.2.0/manifest.json
+curl -O https://github.com/<org>/<repo>/releases/download/v0.2.0/manifest.json.minisig
+curl -O https://github.com/<org>/<repo>/releases/download/v0.2.0/SHA256SUMS.txt
+curl -O https://github.com/<org>/<repo>/releases/download/v0.2.0/SHA256SUMS.txt.minisig
+curl -O https://your-host/downloads/minisign.pub   # cross-check vs README
+
+minisign -Vm manifest.json -p minisign.pub
+minisign -Vm SHA256SUMS.txt -p minisign.pub
+sha256sum -c SHA256SUMS.txt
+```
+
+If `MINISIGN_KEY` is unset, the release still publishes — just without the
+`.minisig` sidecars (mirrors the unsigned-installer fallback for `CSC_LINK`).
+The build job logs a `::notice::` so this is visible without breaking the
+release.
+
 ### Bulk verification with `SHA256SUMS.txt`
 
 Admins rolling out the installers to a fleet usually want to verify several
