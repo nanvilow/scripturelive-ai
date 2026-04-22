@@ -84,3 +84,9 @@ id = "OeVqkZY7oFeX4KgUffdhq"
 uri = "file://downloads/ScriptureLive-AI-source-v0.5.0.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.0 source (no C++ toolchain needed)"
+
+[[outputs]]
+id = "3knsE5qIqgP1-y-pT1cI2"
+uri = "file://release/scripturelive-ai-source-v0.5.1.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.1 — One-click NDI source"
