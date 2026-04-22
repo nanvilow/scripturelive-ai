@@ -36,3 +36,9 @@ id = "xplU7H5ruHykRiQUyMNGJ"
 uri = "file://downloads/ScriptureLive-AI-source-v0.4.2.zip"
 type = "unspecified"
 title = "ScriptureLive AI source v0.4.2 (fixed Windows line endings)"
+
+[[outputs]]
+id = "BJyyVLLOysThdCaOxTCqi"
+uri = "file://downloads/ScriptureLive-AI-source-v0.4.3.zip"
+type = "unspecified"
+title = "ScriptureLive AI source v0.4.3 (verbose mode — shows every command on screen)"
