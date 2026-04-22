@@ -48,6 +48,10 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   // Resets to 0 on any successful `onstart`.
   const consecutiveRestartsRef = useRef(0)
   const lastStartAtRef = useRef(0)
+  // Counts consecutive `network` errors. In Electron these mean the
+  // bundled Chromium can't reach Google's speech service — after a
+  // couple of confirmations we bail out instead of looping forever.
+  const networkErrorCountRef = useRef(0)
   // Track the next index of `event.results` we still need to commit to the
   // running transcript. Web Speech keeps the same array across `onresult`
   // events with `continuous: true` + `interimResults: true`, so without this
@@ -117,6 +121,35 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       setIsListening(false)
       return
     }
+    // Web Speech network failure. In a regular Chrome browser this is a
+    // transient network blip and a quick restart fixes it. In the
+    // packaged Electron desktop app this is FATAL because Electron's
+    // Chromium ships without the Google speech-to-text API key, so the
+    // recognizer can never reach Google's servers and ends up bouncing
+    // on/off forever ("listen and stop keep going off and off when the
+    // speaker speaks nothing detects" — that's exactly this bug).
+    //
+    // Detect Electron + repeated `network` errors and bail out with a
+    // clear, actionable message instead of restarting in a loop.
+    if (err === 'network') {
+      const isElectron =
+        typeof navigator !== 'undefined' &&
+        /Electron/i.test(navigator.userAgent)
+      networkErrorCountRef.current += 1
+      if (isElectron && networkErrorCountRef.current >= 2) {
+        setError(
+          'Live transcription is unavailable in the desktop app. The Web Speech ' +
+          'engine inside the packaged app cannot reach the online speech service. ' +
+          'For now, please use the browser version of ScriptureLive AI for live ' +
+          'detection (open the app URL in Chrome or Edge), or use the manual ' +
+          'text input below to detect verses from typed/pasted text.',
+        )
+        manualStopRef.current = true
+        shouldKeepListeningRef.current = false
+        setIsListening(false)
+        return
+      }
+    }
     console.warn(`Speech recognition error: ${err}, auto-restarting...`)
     setError(null)
   }, [])
@@ -150,6 +183,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
         )
       } else {
         consecutiveRestartsRef.current = 0
+        networkErrorCountRef.current = 0
       }
       const delay =
         consecutiveRestartsRef.current === 0
@@ -180,6 +214,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
             // Successful start — clear the backoff streak so the next
             // natural end triggers a quick 250 ms restart again.
             consecutiveRestartsRef.current = 0
+            networkErrorCountRef.current = 0
           }
 
           recognition.onresult = handleResult
@@ -275,6 +310,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
         setError(null)
         lastStartAtRef.current = Date.now()
         consecutiveRestartsRef.current = 0
+        networkErrorCountRef.current = 0
       }
 
       recognition.onresult = handleResult
