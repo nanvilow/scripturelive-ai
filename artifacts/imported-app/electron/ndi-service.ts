@@ -62,14 +62,80 @@ export class NdiService extends EventEmitter {
   }
 
   private tryLoad() {
+    // First try the normal Node resolution. In dev (running tsx + the
+    // unpacked source tree) this works because node_modules/grandiose
+    // sits next to electron/. In packaged Electron it works only when
+    // grandiose is hoisted to a real folder at app.asar.unpacked/
+    // node_modules/grandiose/ — which is why .npmrc must use
+    // node-linker=hoisted (see comment there).
+    const attempts: string[] = []
+    const tried: { path: string; error: string }[] = []
+
+    attempts.push('grandiose')
+
+    // ── Packaged-app fallbacks ────────────────────────────────────
+    // When the standard require fails, walk a list of likely on-disk
+    // locations inside the installed app and try requiring grandiose
+    // from there directly. This rescues installs where pnpm's
+    // isolated linker placed the real files at a non-standard path
+    // (.pnpm/grandiose@*/...). Without these fallbacks the NDI panel
+    // sits permanently in "runtime not detected" even though the
+    // user's NDI SDK + Tools install is fine.
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      this.grandiose = require('grandiose') as GrandioseModule
-      if (this.grandiose?.FourCC?.BGRA) this.fourCC = this.grandiose.FourCC.BGRA
-    } catch (err) {
-      this.grandiose = null
-      this.loadError = err instanceof Error ? err.message : String(err)
+      const path = require('node:path') as typeof import('node:path')
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require('node:fs') as typeof import('node:fs')
+      const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
+      const candidateRoots: string[] = []
+      if (resourcesPath) {
+        candidateRoots.push(path.join(resourcesPath, 'app.asar.unpacked', 'node_modules'))
+        candidateRoots.push(path.join(resourcesPath, 'app.asar.unpacked', 'node_modules', '.pnpm'))
+      }
+      candidateRoots.push(path.join(__dirname, '..', 'node_modules'))
+      candidateRoots.push(path.join(__dirname, '..', '..', 'node_modules'))
+
+      for (const root of candidateRoots) {
+        if (!fs.existsSync(root)) continue
+        const direct = path.join(root, 'grandiose')
+        if (fs.existsSync(path.join(direct, 'package.json'))) {
+          attempts.push(direct)
+        }
+        // Search .pnpm/grandiose@<ver>/node_modules/grandiose
+        try {
+          const entries = fs.readdirSync(root)
+          for (const entry of entries) {
+            if (!entry.startsWith('grandiose@')) continue
+            const nested = path.join(root, entry, 'node_modules', 'grandiose')
+            if (fs.existsSync(path.join(nested, 'package.json'))) {
+              attempts.push(nested)
+            }
+          }
+        } catch { /* ignore unreadable dirs */ }
+      }
+    } catch (e) {
+      // path/fs themselves should never fail — but if they do, fall through
+      // to the bare require attempt below so we still surface a useful error.
+      tried.push({ path: '<fs/path lookup>', error: e instanceof Error ? e.message : String(e) })
     }
+
+    for (const attempt of attempts) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        this.grandiose = require(attempt) as GrandioseModule
+        if (this.grandiose?.FourCC?.BGRA) this.fourCC = this.grandiose.FourCC.BGRA
+        this.loadError = null
+        console.log(`[ndi] grandiose loaded from: ${attempt}`)
+        return
+      } catch (err) {
+        tried.push({ path: attempt, error: err instanceof Error ? err.message : String(err) })
+      }
+    }
+
+    this.grandiose = null
+    this.loadError = `grandiose native module could not be loaded.\n` +
+      tried.map((t) => `  - ${t.path}: ${t.error.split('\n')[0]}`).join('\n')
+    console.error('[ndi] grandiose load failed:\n' + this.loadError)
   }
 
   isAvailable(): boolean {
