@@ -1,6 +1,6 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "private": true,
   "main": "dist-electron/main.js",
   "pnpm": {
@@ -110,6 +110,7 @@
   },
   "devDependencies": {
     "@electron/notarize": "^2.5.0",
+    "@electron/rebuild": "^3.7.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^22",
     "@types/react": "^19",

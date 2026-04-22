@@ -30,3 +30,9 @@ id = "gYefwjEOxDWRvXeCcrCZk"
 uri = "file://downloads/ScriptureLive-AI-source-v0.3.3.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.3.3 — NDI packaging fix + native output windows"
+
+[[outputs]]
+id = "d7xjP1jk0DOONHeCdDsXX"
+uri = "file://downloads/ScriptureLive-AI-source-v0.3.4.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.3.4 — NDI builds against Electron ABI (fixes Node 24 compat)"
