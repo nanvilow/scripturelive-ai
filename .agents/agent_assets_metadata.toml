@@ -12,3 +12,9 @@ id = "h5GJ_2E1evM1QPSwixgxD"
 uri = "file://release/scripturelive-ai-source-v0.5.2.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.2 — Round logo, kiosk output, speech fix"
+
+[[outputs]]
+id = "3x4vvATK97nbs7IszfgYW"
+uri = "file://exports/ScriptureLive-AI-v0.5.3-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.3 — Windows Build Source"
