@@ -42,3 +42,9 @@ id = "x7vpEalO5_Du8U7xgdzF6"
 uri = "file://downloads/ScriptureLive-AI-source-v0.3.5.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.3.5 — NDI install fix (npm bypass for grandiose)"
+
+[[outputs]]
+id = "8eA2-shKWdxho-EKVQyua"
+uri = "file://downloads/ScriptureLive-AI-source-v0.3.6.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.3.6 — NDI install with 3 fallback strategies + inline error dump"
