@@ -22,7 +22,7 @@ echo. >> "%LOGFILE%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build  v0.3.5
+echo   ScriptureLive AI - One-click Windows Build  v0.3.6
 echo ================================================================
 echo   Full build log:   %LOGFILE%
 echo.
@@ -126,49 +126,80 @@ if errorlevel 1 (
 )
 echo       Dependencies installed OK
 
-REM ---- Step 4b: Install grandiose (NDI) directly with npm ---------
-REM IMPORTANT: grandiose is intentionally NOT in package.json's
-REM dependencies/optionalDependencies. pnpm 10 SILENTLY EXCLUDES any
-REM optional dep that fails its compatibility check (engines/cpu/os).
-REM On a Node 24 host, pnpm's log line is the smoking gun:
-REM   "info: grandiose@^3.0.5 is an optional dependency and failed
-REM    compatibility check. Excluding it from installation."
-REM and node_modules/grandiose is never created. The result is that the
-REM packaged app's NDI panel shows "runtime not detected" forever.
-REM We bypass pnpm entirely and install grandiose with npm, which does
-REM NOT do the optional-compat exclusion. The Electron-ABI env vars
-REM make prebuild-install fetch the binary built for Electron 33's
-REM Node ABI, not the host Node ABI.
+REM ---- Step 4b: Install grandiose (NDI) ---------------------------
+REM grandiose is intentionally NOT in package.json — pnpm 10 silently
+REM excludes optional native modules whose engines/cpu/os don't match
+REM the host (e.g. Node 24). We install it ourselves, with multiple
+REM fallback strategies, and DUMP the real error to the console if
+REM all of them fail so the user doesn't have to go hunt the log.
 echo.
 echo [4b/7] Installing NDI native module (grandiose)...
 where npm >nul 2>nul
 if errorlevel 1 (
   color 0E
-  echo       WARNING: npm not found - skipping NDI install. NDI will not work.
+  echo       WARNING: npm not found - skipping NDI install.
   color 0B
   goto :SKIP_GRANDIOSE
 )
-call npm install grandiose@3.0.5 --no-save --no-package-lock --omit=dev --ignore-scripts=false --foreground-scripts >> "%LOGFILE%" 2>&1
-if not exist "node_modules\grandiose\package.json" (
-  color 0E
-  echo       WARNING: npm could not install grandiose. NDI will be disabled.
-  echo       Check the log for the exact npm error.
-  color 0B
-  goto :SKIP_GRANDIOSE
-)
-echo       grandiose downloaded - rebuilding against Electron ABI...
+
+REM --- Strategy 1: npm install with the prebuilt binary fetch ------
+echo       [strategy 1/3] npm install grandiose@3.0.5 (prebuilt binary)...
+echo. >> "%LOGFILE%"
+echo === GRANDIOSE STRATEGY 1: npm install >> "%LOGFILE%"
+call npm install grandiose@3.0.5 --no-save --no-package-lock --legacy-peer-deps --foreground-scripts >> "%LOGFILE%" 2>&1
+if exist "node_modules\grandiose\build\Release\grandiose.node" goto :GRANDIOSE_OK
+if exist "node_modules\grandiose\prebuilds" goto :TRY_PREBUILD_INSTALL
+
+REM --- Strategy 2: install JS only, then fetch binary explicitly ---
+echo       [strategy 2/3] npm install --ignore-scripts then prebuild-install...
+echo. >> "%LOGFILE%"
+echo === GRANDIOSE STRATEGY 2: ignore-scripts + prebuild-install >> "%LOGFILE%"
+call npm install grandiose@3.0.5 --no-save --no-package-lock --legacy-peer-deps --ignore-scripts >> "%LOGFILE%" 2>&1
+if not exist "node_modules\grandiose\package.json" goto :GRANDIOSE_FAIL
+:TRY_PREBUILD_INSTALL
+pushd "node_modules\grandiose"
+call npx --yes prebuild-install --runtime=electron --target=33.2.1 --arch=x64 --platform=win32 >> "%LOGFILE%" 2>&1
+popd
+if exist "node_modules\grandiose\build\Release\grandiose.node" goto :GRANDIOSE_OK
+
+REM --- Strategy 3: rebuild from source against Electron via @electron/rebuild
+echo       [strategy 3/3] electron-rebuild from source...
+echo. >> "%LOGFILE%"
+echo === GRANDIOSE STRATEGY 3: electron-rebuild from source >> "%LOGFILE%"
 call pnpm exec electron-rebuild -f -w grandiose --module-dir . >> "%LOGFILE%" 2>&1
-if errorlevel 1 (
-  color 0E
-  echo       WARNING: electron-rebuild failed. The prebuilt binary may
-  echo       still work if it matches Electron's Node ABI. If NDI fails
-  echo       at runtime, install Visual Studio Build Tools 2022 from
-  echo       https://visualstudio.microsoft.com/visual-cpp-build-tools/
-  echo       and re-run this script.
-  color 0B
-) else (
-  echo       grandiose rebuilt against Electron OK
-)
+if exist "node_modules\grandiose\build\Release\grandiose.node" goto :GRANDIOSE_OK
+
+:GRANDIOSE_FAIL
+color 0E
+echo.
+echo ----------------------------------------------------------------
+echo   NDI install FAILED. Last 30 lines of grandiose error log:
+echo ----------------------------------------------------------------
+powershell -NoProfile -Command "Get-Content -Tail 30 '%LOGFILE%' | ForEach-Object { Write-Host $_ }"
+echo ----------------------------------------------------------------
+echo   Full log: %LOGFILE%
+echo.
+echo   COMMON FIXES for this exact error:
+echo     1. Install Visual Studio Build Tools 2022 with the
+echo        "Desktop development with C++" workload, then re-run.
+echo        https://visualstudio.microsoft.com/visual-cpp-build-tools/
+echo     2. Make sure Python 3.x is on PATH:  python --version
+echo     3. Confirm the NDI 5/6 SDK is installed (the build script
+echo        already verified this in step 2). If the SDK headers are
+echo        in a non-default folder, set NDI_SDK_DIR to that folder.
+echo     4. If you are on Node 24, try installing Node 20 LTS
+echo        (https://nodejs.org/en/download) and re-run. grandiose's
+echo        prebuilt binaries are most reliable on Node 20.
+echo.
+echo   The build will continue WITHOUT native NDI. Output windows,
+echo   transcription, and the rest of the app will still work.
+color 0B
+goto :SKIP_GRANDIOSE
+
+:GRANDIOSE_OK
+color 0A
+echo       grandiose installed and binary present OK
+color 0B
 :SKIP_GRANDIOSE
 
 REM ---- Step 5: Generate Prisma client -----------------------------
