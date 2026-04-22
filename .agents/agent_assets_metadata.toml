@@ -18,3 +18,9 @@ id = "6U4oMGkBIyDnn7U4NF0MD"
 uri = "file://downloads/ScriptureLive-AI-source-v0.3.1.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.3.1 — build script no longer closes window"
+
+[[outputs]]
+id = "7m6ml5_oVubbVYwI8lh-w"
+uri = "file://downloads/ScriptureLive-AI-source-v0.3.2.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.3.2 — icon, NDI, transcription mic, native output window"
