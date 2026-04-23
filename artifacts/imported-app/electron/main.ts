@@ -412,7 +412,12 @@ function setupIpc() {
           onStatus: (msg) => broadcastNdiStatus({ ...ndi.getStatus(), captureMessage: msg }),
         })
         const layout = opts.layout === 'ndi' ? 'ndi' : 'mirror'
-        let capturePath = '/api/output/congregation'
+        // The ?ndi=1 flag tells the congregation renderer this surface
+        // is the NDI feed, so it follows settings.ndiDisplayMode (the
+        // operator's independent NDI display mode) instead of the
+        // projector's displayMode. Without it the NDI Display Mode
+        // setting in Settings → NDI was silently ignored.
+        let capturePath = '/api/output/congregation?ndi=1'
         let transparent = false
         if (layout === 'ndi') {
           transparent = opts.transparent !== false
@@ -710,7 +715,11 @@ app.whenReady().then(async () => {
         width: 1920,
         height: 1080,
         fps: 30,
-        path: '/api/output/congregation',
+        // ?ndi=1 → renderer treats this as the NDI surface and uses
+        // settings.ndiDisplayMode (Full / Lower Third) instead of the
+        // projector's displayMode, so the operator's choice in
+        // Settings → NDI actually takes effect.
+        path: '/api/output/congregation?ndi=1',
         transparent: false,
       })
       broadcastNdiStatus(ndi.getStatus())
