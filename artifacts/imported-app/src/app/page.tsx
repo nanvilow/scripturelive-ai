@@ -2,6 +2,7 @@
 
 import { SpeechProvider } from '@/components/providers/speech-provider'
 import { OutputBroadcaster } from '@/components/providers/output-broadcaster'
+import { UpdateNotifier } from '@/components/providers/update-notifier'
 import { LogosShell } from '@/components/layout/logos-shell'
 import { SettingsView } from '@/components/views/settings'
 import { useAppStore } from '@/lib/store'
@@ -69,6 +70,10 @@ export default function Home() {
           / text-scale / theme tweaks land on the secondary screen
           immediately instead of after a refresh. */}
       <OutputBroadcaster />
+      {/* Surfaces a small toast when a new release is detected on launch
+          (or by the 4-hour interval check), so the operator never has
+          to dig into Settings to find out an update exists. */}
+      <UpdateNotifier />
       <AppContent />
     </SpeechProvider>
   )
