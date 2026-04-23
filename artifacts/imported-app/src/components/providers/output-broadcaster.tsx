@@ -99,6 +99,24 @@ export function OutputBroadcaster() {
       // route watches for `blanked:true` and blacks its overlay, so
       // NDI keeps running rather than losing its source).
       const blanked = !!s.outputBlanked
+      // Audio routing for downstream surfaces (secondary screen / NDI).
+      // Operator's local pane handles its own muting via the existing
+      // liveMonitorAudio gate in slide-renderer.tsx — this block tells
+      // the OUTSIDE world (congregation TV, NDI feed) what to do:
+      //   - broadcastEnabled: master on/off for downstream audio. Maps
+      //     to the speaker icon on the Live Display audio rail.
+      //   - volume / muted: same master controls the operator drives
+      //     from the toolbar / new bottom-right popover.
+      // Audio settings live OUTSIDE the `settings` block so the
+      // congregation route can apply them WITHOUT bumping its render
+      // key (audio-only changes must not rebuild the <video>, or the
+      // playhead would seek back to t=0 every time the operator
+      // nudged the slider).
+      const audio = {
+        broadcastEnabled: s.liveBroadcastAudio !== false,
+        volume: typeof s.globalVolume === 'number' ? s.globalVolume : 1,
+        muted: !!s.globalMuted,
+      }
       // Operator hasn't put anything on air yet → secondary screen
       // shows the centred WassMedia splash. Flag flips false the
       // moment any slide goes live (and stays false for the rest of
@@ -118,6 +136,7 @@ export function OutputBroadcaster() {
             displayMode: settings.displayMode,
             settings: settingsBlock,
             blanked,
+            audio,
           }
         : {
             type: 'clear' as const,
@@ -130,6 +149,7 @@ export function OutputBroadcaster() {
             displayMode: settings.displayMode,
             settings: settingsBlock,
             blanked,
+            audio,
           }
     }
 
