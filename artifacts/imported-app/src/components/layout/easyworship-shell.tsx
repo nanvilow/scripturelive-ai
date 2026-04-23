@@ -51,7 +51,6 @@ import {
   WorshipLyricsCompact,
   MediaLibraryCompact,
 } from '@/components/layout/library-compact'
-import { NdiOutputPanel } from '@/components/views/ndi-output-panel'
 import { useNdi } from '@/lib/use-electron'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { MonitorPlay } from 'lucide-react'
@@ -952,24 +951,11 @@ export function TopToolbar({
             glowing red dot when ON AIR) is exactly that. Advanced
             settings live in the Settings page. */}
         <NdiToggleButton />
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-6 px-0 text-[11px] border text-zinc-400 border-zinc-800 hover:bg-zinc-800 hover:text-white"
-              title="Advanced NDI settings (source name, status)"
-            >
-              <ChevronDown className="h-3 w-3" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent
-            align="end"
-            className="w-[420px] p-3 bg-zinc-950 border-zinc-800 max-h-[80vh] overflow-y-auto"
-          >
-            <NdiOutputPanel />
-          </PopoverContent>
-        </Popover>
+        {/* Advanced NDI settings live in Settings → NDI panel. The
+            operator-mid-service surface is intentionally a single
+            click: start / stop. Removed the chevron popover after
+            pastor feedback that the dropdown was distracting and
+            never used live. */}
 
         <Button
           variant="ghost"

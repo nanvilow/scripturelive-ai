@@ -18,3 +18,9 @@ id = "3x4vvATK97nbs7IszfgYW"
 uri = "file://exports/ScriptureLive-AI-v0.5.3-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.3 — GitHub: nanvilow/scripturelive-ai"
+
+[[outputs]]
+id = "uD53OFB0FgH3queWbZSgR"
+uri = "file://exports/ScriptureLive-AI-v0.5.4-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.4 — Source"

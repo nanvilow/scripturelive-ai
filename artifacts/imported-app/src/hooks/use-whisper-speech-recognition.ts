@@ -126,7 +126,16 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
       const fd = new FormData()
       fd.append('audio', blob, 'chunk.webm')
       fd.append('language', 'en')
-      const r = await fetch('/api/transcribe', { method: 'POST', body: fd })
+      // The renderer pulls the operator's OpenAI key from a global
+      // mirror that SpeechProvider keeps in sync with the Zustand
+      // store. We send it as a header so the same /api/transcribe
+      // route works in dev (env-based) and in the packaged desktop
+      // app (no env vars exist on the customer's PC).
+      const win = window as unknown as { __userOpenaiKey?: string | null }
+      const userKey = win.__userOpenaiKey || ''
+      const headers: Record<string, string> = {}
+      if (userKey) headers['X-OpenAI-Key'] = userKey
+      const r = await fetch('/api/transcribe', { method: 'POST', body: fd, headers })
       if (!stillCurrent()) return
       if (!r.ok) {
         // Try to surface the server's JSON error payload — operators

@@ -28,6 +28,7 @@ import {
   Mic,
   Type,
   Eye,
+  EyeOff,
   Trash2,
   Check,
   RotateCcw,
@@ -41,6 +42,10 @@ import {
   AlignCenter,
   AlignRight,
   AlignJustify,
+  KeyRound,
+  HelpCircle,
+  ExternalLink,
+  RefreshCcw,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -812,16 +817,33 @@ export function SettingsView() {
               </SelectContent>
             </Select>
           </div>
-          <Card className="bg-amber-500/5 border-amber-500/20">
+          {/* OpenAI API key — REQUIRED for the desktop installer.
+              The packaged app talks to api.openai.com directly via
+              /api/transcribe; without a key here, speech-to-text
+              fails with "Transcription service is not configured".
+              Stored only in localStorage on this PC; never uploaded
+              anywhere except api.openai.com (through the local
+              same-origin route). */}
+          <OpenAiKeyField />
+
+          <Card className="bg-blue-500/5 border-blue-500/20">
             <CardContent className="p-3 flex items-start gap-2">
-              <Eye className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-              <p className="text-xs text-amber-300/80">
-                Speech recognition uses your browser&apos;s built-in Web Speech API. It works best in Google Chrome with a stable internet connection. Network errors are common in sandboxed environments — try opening in a new browser tab.
-              </p>
+              <Mic className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
+              <div className="text-xs text-blue-300/80 space-y-1.5">
+                <p>
+                  <strong>Desktop app:</strong> uses OpenAI Whisper through the key above. Works on any Windows PC with internet.
+                </p>
+                <p>
+                  <strong>Browser:</strong> uses Chrome&apos;s built-in Web Speech API automatically (no key needed).
+                </p>
+              </div>
             </CardContent>
           </Card>
         </CardContent>
       </Card>
+
+      {/* Help & Updates */}
+      <HelpAndUpdatesCard />
 
       {/* Slide Settings */}
       <Card className="bg-card border-border">
@@ -1006,5 +1028,236 @@ export function SettingsView() {
         </Button>
       </div>
     </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// OPENAI API KEY FIELD
+// ──────────────────────────────────────────────────────────────────────
+// Why this is its own component: the key is sensitive and we want
+// password-style masking with a toggleable reveal, plus a Test button
+// that hits /api/transcribe with a tiny silent blob to confirm the key
+// is accepted before the operator goes live. Keeping it isolated also
+// avoids re-rendering the whole Settings page on every keystroke.
+function OpenAiKeyField() {
+  const userOpenaiKey = useAppStore((s) => s.settings.userOpenaiKey)
+  const updateSettings = useAppStore((s) => s.updateSettings)
+  const [draft, setDraft] = useState(userOpenaiKey || '')
+  const [show, setShow] = useState(false)
+  const [testing, setTesting] = useState(false)
+
+  // Keep draft in sync if another surface clears the key.
+  useEffect(() => { setDraft(userOpenaiKey || '') }, [userOpenaiKey])
+
+  const dirty = draft !== (userOpenaiKey || '')
+  const masked = userOpenaiKey ? `sk-…${userOpenaiKey.slice(-4)}` : ''
+
+  const save = () => {
+    const trimmed = draft.trim()
+    updateSettings({ userOpenaiKey: trimmed || null })
+    toast.success(trimmed ? 'OpenAI key saved' : 'OpenAI key cleared')
+  }
+
+  const test = async () => {
+    setTesting(true)
+    try {
+      // Send a sub-1KB silence blob — the route's < 1024 byte
+      // gate returns text:'' WITHOUT calling OpenAI, so this Test
+      // verifies the key is *accepted* (passes the 503 / "no key"
+      // gate) without spending a Whisper credit. An invalid key
+      // surfaces later via the live transcription panel; that's
+      // acceptable because Whisper itself is the only authority on
+      // whether a key is functional, and we don't want every Test
+      // click to bill the operator.
+      const fd = new FormData()
+      const silence = new Blob([new Uint8Array(512)], { type: 'audio/webm' })
+      fd.append('audio', silence, 'test.webm')
+      const r = await fetch('/api/transcribe', {
+        method: 'POST',
+        body: fd,
+        headers: draft.trim() ? { 'X-OpenAI-Key': draft.trim() } : {},
+      })
+      if (r.ok) {
+        toast.success('OpenAI key accepted — speech recognition is ready.')
+      } else {
+        const j = await r.json().catch(() => ({} as { error?: string }))
+        toast.error(j.error || `Test failed: HTTP ${r.status}`)
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Test failed')
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <Label className="text-sm font-medium flex items-center gap-1.5">
+          <KeyRound className="h-3.5 w-3.5" />
+          OpenAI API Key
+          {userOpenaiKey && (
+            <Badge className="h-4 px-1.5 text-[9px] bg-emerald-500/15 text-emerald-300 border-emerald-500/40">
+              SAVED ({masked})
+            </Badge>
+          )}
+        </Label>
+        <a
+          href="https://platform.openai.com/api-keys"
+          target="_blank"
+          rel="noreferrer"
+          className="text-[11px] text-sky-400 hover:underline inline-flex items-center gap-1"
+        >
+          Get a key <ExternalLink className="h-3 w-3" />
+        </a>
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          type={show ? 'text' : 'password'}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="sk-…"
+          autoComplete="off"
+          spellCheck={false}
+          className="font-mono text-xs"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          onClick={() => setShow((s) => !s)}
+          title={show ? 'Hide key' : 'Show key'}
+          className="shrink-0"
+        >
+          {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </Button>
+        <Button type="button" onClick={save} disabled={!dirty} className="shrink-0">
+          Save
+        </Button>
+        <Button type="button" variant="outline" onClick={test} disabled={testing || (!draft.trim() && !userOpenaiKey)} className="shrink-0">
+          {testing ? 'Testing…' : 'Test'}
+        </Button>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Required for the desktop installer. Stored only on this computer.
+        Used to call api.openai.com directly for live transcription.
+      </p>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// HELP & UPDATES CARD
+// ──────────────────────────────────────────────────────────────────────
+// Surfaces three operator-grade affordances:
+//   • App version (read from package.json baked in at build time)
+//   • Check for updates (Electron auto-updater path; in browser we
+//     just open the GitHub releases page)
+//   • Help links — quickstart, troubleshooting, project repo
+function HelpAndUpdatesCard() {
+  const [checking, setChecking] = useState(false)
+  const version = process.env.NEXT_PUBLIC_APP_VERSION || '0.5.4'
+  const isElectron =
+    typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)
+
+  const checkForUpdates = async () => {
+    setChecking(true)
+    try {
+      // Electron path: ask the main process to ping GitHub Releases
+      // via electron-updater. The preload bridge exposes the updater
+      // under window.scriptureLive.updater — see electron/preload.ts.
+      // It returns an UpdateState; { status: 'available'|'downloading'|
+      // 'downloaded'|'not-available'|'error', version?, error? }.
+      const win = window as unknown as {
+        scriptureLive?: {
+          updater?: {
+            check?: () => Promise<{ status: string; version?: string; error?: string }>
+          }
+        }
+      }
+      const checkFn = win.scriptureLive?.updater?.check
+      if (isElectron && checkFn) {
+        const r = await checkFn()
+        if (r?.status === 'available' || r?.status === 'downloading' || r?.status === 'downloaded') {
+          toast.success(`Update available: v${r.version || '?'} — downloading in the background.`)
+        } else if (r?.status === 'error') {
+          toast.error(`Update check failed: ${r.error || 'unknown error'}`)
+        } else {
+          toast.success('You are on the latest version.')
+        }
+      } else {
+        // Browser fallback: open the releases page in a new tab so
+        // the operator can grab the installer manually.
+        window.open('https://github.com/nanvilow/scripturelive-ai/releases/latest', '_blank', 'noreferrer')
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Update check failed')
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  return (
+    <Card className="bg-card border-border">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <HelpCircle className="h-5 w-5 text-primary" />
+          <div>
+            <CardTitle className="text-base">Help & Updates</CardTitle>
+            <CardDescription>
+              Version v{version} {isElectron ? '· Desktop' : '· Browser'}
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <Label className="text-sm font-medium">Check for Updates</Label>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {isElectron
+                ? 'Pings GitHub Releases. New versions install automatically next launch.'
+                : 'Opens the GitHub Releases page in a new tab.'}
+            </p>
+          </div>
+          <Button onClick={checkForUpdates} disabled={checking} className="gap-2 shrink-0">
+            <RefreshCcw className={cn('h-4 w-4', checking && 'animate-spin')} />
+            {checking ? 'Checking…' : 'Check Now'}
+          </Button>
+        </div>
+
+        <Separator />
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <a
+            href="https://github.com/nanvilow/scripturelive-ai#quick-start"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border hover:bg-muted/40 text-xs"
+          >
+            <span className="font-medium">Quick Start</span>
+            <ExternalLink className="h-3 w-3 opacity-60" />
+          </a>
+          <a
+            href="https://github.com/nanvilow/scripturelive-ai/blob/main/docs/TROUBLESHOOTING.md"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border hover:bg-muted/40 text-xs"
+          >
+            <span className="font-medium">Troubleshooting</span>
+            <ExternalLink className="h-3 w-3 opacity-60" />
+          </a>
+          <a
+            href="https://github.com/nanvilow/scripturelive-ai/issues/new"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border hover:bg-muted/40 text-xs"
+          >
+            <span className="font-medium">Report a Bug</span>
+            <ExternalLink className="h-3 w-3 opacity-60" />
+          </a>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
