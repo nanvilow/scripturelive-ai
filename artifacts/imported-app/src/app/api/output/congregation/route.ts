@@ -106,6 +106,14 @@ function resolveFont(k){
 }
 // Same four-bucket size multiplier the operator preview applies.
 const FS_MULT={sm:.85,md:1,lg:1.25,xl:1.5};
+// Detect the NDI sender's hidden capture window. When the URL is
+// loaded with ?ndi=1 (Electron main appends this for the offscreen
+// frame-capture window) the renderer treats this surface as the NDI
+// feed: it ignores the operator's projector displayMode and instead
+// honours settings.ndiDisplayMode so vMix/OBS can receive a Lower
+// Third while the projector stays Full Screen (or vice-versa).
+var IS_NDI=false;
+try{IS_NDI=(new URLSearchParams(location.search).get('ndi')==='1');}catch(e){}
 let es=null,reconnects=0;
 const $=id=>document.getElementById(id);
 // Hash of the last rendered payload — render() bails out if the next
@@ -257,12 +265,21 @@ function render(s){
   // flickered every time we rebroadcast settings or the poll raced
   // an SSE message.
   try{
-    var key=JSON.stringify({sl:s.slide,dm:s.displayMode,st:s.settings});
+    // Include IS_NDI in the render key so the NDI surface refreshes
+    // whenever ndiDisplayMode flips, even if the projector's
+    // displayMode and slide are otherwise unchanged.
+    var key=JSON.stringify({sl:s.slide,dm:s.displayMode,st:s.settings,ndi:IS_NDI});
     if(key===lastRenderKey)return;
     lastRenderKey=key;
   }catch(e){}
   var slide=s.slide;
-  var dm=s.displayMode||'full';
+  // NDI surface follows its own independent display mode so the
+  // operator can run the projector full-screen while the NDI feed
+  // shows a lower-third caption (or vice-versa). Falls back to the
+  // projector mode if no NDI mode was chosen yet.
+  var dm=(IS_NDI&&s.settings&&s.settings.ndiDisplayMode)
+    ?s.settings.ndiDisplayMode
+    :(s.displayMode||'full');
   var st=s.settings||{};
   applyRatio(st.displayRatio||'fill');
   if(!slide){
