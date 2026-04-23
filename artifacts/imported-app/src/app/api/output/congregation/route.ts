@@ -208,6 +208,10 @@ function applyAudio(s){
 // appears immediately instead of after a fade-in delay.
 let pendingFade=null;
 function applyRender(s){
+  // Cache the operator's "show reconnect overlay" preference so the
+  // SSE error handler below can honour it without needing a fresh
+  // payload at the moment of disconnect.
+  try{ window._showReconnect=!!(s&&s.settings&&s.settings.showReconnectingOverlay); }catch(e){}
   var style=(s&&s.settings&&s.settings.slideTransitionStyle)||'fade';
   var dur=(s&&s.settings&&typeof s.settings.slideTransitionDuration==='number')?s.settings.slideTransitionDuration:500;
   if(dur<0)dur=0;if(dur>4000)dur=4000;
@@ -531,7 +535,12 @@ function connect(){
 }
 function reconnect(){
   if(reconnects>=20){$('status-text').textContent='Connection failed';$('reconnecting').classList.remove('active');return}
-  $('reconnecting').classList.add('active');
+  // Only paint the full-screen "Reconnecting…" overlay if the
+  // operator opted in via Settings. Default behaviour is silent
+  // recovery — the secondary screen freezes on the last frame
+  // until SSE comes back, which is far less jarring on a stage
+  // projector than a black overlay popping in.
+  if(window._showReconnect){ $('reconnecting').classList.add('active'); }
   reconnects++;
   $('status-text').textContent='Reconnecting ('+reconnects+')...';
   setTimeout(connect,Math.min(1000*Math.pow(1.3,reconnects),5000));

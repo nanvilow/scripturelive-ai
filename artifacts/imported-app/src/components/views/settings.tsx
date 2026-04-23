@@ -249,6 +249,43 @@ export function SettingsView() {
               </button>
             </div>
           </div>
+
+          {/* Item #15 follow-up — toggle for the full-screen
+              "Reconnecting…" overlay on the secondary screen. Off by
+              default for clean stage projection; flip on when
+              troubleshooting a flaky network so a real outage isn't
+              silent. */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Show "Reconnecting…" overlay on secondary screen</Label>
+            <p className="text-[11px] text-muted-foreground -mt-1">
+              When the link to the second screen drops, paint a full-screen "Reconnecting…" message instead of freezing on the last frame. Leave off for a clean stage projection during services.
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => updateSettings({ showReconnectingOverlay: true })}
+                className={cn(
+                  'px-3 py-1.5 rounded-md text-xs font-medium transition-colors border',
+                  settings.showReconnectingOverlay
+                    ? 'bg-primary/15 border-primary/30 text-primary'
+                    : 'bg-muted border-border text-muted-foreground hover:bg-muted/80'
+                )}
+              >
+                <Check className="h-3 w-3 inline mr-1" />
+                Show
+              </button>
+              <button
+                onClick={() => updateSettings({ showReconnectingOverlay: false })}
+                className={cn(
+                  'px-3 py-1.5 rounded-md text-xs font-medium transition-colors border',
+                  !settings.showReconnectingOverlay
+                    ? 'bg-primary/15 border-primary/30 text-primary'
+                    : 'bg-muted border-border text-muted-foreground hover:bg-muted/80'
+                )}
+              >
+                Hide
+              </button>
+            </div>
+          </div>
         </CardContent>
       </Card>
 

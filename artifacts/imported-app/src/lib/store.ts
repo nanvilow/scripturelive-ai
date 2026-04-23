@@ -141,6 +141,13 @@ export interface AppSettings {
   // reading `displayMode`. A `null`/missing value falls back to
   // `displayMode` for backwards-compat with pre-v0.6 saved state.
   ndiDisplayMode: 'full' | 'lower-third'
+
+  // Item #15 follow-up — when the SSE link to the secondary screen
+  // drops, the page used to slam a full-screen "Reconnecting…"
+  // overlay over the broadcast. Useful for debugging, ugly during a
+  // service. Off by default (clean projection); operator can flip on
+  // when troubleshooting a flaky network at a new venue.
+  showReconnectingOverlay: boolean
 }
 
 interface AppState {
@@ -404,6 +411,7 @@ const defaultSettings: AppSettings = {
   autoGoLiveOnDetection: false,
   autoGoLiveOnLookup: false,
   ndiDisplayMode: 'full',
+  showReconnectingOverlay: false,
 }
 
 export const useAppStore = create<AppState>()(
