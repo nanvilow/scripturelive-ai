@@ -56,6 +56,15 @@ extraResources:
     filter: ["**/*"]
   - from: db/custom.db
     to: app-db/custom.db
+  # Bundled local Whisper engine — whisper-cli.exe + quantized
+  # base.en model + any accompanying DLLs. Downloaded into
+  # electron/whisper-bundle/ by scripts/download-whisper-assets.mjs
+  # during `pnpm run electron:build`, which CI runs before this
+  # electron-builder step. Adds ~70 MB to the installer and makes
+  # offline Base Mode work out of the box with no extra downloads.
+  - from: electron/whisper-bundle
+    to: whisper-bundle
+    filter: ["**/*"]
 # A small hook that runs after electron-builder finishes signing each platform
 # package. For macOS it submits the .app to Apple's notarytool when notarization
 # credentials are present in the environment. For all other platforms (and when

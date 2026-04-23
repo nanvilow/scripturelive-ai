@@ -62,6 +62,7 @@ type NdiStartOptions = NdiServiceStartOptions & {
 }
 import { FrameCapture } from './frame-capture'
 import { setupAutoUpdater, runManualCheck, getUpdateState, openReleasesPage } from './updater'
+import { isWhisperAvailable, transcribeWav } from './whisper-service'
 
 const isDev = !app.isPackaged
 
@@ -602,6 +603,27 @@ function setupIpc() {
       title: 'ScriptureLive — Stage Display',
     })
     return { ok: true }
+  })
+
+  // ── Local Whisper IPC ───────────────────────────────────────────
+  // Base Mode calls into the bundled whisper.cpp binary. We expose
+  // two handlers: availability probe (used by Settings to show the
+  // model status badge) and actual transcription per audio chunk.
+  ipcMain.handle('whisper:is-available', () => {
+    const r = isWhisperAvailable()
+    return r.ok ? { ok: true } : { ok: false, reason: r.reason }
+  })
+
+  ipcMain.handle('whisper:transcribe', async (_e, wavBuffer: ArrayBuffer, language: string) => {
+    try {
+      const buf = Buffer.from(wavBuffer)
+      const text = await transcribeWav(buf, language || 'en')
+      return { ok: true, text }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error('[whisper] transcribe failed:', message)
+      return { ok: false, error: message }
+    }
   })
 
   ndi.on('frame', (count) => {

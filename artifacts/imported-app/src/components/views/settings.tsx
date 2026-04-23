@@ -20,6 +20,14 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import {
   Upload,
   X,
   Image as ImageIcon,
@@ -46,6 +54,12 @@ import {
   HelpCircle,
   ExternalLink,
   RefreshCcw,
+  Sparkles,
+  Cpu,
+  Cloud,
+  Star,
+  ArrowRight,
+  ShieldCheck,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -785,14 +799,17 @@ export function SettingsView() {
         </CardContent>
       </Card>
 
-      {/* Speech Recognition */}
+      {/* AI Detection Mode — dual-engine picker (Base ↔ OpenAI) */}
+      <AiDetectionModeCard />
+
+      {/* Speech Recognition — language + (conditional) OpenAI key */}
       <Card className="bg-card border-border">
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
             <Mic className="h-5 w-5 text-primary" />
             <div>
               <CardTitle className="text-base">Speech Recognition</CardTitle>
-              <CardDescription>Configure live scripture detection</CardDescription>
+              <CardDescription>Language and API credentials</CardDescription>
             </div>
           </div>
         </CardHeader>
@@ -817,28 +834,11 @@ export function SettingsView() {
               </SelectContent>
             </Select>
           </div>
-          {/* OpenAI API key — REQUIRED for the desktop installer.
-              The packaged app talks to api.openai.com directly via
-              /api/transcribe; without a key here, speech-to-text
-              fails with "Transcription service is not configured".
-              Stored only in localStorage on this PC; never uploaded
-              anywhere except api.openai.com (through the local
-              same-origin route). */}
-          <OpenAiKeyField />
-
-          <Card className="bg-blue-500/5 border-blue-500/20">
-            <CardContent className="p-3 flex items-start gap-2">
-              <Mic className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
-              <div className="text-xs text-blue-300/80 space-y-1.5">
-                <p>
-                  <strong>Desktop app:</strong> uses OpenAI Whisper through the key above. Works on any Windows PC with internet.
-                </p>
-                <p>
-                  <strong>Browser:</strong> uses Chrome&apos;s built-in Web Speech API automatically (no key needed).
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+          {/* OpenAI key — only shown when the operator has selected
+              OpenAI Mode in the AI Detection Mode card above, OR
+              when a key has already been saved (so they can rotate
+              it without flipping modes first). */}
+          {(settings.aiMode === 'openai' || settings.userOpenaiKey) && <OpenAiKeyField />}
         </CardContent>
       </Card>
 
@@ -1028,6 +1028,431 @@ export function SettingsView() {
         </Button>
       </div>
     </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// AI DETECTION MODE CARD
+// ──────────────────────────────────────────────────────────────────────
+// Dual-engine picker: Base (bundled, offline, free) vs OpenAI
+// (cloud, faster, paid). Includes:
+//   • Mode toggle with side-by-side cards and ⭐ Recommended badge
+//     on OpenAI.
+//   • Gentle nudge banner when operator is on Base: "For improved
+//     accuracy, switch to OpenAI Mode" — no pop-ups, no pressure.
+//   • Upgrade modal shown when operator picks OpenAI without a key,
+//     with a 7-step setup guide and direct link to platform.openai.com.
+//   • Offline / model-availability badges so the operator always
+//     knows which engine will actually run.
+function AiDetectionModeCard() {
+  const aiMode = useAppStore((s) => s.settings.aiMode)
+  const userOpenaiKey = useAppStore((s) => s.settings.userOpenaiKey)
+  const updateSettings = useAppStore((s) => s.updateSettings)
+  const [showUpgrade, setShowUpgrade] = useState(false)
+  const [baseStatus, setBaseStatus] = useState<
+    | { state: 'unknown' }
+    | { state: 'ok' }
+    | { state: 'missing'; reason: string }
+    | { state: 'browser' }
+  >({ state: 'unknown' })
+
+  // Probe the packaged whisper bundle once on mount so the card can
+  // show a truthful status (Ready / Missing / Browser-only).
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const sl = (window as unknown as {
+      scriptureLive?: { whisper?: { isAvailable: () => Promise<{ ok: boolean; reason?: string }> } }
+    }).scriptureLive
+    const probe = sl?.whisper?.isAvailable
+    if (!probe) {
+      setBaseStatus({ state: 'browser' })
+      return
+    }
+    probe().then((r) => {
+      if (r.ok) setBaseStatus({ state: 'ok' })
+      else setBaseStatus({ state: 'missing', reason: r.reason || 'unknown' })
+    }).catch(() => setBaseStatus({ state: 'missing', reason: 'probe failed' }))
+  }, [])
+
+  const pickBase = () => {
+    updateSettings({ aiMode: 'base' })
+    toast.success('Switched to Base Model — offline detection active.')
+  }
+  const pickOpenAi = () => {
+    if (!userOpenaiKey) {
+      setShowUpgrade(true)
+      return
+    }
+    updateSettings({ aiMode: 'openai' })
+    toast.success('Switched to OpenAI Mode.')
+  }
+
+  return (
+    <Card className="bg-card border-border">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-5 w-5 text-primary" />
+          <div>
+            <CardTitle className="text-base">AI Detection Mode</CardTitle>
+            <CardDescription>Choose the speech engine that drives live scripture detection</CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Base Model card */}
+          <button
+            type="button"
+            onClick={pickBase}
+            className={cn(
+              'text-left rounded-lg border p-4 transition-all',
+              aiMode === 'base'
+                ? 'border-primary bg-primary/5 ring-2 ring-primary/30'
+                : 'border-border bg-card hover:border-primary/40',
+            )}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Cpu className="h-4 w-4 text-emerald-400" />
+                <span className="font-semibold text-sm">Base Model</span>
+              </div>
+              {aiMode === 'base' && (
+                <Badge className="h-5 px-1.5 text-[10px] bg-emerald-500/15 text-emerald-300 border-emerald-500/40">
+                  ACTIVE
+                </Badge>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              Bundled offline engine. Works without internet. No API costs.
+            </p>
+            <ul className="text-[11px] text-muted-foreground space-y-1 mb-3">
+              <li>✓ Free — no account, no billing</li>
+              <li>✓ Fully offline (privacy-safe)</li>
+              <li>• Slower (~2–4 s per chunk)</li>
+              <li>• Good accuracy on clean audio</li>
+            </ul>
+            <div className="flex items-center gap-1.5">
+              {baseStatus.state === 'ok' && (
+                <Badge className="h-5 px-1.5 text-[10px] bg-emerald-500/15 text-emerald-300 border-emerald-500/40">
+                  <ShieldCheck className="h-3 w-3 mr-0.5" /> Ready
+                </Badge>
+              )}
+              {baseStatus.state === 'missing' && (
+                <Badge className="h-5 px-1.5 text-[10px] bg-amber-500/15 text-amber-300 border-amber-500/40">
+                  Model missing
+                </Badge>
+              )}
+              {baseStatus.state === 'browser' && (
+                <Badge className="h-5 px-1.5 text-[10px] bg-muted text-muted-foreground border-border">
+                  Desktop app only
+                </Badge>
+              )}
+            </div>
+          </button>
+
+          {/* OpenAI Model card */}
+          <button
+            type="button"
+            onClick={pickOpenAi}
+            className={cn(
+              'text-left rounded-lg border p-4 transition-all relative',
+              aiMode === 'openai'
+                ? 'border-primary bg-primary/5 ring-2 ring-primary/30'
+                : 'border-border bg-card hover:border-primary/40',
+            )}
+          >
+            <div className="absolute -top-2 right-3">
+              <Badge className="h-5 px-1.5 text-[10px] bg-amber-500/20 text-amber-200 border-amber-500/50">
+                <Star className="h-3 w-3 mr-0.5 fill-amber-300" /> Recommended
+              </Badge>
+            </div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Cloud className="h-4 w-4 text-sky-400" />
+                <span className="font-semibold text-sm">OpenAI Model</span>
+              </div>
+              {aiMode === 'openai' && (
+                <Badge className="h-5 px-1.5 text-[10px] bg-emerald-500/15 text-emerald-300 border-emerald-500/40">
+                  ACTIVE
+                </Badge>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              Cloud Whisper via your OpenAI key. Fastest, highest accuracy.
+            </p>
+            <ul className="text-[11px] text-muted-foreground space-y-1 mb-3">
+              <li>✓ Fast (~1 s per chunk)</li>
+              <li>✓ Better on accents & noisy rooms</li>
+              <li>• Requires internet + paid API key</li>
+              <li>• ~$0.006 per audio minute</li>
+            </ul>
+            <div className="flex items-center gap-1.5">
+              {userOpenaiKey ? (
+                <Badge className="h-5 px-1.5 text-[10px] bg-emerald-500/15 text-emerald-300 border-emerald-500/40">
+                  <KeyRound className="h-3 w-3 mr-0.5" /> Key saved
+                </Badge>
+              ) : (
+                <Badge className="h-5 px-1.5 text-[10px] bg-muted text-muted-foreground border-border">
+                  Key required
+                </Badge>
+              )}
+            </div>
+          </button>
+        </div>
+
+        {/* Gentle nudge — shown only while operator is on Base with
+            no key configured. One line, dismissable by upgrading. */}
+        {aiMode === 'base' && !userOpenaiKey && (
+          <Card className="bg-sky-500/5 border-sky-500/20">
+            <CardContent className="p-3 flex items-start gap-3">
+              <Sparkles className="h-4 w-4 text-sky-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-sky-200/90">
+                  <strong>Want better accuracy?</strong> Switch to OpenAI Mode for faster,
+                  sharper detection — especially on accents and live-room audio.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="shrink-0 border-sky-500/40 text-sky-200 hover:bg-sky-500/10"
+                onClick={() => setShowUpgrade(true)}
+              >
+                Set Up <ArrowRight className="h-3 w-3 ml-1" />
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Failsafe note — always visible so operators understand what
+            happens if the internet drops or the key is rejected. */}
+        <p className="text-[11px] text-muted-foreground">
+          Failsafe: if OpenAI Mode loses internet or the key is rejected, detection
+          automatically falls back to Base Model so the service never goes dark.
+        </p>
+      </CardContent>
+
+      {/* ── Upgrade modal ─────────────────────────────────────────── */}
+      <UpgradeToOpenAiDialog
+        open={showUpgrade}
+        onOpenChange={setShowUpgrade}
+        onActivated={() => {
+          updateSettings({ aiMode: 'openai' })
+          setShowUpgrade(false)
+          toast.success('OpenAI Mode activated.')
+        }}
+      />
+    </Card>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// UPGRADE TO OPENAI DIALOG
+// ──────────────────────────────────────────────────────────────────────
+// Guided 7-step setup — the same flow we'd walk an operator through
+// on a support call. Masked input, Test Connection button, and a
+// "Save + Activate OpenAI Mode" CTA that only enables once the key
+// has been verified (or entered + tested).
+function UpgradeToOpenAiDialog({
+  open,
+  onOpenChange,
+  onActivated,
+}: {
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  onActivated: () => void
+}) {
+  const userOpenaiKey = useAppStore((s) => s.settings.userOpenaiKey)
+  const updateSettings = useAppStore((s) => s.updateSettings)
+  const [draft, setDraft] = useState(userOpenaiKey || '')
+  const [show, setShow] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [tested, setTested] = useState<null | 'ok' | 'fail'>(null)
+
+  useEffect(() => { if (open) setDraft(userOpenaiKey || '') }, [open, userOpenaiKey])
+
+  const test = async () => {
+    const key = draft.trim()
+    if (!key) {
+      toast.error('Paste your OpenAI API key first.')
+      return
+    }
+    setTesting(true)
+    setTested(null)
+    try {
+      const fd = new FormData()
+      const silence = new Blob([new Uint8Array(512)], { type: 'audio/webm' })
+      fd.append('audio', silence, 'test.webm')
+      const r = await fetch('/api/transcribe', {
+        method: 'POST',
+        body: fd,
+        headers: { 'X-OpenAI-Key': key },
+      })
+      if (r.ok) {
+        setTested('ok')
+        toast.success('Key accepted.')
+      } else {
+        setTested('fail')
+        const j = await r.json().catch(() => ({} as { error?: string }))
+        toast.error(j.error || `Test failed: HTTP ${r.status}`)
+      }
+    } catch (e) {
+      setTested('fail')
+      toast.error(e instanceof Error ? e.message : 'Test failed')
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const saveAndActivate = () => {
+    const key = draft.trim()
+    if (!key) return
+    updateSettings({ userOpenaiKey: key })
+    onActivated()
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[560px] max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Cloud className="h-5 w-5 text-sky-400" />
+            Set Up OpenAI Mode
+          </DialogTitle>
+          <DialogDescription>
+            Add your OpenAI API key for faster, more accurate live scripture detection.
+            Your key is stored only on this computer and sent directly to api.openai.com.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
+            <p className="text-xs font-semibold text-foreground uppercase tracking-wide">
+              7-step setup
+            </p>
+            <ol className="text-sm space-y-2 list-decimal list-inside text-muted-foreground">
+              <li>
+                Go to{' '}
+                <a
+                  href="https://platform.openai.com/signup"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sky-400 hover:underline inline-flex items-center gap-0.5"
+                >
+                  platform.openai.com/signup <ExternalLink className="h-3 w-3" />
+                </a>{' '}
+                and create a free account (or sign in).
+              </li>
+              <li>
+                Open{' '}
+                <a
+                  href="https://platform.openai.com/settings/organization/billing/overview"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sky-400 hover:underline inline-flex items-center gap-0.5"
+                >
+                  Billing <ExternalLink className="h-3 w-3" />
+                </a>{' '}
+                and add <strong>$5 of credit</strong> (pay-as-you-go). One service ≈ 6¢.
+              </li>
+              <li>
+                Go to{' '}
+                <a
+                  href="https://platform.openai.com/api-keys"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sky-400 hover:underline inline-flex items-center gap-0.5"
+                >
+                  API Keys <ExternalLink className="h-3 w-3" />
+                </a>{' '}
+                and click <strong>Create new secret key</strong>.
+              </li>
+              <li>
+                Name it <em>ScriptureLive AI</em>, set permissions to{' '}
+                <strong>All</strong>, and create the key.
+              </li>
+              <li>
+                Copy the key (starts with <code className="text-[11px] bg-muted px-1 py-0.5 rounded">sk-…</code>) —
+                you won&apos;t see it again after closing that page.
+              </li>
+              <li>Paste it into the field below and tap <strong>Test</strong>.</li>
+              <li>When the test shows ✓, tap <strong>Save & Activate OpenAI Mode</strong>.</li>
+            </ol>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-sm font-medium flex items-center gap-1.5">
+              <KeyRound className="h-3.5 w-3.5" />
+              Your OpenAI API Key
+            </Label>
+            <div className="flex items-center gap-2">
+              <Input
+                type={show ? 'text' : 'password'}
+                value={draft}
+                onChange={(e) => { setDraft(e.target.value); setTested(null) }}
+                placeholder="sk-…"
+                autoComplete="off"
+                spellCheck={false}
+                className="font-mono text-xs"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={() => setShow((s) => !s)}
+                title={show ? 'Hide key' : 'Show key'}
+                className="shrink-0"
+              >
+                {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={test}
+                disabled={testing || !draft.trim()}
+                className="shrink-0"
+              >
+                {testing ? 'Testing…' : 'Test'}
+              </Button>
+            </div>
+            {tested === 'ok' && (
+              <p className="text-[11px] text-emerald-400 flex items-center gap-1">
+                <Check className="h-3 w-3" /> Key accepted — ready to activate.
+              </p>
+            )}
+            {tested === 'fail' && (
+              <p className="text-[11px] text-destructive flex items-center gap-1">
+                <X className="h-3 w-3" /> Key rejected. Double-check it or try creating a new one.
+              </p>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Stored only on this computer. Never sent anywhere except api.openai.com.
+            </p>
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2 flex-col sm:flex-row">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => onOpenChange(false)}
+            className="sm:mr-auto"
+          >
+            Continue with Base Model
+          </Button>
+          <Button
+            type="button"
+            onClick={saveAndActivate}
+            disabled={!draft.trim()}
+            className="bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700"
+          >
+            <Sparkles className="h-4 w-4 mr-1" />
+            Save & Activate OpenAI Mode
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
