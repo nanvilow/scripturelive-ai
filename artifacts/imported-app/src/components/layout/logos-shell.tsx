@@ -2215,7 +2215,15 @@ export function LogosShell() {
 
   // Live Display panel-local state (UX only — does not change broadcast logic)
   const [displaySize, setDisplaySize] = useState(0.85)
-  const [displayHidden, setDisplayHidden] = useState(false)
+  // displayHidden is mirrored into the store as `outputBlanked` so the
+  // global broadcaster can push a black frame to the congregation
+  // screen AND the NDI feed. Without the store wire-through the HIDDEN
+  // toggle only dimmed the in-app Live Display thumbnail and the
+  // projector stayed lit — the exact bug T003 was filed against.
+  const outputBlanked = useAppStore((s) => s.outputBlanked)
+  const setOutputBlanked = useAppStore((s) => s.setOutputBlanked)
+  const displayHidden = outputBlanked
+  const setDisplayHidden = setOutputBlanked
   // Auto-go-live mode is now a store flag so both the Live Display
   // "AUTO" toggle and the new AUTO pill in Live Transcription drive
   // the same state.
@@ -2323,10 +2331,13 @@ export function LogosShell() {
   }, [setLiveSlideIndex, setIsLive, sendToOutput])
 
   const goBlack = useCallback(() => {
-    setLiveSlideIndex(-1)
-    setIsLive(true)
-    sendToOutput(null, true)
-  }, [setLiveSlideIndex, setIsLive, sendToOutput])
+    // Toggle the store-wide BLACK flag. The broadcaster stamps
+    // `blanked:true` on every subsequent payload and the congregation
+    // route paints a solid black frame, so the projector and the NDI
+    // feed both go dark instantly. Flipping it back off snaps straight
+    // back to whatever was staged, without re-cueing the slide.
+    setOutputBlanked(!outputBlanked)
+  }, [setOutputBlanked, outputBlanked])
 
   const goLogo = useCallback(() => {
     // Logo is a transient overlay that doesn't live in the slide deck,

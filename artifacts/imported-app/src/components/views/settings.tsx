@@ -139,6 +139,10 @@ export function SettingsView() {
       autoGoLiveOnLookup: false,
       displayRatio: 'fill',
       textScale: 1,
+      // Reset the NDI-only display mode alongside the projector's so
+      // the "Reset to defaults" button returns the feed to a clean
+      // Full Screen state (v0.5.5 additions).
+      ndiDisplayMode: 'full',
     })
     setSelectedTranslation('KJV')
     toast.success('Settings reset to defaults')
@@ -814,25 +818,24 @@ export function SettingsView() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
+          {/* Recognition language is locked to English for v0.5.5.
+              The bundled Whisper Base model is English-only and the
+              previous multi-locale picker silently broke detection
+              the moment an operator selected anything else. We keep
+              the field in the store so future localisation work can
+              relight this picker without a schema migration. */}
+          <div className="space-y-1">
             <Label className="text-sm font-medium">Recognition Language</Label>
-            <Select
-              value={settings.speechLanguage}
-              onValueChange={(v) => updateSettings({ speechLanguage: v })}
-            >
-              <SelectTrigger className="bg-card border-border">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="en-US">English (US)</SelectItem>
-                <SelectItem value="en-GB">English (UK)</SelectItem>
-                <SelectItem value="es-ES">Spanish</SelectItem>
-                <SelectItem value="fr-FR">French</SelectItem>
-                <SelectItem value="de-DE">German</SelectItem>
-                <SelectItem value="pt-BR">Portuguese</SelectItem>
-                <SelectItem value="zh-CN">Chinese (Simplified)</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex items-center justify-between rounded-md border border-border bg-muted/20 px-3 py-2">
+              <span className="text-sm">English</span>
+              <Badge variant="secondary" className="text-[10px] uppercase tracking-wider">
+                English-only
+              </Badge>
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1 leading-snug">
+              ScriptureLive&apos;s bundled speech engine is English-only. Multi-language support is
+              planned for a future release.
+            </p>
           </div>
           {/* OpenAI key — only shown when the operator has selected
               OpenAI Mode in the AI Detection Mode card above, OR

@@ -131,6 +131,15 @@ export interface AppSettings {
   // 'base' if 'openai' is selected but the key is missing / invalid /
   // offline, so a lost internet connection never kills detection.
   aiMode: 'base' | 'openai'
+  // ── NDI-only display mode ──────────────────────────────────────
+  // The secondary screen and NDI used to share `displayMode`, which
+  // forced operators to choose ONE layout for both. Production
+  // setups routinely need the projector at Full Screen AND the NDI
+  // feed as a Lower Third (so vMix can composite it over a camera).
+  // This field drives the NDI feed ONLY; the secondary screen keeps
+  // reading `displayMode`. A `null`/missing value falls back to
+  // `displayMode` for backwards-compat with pre-v0.6 saved state.
+  ndiDisplayMode: 'full' | 'lower-third'
 }
 
 interface AppState {
@@ -147,6 +156,10 @@ interface AppState {
   setCurrentVerse: (v: BibleVerse | null) => void
   verseHistory: BibleVerse[]
   addToVerseHistory: (v: BibleVerse) => void
+  // Operator-triggered wipe of the Verse History list. Exposed so
+  // the Chapter Navigator / Detected Verses panels can offer a
+  // one-click "Clear History" per the v0.5.5 spec.
+  clearVerseHistory: () => void
   searchQuery: string
   setSearchQuery: (q: string) => void
 
@@ -211,6 +224,17 @@ interface AppState {
   // mixers like the vMix Output toggle.
   outputEnabled: boolean
   setOutputEnabled: (b: boolean) => void
+
+  // Hard BLACK / HIDDEN state. When true the secondary screen, the
+  // NDI feed and every downstream output render pure black — the
+  // current slide stays staged so the operator can un-black to it
+  // instantly. This is the production-wide "cut to black" control
+  // operators hit during transitions (offering, prayer, camera
+  // flips). Distinct from `outputEnabled` which kills the output
+  // connection entirely; `outputBlanked` keeps NDI live but sends
+  // a black frame so vMix/Wirecast/OBS don't lose the source.
+  outputBlanked: boolean
+  setOutputBlanked: (b: boolean) => void
 
   // Sermon notes shown on the stage-display window. Persisted with
   // the rest of the operator settings so refreshing the console
@@ -361,9 +385,13 @@ const defaultSettings: AppSettings = {
   userOpenaiKey: null,
   aiMode: 'base',
   congregationScreenTheme: 'minimal',
+  // English-only per v0.5.5 spec — the multi-language picker was a
+  // footgun because Whisper's Base model is English-only and the
+  // UI let operators pick locales that silently broke detection.
   speechLanguage: 'en-US',
   autoGoLiveOnDetection: false,
   autoGoLiveOnLookup: false,
+  ndiDisplayMode: 'full',
 }
 
 export const useAppStore = create<AppState>()(
@@ -385,6 +413,7 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           verseHistory: [v, ...state.verseHistory].slice(0, 50),
         })),
+      clearVerseHistory: () => set({ verseHistory: [] }),
       searchQuery: '',
       setSearchQuery: (q) => set({ searchQuery: q }),
 
@@ -451,6 +480,9 @@ export const useAppStore = create<AppState>()(
 
       outputEnabled: true,
       setOutputEnabled: (b) => set({ outputEnabled: b }),
+
+      outputBlanked: false,
+      setOutputBlanked: (b) => set({ outputBlanked: b }),
 
       sermonNotes: '',
       setSermonNotes: (s) => set({ sermonNotes: s }),
