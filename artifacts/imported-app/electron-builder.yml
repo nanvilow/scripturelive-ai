@@ -1,6 +1,11 @@
 appId: ai.scripturelive.desktop
 productName: ScriptureLive AI
 copyright: ScriptureLive AI
+# Pinned because electron-builder cannot reliably auto-detect the
+# electron version in a pnpm workspace (the package is hoisted to the
+# repo root, not under artifacts/imported-app/node_modules), which
+# triggers: "Cannot compute electron version from installed node modules".
+electronVersion: 33.4.11
 # electron-updater pulls signed installers from this GitHub repo.
 # Update `owner` and `repo` to match where your CI publishes
 # releases. The Build Windows Installer GH workflow uses GITHUB_TOKEN
