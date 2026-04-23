@@ -159,6 +159,33 @@ function dropLiveVideoCache(){
   window.__liveVideoKey='';
 }
 
+// applyAudio — pushes the operator's audio toggles down to the live
+// <video> element WITHOUT triggering a render rebuild. We deliberately
+// keep audio out of the render-key so the operator can drag the
+// volume slider, mute, or flip the broadcast speaker without ever
+// remounting the video (which would seek back to t=0).
+//
+// Routing rules (matches user spec for item #11):
+//   - NDI hidden window: ALWAYS muted. Audio capture is a separate
+//     roadmap item; the hidden window must never make the operator's
+//     PC beep.
+//   - Visible secondary screen / congregation TV: plays the media
+//     audio at master volume unless the operator has hit the speaker
+//     toggle on the Live Display audio rail (broadcastEnabled=false)
+//     or the master mute (muted=true).
+function applyAudio(s){
+  var v=window.__liveVideoEl;
+  if(!v||v.tagName!=='VIDEO')return;
+  var a=(s&&s.audio)||{};
+  var vol=typeof a.volume==='number'?Math.max(0,Math.min(1,a.volume)):1;
+  var muted=!!a.muted;
+  var enabled=a.broadcastEnabled!==false;
+  // NDI surface: force-mute. Everywhere else: honour the operator.
+  var shouldMute=IS_NDI||muted||!enabled;
+  try{v.volume=vol;}catch(e){}
+  try{v.muted=shouldMute;}catch(e){}
+}
+
 // applyRender — wraps render() so slide changes can crossfade.
 //
 // Reads slideTransitionStyle ('cut' | 'fade') and slideTransitionDuration
@@ -183,6 +210,7 @@ function applyRender(s){
   if(style==='cut'||dur<=0||!lastRenderKey){
     if(pendingFade){clearTimeout(pendingFade);pendingFade=null;el&&el.classList.remove('fading');}
     render(s);
+    applyAudio(s);
     return;
   }
   // Already mid-fade — replace the queued swap with the freshest payload.
@@ -191,6 +219,7 @@ function applyRender(s){
   pendingFade=setTimeout(function(){
     pendingFade=null;
     render(s);
+    applyAudio(s);
     // Two rAFs so the new DOM has painted before we drop .fading,
     // otherwise the browser skips the fade-in transition.
     requestAnimationFrame(function(){
@@ -354,6 +383,14 @@ function render(s){
       try{lastRenderKey=JSON.stringify({sl:slide,dm:s.displayMode,st:s.settings});}catch(e){}
       return;
     }
+    // NDI surface stays muted: the NDI sender captures raw frames, not
+    // page audio (audio capture is a separate roadmap item), and the
+    // hidden electron window MUST never make the operator's machine
+    // beep. The visible secondary screen mounts initially muted so
+    // browser autoplay policy never blocks the initial play(); the
+    // post-render applyAudio() step then honours the operator's
+    // broadcast/volume/mute toggles and drops the mute on the next
+    // tick once the operator's gesture (Go Live) has flowed through.
     var mediaTag=slide.mediaKind==='video'
       ? '<video id="liveVideo" src="'+slide.mediaUrl+'" '+(slide.mediaPaused?'':'autoplay ')+'loop muted playsinline preload="auto" style="'+mediaStyle+'"></video>'
       : '<img src="'+slide.mediaUrl+'" alt="" style="'+mediaStyle+'">';

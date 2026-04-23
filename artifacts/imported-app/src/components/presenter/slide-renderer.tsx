@@ -176,11 +176,14 @@ function MediaSlideContent({
       // Throttle to ~33 Hz to keep state churn modest.
       if (t - lastWrite >= 30) {
         lastWrite = t
-        // If the surface is paused or muted, force the meter to 0
-        // even if the analyser has residual signal (e.g. a fade-out
-        // tail) — the operator's bar should track *audible* output.
-        const muted = v.muted || v.paused || v.ended
-        setAudioLevel(surface, muted ? 0 : readLevel(an))
+        // The bar should reflect the SOURCE signal, not the local
+        // monitor state — operators specifically asked (item #11) for
+        // the meter to show that audio is going out to the broadcast
+        // even when their own headphone monitor is off. We still
+        // force 0 on paused/ended so the bar honestly drops to dead
+        // flat when nothing is actually playing.
+        const stopped = v.paused || v.ended
+        setAudioLevel(surface, stopped ? 0 : readLevel(an))
       }
       raf = requestAnimationFrame(tick)
     }

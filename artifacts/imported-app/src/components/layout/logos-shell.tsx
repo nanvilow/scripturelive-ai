@@ -144,12 +144,13 @@ function AudioMeter({
   const liveLevel = useAppStore((s) => s.audioLevelLive)
   const previewLevel = useAppStore((s) => s.audioLevelPreview)
   const raw = surface === 'live' ? liveLevel : previewLevel
-  // Strict gating per operator request: the bar must ONLY move when
-  // a) the audio routing toggle is on AND b) the video is actually
-  // playing. No idle pulse, no breathing animation — silence reads
-  // dead-flat zero so an operator can never mistake "armed" for
-  // "live audio". If you want the toggle's state, look at the icon.
-  const level = active && playing ? raw : 0
+  // Show the meter whenever the video is actually playing — even if
+  // the operator is not monitoring locally (item #11). The icon
+  // colour / opacity still communicates whether audio is being
+  // monitored or broadcast; the bar's job is to show that signal is
+  // flowing to the downstream output. Silent / paused / ended still
+  // reads dead-flat zero because the underlying audio level is 0.
+  const level = playing ? raw : 0
   const grad =
     tone === 'red'
       ? 'from-rose-500 via-rose-400 to-amber-400'
