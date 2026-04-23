@@ -7,7 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
+<<<<<<< HEAD
         description: "Optional tag name to publish under (defaults to v<package version>)"
+=======
+        description: "Optional tag name to publish under"
+>>>>>>> 8adf9ddc014dbf8b7fc579b670502e6cd1b7abec
         required: false
         type: string
 
@@ -15,6 +19,7 @@ permissions:
   contents: write
 
 jobs:
+<<<<<<< HEAD
   # Re-check code-signing cert expiry before every release. We don't want a
   # tag push to silently produce an unsigned build because a cert expired
   # since the last release. Failures here surface as workflow-failure emails
@@ -44,6 +49,11 @@ jobs:
             artifact_glob: "artifacts/imported-app/release/*.dmg"
     runs-on: ${{ matrix.os }}
 
+=======
+  build:
+    name: Build Windows installer
+    runs-on: windows-latest
+>>>>>>> 8adf9ddc014dbf8b7fc579b670502e6cd1b7abec
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -59,6 +69,7 @@ jobs:
           node-version: 20
           cache: pnpm
 
+<<<<<<< HEAD
       # ---- NDI SDK install (optional -- enables compiling the grandiose
       # native binding for built-in NDI output). These steps NEVER exit
       # non-zero: if anything fails (download error, hung installer,
@@ -165,10 +176,13 @@ jobs:
           exit 0
 
       # ---- Install dependencies and build ----
+=======
+>>>>>>> 8adf9ddc014dbf8b7fc579b670502e6cd1b7abec
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
       - name: Build Next.js app
+<<<<<<< HEAD
         working-directory: artifacts/imported-app
         run: pnpm run build
 
@@ -188,10 +202,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Authenticode signing. Build still succeeds unsigned when unset.
+=======
+        run: pnpm run build
+
+      - name: Compile Electron main process
+        run: pnpm run electron:build
+
+      - name: Package Windows installer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+>>>>>>> 8adf9ddc014dbf8b7fc579b670502e6cd1b7abec
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: pnpm exec electron-builder --config electron-builder.yml --win --publish=never
 
+<<<<<<< HEAD
       - name: Package macOS installer
         if: runner.os == 'macOS'
         working-directory: artifacts/imported-app
@@ -212,6 +237,13 @@ jobs:
         with:
           name: installers-${{ matrix.os }}
           path: ${{ matrix.artifact_glob }}
+=======
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: ./release/*.exe
+>>>>>>> 8adf9ddc014dbf8b7fc579b670502e6cd1b7abec
           if-no-files-found: error
           retention-days: 14
 
@@ -221,6 +253,7 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
+<<<<<<< HEAD
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -230,6 +263,13 @@ jobs:
           path: dist
           pattern: installers-*
           merge-multiple: true
+=======
+      - name: Download installer
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: dist
+>>>>>>> 8adf9ddc014dbf8b7fc579b670502e6cd1b7abec
 
       - name: List artifacts
         run: ls -la dist
@@ -239,16 +279,22 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
             echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+<<<<<<< HEAD
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           else
             VERSION=$(node -p "require('./artifacts/imported-app/package.json').version")
             echo "name=v${VERSION}" >> "$GITHUB_OUTPUT"
+=======
+          else
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+>>>>>>> 8adf9ddc014dbf8b7fc579b670502e6cd1b7abec
           fi
 
       - name: Compute checksums
         run: |
           cd dist
+<<<<<<< HEAD
           (cd . && for f in *; do shasum -a 256 "$f" >> SHA256SUMS.txt; done)
           cat SHA256SUMS.txt
 
@@ -322,12 +368,18 @@ jobs:
             echo "::warning::No public key at $PUB — skipping self-verify. Commit the public half of MINISIGN_KEY there so /download can advertise it."
           fi
 
+=======
+          for f in *; do shasum -a 256 "$f" >> SHA256SUMS.txt; done
+          cat SHA256SUMS.txt
+
+>>>>>>> 8adf9ddc014dbf8b7fc579b670502e6cd1b7abec
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.name }}
           name: ScriptureLive AI ${{ steps.tag.outputs.name }}
           generate_release_notes: true
+<<<<<<< HEAD
           # Globbing the .minisig files (rather than listing each one) means
           # the release still publishes cleanly when the sign-manifest step
           # was skipped — the glob just matches nothing and softprops/action-
@@ -338,3 +390,8 @@ jobs:
             dist/SHA256SUMS.txt
             dist/manifest.json
             dist/*.minisig
+=======
+          files: |
+            dist/*.exe
+            dist/SHA256SUMS.txt
+>>>>>>> 8adf9ddc014dbf8b7fc579b670502e6cd1b7abec
