@@ -59,6 +59,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import { BibleLookupCompact } from '@/components/layout/library-compact'
 import { TopToolbar, TransportBar } from '@/components/layout/easyworship-shell'
 import {
@@ -854,6 +859,114 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
+// LIVE DISPLAY — bottom-right audio controls
+// ──────────────────────────────────────────────────────────────────────
+// Compact mic toggle + master-volume popover that lives in the Live
+// Display footer. Operators specifically asked for both controls to
+// be reachable from the live pane (item #10) so they don't have to
+// jump to the Live Transcription card to start/stop the mic or to
+// the toolbar to change media volume mid-service.
+function LiveBottomAudioControls() {
+  const isListening = useAppStore((s) => s.isListening)
+  const speechSupported = useAppStore((s) => s.speechSupported)
+  const setSpeechCommand = useAppStore((s) => s.setSpeechCommand)
+  const globalVolume = useAppStore((s) => s.globalVolume)
+  const setGlobalVolume = useAppStore((s) => s.setGlobalVolume)
+  const globalMuted = useAppStore((s) => s.globalMuted)
+  const setGlobalMuted = useAppStore((s) => s.setGlobalMuted)
+  const pct = Math.round(globalVolume * 100)
+  const effectivelyMuted = globalMuted || globalVolume === 0
+
+  const toggleMic = () => {
+    if (!speechSupported) {
+      toast.error('Speech recognition is not supported in this browser')
+      return
+    }
+    setSpeechCommand(isListening ? 'stop' : 'start')
+  }
+
+  return (
+    <div className="flex items-center gap-1 mr-1">
+      <button
+        type="button"
+        onClick={toggleMic}
+        title={isListening ? 'Stop listening for verses' : 'Start listening for verses'}
+        className={cn(
+          'h-7 px-2 rounded-md border text-[10px] uppercase tracking-wider font-semibold flex items-center gap-1.5 transition-colors',
+          isListening
+            ? 'bg-rose-500/20 text-rose-300 border-rose-500/50'
+            : 'bg-black/40 text-zinc-400 border-zinc-800 hover:text-white hover:border-zinc-600',
+        )}
+      >
+        {isListening ? <MicOff className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
+        {isListening ? 'Stop' : 'Mic'}
+      </button>
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            title={`Master volume: ${effectivelyMuted ? 'muted' : pct + '%'}`}
+            className={cn(
+              'h-7 px-2 rounded-md border text-[10px] uppercase tracking-wider font-semibold flex items-center gap-1.5 transition-colors',
+              effectivelyMuted
+                ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                : 'bg-black/40 text-zinc-300 border-zinc-800 hover:text-white hover:border-zinc-600',
+            )}
+          >
+            {effectivelyMuted ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
+            <span className="tabular-nums">{effectivelyMuted ? 'Muted' : `${pct}%`}</span>
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="end"
+          side="top"
+          className="w-[220px] p-3 bg-zinc-950 border-zinc-800"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+              Master Volume
+            </span>
+            <button
+              onClick={() => setGlobalMuted(!globalMuted)}
+              className={cn(
+                'inline-flex items-center gap-1 px-1.5 h-5 rounded text-[10px] font-semibold border',
+                globalMuted
+                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                  : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700',
+              )}
+            >
+              {globalMuted ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
+              {globalMuted ? 'Unmute' : 'Mute'}
+            </button>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={pct}
+            onChange={(e) => {
+              const v = Number(e.target.value) / 100
+              setGlobalVolume(v)
+              if (globalMuted && v > 0) setGlobalMuted(false)
+            }}
+            className="w-full accent-sky-500"
+            aria-label="Master volume"
+          />
+          <div className="flex justify-between mt-1 text-[9px] text-zinc-500 tabular-nums">
+            <span>0</span>
+            <span>{pct}%</span>
+            <span>100</span>
+          </div>
+          <p className="mt-2 text-[9px] text-zinc-500 leading-snug">
+            Affects every video on Preview, Live and the second display.
+          </p>
+        </PopoverContent>
+      </Popover>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // LIVE DISPLAY
 // ──────────────────────────────────────────────────────────────────────
 function LiveDisplayCard({
@@ -1245,9 +1358,13 @@ function LiveDisplayCard({
       </div>
 
       <div className="border-t border-zinc-800/60 px-3 py-2 flex items-center justify-end gap-3 bg-zinc-900/30 shrink-0">
-        {/* Size slider removed (item #10) — operators kept dragging it
-            by accident and shrinking the live output mid-service. The
-            preview always renders at the natural slide aspect now. */}
+        {/* Mic toggle + master-volume control. Operators asked for
+            these to live at the right-bottom of the Live Display so
+            they're reachable without leaving the live pane. The mic
+            button drives the same `setSpeechCommand` action the Live
+            Transcription card uses; the volume popover wraps the
+            global master volume the slide renderer already honours. */}
+        <LiveBottomAudioControls />
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="icon" onClick={onPrev} className="h-7 w-7 text-zinc-300 hover:text-white border border-zinc-800">
             <ChevronLeft className="h-3.5 w-3.5" />
