@@ -52,3 +52,5 @@ prompt
 server.log
 # Skills directory
 /skills/
+# Prisma client generated to a SHORT path to avoid Windows MAX_PATH issues
+src/generated/

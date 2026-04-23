@@ -1,5 +1,11 @@
 generator client {
   provider = "prisma-client-js"
+  // Output to a SHORT, predictable path inside the artifact instead of the
+  // deeply nested pnpm content-addressable folder
+  // (node_modules/.pnpm/@prisma+client@x.y.z_prisma@... etc) which blows
+  // past Windows' 260-char MAX_PATH limit on CI runners and breaks the
+  // installer build with a silent "Exit status 1" from prisma generate.
+  output   = "../src/generated/prisma-client"
 }
 
 datasource db {
