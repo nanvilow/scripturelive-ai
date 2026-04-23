@@ -30,21 +30,21 @@ asarUnpack:
 npmRebuild: false
 buildDependenciesFromSource: false
 extraResources:
-  - from: .next/standalone
+  - from: artifacts/imported-app/.next/standalone
     to: app/.next/standalone
     filter: ["**/*"]
-  - from: .next/static
+  - from: artifacts/imported-app/.next/static
     to: app/.next/standalone/.next/static
     filter: ["**/*"]
-  - from: public
+  - from: artifacts/imported-app/public
     to: app/.next/standalone/public
     filter: ["**/*"]
-  - from: db/custom.db
+  - from: artifacts/imported-app/db/custom.db
     to: app-db/custom.db
-  - from: electron/whisper-bundle
+  - from: artifacts/imported-app/electron/whisper-bundle
     to: whisper-bundle
     filter: ["**/*"]
-afterSign: build-resources/notarize.js
+afterSign: artifacts/imported-app/build-resources/notarize.js
 win:
   target:
     - target: nsis
