@@ -21,7 +21,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: artifacts/imported-app
+        working-directory: .
 
     env:
       # electron-builder reads these for code-signing. Configure them
@@ -88,7 +88,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ScriptureLive-AI-Windows-x64
-          path: artifacts/imported-app/release/*.exe
+          path: ./release/*.exe
           if-no-files-found: error
           retention-days: 30
 
@@ -97,9 +97,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/imported-app/release/*.exe
-            artifacts/imported-app/release/latest.yml
-            artifacts/imported-app/release/*.blockmap
+            ./release/*.exe
+            ./release/latest.yml
+            ./release/*.blockmap
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

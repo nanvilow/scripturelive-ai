@@ -38,10 +38,10 @@ jobs:
         include:
           - os: windows-latest
             script: package:win
-            artifact_glob: "artifacts/imported-app/release/*.exe"
+            artifact_glob: "./release/*.exe"
           - os: macos-latest
             script: package:mac
-            artifact_glob: "artifacts/imported-app/release/*.dmg"
+            artifact_glob: "./release/*.dmg"
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -169,11 +169,11 @@ jobs:
         run: pnpm install --no-frozen-lockfile
 
       - name: Build Next.js app
-        working-directory: artifacts/imported-app
+        working-directory: .
         run: pnpm run build
 
       - name: Compile Electron main process
-        working-directory: artifacts/imported-app
+        working-directory: .
         run: pnpm run electron:build
 
       # Two separate, OS-gated package steps so each platform only ever sees
@@ -184,7 +184,7 @@ jobs:
       # the .exe with the macOS .p12.
       - name: Package Windows installer
         if: runner.os == 'Windows'
-        working-directory: artifacts/imported-app
+        working-directory: .
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Authenticode signing. Build still succeeds unsigned when unset.
@@ -194,7 +194,7 @@ jobs:
 
       - name: Package macOS installer
         if: runner.os == 'macOS'
-        working-directory: artifacts/imported-app
+        working-directory: .
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Developer ID signing. Build still succeeds unsigned when unset.
@@ -242,7 +242,7 @@ jobs:
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           else
-            VERSION=$(node -p "require('./artifacts/imported-app/package.json').version")
+            VERSION=$(node -p "require('./package.json').version")
             echo "name=v${VERSION}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -254,8 +254,8 @@ jobs:
 
       - name: Update download manifest with sizes + SHA-256
         run: |
-          node artifacts/imported-app/scripts/update-download-manifest.mjs --dir "$(pwd)/dist"
-          cp artifacts/imported-app/public/downloads/manifest.json dist/manifest.json
+          node ./scripts/update-download-manifest.mjs --dir "$(pwd)/dist"
+          cp ./public/downloads/manifest.json dist/manifest.json
           cat dist/manifest.json
 
       # ---- Sign the manifest + checksums with minisign so security-conscious
@@ -312,7 +312,7 @@ jobs:
           # repo's published pubkey was rotated but the secret wasn't) fails
           # the release immediately instead of shipping signatures users can't
           # actually verify.
-          PUB="artifacts/imported-app/public/downloads/minisign.pub"
+          PUB="./public/downloads/minisign.pub"
           if [ -f "$PUB" ]; then
             for f in manifest.json SHA256SUMS.txt; do
               echo "Verifying dist/$f against $PUB"
