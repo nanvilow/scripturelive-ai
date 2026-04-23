@@ -33,8 +33,9 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    stage element fills the whole viewport with the theme background and
    centers the canvas. */
 #stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000}
-#output{position:relative;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;transition:opacity .35s ease;overflow:hidden}
+#output{position:relative;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;transition:opacity var(--slide-fade-ms,350ms) ease;overflow:hidden;--slide-fade-ms:350ms}
 #output.hidden{opacity:0}
+#output.fading{opacity:0}
 #output.ratio-16x9{aspect-ratio:16/9;width:min(100vw,calc(100vh*16/9));height:min(100vh,calc(100vw*9/16))}
 #output.ratio-4x3{aspect-ratio:4/3;width:min(100vw,calc(100vh*4/3));height:min(100vh,calc(100vw*3/4))}
 #output.ratio-21x9{aspect-ratio:21/9;width:min(100vw,calc(100vh*21/9));height:min(100vh,calc(100vw*9/21))}
@@ -148,6 +149,49 @@ function applyRatio(r){
 function dropLiveVideoCache(){
   window.__liveVideoEl=null;
   window.__liveVideoKey='';
+}
+
+// applyRender — wraps render() so slide changes can crossfade.
+//
+// Reads slideTransitionStyle ('cut' | 'fade') and slideTransitionDuration
+// from the broadcast settings, sets the --slide-fade-ms CSS variable
+// (so the existing #output opacity transition uses the operator's
+// chosen speed), and on a real content change does:
+//   fade out → swap DOM → fade in
+// For Cut style (or duration<=0, or first paint) we just call render()
+// directly so the swap is instant.
+//
+// We deliberately pass through to render() for the very first paint
+// (lastRenderKey === '') so the initial WassMedia splash / first slide
+// appears immediately instead of after a fade-in delay.
+let pendingFade=null;
+function applyRender(s){
+  var style=(s&&s.settings&&s.settings.slideTransitionStyle)||'fade';
+  var dur=(s&&s.settings&&typeof s.settings.slideTransitionDuration==='number')?s.settings.slideTransitionDuration:500;
+  if(dur<0)dur=0;if(dur>4000)dur=4000;
+  var el=$('output');
+  if(el)el.style.setProperty('--slide-fade-ms',(style==='cut'?0:dur)+'ms');
+  // Cut, no duration, or initial paint → swap straight away.
+  if(style==='cut'||dur<=0||!lastRenderKey){
+    if(pendingFade){clearTimeout(pendingFade);pendingFade=null;el&&el.classList.remove('fading');}
+    render(s);
+    return;
+  }
+  // Already mid-fade — replace the queued swap with the freshest payload.
+  if(pendingFade){clearTimeout(pendingFade);}
+  if(el)el.classList.add('fading');
+  pendingFade=setTimeout(function(){
+    pendingFade=null;
+    render(s);
+    // Two rAFs so the new DOM has painted before we drop .fading,
+    // otherwise the browser skips the fade-in transition.
+    requestAnimationFrame(function(){
+      requestAnimationFrame(function(){
+        var el2=$('output');
+        if(el2)el2.classList.remove('fading');
+      });
+    });
+  },dur);
 }
 
 function render(s){
@@ -377,7 +421,7 @@ function pollOnce(){
       if(!j||!j.state)return;
       if(j.state.timestamp&&j.state.timestamp<=lastPolled)return;
       lastPolled=j.state.timestamp||Date.now();
-      render(j.state);
+      applyRender(j.state);
       // Silent: SSE already showed the "Connected" badge. Re-toasting
       // every poll cycle was distracting the operator (item #8).
     })
@@ -404,7 +448,7 @@ function connect(){
       var d=JSON.parse(e.data);
       if(d.type==='state'){
         if(d.timestamp)lastPolled=d.timestamp;
-        render(d);
+        applyRender(d);
       }
     }catch(err){}
   };
