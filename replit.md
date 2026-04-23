@@ -68,3 +68,8 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 - **`clientCache` in `/api/transcribe` is LRU-capped at 8 entries** so a long-running dev server can't accumulate stale OpenAI client objects.
 
 Deferred to v0.5.5 (told user explicitly): NDI audio capture, media sound monitor, smooth media transitions, full Preview/Live independence, send-to-live stops preview, lower-third re-fit, custom-background preview shrink, resizable panels, HIDDEN→output broadcast wire-through, auto-close trays, detected-verse → Chapter Navigator focus.
+
+## v0.5.5 (2026-04-23) — Critical persistence fix
+
+- **Pinned the internal Next.js port to 47330.** Root cause of "OpenAI key disappears every restart" (and silently every other persisted setting too — schedule, sermon notes, voice prefs): `electron/main.ts` called `getFreePort()` on every launch, so the renderer loaded `http://127.0.0.1:<random>`. Chromium scopes `localStorage` per-origin, so a different port = a different origin = empty storage. Fixed by `getPinnedPort(47330)` which prefers a fixed port and falls back to dynamic only if 47330 is squatted (warning logged; persisted state will look empty for that ONE session, then come back next launch when 47330 is free again).
+- This single 30-line change fixes ALL persisted settings, not just the OpenAI key. Speech recognition now keeps working across restarts because the key the renderer reads from `settings.userOpenaiKey` actually survives a relaunch.

@@ -2,43 +2,13 @@ uploads = []
 generated = []
 
 [[outputs]]
-id = "3knsE5qIqgP1-y-pT1cI2"
-uri = "file://release/scripturelive-ai-source-v0.5.1.zip"
-type = "unspecified"
-title = "ScriptureLive AI v0.5.1 — One-click NDI source"
-
-[[outputs]]
-id = "h5GJ_2E1evM1QPSwixgxD"
-uri = "file://release/scripturelive-ai-source-v0.5.2.zip"
-type = "unspecified"
-title = "ScriptureLive AI v0.5.2 — Round logo, kiosk output, speech fix"
-
-[[outputs]]
-id = "3x4vvATK97nbs7IszfgYW"
-uri = "file://exports/ScriptureLive-AI-v0.5.3-source.zip"
-type = "unspecified"
-title = "ScriptureLive AI v0.5.3 — GitHub: nanvilow/scripturelive-ai"
-
-[[outputs]]
-id = "uD53OFB0FgH3queWbZSgR"
-uri = "file://exports/ScriptureLive-AI-v0.5.4-source.zip"
-type = "unspecified"
-title = "ScriptureLive AI v0.5.4 — Source"
-
-[[outputs]]
-id = "v4trZl6cV8QkIMJURr6AM"
-uri = "file://exports/github-workflows.zip"
-type = "unspecified"
-title = "GitHub Actions workflow files"
-
-[[outputs]]
-id = "pSy7l6kpraifh6MDqAZJa"
-uri = "file://exports/workflows-flat.zip"
-type = "unspecified"
-title = "Patched workflows for flat repo"
-
-[[outputs]]
 id = "9E80LzCXA9PVsyKh_KgUO"
 uri = "file://exports/release-desktop-fixed.zip"
 type = "unspecified"
 title = "release-desktop.yml (Windows-only)"
+
+[[outputs]]
+id = "6gK736AC5-m61L84mY9ho"
+uri = "file://exports/ScriptureLive-AI-v0.5.5-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.5 — Source"
