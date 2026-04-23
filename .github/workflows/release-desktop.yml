@@ -1,4 +1,5 @@
 name: Release ScriptureLive AI Desktop
+
 on:
   push:
     tags:
@@ -6,132 +7,86 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Optional tag name to publish under (defaults to v<package version>)"
+        description: "Optional tag name to publish under"
         required: false
         type: string
+
 permissions:
   contents: write
+
 jobs:
   build:
-    name: Build (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            script: package:win
-            artifact_glob: "./release/*.exe"
-    runs-on: ${{ matrix.os }}
+    name: Build Windows installer
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
-      - name: Install NDI SDK (Windows)
-        if: runner.os == 'Windows'
-        timeout-minutes: 15
-        shell: pwsh
-        env:
-          NDI_SDK_URL_WIN: ${{ secrets.NDI_SDK_URL_WIN }}
-        run: |
-          $url = if ($env:NDI_SDK_URL_WIN) { $env:NDI_SDK_URL_WIN } else { "https://downloads.ndi.tv/SDK/NDI_SDK/NDI%206%20SDK.exe" }
-          $out = "$env:RUNNER_TEMP\ndi-sdk.exe"
-          Write-Host "Downloading NDI SDK from $url"
-          & curl.exe -fsSL --max-time 300 --retry 5 --retry-delay 10 --retry-all-errors -o $out $url
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "::warning::NDI SDK download failed (curl exit $LASTEXITCODE). Build will proceed without NDI compiled."
-            exit 0
-          }
-          $size = (Get-Item $out -ErrorAction SilentlyContinue).Length
-          Write-Host "Downloaded $size bytes"
-          if (-not $size -or $size -lt 10000000) {
-            Write-Host "::warning::Downloaded file is suspiciously small ($size bytes). Build will proceed without NDI compiled."
-            exit 0
-          }
-          Write-Host "Running silent install with /quiet /norestart"
-          try {
-            $proc = Start-Process -FilePath $out -ArgumentList "/quiet","/norestart" -PassThru -ErrorAction Stop
-            if (-not $proc.WaitForExit(600000)) {
-              $proc.Kill()
-              Write-Host "::warning::NDI installer hung for 10 minutes -- killed. Build will proceed without NDI."
-              exit 0
-            }
-            Write-Host "Installer exited with code $($proc.ExitCode)"
-          } catch {
-            Write-Host "::warning::NDI installer failed to start: $_. Build will proceed without NDI."
-            exit 0
-          }
-          $candidates = @(
-            "C:\Program Files\NDI\NDI 6 SDK",
-            "C:\Program Files\NDI\NDI 6 Advanced SDK",
-            "C:\Program Files\NDI\NDI 5 SDK"
-          )
-          $sdkRoot = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $sdkRoot) {
-            Write-Host "::warning::NDI SDK install path not found. Build will proceed without NDI."
-            if (Test-Path "C:\Program Files\NDI") { Get-ChildItem "C:\Program Files\NDI" }
-            exit 0
-          }
-          echo "NDI_SDK_DIR=$sdkRoot" >> $env:GITHUB_ENV
-          Write-Host "NDI SDK installed at $sdkRoot"
+
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
+
       - name: Build Next.js app
         run: pnpm run build
+
       - name: Compile Electron main process
         run: pnpm run electron:build
+
       - name: Package Windows installer
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: pnpm exec electron-builder --config electron-builder.yml --win --publish=never
-      - name: Upload installers
+
+      - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: installers-${{ matrix.os }}
-          path: ${{ matrix.artifact_glob }}
+          name: windows-installer
+          path: ./release/*.exe
           if-no-files-found: error
           retention-days: 14
+
   release:
     name: Publish GitHub Release
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Download all installers
+      - name: Download installer
         uses: actions/download-artifact@v4
         with:
+          name: windows-installer
           path: dist
-          pattern: installers-*
-          merge-multiple: true
+
       - name: List artifacts
         run: ls -la dist
+
       - name: Resolve tag
         id: tag
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
             echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           else
-            VERSION=$(node -p "require('./package.json').version")
-            echo "name=v${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
+
       - name: Compute checksums
         run: |
           cd dist
           for f in *; do shasum -a 256 "$f" >> SHA256SUMS.txt; done
           cat SHA256SUMS.txt
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
