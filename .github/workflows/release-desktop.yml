@@ -15,23 +15,8 @@ permissions:
   contents: write
 
 jobs:
-  # Re-check code-signing cert expiry before every release. We don't want a
-  # tag push to silently produce an unsigned build because a cert expired
-  # since the last release. Failures here surface as workflow-failure emails
-  # to repo admins; warnings (<60 days) are logged but don't block the release.
-  cert-expiry:
-    name: Check signing-cert expiry
-    uses: ./.github/workflows/check-cert-expiry.yml
-    secrets: inherit
-
   build:
     name: Build (${{ matrix.os }})
-    needs: cert-expiry
-    # Build even if the cert-expiry job warns or fails -- we still want the
-    # installers to be produced (just unsigned, in the worst case) so the
-    # team can ship a hotfix while rotating credentials. The failure on the
-    # `cert-expiry` job is what generates the warning email.
-    if: ${{ always() }}
     strategy:
       fail-fast: false
       matrix:
