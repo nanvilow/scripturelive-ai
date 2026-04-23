@@ -1,0 +1,106 @@
+AI MODEL SYSTEM (Dual Mode Setup)
+
+Implement two selectable AI modes inside the app:
+
+1. Base Model (Offline / Default)
+Included in installer (~195 MB)
+Works without internet
+Handles basic Bible verse detection
+Lower accuracy and slower recognition
+
+Label in UI:
+
+Base Model (Offline – Standard Accuracy)
+
+2. OpenAI-Key Model (Online / Premium)
+Requires user API key from OpenAI
+High accuracy Bible verse detection
+Faster and more reliable results
+
+Label in UI:
+
+OpenAI Model (Online – High Accuracy Recommended)
+
+MODEL SWITCH UI
+
+Add a toggle or dropdown:
+
+AI Detection Mode:
+
+Base Model
+OpenAI Model ⭐ (Recommended)
+UPGRADE PROMPT (When user selects OpenAI Model)
+
+Immediately show a clean modal (not annoying, just clear):
+
+Title:
+Upgrade to High Accuracy Detection
+
+Message:
+For more accurate and faster Bible verse detection, use the OpenAI-powered model.
+
+CTA Buttons:
+
+“Set Up OpenAI Key”
+“Continue with Base Model”
+STEP-BY-STEP SETUP FLOW
+
+When user clicks “Set Up OpenAI Key”, show this:
+
+How to Upgrade to OpenAI Model
+Go to: https://platform.openai.com/
+Create or sign in to your account
+Navigate to API Keys
+Click Create New Secret Key
+Copy your API key
+In the App:
+Paste your API key into the field below
+Click Save & Activate
+
+[ Input Field: API Key ]
+[ Save Button ]
+
+IMPORTANT UX DETAILS (Don’t skip this)
+Mask API key input (••••••••••)
+Store key securely (encrypted locally)
+Add “Test Connection” button
+Show status:
+✅ Connected successfully
+❌ Invalid key
+SMART NUDGE (Not aggressive, just honest)
+
+Inside Base Model mode, show subtle message:
+
+“For improved Bible verse detection accuracy, switch to OpenAI Model.”
+
+No popups. No pressure. Just a gentle nudge.
+
+FAILSAFE BEHAVIOR
+
+If:
+
+No internet OR
+Invalid API key
+
+Then:
+
+Automatically fallback to Base Model
+Show message:
+
+“Switched to Base Model (Offline)”
+
+WHY THIS MATTERS
+
+Right now, your app is walking two roads:
+
+Offline reliability
+Online intelligence
+
+If you balance both well, you win.
+
+If you push too hard on “upgrade now,” users bounce.
+If you hide the upgrade, they never discover the power.
+
+So the flow should feel like:
+
+“Here’s the free engine… but here’s the turbo if you want it.”
