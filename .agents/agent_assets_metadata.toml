@@ -30,3 +30,9 @@ id = "v4trZl6cV8QkIMJURr6AM"
 uri = "file://exports/github-workflows.zip"
 type = "unspecified"
 title = "GitHub Actions workflow files"
+
+[[outputs]]
+id = "pSy7l6kpraifh6MDqAZJa"
+uri = "file://exports/workflows-flat.zip"
+type = "unspecified"
+title = "Patched workflows for flat repo"
