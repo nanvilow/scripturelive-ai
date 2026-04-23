@@ -78,8 +78,15 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 .align-right{text-align:right;align-items:flex-end}
 .align-center{text-align:center;align-items:center}
 .align-justify{text-align:justify;align-items:stretch}
-#status{position:fixed;top:1rem;right:1rem;display:flex;align-items:center;gap:.5rem;z-index:100;font-size:.75rem;color:#999;opacity:0;transition:opacity .3s}
-#status.visible{opacity:1}
+/* Item #15 — operator request: hide the "Connected" / "Disconnected"
+   status pill on the secondary display and NDI surface entirely. The
+   small badge in the top-right was distracting on stage projection
+   (and looked like an error to the congregation). Behaviour stays —
+   we just never show the chip. The full-screen "Reconnecting…"
+   overlay below is still allowed so a real network outage isn't
+   silent. */
+#status{display:none !important}
+#status.visible{display:none !important}
 #status-dot{width:8px;height:8px;border-radius:50%;background:#ef4444;animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 #status.connected #status-dot{background:#22c55e;animation:none}
