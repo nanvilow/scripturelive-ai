@@ -86,6 +86,7 @@ export interface AppSettings {
   lowerThirdHeight: 'sm' | 'md' | 'lg'
   autoAdvanceSlides: boolean
   slideTransitionDuration: number
+  slideTransitionStyle: 'cut' | 'fade'
   fontFamily: string
   fontSize: 'sm' | 'md' | 'lg' | 'xl'
   textShadow: boolean
@@ -385,6 +386,7 @@ const defaultSettings: AppSettings = {
   lowerThirdHeight: 'md',
   autoAdvanceSlides: false,
   slideTransitionDuration: 500,
+  slideTransitionStyle: 'fade',
   fontFamily: 'sans',
   fontSize: 'lg',
   textShadow: true,

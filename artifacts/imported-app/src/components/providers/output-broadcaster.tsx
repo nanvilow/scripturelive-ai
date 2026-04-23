@@ -86,6 +86,11 @@ export function OutputBroadcaster() {
         // sender's hidden window), so vMix/OBS can receive a Lower
         // Third even while the projector stays at Full Screen.
         ndiDisplayMode: settings.ndiDisplayMode,
+        // Slide transition: style picks Cut (instant swap) vs Fade
+        // (crossfade), duration drives the fade length in ms. The
+        // congregation route honours both on every slide change.
+        slideTransitionStyle: settings.slideTransitionStyle || 'fade',
+        slideTransitionDuration: settings.slideTransitionDuration ?? 500,
       }
       // BLACK / HIDDEN — operator hit the "Black" transport button or
       // toggled the HIDDEN control. The current slide stays staged in

@@ -129,6 +129,7 @@ export function SettingsView() {
       lowerThirdHeight: 'md',
       autoAdvanceSlides: false,
       slideTransitionDuration: 500,
+      slideTransitionStyle: 'fade',
       fontFamily: 'sans',
       fontSize: 'lg',
       textShadow: true,
@@ -860,34 +861,46 @@ export function SettingsView() {
             <Layers className="h-5 w-5 text-primary" />
             <div>
               <CardTitle className="text-base">Slide Transitions</CardTitle>
-              <CardDescription>Transition speed and auto-advance</CardDescription>
+              <CardDescription>How slides change on the live output</CardDescription>
             </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <Label className="text-sm font-medium">Auto-advance Slides</Label>
-            <button
-              onClick={() => updateSettings({ autoAdvanceSlides: !settings.autoAdvanceSlides })}
-              className={cn(
-                'w-10 h-5 rounded-full transition-colors relative',
-                settings.autoAdvanceSlides ? 'bg-primary' : 'bg-muted'
-              )}
-            >
-              <div className={cn(
-                'absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform shadow-sm',
-                settings.autoAdvanceSlides ? 'left-5.5' : 'left-0.5'
-              )} />
-            </button>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Transition Style</Label>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { v: 'cut',  label: 'Cut',  hint: 'Instant swap' },
+                { v: 'fade', label: 'Fade', hint: 'Smooth crossfade' },
+              ] as const).map(opt => (
+                <button
+                  key={opt.v}
+                  type="button"
+                  onClick={() => updateSettings({ slideTransitionStyle: opt.v })}
+                  className={cn(
+                    'rounded-md border px-3 py-2 text-left transition-colors',
+                    (settings.slideTransitionStyle || 'fade') === opt.v
+                      ? 'border-primary bg-primary/10'
+                      : 'border-border hover:bg-muted/50'
+                  )}
+                >
+                  <div className="text-sm font-medium">{opt.label}</div>
+                  <div className="text-[11px] text-muted-foreground">{opt.hint}</div>
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Applies to the live output (secondary screen / NDI). Cut switches slides instantly; Fade crossfades over the duration below.
+            </p>
           </div>
 
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">Transition Duration: {settings.slideTransitionDuration}ms</Label>
+          <div className={cn('space-y-2', (settings.slideTransitionStyle || 'fade') === 'cut' && 'opacity-50 pointer-events-none')}>
+            <Label className="text-sm font-medium">Fade Duration: {settings.slideTransitionDuration}ms</Label>
             <Input
               type="range"
-              min={200}
+              min={100}
               max={2000}
-              step={100}
+              step={50}
               value={settings.slideTransitionDuration}
               onChange={(e) => updateSettings({ slideTransitionDuration: parseInt(e.target.value) })}
               className="w-full"
