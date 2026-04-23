@@ -1,0 +1,228 @@
+Run pnpm install --no-frozen-lockfile
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+Scope: all 9 workspace projects
+Lockfile is up to date, resolution step is skipped
+Packages: +1392
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 0, reused 0, downloaded 1, added 0
+Progress: resolved 0, reused 0, downloaded 12, added 0
+Progress: resolved 0, reused 0, downloaded 16, added 0
+Progress: resolved 0, reused 0, downloaded 29, added 4
+Progress: resolved 0, reused 0, downloaded 49, added 14
+Progress: resolved 0, reused 0, downloaded 64, added 18
+Progress: resolved 0, reused 0, downloaded 65, added 18
+Progress: resolved 0, reused 0, downloaded 70, added 20
+Progress: resolved 0, reused 0, downloaded 71, added 20
+Progress: resolved 0, reused 0, downloaded 73, added 20
+Progress: resolved 0, reused 0, downloaded 74, added 20
+Progress: resolved 0, reused 0, downloaded 77, added 22
+Progress: resolved 0, reused 0, downloaded 78, added 22
+Progress: resolved 0, reused 0, downloaded 81, added 24
+Progress: resolved 0, reused 0, downloaded 83, added 24
+Progress: resolved 0, reused 0, downloaded 96, added 28
+Progress: resolved 0, reused 0, downloaded 131, added 37
+Progress: resolved 0, reused 0, downloaded 195, added 61
+Progress: resolved 0, reused 0, downloaded 209, added 65
+Progress: resolved 0, reused 0, downloaded 217, added 69
+Progress: resolved 0, reused 0, downloaded 246, added 75
+Progress: resolved 0, reused 0, downloaded 250, added 78
+Progress: resolved 0, reused 0, downloaded 250, added 79
+Progress: resolved 0, reused 0, downloaded 274, added 83
+Progress: resolved 0, reused 0, downloaded 282, added 86
+Progress: resolved 0, reused 0, downloaded 287, added 87
+Progress: resolved 0, reused 0, downloaded 293, added 90
+Progress: resolved 0, reused 0, downloaded 294, added 90
+Progress: resolved 0, reused 0, downloaded 295, added 90
+Progress: resolved 0, reused 0, downloaded 296, added 90
+Progress: resolved 0, reused 0, downloaded 296, added 91
+Progress: resolved 0, reused 0, downloaded 297, added 91
+Progress: resolved 0, reused 0, downloaded 298, added 91
+Progress: resolved 0, reused 0, downloaded 299, added 91
+Progress: resolved 0, reused 0, downloaded 300, added 91
+Progress: resolved 0, reused 0, downloaded 301, added 91
+Progress: resolved 0, reused 0, downloaded 302, added 91
+Progress: resolved 0, reused 0, downloaded 338, added 103
+Progress: resolved 0, reused 0, downloaded 348, added 106
+Progress: resolved 0, reused 0, downloaded 362, added 110
+Progress: resolved 0, reused 0, downloaded 406, added 126
+Progress: resolved 0, reused 0, downloaded 407, added 126
+Progress: resolved 0, reused 0, downloaded 476, added 165
+Progress: resolved 0, reused 0, downloaded 484, added 169
+Progress: resolved 0, reused 0, downloaded 513, added 181
+Progress: resolved 0, reused 0, downloaded 559, added 207
+Progress: resolved 0, reused 0, downloaded 562, added 207
+Progress: resolved 0, reused 0, downloaded 620, added 230
+Progress: resolved 0, reused 0, downloaded 642, added 240
+Progress: resolved 0, reused 0, downloaded 650, added 244
+Progress: resolved 0, reused 0, downloaded 652, added 244
+Progress: resolved 0, reused 0, downloaded 657, added 244
+Progress: resolved 0, reused 0, downloaded 691, added 260
+Progress: resolved 0, reused 0, downloaded 732, added 274
+Progress: resolved 0, reused 0, downloaded 745, added 278
+Progress: resolved 0, reused 0, downloaded 782, added 290
+Progress: resolved 0, reused 0, downloaded 829, added 307
+Progress: resolved 0, reused 0, downloaded 889, added 330
+Progress: resolved 0, reused 0, downloaded 928, added 343
+Progress: resolved 0, reused 0, downloaded 958, added 355
+Progress: resolved 0, reused 0, downloaded 1025, added 380
+Progress: resolved 0, reused 0, downloaded 1082, added 402
+Progress: resolved 0, reused 0, downloaded 1208, added 459
+Progress: resolved 0, reused 0, downloaded 1243, added 476
+Progress: resolved 0, reused 0, downloaded 1244, added 477
+Progress: resolved 0, reused 0, downloaded 1250, added 478
+Progress: resolved 0, reused 0, downloaded 1251, added 478
+Progress: resolved 0, reused 0, downloaded 1256, added 480
+Progress: resolved 0, reused 0, downloaded 1289, added 490
+Progress: resolved 0, reused 0, downloaded 1337, added 674
+Progress: resolved 0, reused 0, downloaded 1337, added 797
+Progress: resolved 0, reused 0, downloaded 1337, added 978
+Progress: resolved 0, reused 0, downloaded 1337, added 1115
+Progress: resolved 0, reused 0, downloaded 1337, added 1245
+Progress: resolved 0, reused 0, downloaded 1337, added 1289
+Progress: resolved 0, reused 0, downloaded 1337, added 1338
+Progress: resolved 0, reused 0, downloaded 1337, added 1392, done
+node_modules/@swc/core postinstall$ node postinstall.js
+node_modules/esbuild postinstall$ node install.js
+node_modules/unrs-resolver postinstall$ napi-postinstall unrs-resolver 1.11.1 check
+node_modules/@swc/core postinstall: Done
+node_modules/esbuild postinstall: Done
+node_modules/unrs-resolver postinstall: Done
+artifacts/imported-app postinstall$ node -e "process.exit(0)"
+. preinstall$ sh -c 'rm -f package-lock.json yarn.lock; case "$npm_config_user_agent" in pnpm/*) ;; *) echo "Use pnpm instead" >&2; exit 1 ;; esac'
+artifacts/imported-app postinstall: Done
+. preinstall: Done
+╭ Warning ─────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│   Ignored build scripts: @parcel/watcher@2.5.6, @prisma/client@6.19.3,       │
+│   @prisma/engines@6.19.3, electron@33.4.11, es5-ext@0.10.64, koffi@2.16.1,   │
+│   prisma@6.19.3, sharp@0.34.5.                                               │
+│   Run "pnpm approve-builds" to pick which dependencies should be allowed     │
+│   to run scripts.                                                            │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Done in 1m 31.2s using pnpm v10.33.2
+36s
+Run pnpm run build
+  
+> workspace@0.0.0 build D:\a\scripturelive-ai\scripturelive-ai
+> pnpm run typecheck && pnpm -r --if-present --filter "!@workspace/mockup-sandbox" run build
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+> workspace@0.0.0 typecheck D:\a\scripturelive-ai\scripturelive-ai
+> pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-present run typecheck
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+> workspace@0.0.0 typecheck:libs D:\a\scripturelive-ai\scripturelive-ai
+> tsc --build
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+Scope: 4 of 9 workspace projects
+artifacts/api-server typecheck$ tsc -p tsconfig.json --noEmit
+artifacts/mockup-sandbox typecheck$ tsc -p tsconfig.json --noEmit
+artifacts/api-server typecheck: Done
+scripts typecheck$ tsc -p tsconfig.json --noEmit
+scripts typecheck: Done
+artifacts/mockup-sandbox typecheck: Done
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+Scope: 8 of 9 workspace projects
+artifacts/imported-app build$ cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build
+artifacts/imported-app build: Prisma schema loaded from prisma\schema.prisma
+artifacts/imported-app build: ✔ Generated Prisma Client (v6.19.3) to .\src\generated\prisma-client in 106ms
+artifacts/imported-app build: Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+artifacts/imported-app build: Tip: Need your database queries to be 1000x faster? Accelerate offers you that and more: https://pris.ly/tip-2-accelerate
+artifacts/imported-app build: ⚠ No build cache found. Please configure build caching for faster rebuilds. Read more: https://nextjs.org/docs/messages/no-cache
+artifacts/imported-app build: Attention: Next.js now collects completely anonymous telemetry regarding usage.
+artifacts/imported-app build: This information is used to shape Next.js' roadmap and prioritize features.
+artifacts/imported-app build: You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+artifacts/imported-app build: https://nextjs.org/telemetry
+artifacts/imported-app build: ▲ Next.js 16.2.4 (Turbopack)
+artifacts/imported-app build:   Creating an optimized production build ...
+artifacts/imported-app build: Turbopack build encountered 1 warnings:
+artifacts/imported-app build: ./artifacts/imported-app/next.config.ts
+artifacts/imported-app build: Encountered unexpected file in NFT list
+artifacts/imported-app build: A file was traced that indicates that the whole project was traced unintentionally. Somewhere in the import trace below, there are:
+artifacts/imported-app build: - filesystem operations (like path.join, path.resolve or fs.readFile), or
+artifacts/imported-app build: - very dynamic requires (like require('./' + foo)).
+artifacts/imported-app build: To resolve this, you can
+artifacts/imported-app build: - remove them if possible, or
+artifacts/imported-app build: - only use them in development, or
+artifacts/imported-app build: - make sure they are statically scoped to some subfolder: path.join(process.cwd(), 'data', bar), or
+artifacts/imported-app build: - add ignore comments: path.join(/*turbopackIgnore: true*/ process.cwd(), bar)
+artifacts/imported-app build: Import trace:
+artifacts/imported-app build:   App Route:
+artifacts/imported-app build:     ./artifacts/imported-app/next.config.ts
+artifacts/imported-app build:     ./artifacts/imported-app/src/generated/prisma-client/index.js
+artifacts/imported-app build:     ./artifacts/imported-app/src/lib/db.ts
+artifacts/imported-app build:     ./artifacts/imported-app/src/app/api/songs/import/route.ts
+artifacts/imported-app build: ✓ Compiled successfully in 8.6s
+artifacts/imported-app build:   Skipping validation of types
+artifacts/imported-app build:   Finished TypeScript config validation in 25ms ...
+artifacts/imported-app build:   Collecting page data using 1 worker ...
+artifacts/imported-app build:   Generating static pages using 1 worker (0/19) ...
+artifacts/imported-app build:   Generating static pages using 1 worker (4/19) 
+artifacts/imported-app build:   Generating static pages using 1 worker (9/19) 
+artifacts/imported-app build:   Generating static pages using 1 worker (14/19) 
+artifacts/imported-app build: ✓ Generating static pages using 1 worker (19/19) in 283ms
+artifacts/imported-app build:   Finalizing page optimization ...
+artifacts/imported-app build: Route (app)
+artifacts/imported-app build: ┌ ○ /
+artifacts/imported-app build: ├ ○ /_not-found
+artifacts/imported-app build: ├ ƒ /api/ai/generate-slides
+artifacts/imported-app build: ├ ƒ /api/ai/structure-lyrics
+artifacts/imported-app build: ├ ƒ /api/bible
+artifacts/imported-app build: ├ ƒ /api/bible/translations
+artifacts/imported-app build: ├ ƒ /api/download/[platform]
+artifacts/imported-app build: ├ ƒ /api/download/checksums
+artifacts/imported-app build: ├ ƒ /api/download/manifest
+artifacts/imported-app build: ├ ƒ /api/output
+artifacts/imported-app build: ├ ƒ /api/output/congregation
+artifacts/imported-app build: ├ ƒ /api/output/ndi
+artifacts/imported-app build: ├ ƒ /api/output/stage
+artifacts/imported-app build: ├ ƒ /api/presentations
+artifacts/imported-app build: ├ ƒ /api/sermons
+artifacts/imported-app build: ├ ƒ /api/songs
+artifacts/imported-app build: ├ ƒ /api/songs/import
+artifacts/imported-app build: ├ ƒ /api/transcribe
+artifacts/imported-app build: ├ ƒ /api/upload
+artifacts/imported-app build: └ ○ /download
+artifacts/imported-app build: Route (pages)
+artifacts/imported-app build: ─ ○ /not-found
+artifacts/imported-app build: ○  (Static)   prerendered as static content
+artifacts/imported-app build: ƒ  (Dynamic)  server-rendered on demand
+artifacts/imported-app build: Done
+artifacts/api-server build$ node ./build.mjs
+artifacts/api-server build:   dist\index.mjs                   1.4mb
+artifacts/api-server build:   dist\pino-worker.mjs           150.9kb
+artifacts/api-server build:   dist\pino-file.mjs             139.9kb
+artifacts/api-server build:   dist\pino-pretty.mjs           111.5kb
+artifacts/api-server build:   dist\thread-stream-worker.mjs    7.1kb
+artifacts/api-server build:   ...and 5 more output files...
+artifacts/api-server build: Done in 171ms
+artifacts/api-server build: Done
+0s
+Run pnpm run electron:build
+  
+ ERR_PNPM_NO_SCRIPT  Missing script: electron:build
+Command "electron:build" not found.
+Error: Process completed with exit code 1.
+0s
+0s
+0s
+1s
+Post job cleanup.
+Pruning is unnecessary.
+2s
+Post job cleanup.
+"C:\Program Files\Git\bin\git.exe" version
+git version 2.53.0.windows.2
+Temporarily overriding HOME='D:\a\_temp\41ea4698-bc28-495d-b974-62608b636012' before making global git config changes
+Adding repository directory to the temporary git global config as a safe directory
+"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\scripturelive-ai\scripturelive-ai
+"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+http.https://github.com/.extraheader
+"C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+0s
+Cleaning up orphan processes
+Warning: Node.js 20 actions are deprecated. The following actions are running on Node.js 20 and may not work as expected: actions/checkout@v4, actions/setup-node@v4, pnpm/action-setup@v4. Actions will be forced to run with Node.js 24 by default starting June 2nd, 2026. Node.js 20 will be removed from the runner on September 16th, 2026. Please check if updated versions of these actions are available that support Node.js 24. To opt into Node.js 24 now, set the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true environment variable on the runner or in your workflow file. Once Node.js 24 becomes the default, you can temporarily opt out by setting ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
