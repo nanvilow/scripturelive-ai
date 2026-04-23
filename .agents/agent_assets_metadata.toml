@@ -24,3 +24,9 @@ id = "uD53OFB0FgH3queWbZSgR"
 uri = "file://exports/ScriptureLive-AI-v0.5.4-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.4 — Source"
+
+[[outputs]]
+id = "v4trZl6cV8QkIMJURr6AM"
+uri = "file://exports/github-workflows.zip"
+type = "unspecified"
+title = "GitHub Actions workflow files"
