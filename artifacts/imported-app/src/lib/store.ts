@@ -624,7 +624,7 @@ export const useAppStore = create<AppState>()(
 
       // Media library view density. Defaults to a comfortable middle
       // ground; user pick is persisted via partialize below.
-      mediaViewMode: 'medium',
+      mediaViewMode: 'tiles',
       setMediaViewMode: (m) => set({ mediaViewMode: m }),
     }),
     {
