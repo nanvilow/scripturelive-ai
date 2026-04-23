@@ -2095,7 +2095,6 @@ function MediaItemsView({
 }
 
 function MediaCard() {
-  const [items, setItems] = useState<MediaItem[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   // Tracks whether the current preview slide originated from this media
   // panel for the selected item — used to gate the "first click previews,
@@ -2103,12 +2102,15 @@ function MediaCard() {
   const [stagedItemId, setStagedItemId] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
-  // Per-item display preferences. Lives only on the panel because each
-  // upload may want a different fit; we copy the chosen value onto the
-  // slide when staging or sending live.
-  const [fitById, setFitById] = useState<Record<string, MediaFit>>({})
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // Item #16 — items + per-item fit live in the persisted Zustand
+  // store so they survive an app restart. The Media panel used to
+  // hold these in component state, which meant every restart of the
+  // Electron app emptied the library and the operator had to
+  // re-upload all their service videos. Now they're keyed off
+  // `mediaLibrary` / `mediaFitById` and rehydrated from localStorage
+  // automatically by zustand/persist.
   const {
     setSlides,
     setLiveSlideIndex,
@@ -2117,7 +2119,47 @@ function MediaCard() {
     setHasShownContent,
     mediaViewMode,
     setMediaViewMode,
+    mediaLibrary,
+    setMediaLibrary,
+    addMediaLibraryItem,
+    removeMediaLibraryItem,
+    mediaFitById,
+    setMediaFit,
   } = useAppStore()
+  const items = mediaLibrary
+  const fitById = mediaFitById as Record<string, MediaFit>
+
+  // On mount, ask the server which uploads still exist on disk and
+  // prune any persisted entries whose underlying file is gone (e.g.
+  // the operator wiped the uploads/ folder, or the file was lost in
+  // a desktop reinstall). Anything still on disk stays — we never
+  // synthesise placeholder names for files we don't recognise so the
+  // grid stays clean.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch('/api/upload?list=1', { cache: 'no-store' })
+        if (!res.ok) return
+        const data = (await res.json()) as { files?: string[] }
+        const onDisk = new Set(data.files || [])
+        if (cancelled) return
+        const surviving = mediaLibrary.filter((m) => {
+          const m2 = m.url.match(/[?&]file=([^&]+)/)
+          const fname = m2 ? decodeURIComponent(m2[1]) : ''
+          return !fname || onDisk.has(fname)
+        })
+        if (surviving.length !== mediaLibrary.length) {
+          setMediaLibrary(surviving)
+        }
+      } catch {
+        /* offline first launch — keep persisted entries as-is */
+      }
+    })()
+    return () => { cancelled = true }
+    // Run once on mount; we don't want this to re-fire every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const selectedItem = items.find((m) => m.id === selectedId) || null
 
@@ -2201,7 +2243,8 @@ function MediaCard() {
         setUploadPct(0)
       }
       if (added.length) {
-        setItems((prev) => [...added, ...prev])
+        // Persist into the store so each upload survives a restart.
+        for (const it of added) addMediaLibraryItem(it)
         setSelectedId(added[0].id)
         setStagedItemId(null)
         // Media-column notifications are intentionally suppressed —
@@ -2269,16 +2312,10 @@ function MediaCard() {
   )
 
   const remove = useCallback((id: string) => {
-    setItems((prev) => prev.filter((m) => m.id !== id))
+    removeMediaLibraryItem(id)
     setSelectedId((cur) => (cur === id ? null : cur))
     setStagedItemId((cur) => (cur === id ? null : cur))
-    setFitById((prev) => {
-      if (!(id in prev)) return prev
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
-  }, [])
+  }, [removeMediaLibraryItem])
 
   // Push a fit/aspect-ratio change for the selected item back through
   // the preview/live state so the operator sees it instantly on every
@@ -2288,7 +2325,7 @@ function MediaCard() {
   // object-fit / aspect-ratio.
   const updateFit = useCallback(
     (item: MediaItem, fit: MediaFit) => {
-      setFitById((prev) => ({ ...prev, [item.id]: fit }))
+      setMediaFit(item.id, fit)
       const refreshed: Slide = {
         id: `slide-media-${item.id}-${Date.now()}`,
         type: 'media',
@@ -2323,6 +2360,7 @@ function MediaCard() {
       setPreviewSlideIndex,
       setLiveSlideIndex,
       setIsLive,
+      setMediaFit,
     ]
   )
 
