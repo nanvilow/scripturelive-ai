@@ -18,14 +18,27 @@ export const runtime = 'nodejs'
  * can request anything bible-api.com supports by passing a custom code.
  */
 
+// Default catalogue — every translation bible-api.com publicly serves
+// plus a few public-domain English classics that are commonly mirrored
+// at the same endpoint. Codes are stored in upper-case but sent to the
+// API in lower-case (see runDownload). If a code 404s the download
+// just records zero verses for those chapters; nothing crashes.
 const CATALOGUE = [
+  // ── English ─────────────────────────────────────────────────────────
   { translation: 'KJV', name: 'King James Version', language: 'en' },
+  { translation: 'ASV', name: 'American Standard Version (1901)', language: 'en' },
   { translation: 'WEB', name: 'World English Bible', language: 'en' },
+  { translation: 'WEBBE', name: 'World English Bible (British Edition)', language: 'en' },
   { translation: 'BBE', name: 'Bible in Basic English', language: 'en' },
-  { translation: 'ASV', name: 'American Standard Version', language: 'en' },
   { translation: 'YLT', name: "Young's Literal Translation", language: 'en' },
   { translation: 'DARBY', name: 'Darby Bible', language: 'en' },
   { translation: 'OEB-CW', name: 'Open English Bible (Commonwealth)', language: 'en' },
+  { translation: 'OEB-US', name: 'Open English Bible (US Edition)', language: 'en' },
+  // ── Other languages ────────────────────────────────────────────────
+  { translation: 'ALMEIDA', name: 'João Ferreira de Almeida (Portuguese)', language: 'pt' },
+  { translation: 'RCCV', name: 'Romanian Corrected Cornilescu Version', language: 'ro' },
+  { translation: 'CLEMENTINE', name: 'Clementine Latin Vulgate', language: 'la' },
+  { translation: 'CHEROKEE', name: 'Cherokee New Testament', language: 'chr' },
 ]
 
 const BOOKS = [
