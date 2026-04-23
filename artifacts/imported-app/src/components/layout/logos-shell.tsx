@@ -429,6 +429,145 @@ function LiveTranscriptionCard() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
+// DISPLAY STAGE — operator-side mirror of the secondary screen
+// ──────────────────────────────────────────────────────────────────────
+// Renders a single slide the way the congregation route would render
+// it given the current Display Mode setting. Used by both the Preview
+// and Live panes so any change to Settings → Display Mode (Full vs
+// Lower Third / Lower Third on Black) reflects on the operator's
+// staging frames in real time, matching what the projector / NDI feed
+// shows. Typography (font family, font size bucket, text scale, text
+// shadow, alignment) and lower-third geometry (position + height
+// bucket) all flow from the same `settings` object the broadcaster
+// transmits, so all three surfaces stay perfectly in sync.
+function DisplayStage({
+  slide,
+  themeKey,
+  settings,
+  isLive,
+}: {
+  slide: Slide
+  themeKey?: string
+  settings: ReturnType<typeof useAppStore.getState>['settings']
+  isLive?: boolean
+}) {
+  const dm = settings.displayMode || 'full'
+  const isLT = dm === 'lower-third' || dm === 'lower-third-black'
+  if (!isLT) {
+    return (
+      <SlideThumb
+        slide={slide}
+        themeKey={themeKey || settings.congregationScreenTheme}
+        size="lg"
+        settings={settings}
+        isLive={isLive}
+      />
+    )
+  }
+  const isBlackBackdrop = dm === 'lower-third-black'
+  const ltPos = settings.lowerThirdPosition === 'top' ? 'top' : 'bottom'
+  const ltHeightMap = { sm: 22, md: 33, lg: 45 } as const
+  const ltHeightPct =
+    ltHeightMap[settings.lowerThirdHeight as keyof typeof ltHeightMap] ?? 33
+  const refLine =
+    settings.showReferenceOnOutput !== false && slide.title
+      ? `${slide.title}${slide.subtitle ? ' — ' + slide.subtitle : ''}`
+      : ''
+  const bodyLines: string[] =
+    slide.type === 'title'
+      ? [slide.title || '', slide.subtitle || ''].filter(Boolean)
+      : slide.content && slide.content.length
+        ? [slide.content.join(' ').replace(/\s+/g, ' ').trim()]
+        : slide.title
+          ? [slide.title]
+          : []
+  const FS_MULT = { sm: 0.85, md: 1, lg: 1.25, xl: 1.5 } as const
+  const rawScale = typeof settings.textScale === 'number' ? settings.textScale : 1
+  const scale =
+    Math.min(2, Math.max(0.5, rawScale)) *
+    (FS_MULT[settings.fontSize as keyof typeof FS_MULT] || 1)
+  const fontStack = getFontStack(settings.fontFamily)
+  const wantsShadow = settings.textShadow !== false
+  const shadowCss = wantsShadow ? '0 2px 12px rgba(0,0,0,0.4)' : 'none'
+  const ta = settings.textAlign ?? 'center'
+  const totalChars = bodyLines.join(' ').length
+  const bandRaw =
+    totalChars > 320 ? 5 : totalChars > 180 ? 7 : totalChars > 90 ? 9 : 11
+  const band = bandRaw * scale
+  const bodyMin = Math.max(7, 9 * scale)
+  const bodyMax = Math.max(14, 30 * scale)
+  const refMin = Math.max(6, 7 * scale)
+  const refMax = Math.max(11, 20 * scale)
+  return (
+    <div className="relative w-full aspect-video bg-black overflow-hidden ring-1 ring-zinc-800">
+      {!isBlackBackdrop && settings.customBackground && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={settings.customBackground}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover opacity-40"
+        />
+      )}
+      <div
+        className="absolute left-0 right-0 flex items-center justify-center"
+        style={{
+          [ltPos]: '6%',
+          height: `${ltHeightPct}%`,
+          padding: '0 6%',
+          containerType: 'size',
+        }}
+      >
+        <div
+          className="w-full h-full max-w-[68rem] mx-auto rounded-md flex flex-col justify-center text-white"
+          style={{
+            background: 'rgba(0,0,0,0.85)',
+            backdropFilter: 'blur(8px)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            padding: '3% 5%',
+            gap: '1cqh',
+            overflow: 'hidden',
+            fontFamily: fontStack,
+            textAlign: ta,
+            alignItems:
+              ta === 'left' ? 'flex-start' : ta === 'right' ? 'flex-end' : 'center',
+          }}
+        >
+          {refLine && (
+            <div
+              className="opacity-70 font-medium leading-tight"
+              style={{
+                fontSize: `clamp(${refMin}px, min(${2 * scale}cqw, ${4 * scale}cqh), ${refMax}px)`,
+                textShadow: shadowCss,
+              }}
+            >
+              {refLine}
+            </div>
+          )}
+          {bodyLines.map((line, i) => (
+            <div
+              key={i}
+              className="font-semibold leading-snug w-full"
+              style={{
+                fontSize: `clamp(${bodyMin}px, min(${band * 0.55}cqw, ${band}cqh), ${bodyMax}px)`,
+                textShadow: shadowCss,
+              }}
+            >
+              {line}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="absolute top-1 left-1 z-10">
+        <Badge className="text-[8px] px-1 py-0 font-bold uppercase tracking-wider border-0 bg-sky-600 text-white">
+          {isBlackBackdrop ? 'L/3 · Black · ' : 'Lower Third · '}
+          {ltPos}
+        </Badge>
+      </div>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // PREVIEW
 // ──────────────────────────────────────────────────────────────────────
 function PreviewCard() {
@@ -566,10 +705,16 @@ function PreviewCard() {
         <div className="flex-1 min-w-0 flex items-center justify-center">
           {previewSlide ? (
             <div className="w-full max-w-full">
-              <SlideThumb
+              {/* The Preview pane mirrors the Live pane's display-mode
+                  composite so flipping Settings → Display Mode between
+                  Full Screen and Lower Third reflects on Preview
+                  immediately — not just after a slide is sent live.
+                  Operators kept asking "did it apply?" when they could
+                  see it on the secondary screen but not in the
+                  staging pane next to it. */}
+              <DisplayStage
                 slide={previewSlide}
                 themeKey={previewSlide.background || settings.congregationScreenTheme}
-                size="lg"
                 settings={settings}
               />
             </div>
