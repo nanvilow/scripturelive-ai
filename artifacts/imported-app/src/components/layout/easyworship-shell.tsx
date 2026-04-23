@@ -286,6 +286,15 @@ export function TopToolbar({
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([])
   const [micPermission, setMicPermission] = useState<'granted' | 'denied' | 'prompt' | 'unknown'>('unknown')
 
+  // v0.5.4 T004 — Controlled popover open state so each tray
+  // (Microphone / Output Display / Display Mode) auto-closes the
+  // moment the operator makes a selection. Operators asked for
+  // this after mid-service clicks: the tray stayed open and
+  // blocked the live preview beneath it.
+  const [micMenuOpen, setMicMenuOpen] = useState(false)
+  const [outputMenuOpen, setOutputMenuOpen] = useState(false)
+  const [modeMenuOpen, setModeMenuOpen] = useState(false)
+
   // ── Live mic-input level meter ──────────────────────────────────────
   // A continuously-running RMS reader on the chosen microphone so the
   // operator can SEE that the selected mic is actually picking up
@@ -616,7 +625,7 @@ export function TopToolbar({
             Lists every connected audio input device. The chosen mic is
             stored globally and the SpeechProvider claims it via getUserMedia
             before starting recognition. */}
-        <Popover>
+        <Popover open={micMenuOpen} onOpenChange={setMicMenuOpen}>
           <PopoverTrigger asChild>
             <Button
               variant="ghost"
@@ -702,6 +711,7 @@ export function TopToolbar({
               onClick={() => {
                 setSelectedMicrophoneId(null)
                 toast.success('Using system default microphone')
+                setMicMenuOpen(false)
               }}
               className={cn(
                 'w-full text-left px-2 py-1.5 text-xs rounded flex items-center gap-2',
@@ -722,6 +732,7 @@ export function TopToolbar({
                   onClick={() => {
                     setSelectedMicrophoneId(d.deviceId || null)
                     toast.success(`Microphone: ${d.label || `Microphone ${i + 1}`}`)
+                    setMicMenuOpen(false)
                   }}
                   className={cn(
                     'w-full text-left px-2 py-1.5 text-xs rounded flex items-center gap-2',
@@ -747,7 +758,13 @@ export function TopToolbar({
             Always a popover. Lists every physical monitor in the desktop
             app, every screen returned by the Window Management API in
             modern browsers, and a "Pop-out window" fallback otherwise. */}
-        <Popover onOpenChange={(o) => { if (o) probeBrowserScreens() }}>
+        <Popover
+          open={outputMenuOpen}
+          onOpenChange={(o) => {
+            setOutputMenuOpen(o)
+            if (o) probeBrowserScreens()
+          }}
+        >
           <PopoverTrigger asChild>
             <Button
               variant="ghost"
@@ -772,7 +789,10 @@ export function TopToolbar({
                 control similar to the OUTPUT button on hardware mixers. */}
             {outputActive && (
               <button
-                onClick={toggleOutput}
+                onClick={() => {
+                  toggleOutput()
+                  setOutputMenuOpen(false)
+                }}
                 className="w-full text-left px-2 py-2 mb-1 rounded bg-rose-500/15 border border-rose-500/40 text-[11px] text-rose-200 hover:bg-rose-500/25 flex items-center gap-2"
               >
                 <MonitorPlay className="h-3.5 w-3.5" />
@@ -813,7 +833,10 @@ export function TopToolbar({
             {displays.length > 0 && displays.map((d) => (
               <button
                 key={`disp-${d.id}`}
-                onClick={() => openOnScreen({ displayId: d.id })}
+                onClick={() => {
+                  openOnScreen({ displayId: d.id })
+                  setOutputMenuOpen(false)
+                }}
                 className="w-full text-left px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 rounded flex items-center gap-2"
               >
                 <MonitorPlay className="h-3.5 w-3.5 text-zinc-500" />
@@ -831,7 +854,10 @@ export function TopToolbar({
             {browserScreens.length > 0 && browserScreens.map((s) => (
               <button
                 key={s.id}
-                onClick={() => openOnScreen({ browserScreen: s })}
+                onClick={() => {
+                  openOnScreen({ browserScreen: s })
+                  setOutputMenuOpen(false)
+                }}
                 className="w-full text-left px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 rounded flex items-center gap-2"
               >
                 <MonitorPlay className="h-3.5 w-3.5 text-zinc-500" />
@@ -871,7 +897,10 @@ export function TopToolbar({
 
             <div className="border-t border-zinc-800 mt-1 pt-1">
               <button
-                onClick={() => openOnScreen()}
+                onClick={() => {
+                  openOnScreen()
+                  setOutputMenuOpen(false)
+                }}
                 className="w-full text-left px-2 py-1.5 text-[10px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 rounded flex items-center gap-2"
                 title="Manual fallback: open the output as a draggable window."
               >
@@ -891,7 +920,7 @@ export function TopToolbar({
             <OutputBroadcaster /> on the next animation frame, so the
             preview, the secondary screen and the NDI feed all flip
             together with no refresh required. */}
-        <Popover>
+        <Popover open={modeMenuOpen} onOpenChange={setModeMenuOpen}>
           <PopoverTrigger asChild>
             <Button
               variant="ghost"
@@ -921,7 +950,10 @@ export function TopToolbar({
               return (
                 <button
                   key={opt.value}
-                  onClick={() => updateSettings({ displayMode: opt.value as 'full' | 'lower-third' | 'lower-third-black' })}
+                  onClick={() => {
+                    updateSettings({ displayMode: opt.value as 'full' | 'lower-third' | 'lower-third-black' })
+                    setModeMenuOpen(false)
+                  }}
                   className={cn(
                     'w-full text-left px-2 py-1.5 rounded text-[11px] flex items-start gap-2 transition-colors',
                     active

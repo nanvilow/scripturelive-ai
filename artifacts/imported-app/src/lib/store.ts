@@ -236,6 +236,16 @@ interface AppState {
   outputBlanked: boolean
   setOutputBlanked: (b: boolean) => void
 
+  // v0.5.4 T005 — One-way signal from the Detected Verses card to the
+  // Chapter Navigator. When the operator single-clicks a verse that
+  // the speech pipeline detected, we drop the reference here; the
+  // navigator watches the field, auto-loads that chapter + verse,
+  // focuses the verse in the list and clears the field. A timestamp
+  // is appended so the same reference twice in a row still fires.
+  navigatorRequestedRef: string | null
+  requestNavigatorRef: (ref: string) => void
+  clearNavigatorRequestedRef: () => void
+
   // Sermon notes shown on the stage-display window. Persisted with
   // the rest of the operator settings so refreshing the console
   // doesn't lose what the speaker is reading from.
@@ -483,6 +493,11 @@ export const useAppStore = create<AppState>()(
 
       outputBlanked: false,
       setOutputBlanked: (b) => set({ outputBlanked: b }),
+
+      navigatorRequestedRef: null,
+      requestNavigatorRef: (ref) =>
+        set({ navigatorRequestedRef: `${ref}\u0000${Date.now()}` }),
+      clearNavigatorRequestedRef: () => set({ navigatorRequestedRef: null }),
 
       sermonNotes: '',
       setSermonNotes: (s) => set({ sermonNotes: s }),
