@@ -31,9 +31,20 @@ const OUT_DIR = path.resolve(__dirname, '..', 'electron', 'whisper-bundle')
 // Pinned versions so future whisper.cpp changes don't silently alter
 // the bundled runtime mid-release. Bump when you validate a newer
 // release on a test machine.
-const WHISPER_CPP_VERSION = 'v1.7.4'
+//
+// IMPORTANT: the upstream repo moved from `ggerganov/whisper.cpp` to
+// `ggml-org/whisper.cpp` in late 2024. The old GitHub URL still 301s
+// to the new org, but v1.7.4's `whisper-bin-x64.zip` asset is no
+// longer published there (404), and v1.7.5 only ships an xcframework.
+// v1.7.6 was the first post-move release to re-publish the Windows
+// prebuilt; v1.8.x continues that. We pin to a known-good release
+// that publishes `whisper-bin-x64.zip` containing
+// `Release/whisper-cli.exe` + ggml DLLs. If you bump this, verify
+// the asset list at:
+//   https://github.com/ggml-org/whisper.cpp/releases
+const WHISPER_CPP_VERSION = 'v1.8.4'
 const WHISPER_ARCHIVE = 'whisper-bin-x64.zip'
-const WHISPER_URL = `https://github.com/ggerganov/whisper.cpp/releases/download/${WHISPER_CPP_VERSION}/${WHISPER_ARCHIVE}`
+const WHISPER_URL = `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_CPP_VERSION}/${WHISPER_ARCHIVE}`
 
 // Quantized base.en — ~58 MB (vs 148 MB for full base.en), same
 // word-error rate for cleanly-mic'd preaching. From the official
@@ -196,16 +207,38 @@ async function main() {
   const model = await ensureModel()
   if (bin && model) {
     log('✓ whisper-bundle ready for packaging.')
-  } else {
-    warn('whisper-bundle is INCOMPLETE — installer will ship without Base Mode. Users will see a "Base Model unavailable" notice and can still use OpenAI Mode.')
+    process.exit(0)
   }
-  // Always exit 0 so a transient download failure never blocks the
-  // release. Electron-builder still runs; runtime code handles the
-  // missing-asset case by auto-falling-back to OpenAI Mode.
+  warn('whisper-bundle is INCOMPLETE — Base Mode would be unavailable in the installer.')
+  // On Windows the bundled Base Mode is the headline offline
+  // transcription path. Shipping an installer without
+  // whisper-cli.exe / the model is the exact bug operators hit
+  // ("Reinstall the app") because the script used to exit 0 on a
+  // 404 and electron-builder happily packaged a broken bundle.
+  //
+  // Hard-fail policy:
+  //   - Always fail on win32 (the only host that actually packages
+  //     the Base Mode binary; release-desktop.yml runs windows-latest).
+  //   - Also fail when REQUIRE_WHISPER_BUNDLE=true so a future
+  //     cross-platform CI matrix can opt-in per job rather than
+  //     getting a surprise failure on mac/linux runners that don't
+  //     ship Base Mode at all.
+  //   - Stay graceful (exit 0) elsewhere so local mac/linux dev,
+  //     and Replit's Linux container, can still run pnpm install
+  //     hooks without needing a Windows binary they'd never use.
+  const requireBundle = process.env.REQUIRE_WHISPER_BUNDLE === 'true'
+  if (process.platform === 'win32' || requireBundle) {
+    console.error(`[whisper-assets] FATAL: refusing to package without whisper-cli + model. Check ${WHISPER_URL} and the model URL.`)
+    process.exit(1)
+  }
   process.exit(0)
 }
 
 main().catch((e) => {
   warn(`Unexpected error: ${e.stack || e.message}`)
-  process.exit(0)
+  // Same reasoning as above: never let a download crash silently
+  // produce a half-baked installer on the host that actually ships
+  // the binary.
+  const requireBundle = process.env.REQUIRE_WHISPER_BUNDLE === 'true'
+  process.exit(process.platform === 'win32' || requireBundle ? 1 : 0)
 })
