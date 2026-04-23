@@ -111,6 +111,13 @@ export interface AppSettings {
   // the Typography settings card; the change is broadcast to the
   // secondary screen and NDI feed in real time.
   textAlign: 'left' | 'center' | 'right' | 'justify'
+  // User-supplied OpenAI API key for the Whisper transcription
+  // pipeline. In dev/Replit the route falls back to the integration
+  // proxy creds (AI_INTEGRATIONS_OPENAI_*); on the user's installed
+  // desktop build those env vars don't exist, so the key entered here
+  // is the only way speech-to-text works. Stored locally only — never
+  // sent to anything other than api.openai.com via the local route.
+  userOpenaiKey: string | null
 }
 
 interface AppState {
@@ -338,6 +345,7 @@ const defaultSettings: AppSettings = {
   displayRatio: 'fill',
   textScale: 1,
   textAlign: 'center',
+  userOpenaiKey: null,
   congregationScreenTheme: 'minimal',
   speechLanguage: 'en-US',
   autoGoLiveOnDetection: false,
