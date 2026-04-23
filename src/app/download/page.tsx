@@ -1,0 +1,411 @@
+'use client'
+
+import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
+import { Apple, Download, Monitor, ShieldCheck, Sparkles, Wifi, ArrowLeft, Cpu, HardDrive, AlertTriangle, Copy, Check, Fingerprint } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
+
+type ManifestFile = {
+  label: string
+  filename: string
+  size: number | null
+  sha256: string | null
+  available: boolean
+}
+
+type Manifest = {
+  version: string
+  releaseNotes?: string
+  publishedAt: string | null
+  files: Record<string, ManifestFile>
+  externalReleaseUrl: string | null
+}
+
+type PlatformKey = 'win-x64' | 'mac-arm64' | 'mac-x64'
+
+function formatSize(bytes: number | null): string {
+  if (!bytes) return '—'
+  const mb = bytes / (1024 * 1024)
+  return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(1)} MB`
+}
+
+function formatBytes(bytes: number | null): string {
+  if (!bytes) return ''
+  return `${bytes.toLocaleString()} bytes`
+}
+
+function shortHash(sha256: string): string {
+  return `${sha256.slice(0, 8)}…${sha256.slice(-8)}`
+}
+
+function ChecksumRow({ sha256 }: { sha256: string | null }) {
+  const [copied, setCopied] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  if (!sha256) {
+    return (
+      <div className="flex items-center justify-between rounded-md border border-dashed border-border/70 bg-muted/30 px-2 py-1.5 text-[11px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5">
+          <Fingerprint className="h-3 w-3" /> SHA-256
+        </span>
+        <span>pending build</span>
+      </div>
+    )
+  }
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(sha256)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // ignore — clipboard may be unavailable in some browsers/contexts
+    }
+  }
+  return (
+    <div className="rounded-md border border-border/70 bg-muted/40 px-2 py-1.5 text-[11px]">
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          aria-label={expanded ? 'Hide full SHA-256' : 'Show full SHA-256'}
+          className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <Fingerprint className="h-3 w-3" /> SHA-256
+          <span className="text-[10px] underline-offset-2 hover:underline">
+            {expanded ? '(hide)' : '(show full)'}
+          </span>
+        </button>
+        <span className="flex items-center gap-1.5">
+          {!expanded && (
+            <code className="font-mono text-foreground/90" title={sha256}>
+              {shortHash(sha256)}
+            </code>
+          )}
+          <button
+            type="button"
+            onClick={copy}
+            aria-label="Copy SHA-256 checksum"
+            className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-colors"
+          >
+            {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+          </button>
+        </span>
+      </div>
+      {expanded && (
+        <code className="mt-1.5 block break-all font-mono text-[10px] leading-relaxed text-foreground/90">
+          {sha256}
+        </code>
+      )}
+    </div>
+  )
+}
+
+function detectPlatform(): PlatformKey | null {
+  if (typeof navigator === 'undefined') return null
+  const ua = navigator.userAgent.toLowerCase()
+  const platform = (navigator as Navigator & { userAgentData?: { platform?: string } })
+    .userAgentData?.platform?.toLowerCase()
+  if (platform?.includes('win') || ua.includes('windows')) return 'win-x64'
+  if (platform?.includes('mac') || ua.includes('mac os x')) {
+    // Best-effort: Apple Silicon detection isn't exposed; default to arm64 since it covers all M-series
+    return 'mac-arm64'
+  }
+  return null
+}
+
+export default function DownloadPage() {
+  const [manifest, setManifest] = useState<Manifest | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [detected, setDetected] = useState<PlatformKey | null>(null)
+
+  useEffect(() => {
+    setDetected(detectPlatform())
+    fetch('/api/download/manifest', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((m: Manifest) => setManifest(m))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const cards: { key: PlatformKey; icon: React.ReactNode; sub: string }[] = useMemo(() => [
+    { key: 'win-x64', icon: <Monitor className="h-6 w-6" />, sub: 'NSIS installer · 64-bit' },
+    { key: 'mac-arm64', icon: <Apple className="h-6 w-6" />, sub: 'Disk image · Apple Silicon' },
+    { key: 'mac-x64', icon: <Apple className="h-6 w-6" />, sub: 'Disk image · Intel Macs' },
+  ], [])
+
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      <div className="mx-auto max-w-5xl px-6 py-10">
+        {/* Top bar */}
+        <div className="mb-8 flex items-center justify-between">
+          <Link href="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="h-4 w-4" /> Back to ScriptureLive AI
+          </Link>
+          <div className="flex items-center gap-3">
+            <img src="/logo.png" alt="ScriptureLive AI" className="h-9 w-auto" />
+          </div>
+        </div>
+
+        {/* Hero */}
+        <div className="rounded-2xl border border-border bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-transparent p-8 md:p-10">
+          <Badge className="mb-4 bg-amber-500/15 text-amber-300 border border-amber-500/20 gap-1.5">
+            <Sparkles className="h-3 w-3" /> Desktop app · v{manifest?.version ?? '0.2.0'}
+          </Badge>
+          <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
+            ScriptureLive AI for Windows &amp; macOS
+          </h1>
+          <p className="mt-3 max-w-2xl text-muted-foreground leading-relaxed">
+            Get the full ScriptureLive AI presentation platform on your machine — with{' '}
+            <strong className="text-foreground">built-in native NDI output</strong> that vMix, Wirecast,
+            and OBS pick up automatically on your LAN. No screen capture, no extra tools.
+          </p>
+
+          <div className="mt-6 flex flex-wrap gap-3 text-xs">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card/50 px-3 py-1.5">
+              <Wifi className="h-3.5 w-3.5 text-emerald-400" /> Native NDI sender
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card/50 px-3 py-1.5">
+              <ShieldCheck className="h-3.5 w-3.5 text-sky-400" /> Local-first · runs offline
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card/50 px-3 py-1.5">
+              <Cpu className="h-3.5 w-3.5 text-violet-400" /> Apple Silicon &amp; Intel
+            </span>
+          </div>
+        </div>
+
+        {/* Cards */}
+        <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+          {cards.map(({ key, icon, sub }) => {
+            const file = manifest?.files[key]
+            const recommended = detected === key
+            const available = !!file?.available
+            return (
+              <div
+                key={key}
+                className={cn(
+                  'rounded-xl border p-5 transition-colors flex flex-col',
+                  recommended ? 'border-primary/40 bg-primary/5' : 'border-border bg-card'
+                )}
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className={cn('flex h-10 w-10 items-center justify-center rounded-lg',
+                      recommended ? 'bg-primary/15 text-primary' : 'bg-muted text-foreground/80')}>
+                      {icon}
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold">{file?.label || key}</div>
+                      <div className="text-[11px] text-muted-foreground">{sub}</div>
+                    </div>
+                  </div>
+                  {recommended && <Badge className="text-[10px]">Detected</Badge>}
+                </div>
+
+                <div className="mt-auto space-y-3">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span className="inline-flex items-center gap-1">
+                      <HardDrive className="h-3.5 w-3.5" />
+                      <span>{formatSize(file?.size ?? null)}</span>
+                      {file?.size ? (
+                        <span className="text-[10px] text-muted-foreground/70">
+                          ({formatBytes(file.size)})
+                        </span>
+                      ) : null}
+                    </span>
+                    <span>v{manifest?.version ?? '—'}</span>
+                  </div>
+                  <ChecksumRow sha256={file?.sha256 ?? null} />
+                  <Button
+                    asChild={available}
+                    disabled={!available || loading}
+                    className={cn('w-full gap-2', recommended && available && 'bg-primary')}
+                    variant={available ? 'default' : 'outline'}
+                  >
+                    {available ? (
+                      <a href={`/api/download/${key}`} download>
+                        <Download className="h-4 w-4" /> Download
+                      </a>
+                    ) : (
+                      <span className="inline-flex items-center justify-center gap-2">
+                        <AlertTriangle className="h-4 w-4" /> Build pending
+                      </span>
+                    )}
+                  </Button>
+                  {!available && !loading && (
+                    <p className="text-[10px] text-muted-foreground leading-snug">
+                      First cloud build pending. The GitHub Actions pipeline at
+                      {' '}<code className="bg-muted px-1 rounded">.github/workflows/release-desktop.yml</code>{' '}
+                      builds this on a real {key.startsWith('mac') ? 'Mac' : 'Windows machine'} when you push a <code className="bg-muted px-1 rounded">v*</code> tag.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Verify your download */}
+        <div className="mt-8 rounded-xl border border-border bg-card p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <ShieldCheck className="h-4 w-4 text-emerald-400" />
+            <h3 className="font-semibold text-sm">Verify your download</h3>
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Each installer above shows its exact byte size and SHA-256 checksum. After downloading, run
+            the matching command on your machine and confirm the output equals the value shown on the card
+            (use the copy button next to the hash). This is especially important while the installers are
+            unsigned.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+            <span>Verifying multiple installers? Grab a single file:</span>
+            <a
+              href="/api/download/checksums"
+              download="SHA256SUMS.txt"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1 font-mono text-foreground hover:bg-muted transition-colors"
+            >
+              <Download className="h-3 w-3" /> SHA256SUMS.txt
+            </a>
+            <span>then run <code className="rounded bg-muted px-1 font-mono">sha256sum -c SHA256SUMS.txt</code> next to the installers.</span>
+          </div>
+
+          {/* End-to-end verification: a detached minisign signature on the
+              manifest + checksums file lets admins verify the chain even if
+              the page itself is compromised — the public key is published
+              out-of-band on this site and the GitHub README, so an attacker
+              who swaps both an installer and its hash on the page still can't
+              forge a signature without the maintainer's private key. */}
+          {manifest?.externalReleaseUrl && (
+            <div className="mt-4 rounded-md border border-border/70 bg-muted/30 p-3">
+              <div className="flex items-center gap-2 mb-2 text-[11px] font-semibold text-foreground">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+                Verify the manifest itself (advanced)
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                The hashes above are only as trustworthy as this page. For an
+                end-to-end check, fetch the signed{' '}
+                <code className="rounded bg-muted px-1 font-mono">manifest.json</code>{' '}
+                and its detached{' '}
+                <code className="rounded bg-muted px-1 font-mono">.minisig</code>{' '}
+                signature from the GitHub Release, plus our public key (also
+                pinned in the GitHub README), and verify with{' '}
+                <a
+                  href="https://jedisct1.github.io/minisign/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-foreground"
+                >
+                  minisign
+                </a>:
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                <a
+                  href={`${manifest.externalReleaseUrl}/manifest.json`}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 font-mono hover:bg-muted transition-colors"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Download className="h-3 w-3" /> manifest.json
+                </a>
+                <a
+                  href={`${manifest.externalReleaseUrl}/manifest.json.minisig`}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 font-mono hover:bg-muted transition-colors"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Download className="h-3 w-3" /> manifest.json.minisig
+                </a>
+                <a
+                  href={`${manifest.externalReleaseUrl}/SHA256SUMS.txt.minisig`}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 font-mono hover:bg-muted transition-colors"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Download className="h-3 w-3" /> SHA256SUMS.txt.minisig
+                </a>
+                <a
+                  href="/downloads/minisign.pub"
+                  download="scripturelive-minisign.pub"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 font-mono hover:bg-muted transition-colors"
+                >
+                  <Download className="h-3 w-3" /> minisign.pub
+                </a>
+              </div>
+              <pre className="mt-2 overflow-x-auto rounded-md border border-border bg-muted/40 p-2 font-mono text-[11px] leading-relaxed">
+{`# one-time: install minisign (brew install minisign / apt install minisign / scoop install minisign)
+minisign -Vm manifest.json -p scripturelive-minisign.pub
+minisign -Vm SHA256SUMS.txt -p scripturelive-minisign.pub
+# then trust the SHA-256 lines and verify each installer:
+sha256sum -c SHA256SUMS.txt`}
+              </pre>
+              <p className="mt-2 text-[10px] text-muted-foreground leading-snug">
+                Cross-check the public-key fingerprint against the copy
+                pinned in the project's GitHub repo README — that out-of-band
+                channel is what makes the chain tamper-evident. (If you got
+                here from a link in that README, you've already done it.)
+              </p>
+            </div>
+          )}
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+            <div>
+              <div className="font-semibold text-muted-foreground mb-1">Windows (PowerShell)</div>
+              <pre className="overflow-x-auto rounded-md border border-border bg-muted/40 p-2 font-mono">
+{`Get-FileHash .\\ScriptureLive*Setup-x64.exe -Algorithm SHA256`}
+              </pre>
+            </div>
+            <div>
+              <div className="font-semibold text-muted-foreground mb-1">macOS / Linux</div>
+              <pre className="overflow-x-auto rounded-md border border-border bg-muted/40 p-2 font-mono">
+{`shasum -a 256 ScriptureLive*.dmg`}
+              </pre>
+            </div>
+          </div>
+        </div>
+
+        {/* Install instructions */}
+        <div className="mt-10 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="rounded-xl border border-border bg-card p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <Monitor className="h-4 w-4 text-sky-400" />
+              <h3 className="font-semibold text-sm">Install on Windows</h3>
+            </div>
+            <ol className="text-xs text-muted-foreground space-y-1.5 list-decimal pl-5">
+              <li>Run the downloaded <code className="bg-muted px-1 rounded">.exe</code> installer.</li>
+              <li>If SmartScreen warns about an unknown publisher, click <em>More info → Run anyway</em>.</li>
+              <li>Choose an install folder, then launch <strong>ScriptureLive AI</strong> from the Start menu.</li>
+              <li>Install <a href="https://ndi.video/tools/" target="_blank" rel="noopener noreferrer" className="underline">NDI Tools</a> (free) on every machine that needs the runtime.</li>
+              <li>In Settings → Native NDI Output, click <strong>Enable NDI</strong>. The source appears in vMix / OBS / Wirecast on the same LAN.</li>
+            </ol>
+          </div>
+
+          <div className="rounded-xl border border-border bg-card p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <Apple className="h-4 w-4 text-zinc-200" />
+              <h3 className="font-semibold text-sm">Install on macOS</h3>
+            </div>
+            <ol className="text-xs text-muted-foreground space-y-1.5 list-decimal pl-5">
+              <li>Open the downloaded <code className="bg-muted px-1 rounded">.dmg</code> and drag <strong>ScriptureLive AI</strong> into Applications.</li>
+              <li>The first launch: right-click the app → <em>Open</em>, then confirm (Gatekeeper).</li>
+              <li>Install <a href="https://ndi.video/tools/" target="_blank" rel="noopener noreferrer" className="underline">NDI Tools</a> for the runtime.</li>
+              <li>In Settings → Native NDI Output, click <strong>Enable NDI</strong>.</li>
+              <li>Apple Silicon Macs use the <code className="bg-muted px-1 rounded">arm64</code> DMG; older Intel Macs use <code className="bg-muted px-1 rounded">x64</code>.</li>
+            </ol>
+          </div>
+        </div>
+
+        {/* Release notes */}
+        {manifest?.releaseNotes && (
+          <div className="mt-10 rounded-xl border border-border bg-card p-5">
+            <h3 className="font-semibold text-sm mb-2">What's new in v{manifest.version}</h3>
+            <p className="text-sm text-muted-foreground leading-relaxed">{manifest.releaseNotes}</p>
+          </div>
+        )}
+
+        <div className="mt-10 text-center text-xs text-muted-foreground">
+          Need the browser-only experience instead?{' '}
+          <Link href="/" className="underline hover:text-foreground">Open the web app</Link>.
+        </div>
+      </div>
+    </div>
+  )
+}

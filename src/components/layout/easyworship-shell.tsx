@@ -1,0 +1,1677 @@
+'use client'
+
+import { useEffect, useState, useCallback, useRef } from 'react'
+import Image from 'next/image'
+import { useAppStore, type LibraryTab, type ScheduleItem } from '@/lib/store'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { TRANSLATIONS_INFO } from '@/lib/bible-api'
+import { SlideThumb } from '@/components/presenter/slide-renderer'
+import { cn } from '@/lib/utils'
+import { toast } from 'sonner'
+import {
+  BookOpen,
+  Music2,
+  Mic,
+  Sparkles,
+  FileText,
+  Image as ImageIcon,
+  Settings as SettingsIcon,
+  Square,
+  Send,
+  CircleSlash,
+  Image as LogoIcon,
+  Wifi,
+  ExternalLink,
+  ChevronUp,
+  ChevronDown,
+  Clock,
+  Radio,
+  GripVertical,
+  X,
+  Plus,
+  RefreshCw,
+  Volume2,
+  VolumeX,
+} from 'lucide-react'
+
+import {
+  BibleLookupCompact,
+  ScriptureDetectionCompact,
+  SlideGeneratorCompact,
+  SermonNotesCompact,
+  WorshipLyricsCompact,
+  MediaLibraryCompact,
+} from '@/components/layout/library-compact'
+import { NdiOutputPanel } from '@/components/views/ndi-output-panel'
+import { useNdi } from '@/lib/use-electron'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { MonitorPlay } from 'lucide-react'
+
+// ──────────────────────────────────────────────────────────────────────
+// Library tab definitions
+// ──────────────────────────────────────────────────────────────────────
+const LIBRARY_TABS: { id: LibraryTab; label: string; icon: typeof BookOpen }[] = [
+  { id: 'bible', label: 'Scriptures', icon: BookOpen },
+  { id: 'songs', label: 'Songs', icon: Music2 },
+  { id: 'detection', label: 'Detect', icon: Mic },
+  { id: 'ai-slides', label: 'AI Slides', icon: Sparkles },
+  { id: 'sermon', label: 'Sermon', icon: FileText },
+  { id: 'media', label: 'Media', icon: ImageIcon },
+]
+
+function LibraryPanelContent({ tab }: { tab: LibraryTab }) {
+  switch (tab) {
+    case 'bible':
+      return <BibleLookupCompact />
+    case 'songs':
+      return <WorshipLyricsCompact />
+    case 'detection':
+      return <ScriptureDetectionCompact />
+    case 'ai-slides':
+      return <SlideGeneratorCompact />
+    case 'sermon':
+      return <SermonNotesCompact />
+    case 'media':
+      return <MediaLibraryCompact />
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Top toolbar (EasyWorship-style "ribbon" — flat, dark, dense)
+// ──────────────────────────────────────────────────────────────────────
+type DesktopDisplay = { id: number; label: string; primary: boolean; width: number; height: number }
+type DesktopApi = {
+  output?: {
+    openWindow?: (opts?: { displayId?: number }) => Promise<{ ok: boolean; error?: string }>
+    listDisplays?: () => Promise<DesktopDisplay[]>
+  }
+}
+
+// Browser-only screen list returned by the experimental Window Management API.
+type BrowserScreen = { id: string; label: string; primary: boolean; width: number; height: number; left: number; top: number }
+
+// ──────────────────────────────────────────────────────────────────────
+// Global master volume control
+// ──────────────────────────────────────────────────────────────────────
+// Lives in the toolbar so it's always reachable. Drives the
+// `globalVolume` / `globalMuted` flags in the store, which the slide
+// renderer multiplies into every <video>'s `volume` / `muted` props.
+function GlobalVolumeControl() {
+  const globalVolume = useAppStore((s) => s.globalVolume)
+  const setGlobalVolume = useAppStore((s) => s.setGlobalVolume)
+  const globalMuted = useAppStore((s) => s.globalMuted)
+  const setGlobalMuted = useAppStore((s) => s.setGlobalMuted)
+  const pct = Math.round(globalVolume * 100)
+  const effectivelyMuted = globalMuted || globalVolume === 0
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn(
+            'h-7 px-2 text-[11px] gap-1.5 border',
+            effectivelyMuted
+              ? 'bg-rose-500/15 text-rose-300 border-rose-700 hover:bg-rose-500/25'
+              : 'text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white',
+          )}
+          title="Master volume — affects every video on Preview, Live and the second display."
+        >
+          {effectivelyMuted ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
+          <span className="tabular-nums">{effectivelyMuted ? 'Muted' : `${pct}%`}</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[240px] p-3 bg-zinc-950 border-zinc-800">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+            Master Volume
+          </span>
+          <button
+            onClick={() => setGlobalMuted(!globalMuted)}
+            className={cn(
+              'inline-flex items-center gap-1 px-1.5 h-5 rounded text-[10px] font-semibold',
+              globalMuted
+                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                : 'bg-zinc-800 text-zinc-300 border border-zinc-700 hover:bg-zinc-700',
+            )}
+          >
+            {globalMuted ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
+            {globalMuted ? 'Unmute' : 'Mute'}
+          </button>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={pct}
+          onChange={(e) => {
+            const v = Number(e.target.value) / 100
+            setGlobalVolume(v)
+            if (globalMuted && v > 0) setGlobalMuted(false)
+          }}
+          className="w-full accent-sky-500"
+          aria-label="Master volume"
+        />
+        <div className="flex justify-between mt-1 text-[9px] text-zinc-500 tabular-nums">
+          <span>0</span>
+          <span>{pct}%</span>
+          <span>100</span>
+        </div>
+        <p className="mt-2 text-[9px] text-zinc-500 leading-snug">
+          Controls Preview, Live Display, second display and any media clip.
+        </p>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// NDI single-toggle button
+// ──────────────────────────────────────────────────────────────────────
+// One click = start or stop the NDI sender. Glowing red dot means ON
+// AIR (visible from across the room). All advanced controls live in
+// the small caret-popover next to it / the Settings page. Replaces
+// the old multi-step popover that operators kept missing during a
+// service.
+function NdiToggleButton() {
+  const { desktop, status, available } = useNdi()
+  const setNdiConnected = useAppStore((s) => s.setNdiConnected)
+  const updateSettings = useAppStore((s) => s.updateSettings)
+  const [busy, setBusy] = useState(false)
+  const isRunning = !!status?.running
+
+  // Mirror real NDI state into the store so other panels (status pills
+  // etc.) reflect the truth from the desktop bridge, not optimistic
+  // UI flags.
+  useEffect(() => {
+    setNdiConnected(isRunning)
+  }, [isRunning, setNdiConnected])
+
+  const handleToggle = useCallback(async () => {
+    if (!desktop) {
+      toast.info('NDI requires the desktop app — install ScriptureLive AI for Windows')
+      return
+    }
+    if (available === false) {
+      toast.error('NDI runtime missing — install NDI Tools from ndi.video/tools')
+      return
+    }
+    setBusy(true)
+    try {
+      if (isRunning) {
+        const r = await desktop.ndi.stop()
+        if (!r.ok) toast.error(r.error || 'Failed to stop NDI')
+        else {
+          updateSettings({ outputDestination: 'window' })
+          toast.success('NDI output stopped')
+        }
+      } else {
+        const r = await desktop.ndi.start({
+          name: 'ScriptureLive AI',
+          width: 1920, height: 1080, fps: 30,
+        })
+        if (!r.ok) toast.error(r.error || 'Failed to start NDI')
+        else toast.success('Broadcasting on the LAN as "ScriptureLive AI"')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }, [desktop, available, isRunning, updateSettings])
+
+  const unavailable = !desktop || available === false
+
+  return (
+    <Button
+      onClick={handleToggle}
+      disabled={busy}
+      variant="ghost"
+      size="sm"
+      className={cn(
+        'h-7 px-2.5 text-[11px] gap-1.5 border font-semibold transition-colors',
+        isRunning
+          ? 'bg-red-600/20 text-red-200 border-red-600 hover:bg-red-600/30'
+          : unavailable
+            ? 'text-zinc-500 border-zinc-800 hover:bg-zinc-800'
+            : 'text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white',
+      )}
+      title={
+        isRunning
+          ? 'NDI is ON AIR — click to stop sending to vMix / OBS / Wirecast'
+          : unavailable
+            ? 'NDI requires the desktop app + NDI runtime'
+            : 'Click to broadcast the live output to vMix / OBS / Wirecast over NDI'
+      }
+    >
+      <Radio className={cn('h-3 w-3', isRunning && 'text-red-300')} />
+      NDI
+      {isRunning && (
+        <span
+          className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse"
+          style={{ boxShadow: '0 0 8px 2px rgba(239,68,68,0.85), 0 0 16px 4px rgba(239,68,68,0.45)' }}
+        />
+      )}
+    </Button>
+  )
+}
+
+export function TopToolbar({
+  outputActive,
+  toggleOutput,
+}: {
+  outputActive: boolean
+  toggleOutput: () => void
+}) {
+  const {
+    selectedTranslation,
+    setSelectedTranslation,
+    isLive,
+    setCurrentView,
+    selectedMicrophoneId,
+    setSelectedMicrophoneId,
+    updateSettings,
+    settings,
+  } = useAppStore()
+  const displayMode = settings.displayMode
+
+  const [displays, setDisplays] = useState<DesktopDisplay[]>([])
+  const [browserScreens, setBrowserScreens] = useState<BrowserScreen[]>([])
+  const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([])
+  const [micPermission, setMicPermission] = useState<'granted' | 'denied' | 'prompt' | 'unknown'>('unknown')
+
+  // ── Live mic-input level meter ──────────────────────────────────────
+  // A continuously-running RMS reader on the chosen microphone so the
+  // operator can SEE that the selected mic is actually picking up
+  // sound. Without this, the only feedback that the mic works is the
+  // transcript appearing — which is too slow when troubleshooting on
+  // stage. Acquired once per device change and torn down cleanly so
+  // we never leak a mic stream.
+  const [micLevel, setMicLevel] = useState(0)
+  const micStreamRef = useRef<MediaStream | null>(null)
+  const micCtxRef = useRef<AudioContext | null>(null)
+  useEffect(() => {
+    if (typeof window === 'undefined' || micPermission !== 'granted') return
+    let cancelled = false
+    let raf = 0
+    const run = async () => {
+      try {
+        const constraints: MediaStreamConstraints = selectedMicrophoneId
+          ? { audio: { deviceId: { exact: selectedMicrophoneId } } }
+          : { audio: true }
+        const stream = await navigator.mediaDevices.getUserMedia(constraints)
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop())
+          return
+        }
+        micStreamRef.current = stream
+        const Ctor =
+          (window as unknown as { AudioContext?: typeof AudioContext }).AudioContext ||
+          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+        if (!Ctor) return
+        const ctx = new Ctor()
+        micCtxRef.current = ctx
+        const src = ctx.createMediaStreamSource(stream)
+        const an = ctx.createAnalyser()
+        an.fftSize = 512
+        an.smoothingTimeConstant = 0.55
+        src.connect(an)
+        const buf = new Uint8Array(an.fftSize)
+        const tick = () => {
+          if (cancelled) return
+          an.getByteTimeDomainData(buf)
+          let sum = 0
+          for (let i = 0; i < buf.length; i++) {
+            const v = (buf[i] - 128) / 128
+            sum += v * v
+          }
+          // Mic levels are typically tiny (RMS 0.02–0.15 for normal
+          // speech) so we scale up generously and clamp.
+          const rms = Math.sqrt(sum / buf.length)
+          setMicLevel(Math.min(1, rms * 6))
+          raf = requestAnimationFrame(tick)
+        }
+        raf = requestAnimationFrame(tick)
+      } catch {
+        /* mic unavailable — leave meter at zero */
+      }
+    }
+    run()
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(raf)
+      if (micStreamRef.current) {
+        micStreamRef.current.getTracks().forEach((t) => t.stop())
+        micStreamRef.current = null
+      }
+      if (micCtxRef.current) {
+        micCtxRef.current.close().catch(() => {})
+        micCtxRef.current = null
+      }
+      setMicLevel(0)
+    }
+  }, [selectedMicrophoneId, micPermission])
+
+  const desktop: DesktopApi | undefined = (typeof window !== 'undefined'
+    ? ((window as unknown as { electron?: DesktopApi; scriptureLive?: DesktopApi }).electron
+      ?? (window as unknown as { scriptureLive?: DesktopApi }).scriptureLive)
+    : undefined)
+
+  // Load list of available physical displays (Electron only)
+  useEffect(() => {
+    let cancelled = false
+    if (desktop?.output?.listDisplays) {
+      desktop.output.listDisplays().then((list) => {
+        if (!cancelled) setDisplays(list || [])
+      }).catch(() => {})
+    }
+    return () => { cancelled = true }
+  }, [desktop])
+
+  // ── Microphone enumeration ──────────────────────────────────────────
+  // We list audio inputs whenever the popover opens or device list changes.
+  // Device labels are only available after the user grants mic permission,
+  // so we expose a "Grant mic access" affordance when labels are blank.
+  const refreshMicrophones = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) return
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices()
+      const inputs = all.filter((d) => d.kind === 'audioinput')
+      setMicrophones(inputs)
+      const anyLabel = inputs.some((d) => d.label && d.label.length > 0)
+      setMicPermission(anyLabel ? 'granted' : 'prompt')
+    } catch {
+      setMicPermission('denied')
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshMicrophones()
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.addEventListener) {
+      const handler = () => refreshMicrophones()
+      navigator.mediaDevices.addEventListener('devicechange', handler)
+      return () => navigator.mediaDevices.removeEventListener('devicechange', handler)
+    }
+  }, [refreshMicrophones])
+
+  const requestMicAccess = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream.getTracks().forEach((t) => t.stop())
+      setMicPermission('granted')
+      await refreshMicrophones()
+    } catch {
+      setMicPermission('denied')
+      toast.error('Microphone access was denied')
+    }
+  }, [refreshMicrophones])
+
+  // ── Browser-side screen enumeration via Window Management API ──────
+  // Chrome/Edge expose getScreenDetails() once the user grants the
+  // window-management permission. We probe it lazily so we don't trigger
+  // a permission prompt on app load.
+  type ScreenDetailed = { label?: string; width: number; height: number; left: number; top: number; isPrimary: boolean }
+  type ScreenDetails = { screens: ScreenDetailed[]; addEventListener?: (ev: string, cb: () => void) => void }
+  type WindowWithScreenDetails = Window & { getScreenDetails?: () => Promise<ScreenDetails> }
+  const [screenPermission, setScreenPermission] = useState<'granted' | 'denied' | 'prompt' | 'unsupported' | 'unknown'>('unknown')
+
+  const applyScreens = useCallback((details: ScreenDetails) => {
+    setBrowserScreens(
+      details.screens.map((s, i: number) => ({
+        id: `browser-${i}`,
+        label: s.label || `Display ${i + 1}`,
+        primary: !!s.isPrimary,
+        width: s.width,
+        height: s.height,
+        left: s.left,
+        top: s.top,
+      })),
+    )
+  }, [])
+
+  const probeBrowserScreens = useCallback(async () => {
+    if (typeof window === 'undefined') return
+    const win = window as WindowWithScreenDetails
+    if (!win.getScreenDetails) {
+      setScreenPermission('unsupported')
+      return
+    }
+    try {
+      const details = await win.getScreenDetails()
+      applyScreens(details)
+      setScreenPermission('granted')
+      // Re-enumerate when the user plugs/unplugs a monitor.
+      details.addEventListener?.('screenschange', () => applyScreens(details))
+    } catch {
+      setScreenPermission('denied')
+    }
+  }, [applyScreens])
+
+  // Try to silently re-use a previously granted permission on mount so the
+  // multi-monitor list is ready before the user even opens the popover —
+  // matches the vMix / Wirecast feel where displays "just appear".
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('permissions' in navigator)) return
+    type PermName = PermissionName | 'window-management' | 'window-placement'
+    const tryNames: PermName[] = ['window-management', 'window-placement']
+    ;(async () => {
+      for (const name of tryNames) {
+        try {
+          const status = await (navigator.permissions as Permissions).query({ name: name as PermissionName })
+          if (status.state === 'granted') {
+            await probeBrowserScreens()
+            return
+          }
+          if (status.state === 'denied') {
+            setScreenPermission('denied')
+            return
+          }
+          setScreenPermission('prompt')
+          return
+        } catch {
+          /* try next name */
+        }
+      }
+      // Permissions API doesn't recognise the name; we'll know on first probe.
+    })()
+  }, [probeBrowserScreens])
+
+  const pushCurrentSlide = useCallback(async () => {
+    if (!outputActive) toggleOutput()
+    try {
+      const s = useAppStore.getState()
+      const cur = s.liveSlideIndex >= 0 ? s.slides[s.liveSlideIndex] : null
+      await fetch('/api/output', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'slide',
+          slide: cur,
+          isLive: s.isLive,
+          displayMode: s.settings.displayMode,
+          settings: {
+            fontSize: s.settings.fontSize,
+            fontFamily: s.settings.fontFamily,
+            textShadow: s.settings.textShadow,
+            showReferenceOnOutput: s.settings.showReferenceOnOutput,
+            lowerThirdHeight: s.settings.lowerThirdHeight,
+            lowerThirdPosition: s.settings.lowerThirdPosition,
+            customBackground: s.settings.customBackground,
+            congregationScreenTheme: s.settings.congregationScreenTheme,
+          },
+        }),
+      })
+    } catch {
+      /* SSE in the popup will pick up the next state change anyway */
+    }
+  }, [outputActive, toggleOutput])
+
+  const openOnScreen = useCallback(async (
+    target?: { displayId?: number; browserScreen?: BrowserScreen },
+  ) => {
+    // If nothing is live yet, auto-promote the current preview slide so the
+    // output screen immediately shows real content instead of staying blank.
+    const before = useAppStore.getState()
+    if (before.liveSlideIndex < 0 && before.slides.length > 0) {
+      const idx = Math.max(0, before.previewSlideIndex)
+      before.setLiveSlideIndex(idx)
+      before.setIsLive(true)
+    } else if (before.liveSlideIndex >= 0 && !before.isLive) {
+      before.setIsLive(true)
+    }
+    await pushCurrentSlide()
+    // Desktop (Electron): hand off to the main process which knows about every
+    // physical monitor and can place the BrowserWindow on the right one.
+    if (desktop?.output?.openWindow) {
+      const r = await desktop.output.openWindow(
+        target?.displayId !== undefined ? { displayId: target.displayId } : undefined,
+      )
+      if (!r?.ok) toast.error(r?.error || 'Could not open output window')
+      else toast.success(target?.displayId !== undefined ? 'Output opened on selected screen' : 'Output window opened')
+      return
+    }
+    // Browser: if the user picked a specific monitor (Window Management API),
+    // open the popup positioned at that screen's origin so the operator only
+    // has to press F11 to fullscreen — no manual dragging required.
+    let features = 'width=1280,height=720,toolbar=no,menubar=no,location=no,status=no'
+    if (target?.browserScreen) {
+      const s = target.browserScreen
+      features = `left=${s.left},top=${s.top},width=${s.width},height=${s.height},toolbar=no,menubar=no,location=no,status=no`
+    }
+    const w = window.open('/api/output/congregation', 'scripturelive-output', features)
+    if (w) {
+      if (target?.browserScreen) {
+        try {
+          w.moveTo(target.browserScreen.left, target.browserScreen.top)
+          w.resizeTo(target.browserScreen.width, target.browserScreen.height)
+        } catch { /* some browsers block move/resize on existing windows */ }
+        toast.success(`Output opened on "${target.browserScreen.label}" — press F11 to fullscreen`)
+      } else {
+        toast.success('Output opened — drag it to your second display, then press F11')
+      }
+    } else {
+      toast.error('Pop-up blocked. Allow pop-ups for ScriptureLive in your browser.')
+    }
+  }, [pushCurrentSlide, desktop])
+
+  return (
+    <header className="flex h-12 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-3 shrink-0">
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          <div className="h-7 w-7 rounded-full bg-white flex items-center justify-center overflow-hidden shrink-0">
+            <Image src="/logo.png" alt="ScriptureLive" width={28} height={28} className="object-contain" style={{ height: 'auto', width: 'auto', maxWidth: 28, maxHeight: 28 }} />
+          </div>
+          <div className="leading-tight">
+            <h1 className="text-xs font-bold text-zinc-100 tracking-tight">ScriptureLive AI</h1>
+            <p className="text-[9px] text-zinc-500 tracking-wide">Powered by WassMedia (+233246798526)</p>
+          </div>
+        </div>
+
+      </div>
+
+      <div className="flex items-center gap-2">
+        {isLive && (
+          // Click the badge to hard-stop ALL live transmission. Pulls
+          // the live slide index back to "nothing on air", flips
+          // isLive off, and disables the output broadcast so the
+          // congregation TV / NDI feed instantly cuts. This is a
+          // panic-stop / "kill the program out" affordance and is
+          // intentionally one click.
+          <button
+            type="button"
+            onClick={() => {
+              const st = useAppStore.getState()
+              st.setLiveSlideIndex(-1)
+              st.setIsLive(false)
+              st.setOutputEnabled(false)
+            }}
+            title="Click to stop all live transmission"
+            className="inline-flex items-center gap-1 h-6 px-2 rounded-md bg-red-600 hover:bg-red-700 text-white border-0 text-[10px] font-bold tracking-wider animate-pulse cursor-pointer transition-colors"
+          >
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-white" />
+            ON AIR
+          </button>
+        )}
+
+        <Select value={selectedTranslation} onValueChange={(v) => setSelectedTranslation(v)}>
+          <SelectTrigger className="w-[100px] h-7 text-[11px] bg-zinc-900 border-zinc-800 text-zinc-200">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {Object.entries(TRANSLATIONS_INFO).map(([key, info]) => (
+              <SelectItem key={key} value={key}>
+                {info.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {/* ── Microphone selector ────────────────────────────────────────
+            Lists every connected audio input device. The chosen mic is
+            stored globally and the SpeechProvider claims it via getUserMedia
+            before starting recognition. */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[11px] gap-1.5 border text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white max-w-[160px]"
+              title="Choose which connected microphone to use for live transcription."
+            >
+              <Mic
+                className={cn(
+                  'h-3 w-3 shrink-0 transition-colors',
+                  micLevel > 0.04 ? 'text-emerald-400' : 'text-zinc-400',
+                )}
+              />
+              <span className="truncate">
+                {(() => {
+                  if (selectedMicrophoneId) {
+                    const m = microphones.find((d) => d.deviceId === selectedMicrophoneId)
+                    if (m?.label) return m.label
+                  }
+                  return 'Default Mic'
+                })()}
+              </span>
+              {/* Live mic-input level — 6 LED ladder. Lights from
+                  green → amber → red as input gets louder so the
+                  operator can verify the chosen mic is actually
+                  receiving audio without waiting for a transcript. */}
+              <span
+                className="flex items-end gap-[2px] h-3 ml-0.5 shrink-0"
+                aria-label={`Mic input level ${Math.round(micLevel * 100)}%`}
+                title={micPermission === 'granted'
+                  ? `Mic input · ${Math.round(micLevel * 100)}%`
+                  : 'Allow microphone access to see input level'}
+              >
+                {Array.from({ length: 6 }).map((_, i) => {
+                  const threshold = (i + 1) / 6
+                  const lit = micLevel >= threshold - 0.08
+                  const color = i >= 5
+                    ? 'bg-rose-400'
+                    : i >= 3
+                      ? 'bg-amber-400'
+                      : 'bg-emerald-400'
+                  return (
+                    <span
+                      key={i}
+                      className={cn(
+                        'w-[2px] rounded-sm transition-opacity duration-75',
+                        color,
+                        lit ? 'opacity-100' : 'opacity-15',
+                      )}
+                      style={{ height: `${4 + i * 1.4}px` }}
+                    />
+                  )
+                })}
+              </span>
+              <ChevronDown className="h-3 w-3 opacity-60 shrink-0" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-[280px] p-1 bg-zinc-950 border-zinc-800">
+            <div className="flex items-center justify-between px-2 py-1.5">
+              <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+                Microphone
+              </span>
+              <button
+                onClick={refreshMicrophones}
+                className="text-zinc-500 hover:text-zinc-200 p-0.5"
+                title="Refresh microphone list"
+              >
+                <RefreshCw className="h-3 w-3" />
+              </button>
+            </div>
+            {micPermission !== 'granted' && (
+              <div className="px-2 py-2 mb-1 rounded bg-amber-500/10 border border-amber-500/30 text-[10px] text-amber-200">
+                Grant microphone access to see device names.
+                <button
+                  onClick={requestMicAccess}
+                  className="block mt-1 underline text-amber-300 hover:text-amber-200"
+                >
+                  Allow microphone
+                </button>
+              </div>
+            )}
+            <button
+              onClick={() => {
+                setSelectedMicrophoneId(null)
+                toast.success('Using system default microphone')
+              }}
+              className={cn(
+                'w-full text-left px-2 py-1.5 text-xs rounded flex items-center gap-2',
+                selectedMicrophoneId === null ? 'bg-sky-500/15 text-sky-200' : 'text-zinc-200 hover:bg-zinc-800',
+              )}
+            >
+              <Mic className="h-3.5 w-3.5 text-zinc-500" />
+              <span className="flex-1 truncate">System default</span>
+            </button>
+            {microphones.length === 0 ? (
+              <div className="px-2 py-2 text-[10px] text-zinc-500">
+                No microphones detected.
+              </div>
+            ) : (
+              microphones.map((d, i) => (
+                <button
+                  key={d.deviceId || `mic-${i}`}
+                  onClick={() => {
+                    setSelectedMicrophoneId(d.deviceId || null)
+                    toast.success(`Microphone: ${d.label || `Microphone ${i + 1}`}`)
+                  }}
+                  className={cn(
+                    'w-full text-left px-2 py-1.5 text-xs rounded flex items-center gap-2',
+                    selectedMicrophoneId === d.deviceId
+                      ? 'bg-sky-500/15 text-sky-200'
+                      : 'text-zinc-200 hover:bg-zinc-800',
+                  )}
+                >
+                  <Mic className="h-3.5 w-3.5 text-zinc-500" />
+                  <span className="flex-1 truncate">{d.label || `Microphone ${i + 1}`}</span>
+                </button>
+              ))
+            )}
+          </PopoverContent>
+        </Popover>
+
+        {/* Master volume moved out of the toolbar — it now lives inside
+            the Live Display panel, beside the slide it actually
+            controls. Less top-bar clutter; closer to the audio it
+            governs. Operators asked for this (item #11). */}
+
+        {/* ── Output Display picker ─────────────────────────────────────
+            Always a popover. Lists every physical monitor in the desktop
+            app, every screen returned by the Window Management API in
+            modern browsers, and a "Pop-out window" fallback otherwise. */}
+        <Popover onOpenChange={(o) => { if (o) probeBrowserScreens() }}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                'h-7 px-2 text-[11px] gap-1.5 border',
+                outputActive
+                  ? 'bg-emerald-600/20 text-emerald-300 border-emerald-700 hover:bg-emerald-600/30'
+                  : 'text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white',
+              )}
+              title="Pick which monitor / TV to send the live output to."
+            >
+              {outputActive ? <Wifi className="h-3 w-3" /> : <MonitorPlay className="h-3 w-3" />}
+              Output Display
+              <ChevronDown className="h-3 w-3 opacity-60" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-[320px] p-1 bg-zinc-950 border-zinc-800">
+            {/* Disconnect: instantly blanks the secondary screen and
+                stops broadcasting until the operator re-enables output.
+                Operators asked for a one-click "kill the second screen"
+                control similar to the OUTPUT button on hardware mixers. */}
+            {outputActive && (
+              <button
+                onClick={toggleOutput}
+                className="w-full text-left px-2 py-2 mb-1 rounded bg-rose-500/15 border border-rose-500/40 text-[11px] text-rose-200 hover:bg-rose-500/25 flex items-center gap-2"
+              >
+                <MonitorPlay className="h-3.5 w-3.5" />
+                <span className="flex-1 font-medium">Disconnect secondary screen</span>
+                <span className="text-[9px] uppercase tracking-wider opacity-70">Blank</span>
+              </button>
+            )}
+            <div className="flex items-center justify-between px-2 py-1.5">
+              <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+                Choose output screen
+              </span>
+              {desktop?.output?.listDisplays && (
+                <Badge className="h-4 px-1 text-[8px] bg-emerald-500/15 text-emerald-300 border-0">
+                  DESKTOP
+                </Badge>
+              )}
+              {!desktop?.output?.listDisplays && screenPermission === 'granted' && (
+                <Badge className="h-4 px-1 text-[8px] bg-sky-500/15 text-sky-300 border-0">
+                  BROWSER
+                </Badge>
+              )}
+            </div>
+
+            {/* If running in a browser without permission yet, show a single
+                CTA that triggers the OS prompt and immediately enumerates
+                displays — closely mirrors how vMix/Wirecast feel native. */}
+            {!desktop?.output?.listDisplays && screenPermission !== 'granted' && screenPermission !== 'unsupported' && (
+              <button
+                onClick={probeBrowserScreens}
+                className="w-full text-left px-2 py-2 mb-1 rounded bg-sky-500/15 border border-sky-500/40 text-[11px] text-sky-200 hover:bg-sky-500/25 flex items-center gap-2"
+              >
+                <MonitorPlay className="h-3.5 w-3.5" />
+                <span className="flex-1">Detect connected monitors</span>
+              </button>
+            )}
+
+            {/* Electron physical displays */}
+            {displays.length > 0 && displays.map((d) => (
+              <button
+                key={`disp-${d.id}`}
+                onClick={() => openOnScreen({ displayId: d.id })}
+                className="w-full text-left px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 rounded flex items-center gap-2"
+              >
+                <MonitorPlay className="h-3.5 w-3.5 text-zinc-500" />
+                <span className="flex-1 truncate">{d.label}</span>
+                {d.primary && (
+                  <Badge className="h-4 px-1 text-[8px] bg-zinc-800 text-zinc-400 border-0">
+                    MAIN
+                  </Badge>
+                )}
+                <span className="text-[9px] text-zinc-500 tabular-nums">{d.width}×{d.height}</span>
+              </button>
+            ))}
+
+            {/* Browser-detected screens (Window Management API) */}
+            {browserScreens.length > 0 && browserScreens.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => openOnScreen({ browserScreen: s })}
+                className="w-full text-left px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 rounded flex items-center gap-2"
+              >
+                <MonitorPlay className="h-3.5 w-3.5 text-zinc-500" />
+                <span className="flex-1 truncate">{s.label}</span>
+                {s.primary && (
+                  <Badge className="h-4 px-1 text-[8px] bg-zinc-800 text-zinc-400 border-0">
+                    MAIN
+                  </Badge>
+                )}
+                <span className="text-[9px] text-zinc-500 tabular-nums">{s.width}×{s.height}</span>
+              </button>
+            ))}
+
+            {displays.length === 0 && browserScreens.length === 0 && screenPermission === 'granted' && (
+              <div className="px-2 py-2 mb-1 rounded bg-zinc-900/60 border border-zinc-800 text-[10px] text-zinc-400">
+                Only one monitor detected. Connect a second display via
+                HDMI / DisplayPort and it will appear here automatically.
+              </div>
+            )}
+
+            {!desktop?.output?.listDisplays && screenPermission === 'denied' && (
+              <div className="px-2 py-2 mb-1 rounded bg-rose-500/10 border border-rose-500/30 text-[10px] text-rose-200">
+                Screen permission was blocked. Click the lock icon in your
+                browser's address bar and allow <strong>Window Management</strong>,
+                or use the desktop app for native monitor selection.
+              </div>
+            )}
+
+            {!desktop?.output?.listDisplays && screenPermission === 'unsupported' && (
+              <div className="px-2 py-2 mb-1 rounded bg-amber-500/10 border border-amber-500/30 text-[10px] text-amber-200">
+                This browser can&apos;t list connected monitors. For native
+                vMix-style display selection, install the
+                <strong> ScriptureLive desktop app</strong> from the
+                Download page — it sees every PC monitor automatically.
+              </div>
+            )}
+
+            <div className="border-t border-zinc-800 mt-1 pt-1">
+              <button
+                onClick={() => openOnScreen()}
+                className="w-full text-left px-2 py-1.5 text-[10px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 rounded flex items-center gap-2"
+                title="Manual fallback: open the output as a draggable window."
+              >
+                <ExternalLink className="h-3 w-3" />
+                Open as window (manual fallback)
+              </button>
+            </div>
+          </PopoverContent>
+        </Popover>
+
+        {/* ── Output Display Mode (Full / Lower Third) ─────────────────
+            Per FRS: a clearly-labelled, easily-accessible top-level
+            control to switch the output between Full Screen and Lower
+            Third for BOTH the secondary screen AND the NDI feed. The
+            currently active mode is reflected in the trigger label and
+            the selected row. Changes are picked up by the global
+            <OutputBroadcaster /> on the next animation frame, so the
+            preview, the secondary screen and the NDI feed all flip
+            together with no refresh required. */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[11px] gap-1.5 border text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white"
+              title="Switch the live output between Full Screen and Lower Third overlay. Applies to both the secondary screen and NDI."
+            >
+              <MonitorPlay className="h-3 w-3" />
+              {displayMode === 'lower-third'
+                ? 'Lower Third'
+                : displayMode === 'lower-third-black'
+                  ? 'L/3 · Black'
+                  : 'Full Screen'}
+              <ChevronDown className="h-3 w-3 opacity-60" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-[260px] p-1 bg-zinc-950 border-zinc-800">
+            <div className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+              Output Display Mode
+            </div>
+            {[
+              { value: 'full', label: 'Full Screen', sub: 'Slide fills the screen' },
+              { value: 'lower-third', label: 'Lower Third', sub: 'Bar over background' },
+              { value: 'lower-third-black', label: 'Lower Third · Black', sub: 'Bar on black frame' },
+            ].map((opt) => {
+              const active = displayMode === opt.value
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => updateSettings({ displayMode: opt.value as 'full' | 'lower-third' | 'lower-third-black' })}
+                  className={cn(
+                    'w-full text-left px-2 py-1.5 rounded text-[11px] flex items-start gap-2 transition-colors',
+                    active
+                      ? 'bg-sky-500/15 text-sky-200 ring-1 ring-sky-500/40'
+                      : 'text-zinc-300 hover:bg-zinc-800',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'mt-0.5 inline-block h-1.5 w-1.5 rounded-full',
+                      active ? 'bg-sky-400' : 'bg-zinc-600',
+                    )}
+                  />
+                  <span className="flex-1">
+                    <span className="block font-medium">{opt.label}</span>
+                    <span className="block text-[10px] text-zinc-500">{opt.sub}</span>
+                  </span>
+                </button>
+              )
+            })}
+          </PopoverContent>
+        </Popover>
+
+        {/* NDI single-toggle. Click = start/stop. The whole popover-of-
+            settings is gone; the only thing operators do mid-service is
+            kill or restart the sender, and a single big button (with a
+            glowing red dot when ON AIR) is exactly that. Advanced
+            settings live in the Settings page. */}
+        <NdiToggleButton />
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-6 px-0 text-[11px] border text-zinc-400 border-zinc-800 hover:bg-zinc-800 hover:text-white"
+              title="Advanced NDI settings (source name, status)"
+            >
+              <ChevronDown className="h-3 w-3" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="end"
+            className="w-[420px] p-3 bg-zinc-950 border-zinc-800 max-h-[80vh] overflow-y-auto"
+          >
+            <NdiOutputPanel />
+          </PopoverContent>
+        </Popover>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-white gap-1"
+          onClick={() => setCurrentView('settings')}
+        >
+          <SettingsIcon className="h-3 w-3" />
+          Settings
+        </Button>
+      </div>
+    </header>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Library panel (left column)
+// ──────────────────────────────────────────────────────────────────────
+function LibraryPanel() {
+  const { activeLibraryTab, setActiveLibraryTab } = useAppStore()
+
+  return (
+    <aside className="w-[320px] shrink-0 border-r border-zinc-800 bg-zinc-950 flex flex-col">
+      <div className="px-2 pt-2 pb-1 border-b border-zinc-800">
+        <p className="text-[9px] uppercase tracking-widest text-zinc-500 px-1.5 pb-1.5">Library</p>
+        <div className="grid grid-cols-3 gap-1">
+          {LIBRARY_TABS.map((tab) => {
+            const Icon = tab.icon
+            const active = activeLibraryTab === tab.id
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveLibraryTab(tab.id)}
+                className={cn(
+                  'flex flex-col items-center justify-center gap-0.5 rounded px-1 py-2 text-[10px] font-medium transition-colors',
+                  active
+                    ? 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30'
+                    : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200',
+                )}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {tab.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto bg-zinc-900/30">
+        <LibraryPanelContent tab={activeLibraryTab} />
+      </div>
+    </aside>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Schedule panel (running order)
+// ──────────────────────────────────────────────────────────────────────
+function SchedulePanel() {
+  const {
+    schedule,
+    selectedScheduleItemId,
+    selectScheduleItem,
+    removeScheduleItem,
+    moveScheduleItem,
+    setActiveLibraryTab,
+  } = useAppStore()
+
+  const itemTypeLabel = (t: ScheduleItem['type']) => {
+    switch (t) {
+      case 'verse': return 'Scripture'
+      case 'song': return 'Song'
+      case 'sermon': return 'Sermon'
+      case 'announcement': return 'Announce'
+      default: return 'Slides'
+    }
+  }
+  const itemAccent = (t: ScheduleItem['type']) => {
+    switch (t) {
+      case 'verse': return 'bg-blue-500/15 text-blue-300 border-blue-700/40'
+      case 'song': return 'bg-purple-500/15 text-purple-300 border-purple-700/40'
+      case 'sermon': return 'bg-amber-500/15 text-amber-300 border-amber-700/40'
+      case 'announcement': return 'bg-pink-500/15 text-pink-300 border-pink-700/40'
+      default: return 'bg-zinc-700/30 text-zinc-300 border-zinc-700'
+    }
+  }
+
+  return (
+    <div className="flex flex-col h-full bg-zinc-900/40 border-r border-zinc-800">
+      <div className="flex items-center justify-between px-3 h-9 border-b border-zinc-800 shrink-0 bg-zinc-950/50">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[9px] uppercase tracking-widest text-zinc-500 font-semibold">Schedule</span>
+          <Badge variant="outline" className="text-[9px] h-4 px-1 border-zinc-700 text-zinc-400">
+            {schedule.length}
+          </Badge>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 px-1.5 text-[10px] text-zinc-400 hover:text-white hover:bg-zinc-800 gap-1"
+          onClick={() => setActiveLibraryTab('bible')}
+        >
+          <Plus className="h-3 w-3" /> Add from Library
+        </Button>
+      </div>
+
+      <ScrollArea className="flex-1">
+        {schedule.length === 0 ? (
+          <div className="p-6 text-center">
+            <div className="text-3xl mb-2 opacity-30">▶</div>
+            <h3 className="text-xs font-semibold text-zinc-300 mb-1">Schedule is empty</h3>
+            <p className="text-[10px] text-zinc-500 max-w-[200px] mx-auto leading-relaxed">
+              Use the <strong className="text-zinc-300">Library</strong> on the left to look up scriptures, add songs,
+              or generate slides. Then send them to the schedule.
+            </p>
+          </div>
+        ) : (
+          <ul className="p-1.5 space-y-1">
+            {schedule.map((item, i) => {
+              const selected = item.id === selectedScheduleItemId
+              return (
+                <li
+                  key={item.id}
+                  className={cn(
+                    'group flex items-stretch rounded border transition-colors',
+                    selected
+                      ? 'bg-amber-500/10 border-amber-500/40'
+                      : 'bg-zinc-900/60 border-zinc-800 hover:bg-zinc-800/60 hover:border-zinc-700',
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={() => selectScheduleItem(item.id)}
+                    onDoubleClick={() => {
+                      // Double-click a schedule item → send its first slide to LIVE
+                      selectScheduleItem(item.id)
+                      const s = useAppStore.getState()
+                      if (item.slides.length > 0) {
+                        s.setSlides(item.slides)
+                        s.setPreviewSlideIndex(0)
+                        s.setLiveSlideIndex(0)
+                        s.setIsLive(true)
+                        toast.success(`Live: ${item.title}`)
+                      }
+                    }}
+                    className="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 text-left"
+                  >
+                    <GripVertical className="h-3 w-3 text-zinc-600 shrink-0" />
+                    <div
+                      className={cn(
+                        'flex h-6 w-6 shrink-0 items-center justify-center rounded text-[10px] font-bold',
+                        selected ? 'bg-amber-500 text-black' : 'bg-zinc-800 text-zinc-400',
+                      )}
+                    >
+                      {i + 1}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <Badge
+                          className={cn(
+                            'text-[8px] h-3.5 px-1 border font-medium',
+                            itemAccent(item.type),
+                          )}
+                        >
+                          {itemTypeLabel(item.type)}
+                        </Badge>
+                        <span className="text-[10px] text-zinc-500">{item.slides.length} slides</span>
+                      </div>
+                      <p className={cn('text-xs truncate mt-0.5', selected ? 'text-white font-semibold' : 'text-zinc-200')}>
+                        {item.title}
+                      </p>
+                      {item.subtitle && (
+                        <p className="text-[10px] text-zinc-500 truncate">{item.subtitle}</p>
+                      )}
+                    </div>
+                  </button>
+                  <div className="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity border-l border-zinc-800">
+                    <button
+                      onClick={() => moveScheduleItem(item.id, 'up')}
+                      disabled={i === 0}
+                      className="flex-1 px-1 hover:bg-zinc-800 text-zinc-400 hover:text-white disabled:opacity-30"
+                      aria-label="Move up"
+                    >
+                      <ChevronUp className="h-2.5 w-2.5" />
+                    </button>
+                    <button
+                      onClick={() => moveScheduleItem(item.id, 'down')}
+                      disabled={i === schedule.length - 1}
+                      className="flex-1 px-1 hover:bg-zinc-800 text-zinc-400 hover:text-white disabled:opacity-30"
+                      aria-label="Move down"
+                    >
+                      <ChevronDown className="h-2.5 w-2.5" />
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => removeScheduleItem(item.id)}
+                    className="px-1.5 opacity-0 group-hover:opacity-100 hover:bg-red-600/20 text-zinc-500 hover:text-red-400 border-l border-zinc-800 transition-opacity"
+                    aria-label="Remove"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </ScrollArea>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Slide thumbnails panel (slides for the currently selected schedule item)
+// ──────────────────────────────────────────────────────────────────────
+function SlidesPanel() {
+  const {
+    slides,
+    previewSlideIndex,
+    setPreviewSlideIndex,
+    liveSlideIndex,
+    settings,
+    schedule,
+    selectedScheduleItemId,
+  } = useAppStore()
+
+  const currentItem = schedule.find((s) => s.id === selectedScheduleItemId)
+
+  return (
+    <div className="flex flex-col h-full bg-zinc-950 border-r border-zinc-800">
+      <div className="flex items-center justify-between px-3 h-9 border-b border-zinc-800 shrink-0 bg-zinc-950/50">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-[9px] uppercase tracking-widest text-zinc-500 font-semibold">Slides</span>
+          {currentItem && (
+            <span className="text-xs text-zinc-300 truncate">· {currentItem.title}</span>
+          )}
+        </div>
+        {slides.length > 0 && (
+          <Badge variant="outline" className="text-[9px] h-4 px-1 border-zinc-700 text-zinc-400">
+            {slides.length}
+          </Badge>
+        )}
+      </div>
+
+      <ScrollArea className="flex-1">
+        {slides.length === 0 ? (
+          <div className="p-6 text-center">
+            <div className="grid grid-cols-2 gap-2 max-w-[140px] mx-auto opacity-20 mb-3">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="aspect-video bg-zinc-700 rounded" />
+              ))}
+            </div>
+            <p className="text-[10px] text-zinc-500 max-w-[220px] mx-auto leading-relaxed">
+              Select a schedule item to see its slides — or add something from the Library to get started.
+            </p>
+          </div>
+        ) : (
+          <div className="p-2 grid grid-cols-2 xl:grid-cols-3 gap-2">
+            {slides.map((slide, i) => (
+              <div key={slide.id} className="space-y-1">
+                <div
+                  onDoubleClick={() => {
+                    // Double-click a slide thumb → send THIS slide to LIVE
+                    const s = useAppStore.getState()
+                    s.setPreviewSlideIndex(i)
+                    s.setLiveSlideIndex(i)
+                    s.setIsLive(true)
+                  }}
+                >
+                  <SlideThumb
+                    slide={slide}
+                    themeKey={slide.background || settings.congregationScreenTheme}
+                    isActive={previewSlideIndex === i}
+                    isLive={liveSlideIndex === i}
+                    onClick={() => setPreviewSlideIndex(i)}
+                    size="sm"
+                    settings={settings}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-1 px-0.5">
+                  <span
+                    className={cn(
+                      'text-[9px] font-mono',
+                      liveSlideIndex === i
+                        ? 'text-red-400 font-bold'
+                        : previewSlideIndex === i
+                          ? 'text-amber-400 font-bold'
+                          : 'text-zinc-500',
+                    )}
+                  >
+                    {String(i + 1).padStart(2, '0')}
+                  </span>
+                  <span className="text-[9px] text-zinc-600 truncate flex-1 text-right">
+                    {slide.type}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </ScrollArea>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Output panel (right column) — Preview on top, Live on bottom
+// ──────────────────────────────────────────────────────────────────────
+function OutputPanel() {
+  const {
+    slides,
+    previewSlideIndex,
+    setPreviewSlideIndex,
+    liveSlideIndex,
+    settings,
+  } = useAppStore()
+
+  const previewSlide = slides[previewSlideIndex] || null
+  const liveSlide = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
+
+  return (
+    <aside className="w-[400px] shrink-0 bg-zinc-950 flex flex-col">
+      {/* Preview window */}
+      <div className="flex flex-col flex-1 min-h-0 border-b border-zinc-800">
+        <div className="flex items-center justify-between px-3 h-9 border-b border-zinc-800 shrink-0 bg-zinc-950/50">
+          <div className="flex items-center gap-2">
+            <div className="h-2 w-2 rounded-full bg-amber-500" />
+            <span className="text-[10px] uppercase tracking-widest text-amber-400 font-bold">Preview</span>
+            {previewSlide && (
+              <span className="text-[10px] text-zinc-500">
+                {previewSlideIndex + 1} / {slides.length}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-zinc-400 hover:text-white hover:bg-zinc-800"
+              onClick={() => setPreviewSlideIndex(Math.max(0, previewSlideIndex - 1))}
+              disabled={!slides.length || previewSlideIndex === 0}
+            >
+              <ChevronUp className="h-3.5 w-3.5 -rotate-90" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-zinc-400 hover:text-white hover:bg-zinc-800"
+              onClick={() => setPreviewSlideIndex(Math.min(slides.length - 1, previewSlideIndex + 1))}
+              disabled={!slides.length || previewSlideIndex >= slides.length - 1}
+            >
+              <ChevronDown className="h-3.5 w-3.5 -rotate-90" />
+            </Button>
+          </div>
+        </div>
+        <div className="flex-1 min-h-0 p-3 flex items-center justify-center bg-black">
+          {previewSlide ? (
+            <div className="w-full max-w-full">
+              <SlideThumb
+                slide={previewSlide}
+                themeKey={previewSlide.background || settings.congregationScreenTheme}
+                size="lg"
+                settings={settings}
+              />
+            </div>
+          ) : (
+            <p className="text-[11px] text-zinc-600">No preview slide</p>
+          )}
+        </div>
+      </div>
+
+      {/* Live window */}
+      <div className="flex flex-col flex-1 min-h-0">
+        <div className="flex items-center justify-between px-3 h-9 border-b border-zinc-800 shrink-0 bg-zinc-950/50">
+          <div className="flex items-center gap-2">
+            <div className={cn('h-2 w-2 rounded-full', liveSlide ? 'bg-red-500 animate-pulse' : 'bg-zinc-700')} />
+            <span className={cn('text-[10px] uppercase tracking-widest font-bold', liveSlide ? 'text-red-500' : 'text-zinc-500')}>
+              Live Output
+            </span>
+            {liveSlide && (
+              <span className="text-[10px] text-zinc-500">
+                {liveSlideIndex + 1} / {slides.length}
+              </span>
+            )}
+          </div>
+          {/* Master volume — moved here from the top toolbar so it sits
+              next to the slide whose audio it actually controls. Same
+              control as before, just relocated for a calmer top bar. */}
+          <GlobalVolumeControl />
+        </div>
+        <div className="flex-1 min-h-0 p-3 flex items-center justify-center bg-black">
+          {liveSlide ? (
+            <div className="w-full max-w-full">
+              <SlideThumb
+                slide={liveSlide}
+                themeKey={liveSlide.background || settings.congregationScreenTheme}
+                isLive
+                size="lg"
+                settings={settings}
+              />
+            </div>
+          ) : (
+            <div className="text-center">
+              <CircleSlash className="h-8 w-8 text-zinc-700 mx-auto mb-1" />
+              <p className="text-[11px] text-zinc-600">Output is dark</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </aside>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Bottom transport bar
+// ──────────────────────────────────────────────────────────────────────
+export function TransportBar({
+  outputActive,
+  elapsedTime,
+  onGoLive,
+  onClearLive,
+  onBlack,
+  onLogo,
+}: {
+  outputActive: boolean
+  elapsedTime: number
+  onGoLive: () => void
+  onClearLive: () => void
+  onBlack: () => void
+  onLogo: () => void
+}) {
+  const { slides, previewSlideIndex, liveSlideIndex, isLive, settings } = useAppStore()
+  const formatTime = (s: number) =>
+    `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`
+
+  // Toggle behaviour: first click goes live, second click while on
+  // air STOPS live. One button, no hunting for the Clear control.
+  const onGoLiveToggle = () => {
+    if (isLive) onClearLive()
+    else onGoLive()
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 px-3 h-14 border-t border-zinc-800 bg-zinc-950 shrink-0">
+      <div className="flex items-center gap-1.5">
+        <Button
+          onClick={onGoLiveToggle}
+          disabled={!slides.length}
+          className={cn(
+            'h-10 px-5 font-bold text-xs uppercase tracking-wider gap-1.5 shadow-lg',
+            isLive
+              ? 'bg-red-600 hover:bg-red-700 text-white shadow-red-600/30'
+              : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20',
+          )}
+          title={isLive ? 'Click to stop live broadcast' : 'Click to start live broadcast'}
+        >
+          {isLive ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+          {isLive ? 'Stop Live' : 'Go Live'}
+          <kbd className="ml-1 px-1 py-0.5 rounded bg-black/30 text-[9px] font-mono normal-case tracking-normal">
+            ⏎
+          </kbd>
+        </Button>
+
+        <Button
+          onClick={onClearLive}
+          disabled={liveSlideIndex < 0 && !isLive}
+          variant="ghost"
+          className="h-10 px-3 text-xs uppercase tracking-wider gap-1.5 text-zinc-300 hover:bg-zinc-800 hover:text-white border border-zinc-800"
+        >
+          <Square className="h-3.5 w-3.5" />
+          Clear
+        </Button>
+
+        <Button
+          onClick={onBlack}
+          variant="ghost"
+          className="h-10 px-3 text-xs uppercase tracking-wider gap-1.5 text-zinc-300 hover:bg-zinc-800 hover:text-white border border-zinc-800"
+        >
+          <CircleSlash className="h-3.5 w-3.5" />
+          Black
+        </Button>
+
+        <Button
+          onClick={onLogo}
+          variant="ghost"
+          className="h-10 px-3 text-xs uppercase tracking-wider gap-1.5 text-zinc-300 hover:bg-zinc-800 hover:text-white border border-zinc-800"
+        >
+          <LogoIcon className="h-3.5 w-3.5" />
+          Logo
+        </Button>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1.5 text-zinc-400">
+          <Clock className="h-3 w-3" />
+          <span className="text-xs font-mono tabular-nums">{formatTime(elapsedTime)}</span>
+        </div>
+
+        <div className="h-6 w-px bg-zinc-800" />
+
+        <div className="flex items-center gap-1.5">
+          <Radio
+            className={cn(
+              'h-3 w-3',
+              outputActive ? 'text-emerald-400' : 'text-zinc-600',
+            )}
+          />
+          <span className={cn('text-[10px] uppercase font-bold tracking-wider', outputActive ? 'text-emerald-400' : 'text-zinc-600')}>
+            {outputActive ? 'NDI / Output Active' : 'Output Idle'}
+          </span>
+        </div>
+
+        <div className="h-6 w-px bg-zinc-800" />
+
+        <span className="text-[10px] text-zinc-500 uppercase tracking-wider">
+          {settings.displayMode === 'full' ? 'Full Screen' : 'Lower Third'}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Main shell — wires it all together with output broadcasting + hotkeys
+// ──────────────────────────────────────────────────────────────────────
+export function EasyWorshipShell() {
+  const {
+    slides,
+    previewSlideIndex,
+    setPreviewSlideIndex,
+    liveSlideIndex,
+    setLiveSlideIndex,
+    isLive,
+    setIsLive,
+    setNdiConnected,
+    settings,
+  } = useAppStore()
+
+  const [outputActive, setOutputActive] = useState(false)
+  const [elapsedTime, setElapsedTime] = useState(0)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // ── Broadcast helper ─────────────────────────────────────────────────
+  const sendToOutput = useCallback(
+    async (slide: typeof slides[number] | null, live: boolean) => {
+      try {
+        await fetch('/api/output', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'slide',
+            slide,
+            isLive: live,
+            displayMode: settings.displayMode,
+            settings: {
+              fontSize: settings.fontSize,
+              fontFamily: settings.fontFamily,
+              textShadow: settings.textShadow,
+              showReferenceOnOutput: settings.showReferenceOnOutput,
+              lowerThirdHeight: settings.lowerThirdHeight,
+              lowerThirdPosition: settings.lowerThirdPosition,
+              customBackground: settings.customBackground,
+              congregationScreenTheme: settings.congregationScreenTheme,
+            },
+          }),
+        })
+      } catch {
+        /* congregation reconnects via SSE */
+      }
+    },
+    [settings],
+  )
+
+  // Auto-enable output if NDI mode set
+  useEffect(() => {
+    if ((settings.outputDestination === 'ndi' || settings.outputDestination === 'both') && !outputActive) {
+      setOutputActive(true) // eslint-disable-line react-hooks/set-state-in-effect
+      setNdiConnected(true)
+    }
+  }, [settings.outputDestination, outputActive, setNdiConnected])
+
+  // Live timer
+  const prevIsLive = useRef(isLive)
+  useEffect(() => {
+    if (prevIsLive.current && !isLive) setElapsedTime(0) // eslint-disable-line react-hooks/set-state-in-effect
+    prevIsLive.current = isLive
+  }, [isLive])
+  useEffect(() => {
+    if (isLive) {
+      timerRef.current = setInterval(() => setElapsedTime((p) => p + 1), 1000)
+    } else if (timerRef.current) {
+      clearInterval(timerRef.current)
+    }
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [isLive])
+
+  // Sync live changes to output. We always broadcast — the SSE/HTTP channel is
+  // cheap and the secondary "Show on Screen" window relies on it, even when
+  // the user hasn't explicitly toggled the NDI/Output button on. The
+  // outputActive flag still drives NDI activation and the toolbar indicator.
+  useEffect(() => {
+    const cur = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
+    sendToOutput(cur, isLive)
+  }, [liveSlideIndex, isLive, slides, sendToOutput])
+
+  // ── Transport actions ────────────────────────────────────────────────
+  const goLive = useCallback(() => {
+    if (!slides.length) {
+      toast.info('Add something to the schedule first')
+      return
+    }
+    setLiveSlideIndex(previewSlideIndex)
+    setIsLive(true)
+    if (previewSlideIndex < slides.length - 1) setPreviewSlideIndex(previewSlideIndex + 1)
+  }, [slides.length, previewSlideIndex, setLiveSlideIndex, setIsLive, setPreviewSlideIndex])
+
+  const clearLive = useCallback(() => {
+    setLiveSlideIndex(-1)
+    setIsLive(false)
+    sendToOutput(null, false)
+  }, [setLiveSlideIndex, setIsLive, sendToOutput])
+
+  const goBlack = useCallback(() => {
+    setLiveSlideIndex(-1)
+    setIsLive(true)
+    sendToOutput(null, true)
+  }, [setLiveSlideIndex, setIsLive, sendToOutput])
+
+  const goLogo = useCallback(() => {
+    sendToOutput(
+      {
+        id: 'logo',
+        type: 'title',
+        title: 'ScriptureLive AI',
+        subtitle: '',
+        content: [],
+      },
+      true,
+    )
+    setIsLive(true)
+    toast.success('Logo sent to output')
+  }, [sendToOutput, setIsLive])
+
+  const toggleOutput = useCallback(() => {
+    if (outputActive) {
+      setOutputActive(false)
+      setNdiConnected(false)
+      toast.success('Output stopped')
+    } else {
+      setOutputActive(true)
+      setNdiConnected(true)
+      toast.success('Output started')
+      const cur = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
+      sendToOutput(cur, isLive)
+    }
+  }, [outputActive, setNdiConnected, sendToOutput, liveSlideIndex, slides, isLive])
+
+  // ── Keyboard shortcuts ───────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        // Toggle: Enter while live STOPS live, matching the GO LIVE
+        // / STOP LIVE button so keyboard and mouse stay consistent.
+        if (useAppStore.getState().isLive) clearLive()
+        else goLive()
+      } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        e.preventDefault()
+        if (previewSlideIndex < slides.length - 1) setPreviewSlideIndex(previewSlideIndex + 1)
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        if (previewSlideIndex > 0) setPreviewSlideIndex(previewSlideIndex - 1)
+      } else if (e.key === 'Escape') {
+        clearLive()
+      } else if (e.key.toLowerCase() === 'b') {
+        goBlack()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [previewSlideIndex, slides.length, goLive, clearLive, goBlack, setPreviewSlideIndex])
+
+  return (
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-black text-zinc-100 dark">
+      <TopToolbar outputActive={outputActive} toggleOutput={toggleOutput} />
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        <LibraryPanel />
+        <div className="flex-1 min-w-0 grid grid-cols-2">
+          <SchedulePanel />
+          <SlidesPanel />
+        </div>
+        <OutputPanel />
+      </div>
+      <TransportBar
+        outputActive={outputActive}
+        elapsedTime={elapsedTime}
+        onGoLive={goLive}
+        onClearLive={clearLive}
+        onBlack={goBlack}
+        onLogo={goLogo}
+      />
+    </div>
+  )
+}
