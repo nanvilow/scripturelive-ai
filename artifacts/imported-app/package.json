@@ -1,6 +1,6 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.5.15",
+  "version": "0.5.16",
   "private": true,
   "main": "dist-electron/main.js",
   "pnpm": {

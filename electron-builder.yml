@@ -1,0 +1,78 @@
+appId: ai.scripturelive.desktop
+productName: ScriptureLive AI
+copyright: ScriptureLive AI
+electronVersion: 33.4.11
+publish:
+  - provider: github
+    owner: nanvilow
+    repo: scripturelive-ai
+    releaseType: release
+directories:
+  app: artifacts/imported-app
+  output: artifacts/imported-app/release
+  buildResources: artifacts/imported-app/build-resources
+files:
+  - dist-electron/**/*
+  - package.json
+  - "node_modules/**/*"
+  - "!node_modules/**/{*.md,*.markdown,*.ts,*.map,test,tests,__tests__,docs,doc,example,examples,LICENSE*}"
+  - "!node_modules/.cache/**/*"
+  - "!node_modules/@parcel/watcher/**/*"
+  - "!node_modules/@parcel/watcher-*/**/*"
+  - "!node_modules/.pnpm/@parcel+watcher@*/**/*"
+  - "!node_modules/.pnpm/@parcel+watcher-*/**/*"
+  - "!node_modules/fsevents/**/*"
+  - "!node_modules/.pnpm/fsevents@*/**/*"
+asarUnpack:
+  - "node_modules/koffi/**/*"
+  - "node_modules/.pnpm/koffi@*/**/*"
+  - "node_modules/.pnpm/koffi@*/node_modules/koffi/**/*"
+npmRebuild: false
+buildDependenciesFromSource: false
+extraResources:
+  - from: .next/standalone
+    to: app/.next/standalone
+    filter: ["**/*"]
+  - from: .next/static
+    to: app/.next/standalone/.next/static
+    filter: ["**/*"]
+  - from: public
+    to: app/.next/standalone/public
+    filter: ["**/*"]
+  - from: db/custom.db
+    to: app-db/custom.db
+  - from: electron/whisper-bundle
+    to: whisper-bundle
+    filter: ["**/*"]
+afterSign: build-resources/notarize.js
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build-resources/icon.ico
+  artifactName: "${productName}-${version}-Setup-${arch}.${ext}"
+  signtoolOptions:
+    signingHashAlgorithms:
+      - sha256
+    rfc3161TimeStampServer: http://timestamp.digicert.com
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  icon: build-resources/icon.png
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build-resources/entitlements.mac.plist
+  entitlementsInherit: build-resources/entitlements.mac.plist
+  notarize: false
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+dmg:
+  writeUpdateInfo: true
+  sign: true
