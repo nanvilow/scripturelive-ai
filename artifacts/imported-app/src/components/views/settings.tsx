@@ -756,7 +756,12 @@ export function SettingsView() {
         <CardContent className="space-y-4">
           {settings.customBackground ? (
             <div className="space-y-3">
-              <div className="relative rounded-lg overflow-hidden border border-border aspect-video bg-muted">
+              {/* v0.5.4 T010 — Custom background preview was previously a
+                  full-width 16:9 hero that dwarfed the Settings card.
+                  Operators complained they had to scroll past it to reach
+                  other controls. Capped to a compact 240px thumbnail so
+                  it behaves like a confirmation chip rather than a banner. */}
+              <div className="relative rounded-lg overflow-hidden border border-border aspect-video bg-muted max-w-[240px]">
                 <img
                   src={settings.customBackground}
                   alt="Custom background"
@@ -765,10 +770,10 @@ export function SettingsView() {
                 <Button
                   variant="destructive"
                   size="icon"
-                  className="absolute top-2 right-2 h-7 w-7"
+                  className="absolute top-1.5 right-1.5 h-6 w-6"
                   onClick={removeBackground}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Trash2 className="h-3 w-3" />
                 </Button>
               </div>
               <div className="flex items-center gap-2">

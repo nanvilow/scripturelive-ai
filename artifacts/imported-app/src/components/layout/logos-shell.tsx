@@ -1321,6 +1321,7 @@ function DetectedVersesCard() {
     setLiveSlideIndex,
     setIsLive,
     settings,
+    requestNavigatorRef,
   } = useAppStore()
 
   // Long detected verses (whole passages, paraphrases, multi-verse
@@ -1439,10 +1440,18 @@ function DetectedVersesCard() {
               return (
                 <div
                   key={`${v.reference}-${i}`}
-                  onClick={() => sendDetected(v, false)}
+                  onClick={() => {
+                    // v0.5.4 T005 — In addition to staging the slide in
+                    // Preview, push the reference to the Chapter
+                    // Navigator so the operator can read surrounding
+                    // context without retyping the reference. Double-
+                    // click still pushes the verse to Live.
+                    sendDetected(v, false)
+                    requestNavigatorRef(v.reference)
+                  }}
                   onDoubleClick={() => sendDetected(v, true)}
                   className="rounded border border-zinc-800/70 bg-zinc-900/40 hover:border-emerald-500/40 hover:bg-zinc-900 px-2 py-1.5 cursor-pointer transition-colors select-none"
-                  title={`Click → schedule · Double-click → live · Detection accuracy: ${pct}%`}
+                  title={`Click → schedule + open in Chapter Navigator · Double-click → live · Detection accuracy: ${pct}%`}
                 >
                   <div className="flex items-center justify-between gap-2 mb-0.5">
                     <span className="text-[10px] font-semibold text-emerald-300">
