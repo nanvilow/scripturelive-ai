@@ -1587,41 +1587,103 @@ function OpenAiKeyField() {
 //   • Check for updates (Electron auto-updater path; in browser we
 //     just open the GitHub releases page)
 //   • Help links — quickstart, troubleshooting, project repo
+// Shape of the updater state broadcast by electron/updater.ts. Mirrors
+// the UpdateState union exported from there + preload.ts. Kept inline
+// to avoid a cross-package type import (settings.tsx is a renderer
+// module that must compile in the browser too).
+type UpdaterState =
+  | { status: 'idle' }
+  | { status: 'checking' }
+  | { status: 'available'; version: string }
+  | { status: 'not-available'; version: string }
+  | { status: 'downloading'; percent: number }
+  | { status: 'downloaded'; version: string }
+  | { status: 'error'; message: string }
+
+type ScriptureLiveUpdaterBridge = {
+  getInfo?: () => Promise<{ version?: string }>
+  updater?: {
+    getState?: () => Promise<UpdaterState>
+    check?: () => Promise<UpdaterState>
+    install?: () => Promise<{ ok: boolean; error?: string }>
+    onState?: (cb: (s: UpdaterState) => void) => () => void
+  }
+}
+
 function HelpAndUpdatesCard() {
   const [checking, setChecking] = useState(false)
-  const version = process.env.NEXT_PUBLIC_APP_VERSION || '0.5.4'
+  // Installed version: trust the main process (app.getVersion()) over
+  // any baked-in env var. The env var is unreliable in production
+  // because Next builds don't see package.json at runtime when bundled
+  // inside Electron. Falls back to env var, then to package version.
+  const [appVersion, setAppVersion] = useState<string>(
+    process.env.NEXT_PUBLIC_APP_VERSION || '0.5.6',
+  )
+  const [state, setState] = useState<UpdaterState>({ status: 'idle' })
   const isElectron =
     typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)
+
+  // Pull the real installed version from the Electron main process and
+  // seed the updater state so the card shows accurate info on first
+  // paint — without forcing the user to click Check Now.
+  useEffect(() => {
+    if (!isElectron) return
+    const bridge = (window as unknown as { scriptureLive?: ScriptureLiveUpdaterBridge })
+      .scriptureLive
+    if (!bridge) return
+    let cancelled = false
+    bridge.getInfo?.().then((info) => {
+      if (!cancelled && info?.version) setAppVersion(info.version)
+    }).catch(() => { /* ignore — fall back to baked-in version */ })
+    bridge.updater?.getState?.().then((s) => {
+      if (!cancelled && s) setState(s)
+    }).catch(() => { /* ignore */ })
+    // Subscribe to background update-state pushes (the updater also
+    // checks on a 4h interval and on launch). This keeps the card in
+    // sync without polling.
+    const off = bridge.updater?.onState?.((s) => { if (!cancelled) setState(s) })
+    return () => {
+      cancelled = true
+      if (off) off()
+    }
+  }, [isElectron])
 
   const checkForUpdates = async () => {
     setChecking(true)
     try {
-      // Electron path: ask the main process to ping GitHub Releases
-      // via electron-updater. The preload bridge exposes the updater
-      // under window.scriptureLive.updater — see electron/preload.ts.
-      // It returns an UpdateState; { status: 'available'|'downloading'|
-      // 'downloaded'|'not-available'|'error', version?, error? }.
-      const win = window as unknown as {
-        scriptureLive?: {
-          updater?: {
-            check?: () => Promise<{ status: string; version?: string; error?: string }>
-          }
-        }
-      }
-      const checkFn = win.scriptureLive?.updater?.check
+      const bridge = (window as unknown as { scriptureLive?: ScriptureLiveUpdaterBridge })
+        .scriptureLive
+      const checkFn = bridge?.updater?.check
       if (isElectron && checkFn) {
         const r = await checkFn()
-        if (r?.status === 'available' || r?.status === 'downloading' || r?.status === 'downloaded') {
-          toast.success(`Update available: v${r.version || '?'} — downloading in the background.`)
-        } else if (r?.status === 'error') {
-          toast.error(`Update check failed: ${r.error || 'unknown error'}`)
+        setState(r)
+        if (r.status === 'available') {
+          toast.success(`Update available: v${r.version} — downloading in background.`)
+        } else if (r.status === 'downloading') {
+          toast.info('Update is already downloading…')
+        } else if (r.status === 'downloaded') {
+          toast.success(`Update v${r.version} ready — restart to install.`)
+        } else if (r.status === 'not-available') {
+          toast.success(`You're on the latest version (v${appVersion}).`)
+        } else if (r.status === 'checking') {
+          toast.info('Already checking for updates…')
+        } else if (r.status === 'error') {
+          toast.error(`Update check failed: ${r.message}`)
         } else {
-          toast.success('You are on the latest version.')
+          // status === 'idle' — happens in unpackaged dev builds where
+          // electron-updater refuses to run. Tell the operator instead
+          // of silently lying about being on the latest version.
+          toast.info('Update checks are only available in the installed desktop build.')
         }
       } else {
-        // Browser fallback: open the releases page in a new tab so
-        // the operator can grab the installer manually.
-        window.open('https://github.com/nanvilow/scripturelive-ai/releases/latest', '_blank', 'noreferrer')
+        // Browser fallback: open the releases page so the user can
+        // grab the installer manually.
+        window.open(
+          'https://github.com/nanvilow/scripturelive-ai/releases/latest',
+          '_blank',
+          'noreferrer',
+        )
+        toast.info('Opened the GitHub Releases page.')
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Update check failed')
@@ -1629,6 +1691,46 @@ function HelpAndUpdatesCard() {
       setChecking(false)
     }
   }
+
+  const installUpdateNow = async () => {
+    const bridge = (window as unknown as { scriptureLive?: ScriptureLiveUpdaterBridge })
+      .scriptureLive
+    const installFn = bridge?.updater?.install
+    if (!installFn) return
+    const r = await installFn()
+    if (!r.ok) toast.error(`Could not install: ${r.error || 'unknown error'}`)
+  }
+
+  // Human-readable status line shown under the version row. Single
+  // source of truth so the card never disagrees with the toasts.
+  const statusLine = (() => {
+    if (!isElectron) {
+      return 'Browser preview — install the desktop build to receive automatic updates.'
+    }
+    switch (state.status) {
+      case 'available':
+        return `Update available: v${state.version} (you have v${appVersion}). Downloading in background…`
+      case 'downloading':
+        return `Downloading update… ${Math.max(0, Math.min(100, Math.round(state.percent || 0)))}%`
+      case 'downloaded':
+        return `Update v${state.version} ready — restart to install.`
+      case 'not-available':
+        return `You're on the latest version (v${appVersion}).`
+      case 'checking':
+        return 'Checking GitHub Releases…'
+      case 'error':
+        return `Last check failed: ${state.message}`
+      case 'idle':
+      default:
+        return `Installed: v${appVersion}. Click Check Now to query GitHub Releases.`
+    }
+  })()
+
+  // Pick the right primary action: when an update is downloaded we
+  // surface "Restart & Install" instead of another check.
+  const showInstall = state.status === 'downloaded'
+  const isAvailable = state.status === 'available' || state.status === 'downloading'
+  const isCurrent = state.status === 'not-available'
 
   return (
     <Card className="bg-card border-border">
@@ -1638,7 +1740,7 @@ function HelpAndUpdatesCard() {
           <div>
             <CardTitle className="text-base">Help & Updates</CardTitle>
             <CardDescription>
-              Version v{version} {isElectron ? '· Desktop' : '· Browser'}
+              Version v{appVersion} {isElectron ? '· Desktop' : '· Browser'}
             </CardDescription>
           </div>
         </div>
@@ -1647,16 +1749,32 @@ function HelpAndUpdatesCard() {
         <div className="flex items-center justify-between gap-2">
           <div className="flex-1 min-w-0">
             <Label className="text-sm font-medium">Check for Updates</Label>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {isElectron
-                ? 'Pings GitHub Releases. New versions install automatically next launch.'
-                : 'Opens the GitHub Releases page in a new tab.'}
+            <p
+              className={cn(
+                'text-xs mt-0.5',
+                state.status === 'error'
+                  ? 'text-destructive'
+                  : isAvailable || showInstall
+                    ? 'text-primary'
+                    : isCurrent
+                      ? 'text-emerald-500'
+                      : 'text-muted-foreground',
+              )}
+            >
+              {statusLine}
             </p>
           </div>
-          <Button onClick={checkForUpdates} disabled={checking} className="gap-2 shrink-0">
-            <RefreshCcw className={cn('h-4 w-4', checking && 'animate-spin')} />
-            {checking ? 'Checking…' : 'Check Now'}
-          </Button>
+          {showInstall ? (
+            <Button onClick={installUpdateNow} className="gap-2 shrink-0">
+              <RefreshCcw className="h-4 w-4" />
+              Restart &amp; Install
+            </Button>
+          ) : (
+            <Button onClick={checkForUpdates} disabled={checking} className="gap-2 shrink-0">
+              <RefreshCcw className={cn('h-4 w-4', checking && 'animate-spin')} />
+              {checking ? 'Checking…' : 'Check Now'}
+            </Button>
+          )}
         </div>
 
         <Separator />
