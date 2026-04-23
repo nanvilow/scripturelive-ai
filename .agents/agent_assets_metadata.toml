@@ -36,3 +36,9 @@ id = "pSy7l6kpraifh6MDqAZJa"
 uri = "file://exports/workflows-flat.zip"
 type = "unspecified"
 title = "Patched workflows for flat repo"
+
+[[outputs]]
+id = "9E80LzCXA9PVsyKh_KgUO"
+uri = "file://exports/release-desktop-fixed.zip"
+type = "unspecified"
+title = "Fixed release-desktop.yml"
