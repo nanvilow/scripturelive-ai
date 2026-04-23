@@ -86,9 +86,10 @@ win:
   #   CSC_LINK            path to .pfx, base64-encoded .pfx contents, or https URL
   #   CSC_KEY_PASSWORD    password for the .pfx
   # If both are absent the installer is built unsigned and SmartScreen will warn.
-  signingHashAlgorithms:
-    - sha256
-  rfc3161TimeStampServer: http://timestamp.digicert.com
+  signtoolOptions:
+    signingHashAlgorithms:
+      - sha256
+    rfc3161TimeStampServer: http://timestamp.digicert.com
 nsis:
   oneClick: false
   perMachine: false
