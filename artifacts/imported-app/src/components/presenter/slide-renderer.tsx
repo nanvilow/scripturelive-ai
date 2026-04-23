@@ -105,13 +105,20 @@ function MediaSlideContent({
       const id = window.setInterval(tick, 500)
       return () => window.clearInterval(id)
     } else {
-      // Non-live surface: follow the master clock.
+      // Non-live surface: follow the master clock — but ONLY while
+      // nothing is on air. The moment the operator sends to live, the
+      // Preview pane must FREEZE on its current frame (item #12). If
+      // we kept seeking the preview <video> to live's currentTime,
+      // the operator would still see the live frame ticking inside
+      // their staging pane even though the element is paused. Pin
+      // the preview clock by short-circuiting the seek while live.
+      if (globalIsLive) return
       const drift = Math.abs(v.currentTime - mediaCurrentTime)
       if (mediaCurrentTime > 0 && drift > 0.4) {
         try { v.currentTime = mediaCurrentTime } catch { /* ignore seek errors */ }
       }
     }
-  }, [isLive, mediaCurrentTime, setMediaCurrentTime])
+  }, [isLive, globalIsLive, mediaCurrentTime, setMediaCurrentTime])
 
   // Reflect the audio toggle on the actual <video> element. We mount
   // muted so autoplay survives, then drop the mute the moment the
