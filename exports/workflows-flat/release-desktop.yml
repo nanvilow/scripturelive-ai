@@ -24,9 +24,6 @@ jobs:
           - os: windows-latest
             script: package:win
             artifact_glob: "./release/*.exe"
-          - os: macos-latest
-            script: package:mac
-            artifact_glob: "./release/*.dmg"
     runs-on: ${{ matrix.os }}
 
     steps:
