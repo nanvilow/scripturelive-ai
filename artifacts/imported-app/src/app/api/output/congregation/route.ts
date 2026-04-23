@@ -387,9 +387,17 @@ function render(s){
     var ltStyle='position:absolute;left:0;right:0;height:'+hPct+'%;'+(pos==='top'?'top:6%;':'bottom:6%;');
     var alignClass='align-'+(st.textAlign||'center');
     // Re-size body text inside the bar based on character density so
-    // long verses shrink to fit. Mirrors the preview logic.
+    // long verses shrink to fit. We also bake in the operator's
+    // fontSize bucket and textScale multiplier so Settings → Typography
+    // (Small / Medium / Large / Extra Large + the Text Scale slider)
+    // visibly steps the lower-third bar text on the secondary screen
+    // and NDI feed — previously this path was hardcoded and ignored
+    // both controls.
     var ltBand=totalChars>320?5:totalChars>180?7:totalChars>90?9:11;
-    var ltFs='clamp(.6rem,min('+(ltBand*0.55)+'cqw,'+ltBand+'cqh),2rem)';
+    ltBand=ltBand*scale;
+    var ltCap=Math.max(1.4,2*scale);
+    var ltMin=Math.max(.4,.6*scale);
+    var ltFs='clamp('+ltMin+'rem,min('+(ltBand*0.55)+'cqw,'+ltBand+'cqh),'+ltCap+'rem)';
     var ltTxt=txt.replace(/font-size:[^;"]+;?/g,'font-size:'+ltFs+';');
     // lower-third-black forces the bar's background to solid black so
     // it reads like a broadcast caption regardless of theme.

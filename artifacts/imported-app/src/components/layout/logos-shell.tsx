@@ -16,6 +16,7 @@ import { useAppStore } from '@/lib/store'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { SlideThumb } from '@/components/presenter/slide-renderer'
+import { getFontStack } from '@/lib/fonts'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import {
@@ -946,59 +947,83 @@ function LiveDisplayCard({
                     on the bar wrapper itself so cqw/cqh scale to the
                     bar — not the whole stage — keeping text inside the
                     panel on every output size. */}
-                <div
-                  className="absolute left-0 right-0 flex items-center justify-center"
-                  style={{
-                    [ltPos]: '6%',
-                    height: `${ltHeightPct}%`,
-                    padding: '0 6%',
-                    containerType: 'size',
-                  }}
-                >
-                  <div
-                    className="w-full h-full max-w-[68rem] mx-auto rounded-md flex flex-col justify-center text-white"
-                    style={{
-                      background: 'rgba(0,0,0,0.85)',
-                      backdropFilter: 'blur(8px)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      padding: '3% 5%',
-                      gap: '1cqh',
-                      overflow: 'hidden',
-                      textAlign: settings.textAlign ?? 'center',
-                      alignItems:
-                        (settings.textAlign ?? 'center') === 'left'
-                          ? 'flex-start'
-                          : (settings.textAlign ?? 'center') === 'right'
-                            ? 'flex-end'
-                            : 'center',
-                    }}
-                  >
-                    {refLine && (
+                {(() => {
+                  // Mirror the congregation route's typography pipeline so
+                  // the operator's Lower-Third PREVIEW honours every
+                  // Settings → Typography control (font family, font size
+                  // bucket, text scale, text shadow, alignment) — not just
+                  // alignment as it used to. Without this the preview
+                  // looked completely different from the secondary screen
+                  // / NDI feed even though the bar geometry matched.
+                  const FS_MULT = { sm: 0.85, md: 1, lg: 1.25, xl: 1.5 } as const
+                  const rawScale = typeof settings.textScale === 'number' ? settings.textScale : 1
+                  const scale =
+                    Math.min(2, Math.max(0.5, rawScale)) *
+                    (FS_MULT[settings.fontSize as keyof typeof FS_MULT] || 1)
+                  const fontStack = getFontStack(settings.fontFamily)
+                  const wantsShadow = settings.textShadow !== false
+                  const shadowCss = wantsShadow ? '0 2px 12px rgba(0,0,0,0.4)' : 'none'
+                  const ta = settings.textAlign ?? 'center'
+                  const totalChars = bodyLines.join(' ').length
+                  const bandRaw =
+                    totalChars > 320 ? 5 : totalChars > 180 ? 7 : totalChars > 90 ? 9 : 11
+                  const band = bandRaw * scale
+                  const bodyMin = Math.max(7, 9 * scale)
+                  const bodyMax = Math.max(14, 30 * scale)
+                  const refMin = Math.max(6, 7 * scale)
+                  const refMax = Math.max(11, 20 * scale)
+                  return (
+                    <div
+                      className="absolute left-0 right-0 flex items-center justify-center"
+                      style={{
+                        [ltPos]: '6%',
+                        height: `${ltHeightPct}%`,
+                        padding: '0 6%',
+                        containerType: 'size',
+                      }}
+                    >
                       <div
-                        className="opacity-70 font-medium leading-tight"
-                        style={{ fontSize: 'clamp(7px, min(2cqw, 4cqh), 20px)' }}
+                        className="w-full h-full max-w-[68rem] mx-auto rounded-md flex flex-col justify-center text-white"
+                        style={{
+                          background: 'rgba(0,0,0,0.85)',
+                          backdropFilter: 'blur(8px)',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          padding: '3% 5%',
+                          gap: '1cqh',
+                          overflow: 'hidden',
+                          fontFamily: fontStack,
+                          textAlign: ta,
+                          alignItems:
+                            ta === 'left' ? 'flex-start' : ta === 'right' ? 'flex-end' : 'center',
+                        }}
                       >
-                        {refLine}
+                        {refLine && (
+                          <div
+                            className="opacity-70 font-medium leading-tight"
+                            style={{
+                              fontSize: `clamp(${refMin}px, min(${2 * scale}cqw, ${4 * scale}cqh), ${refMax}px)`,
+                              textShadow: shadowCss,
+                            }}
+                          >
+                            {refLine}
+                          </div>
+                        )}
+                        {bodyLines.map((line, i) => (
+                          <div
+                            key={i}
+                            className="font-semibold leading-snug w-full"
+                            style={{
+                              fontSize: `clamp(${bodyMin}px, min(${band * 0.55}cqw, ${band}cqh), ${bodyMax}px)`,
+                              textShadow: shadowCss,
+                            }}
+                          >
+                            {line}
+                          </div>
+                        ))}
                       </div>
-                    )}
-                    {bodyLines.map((line, i) => {
-                      const totalChars = bodyLines.join(' ').length
-                      const band =
-                        totalChars > 320 ? 5 : totalChars > 180 ? 7 : totalChars > 90 ? 9 : 11
-                      return (
-                        <div
-                          key={i}
-                          className="font-semibold leading-snug w-full"
-                          style={{
-                            fontSize: `clamp(9px, min(${band * 0.55}cqw, ${band}cqh), 30px)`,
-                          }}
-                        >
-                          {line}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
+                    </div>
+                  )
+                })()}
                 <div className="absolute top-1 left-1 z-10">
                   <Badge className="text-[8px] px-1 py-0 font-bold uppercase tracking-wider border-0 bg-sky-600 text-white">
                     {isBlackBackdrop ? 'L/3 · Black · ' : 'Lower Third · '}
