@@ -99,17 +99,9 @@
     .lower-third.large { padding: 3rem; }
     .lower-third.large .slide-text { font-size: 3rem; }
 
-    /* Status indicator */
-    #status {
-      position: fixed; top: 1rem; right: 1rem;
-      display: flex; align-items: center; gap: 0.5rem;
-      z-index: 100;
-      font-size: 0.75rem;
-      color: #999;
-      opacity: 0;
-      transition: opacity 0.3s;
-    }
-    #status.visible { opacity: 1; }
+    /* Status indicator — hidden permanently per item #15. */
+    #status { display: none !important; }
+    #status.visible { display: none !important; }
     #status-dot {
       width: 8px; height: 8px;
       border-radius: 50%;

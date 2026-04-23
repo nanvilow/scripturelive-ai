@@ -74,8 +74,9 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:-ap
 .lower-third.bottom{bottom:0}.lower-third.top{top:0}
 .lt-box{width:100%;max-width:60rem;background:rgba(0,0,0,.85);backdrop-filter:blur(8px);border-radius:.5rem;padding:1.5rem 2.5rem;border:1px solid rgba(255,255,255,.1)}
 .lower-third .slide-text{font-size:2rem;line-height:1.3}
-#status{position:fixed;top:1rem;right:1rem;display:flex;align-items:center;gap:.5rem;z-index:100;font-size:.75rem;color:#999;opacity:0;transition:opacity .3s}
-#status.visible{opacity:1}
+/* Item #15 — status pill permanently hidden per operator request. */
+#status{display:none !important}
+#status.visible{display:none !important}
 #status-dot{width:8px;height:8px;border-radius:50%;background:#ef4444;animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 #status.connected #status-dot{background:#22c55e;animation:none}
