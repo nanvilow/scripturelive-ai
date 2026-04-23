@@ -1,0 +1,260 @@
+2s
+Current runner version: '2.333.1'
+Runner Image Provisioner
+Operating System
+Runner Image
+GITHUB_TOKEN Permissions
+Secret source: Actions
+Prepare workflow directory
+Prepare all required actions
+Getting action download info
+Download action repository 'actions/checkout@v4' (SHA:34e114876b0b11c390a56381ad16ebd13914f8d5)
+Download action repository 'pnpm/action-setup@v4' (SHA:b906affcce14559ad1aafd4ab0e942779e9f58b1)
+Download action repository 'actions/setup-node@v4' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+Complete job name: Build Windows installer
+7s
+Run actions/checkout@v4
+Syncing repository: nanvilow/scripturelive-ai
+Getting Git version info
+Temporarily overriding HOME='D:\a\_temp\57de3103-b94c-48ec-a153-8fdff499e845' before making global git config changes
+Adding repository directory to the temporary git global config as a safe directory
+"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\scripturelive-ai\scripturelive-ai
+Deleting the contents of 'D:\a\scripturelive-ai\scripturelive-ai'
+Initializing the repository
+Disabling automatic garbage collection
+Setting up auth
+Fetching the repository
+Determining the checkout info
+"C:\Program Files\Git\bin\git.exe" sparse-checkout disable
+"C:\Program Files\Git\bin\git.exe" config --local --unset-all extensions.worktreeConfig
+Checking out the ref
+"C:\Program Files\Git\bin\git.exe" log -1 --format=%H
+19e336280a423be31932d02a4b63eef0c706c1de
+5s
+Run pnpm/action-setup@v4
+Running self-installer...
+Installation Completed!
+7s
+Run actions/setup-node@v4
+Found in cache @ C:\hostedtoolcache\windows\node\20.20.2\x64
+Environment details
+C:\Windows\system32\cmd.exe /D /S /C "C:\Users\runneradmin\setup-pnpm\node_modules\.bin\pnpm.CMD store path --silent"
+D:\.pnpm-store\v10
+pnpm cache is not found
+1m 26s
+Run pnpm install --no-frozen-lockfile
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+Scope: all 9 workspace projects
+Lockfile is up to date, resolution step is skipped
+Packages: +1386
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 0, reused 0, downloaded 1, added 0
+Progress: resolved 0, reused 0, downloaded 13, added 0
+Progress: resolved 0, reused 0, downloaded 15, added 0
+Progress: resolved 0, reused 0, downloaded 24, added 4
+Progress: resolved 0, reused 0, downloaded 51, added 13
+Progress: resolved 0, reused 0, downloaded 66, added 17
+Progress: resolved 0, reused 0, downloaded 67, added 17
+Progress: resolved 0, reused 0, downloaded 72, added 21
+Progress: resolved 0, reused 0, downloaded 74, added 21
+Progress: resolved 0, reused 0, downloaded 75, added 21
+Progress: resolved 0, reused 0, downloaded 76, added 21
+Progress: resolved 0, reused 0, downloaded 77, added 21
+Progress: resolved 0, reused 0, downloaded 81, added 21
+Progress: resolved 0, reused 0, downloaded 82, added 22
+Progress: resolved 0, reused 0, downloaded 108, added 29
+Progress: resolved 0, reused 0, downloaded 128, added 36
+Progress: resolved 0, reused 0, downloaded 201, added 71
+Progress: resolved 0, reused 0, downloaded 207, added 72
+Progress: resolved 0, reused 0, downloaded 223, added 76
+Progress: resolved 0, reused 0, downloaded 235, added 79
+Progress: resolved 0, reused 0, downloaded 239, added 80
+Progress: resolved 0, reused 0, downloaded 255, added 84
+Progress: resolved 0, reused 0, downloaded 273, added 90
+Progress: resolved 0, reused 0, downloaded 286, added 93
+Progress: resolved 0, reused 0, downloaded 289, added 94
+Progress: resolved 0, reused 0, downloaded 294, added 97
+Progress: resolved 0, reused 0, downloaded 295, added 97
+Progress: resolved 0, reused 0, downloaded 296, added 98
+Progress: resolved 0, reused 0, downloaded 298, added 98
+Progress: resolved 0, reused 0, downloaded 299, added 98
+Progress: resolved 0, reused 0, downloaded 300, added 98
+Progress: resolved 0, reused 0, downloaded 302, added 98
+Progress: resolved 0, reused 0, downloaded 304, added 98
+Progress: resolved 0, reused 0, downloaded 305, added 99
+Progress: resolved 0, reused 0, downloaded 332, added 106
+Progress: resolved 0, reused 0, downloaded 346, added 110
+Progress: resolved 0, reused 0, downloaded 358, added 114
+Progress: resolved 0, reused 0, downloaded 385, added 122
+Progress: resolved 0, reused 0, downloaded 433, added 144
+Progress: resolved 0, reused 0, downloaded 475, added 166
+Progress: resolved 0, reused 0, downloaded 502, added 174
+Progress: resolved 0, reused 0, downloaded 559, added 213
+Progress: resolved 0, reused 0, downloaded 598, added 226
+Progress: resolved 0, reused 0, downloaded 618, added 237
+Progress: resolved 0, reused 0, downloaded 643, added 249
+Progress: resolved 0, reused 0, downloaded 655, added 253
+Progress: resolved 0, reused 0, downloaded 670, added 257
+Progress: resolved 0, reused 0, downloaded 730, added 281
+Progress: resolved 0, reused 0, downloaded 745, added 285
+Progress: resolved 0, reused 0, downloaded 761, added 292
+Progress: resolved 0, reused 0, downloaded 810, added 307
+Progress: resolved 0, reused 0, downloaded 866, added 328
+Progress: resolved 0, reused 0, downloaded 908, added 345
+Progress: resolved 0, reused 0, downloaded 990, added 379
+Progress: resolved 0, reused 0, downloaded 1021, added 387
+Progress: resolved 0, reused 0, downloaded 1101, added 424
+Progress: resolved 0, reused 0, downloaded 1214, added 471
+Progress: resolved 0, reused 0, downloaded 1239, added 481
+Progress: resolved 0, reused 0, downloaded 1240, added 481
+Progress: resolved 0, reused 0, downloaded 1242, added 481
+Progress: resolved 0, reused 0, downloaded 1251, added 484
+Progress: resolved 0, reused 0, downloaded 1283, added 496
+Progress: resolved 0, reused 0, downloaded 1331, added 545
+Progress: resolved 0, reused 0, downloaded 1331, added 802
+Progress: resolved 0, reused 0, downloaded 1331, added 901
+Progress: resolved 0, reused 0, downloaded 1331, added 1144
+Progress: resolved 0, reused 0, downloaded 1331, added 1237
+Progress: resolved 0, reused 0, downloaded 1331, added 1251
+Progress: resolved 0, reused 0, downloaded 1331, added 1358
+Progress: resolved 0, reused 0, downloaded 1331, added 1386, done
+node_modules/@swc/core postinstall$ node postinstall.js
+node_modules/esbuild postinstall$ node install.js
+node_modules/unrs-resolver postinstall$ napi-postinstall unrs-resolver 1.11.1 check
+node_modules/esbuild postinstall: [esbuild] Failed to find package "@esbuild/win32-x64" on the file system
+node_modules/esbuild postinstall: This can happen if you use the "--no-optional" flag. The "optionalDependencies"
+node_modules/esbuild postinstall: package.json feature is used by esbuild to install the correct binary executable
+node_modules/esbuild postinstall: for your current platform. This install script will now attempt to work around
+node_modules/esbuild postinstall: this. If that fails, you need to remove the "--no-optional" flag to use esbuild.
+node_modules/esbuild postinstall: [esbuild] Trying to install package "@esbuild/win32-x64" using npm
+node_modules/@swc/core postinstall: Done
+node_modules/unrs-resolver postinstall: Done
+node_modules/esbuild postinstall: Done
+artifacts/imported-app postinstall$ node -e "process.exit(0)"
+. preinstall$ sh -c 'rm -f package-lock.json yarn.lock; case "$npm_config_user_agent" in pnpm/*) ;; *) echo "Use pnpm instead" >&2; exit 1 ;; esac'
+artifacts/imported-app postinstall: Done
+. preinstall: Done
+╭ Warning ─────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│   Ignored build scripts: @parcel/watcher@2.5.6, @prisma/client@6.19.3,       │
+│   @prisma/engines@6.19.3, electron@33.4.11, es5-ext@0.10.64, koffi@2.16.1,   │
+│   prisma@6.19.3, sharp@0.34.5.                                               │
+│   Run "pnpm approve-builds" to pick which dependencies should be allowed     │
+│   to run scripts.                                                            │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Done in 1m 20.7s using pnpm v10.33.2
+36s
+Run pnpm run build
+  
+> workspace@0.0.0 build D:\a\scripturelive-ai\scripturelive-ai
+> pnpm run typecheck && pnpm -r --if-present --filter "!@workspace/mockup-sandbox" run build
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+> workspace@0.0.0 typecheck D:\a\scripturelive-ai\scripturelive-ai
+> pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-present run typecheck
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+> workspace@0.0.0 typecheck:libs D:\a\scripturelive-ai\scripturelive-ai
+> tsc --build
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+Scope: 4 of 9 workspace projects
+artifacts/api-server typecheck$ tsc -p tsconfig.json --noEmit
+artifacts/mockup-sandbox typecheck$ tsc -p tsconfig.json --noEmit
+artifacts/api-server typecheck: Done
+scripts typecheck$ tsc -p tsconfig.json --noEmit
+scripts typecheck: Done
+artifacts/mockup-sandbox typecheck: Done
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+Scope: 8 of 9 workspace projects
+artifacts/imported-app build$ cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build
+artifacts/imported-app build: Prisma schema loaded from prisma\schema.prisma
+artifacts/imported-app build: ✔ Generated Prisma Client (v6.19.3) to .\src\generated\prisma-client in 142ms
+artifacts/imported-app build: Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+artifacts/imported-app build: Tip: Want to turn off tips and other hints? https://pris.ly/tip-4-nohints
+artifacts/imported-app build: ⚠ No build cache found. Please configure build caching for faster rebuilds. Read more: https://nextjs.org/docs/messages/no-cache
+artifacts/imported-app build: Attention: Next.js now collects completely anonymous telemetry regarding usage.
+artifacts/imported-app build: This information is used to shape Next.js' roadmap and prioritize features.
+artifacts/imported-app build: You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+artifacts/imported-app build: https://nextjs.org/telemetry
+artifacts/imported-app build: ▲ Next.js 16.2.4 (Turbopack)
+artifacts/imported-app build:   Creating an optimized production build ...
+artifacts/imported-app build: Turbopack build encountered 1 warnings:
+artifacts/imported-app build: ./artifacts/imported-app/next.config.ts
+artifacts/imported-app build: Encountered unexpected file in NFT list
+artifacts/imported-app build: A file was traced that indicates that the whole project was traced unintentionally. Somewhere in the import trace below, there are:
+artifacts/imported-app build: - filesystem operations (like path.join, path.resolve or fs.readFile), or
+artifacts/imported-app build: - very dynamic requires (like require('./' + foo)).
+artifacts/imported-app build: To resolve this, you can
+artifacts/imported-app build: - remove them if possible, or
+artifacts/imported-app build: - only use them in development, or
+artifacts/imported-app build: - make sure they are statically scoped to some subfolder: path.join(process.cwd(), 'data', bar), or
+artifacts/imported-app build: - add ignore comments: path.join(/*turbopackIgnore: true*/ process.cwd(), bar)
+artifacts/imported-app build: Import trace:
+artifacts/imported-app build:   App Route:
+artifacts/imported-app build:     ./artifacts/imported-app/next.config.ts
+artifacts/imported-app build:     ./artifacts/imported-app/src/generated/prisma-client/index.js
+artifacts/imported-app build:     ./artifacts/imported-app/src/lib/db.ts
+artifacts/imported-app build:     ./artifacts/imported-app/src/app/api/songs/import/route.ts
+artifacts/imported-app build: > Build error occurred
+artifacts/imported-app build: Error: Turbopack build failed with 1 errors:
+artifacts/imported-app build: ./artifacts/imported-app/src/app/globals.css
+artifacts/imported-app build: Error evaluating Node.js code
+artifacts/imported-app build: Error: Cannot find module '../lightningcss.win32-x64-msvc.node'
+artifacts/imported-app build: Require stack:
+artifacts/imported-app build: - D:\a\scripturelive-ai\scripturelive-ai\node_modules\lightningcss\node\index.js
+artifacts/imported-app build: - D:\a\scripturelive-ai\scripturelive-ai\node_modules\@tailwindcss\node\dist\index.js
+artifacts/imported-app build: - D:\a\scripturelive-ai\scripturelive-ai\node_modules\@tailwindcss\postcss\dist\index.js
+artifacts/imported-app build: - D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app\.next\build\chunks\[root-of-the-server]__0ak_mir._.js
+artifacts/imported-app build: - D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app\.next\build\chunks\[turbopack]_runtime.js
+artifacts/imported-app build: - D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app\.next\build\postcss.js
+artifacts/imported-app build:     [at Module._resolveFilename (node:internal/modules/cjs/loader:1207:15)]
+artifacts/imported-app build:     [at Module._load (node:internal/modules/cjs/loader:1038:27)]
+artifacts/imported-app build:     [at Module.require (node:internal/modules/cjs/loader:1289:19)]
+artifacts/imported-app build:     [at require (node:internal/modules/helpers:182:18)]
+artifacts/imported-app build:     [at Object.<anonymous> (D:\a\scripturelive-ai\scripturelive-ai\node_modules\lightningcss\node\index.js:20:12)]
+artifacts/imported-app build:     [at Module._compile (node:internal/modules/cjs/loader:1521:14)]
+artifacts/imported-app build:     [at Module._extensions..js (node:internal/modules/cjs/loader:1623:10)]
+artifacts/imported-app build:     [at Module.load (node:internal/modules/cjs/loader:1266:32)]
+artifacts/imported-app build:     [at Module._load (node:internal/modules/cjs/loader:1091:12)]
+artifacts/imported-app build:     [at Module.require (node:internal/modules/cjs/loader:1289:19)]
+artifacts/imported-app build: Import traces:
+artifacts/imported-app build:   Client Component Browser:
+artifacts/imported-app build:     ./artifacts/imported-app/src/app/globals.css [Client Component Browser]
+artifacts/imported-app build:     ./artifacts/imported-app/src/app/layout.tsx [Server Component]
+artifacts/imported-app build:   App Route:
+artifacts/imported-app build:     ./artifacts/imported-app/src/app/globals.css
+artifacts/imported-app build:     ./artifacts/imported-app/src/generated/prisma-client/index.js
+artifacts/imported-app build:     ./artifacts/imported-app/src/lib/db.ts
+artifacts/imported-app build:     ./artifacts/imported-app/src/app/api/songs/import/route.ts
+artifacts/imported-app build:     at ignore-listed frames
+artifacts/imported-app build: Failed
+D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/imported-app@0.5.10 build: `cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build`
+Exit status 1
+ ELIFECYCLE  Command failed with exit code 1.
+Error: Process completed with exit code 1.
+0s
+0s
+0s
+0s
+0s
+Post job cleanup.
+Pruning is unnecessary.
+2s
+Post job cleanup.
+"C:\Program Files\Git\bin\git.exe" version
+git version 2.53.0.windows.2
+Temporarily overriding HOME='D:\a\_temp\ab97a8ff-b4fc-446f-a131-528596ba9e30' before making global git config changes
+Adding repository directory to the temporary git global config as a safe directory
+"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\scripturelive-ai\scripturelive-ai
+"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+http.https://github.com/.extraheader
+"C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+0s
+Cleaning up orphan processes
+Warning: Node.js 20 actions are deprecated. The following actions are running on Node.js 20 and may not work as expected: actions/checkout@v4, actions/setup-node@v4, pnpm/action-setup@v4. Actions will be forced to run with Node.js 24 by default starting June 2nd, 2026. Node.js 20 will be removed from the runner on September 16th, 2026. Please check if updated versions of these actions are available that support Node.js 24. To opt into Node.js 24 now, set the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true environment variable on the runner or in your workflow file. Once Node.js 24 becomes the default, you can temporarily opt out by setting ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
