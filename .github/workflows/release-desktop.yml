@@ -1,0 +1,340 @@
+name: Release ScriptureLive AI Desktop
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Optional tag name to publish under (defaults to v<package version>)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  # Re-check code-signing cert expiry before every release. We don't want a
+  # tag push to silently produce an unsigned build because a cert expired
+  # since the last release. Failures here surface as workflow-failure emails
+  # to repo admins; warnings (<60 days) are logged but don't block the release.
+  cert-expiry:
+    name: Check signing-cert expiry
+    uses: ./.github/workflows/check-cert-expiry.yml
+    secrets: inherit
+
+  build:
+    name: Build (${{ matrix.os }})
+    needs: cert-expiry
+    # Build even if the cert-expiry job warns or fails -- we still want the
+    # installers to be produced (just unsigned, in the worst case) so the
+    # team can ship a hotfix while rotating credentials. The failure on the
+    # `cert-expiry` job is what generates the warning email.
+    if: ${{ always() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: package:win
+            artifact_glob: "artifacts/imported-app/release/*.exe"
+          - os: macos-latest
+            script: package:mac
+            artifact_glob: "artifacts/imported-app/release/*.dmg"
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      # ---- NDI SDK install (optional -- enables compiling the grandiose
+      # native binding for built-in NDI output). These steps NEVER exit
+      # non-zero: if anything fails (download error, hung installer,
+      # missing files), the step prints a warning, leaves NDI_SDK_DIR
+      # unset, and the build proceeds. grandiose is an optionalDependency
+      # and ndi-service.ts wraps `require('grandiose')` in try/catch, so
+      # the produced installer simply won't have NDI output -- the rest
+      # of the app (scripture lookup, slides, output window) still works,
+      # and end users can install NDI Tools separately to add NDI output.
+      - name: Install NDI SDK (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          NDI_SDK_URL_WIN: ${{ secrets.NDI_SDK_URL_WIN }}
+        run: |
+          # NOTE: do NOT set $ErrorActionPreference = "Stop" -- we want this
+          # step to always exit 0 so the rest of the build runs.
+          $url = if ($env:NDI_SDK_URL_WIN) { $env:NDI_SDK_URL_WIN } else { "https://downloads.ndi.tv/SDK/NDI_SDK/NDI%206%20SDK.exe" }
+          $out = "$env:RUNNER_TEMP\ndi-sdk.exe"
+          Write-Host "Downloading NDI SDK from $url"
+          # Use curl.exe (built into Windows 10+) instead of Invoke-WebRequest:
+          # IWR's progress bar makes 40MB downloads take 10+ minutes on CI.
+          & curl.exe -fsSL --max-time 300 --retry 5 --retry-delay 10 --retry-all-errors -o $out $url
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::warning::NDI SDK download failed (curl exit $LASTEXITCODE). Build will proceed without NDI compiled."
+            exit 0
+          }
+          $size = (Get-Item $out -ErrorAction SilentlyContinue).Length
+          Write-Host "Downloaded $size bytes"
+          if (-not $size -or $size -lt 10000000) {
+            Write-Host "::warning::Downloaded file is suspiciously small ($size bytes) -- URL likely returned an HTML error page. Build will proceed without NDI compiled."
+            exit 0
+          }
+
+          # NDI 6 SDK installer is built with Advanced Installer (/quiet),
+          # not Inno Setup (/VERYSILENT). Run via Start-Process so we can
+          # kill it if it hangs on a GUI dialog.
+          Write-Host "Running silent install with /quiet /norestart"
+          try {
+            $proc = Start-Process -FilePath $out -ArgumentList "/quiet","/norestart" -PassThru -ErrorAction Stop
+            if (-not $proc.WaitForExit(600000)) {
+              $proc.Kill()
+              Write-Host "::warning::NDI installer hung for 10 minutes -- killed. Build will proceed without NDI."
+              exit 0
+            }
+            Write-Host "Installer exited with code $($proc.ExitCode)"
+          } catch {
+            Write-Host "::warning::NDI installer failed to start: $_. Build will proceed without NDI."
+            exit 0
+          }
+
+          $candidates = @(
+            "C:\Program Files\NDI\NDI 6 SDK",
+            "C:\Program Files\NDI\NDI 6 Advanced SDK",
+            "C:\Program Files\NDI\NDI 5 SDK"
+          )
+          $sdkRoot = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $sdkRoot) {
+            Write-Host "::warning::NDI SDK install path not found. Build will proceed without NDI."
+            if (Test-Path "C:\Program Files\NDI") { Get-ChildItem "C:\Program Files\NDI" }
+            exit 0
+          }
+          echo "NDI_SDK_DIR=$sdkRoot" >> $env:GITHUB_ENV
+          Write-Host "NDI SDK installed at $sdkRoot"
+
+      - name: Install NDI SDK (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 15
+        env:
+          NDI_SDK_URL_MAC: ${{ secrets.NDI_SDK_URL_MAC }}
+        run: |
+          # NOTE: no `set -e` -- this step always exits 0 so the build proceeds.
+          URL="${NDI_SDK_URL_MAC:-https://downloads.ndi.tv/SDK/NDI_SDK_Mac/Install_NDI_SDK_v6_Apple.pkg}"
+          echo "Downloading NDI SDK from $URL"
+          if ! curl -fsSL --max-time 600 --retry 5 --retry-delay 10 --retry-all-errors "$URL" -o /tmp/ndi-sdk.pkg; then
+            echo "::warning::NDI SDK download failed. Build will proceed without NDI compiled."
+            exit 0
+          fi
+          SIZE=$(stat -f%z /tmp/ndi-sdk.pkg 2>/dev/null || echo 0)
+          echo "Downloaded $SIZE bytes"
+          file /tmp/ndi-sdk.pkg || true
+          if [ "$SIZE" -lt 10000000 ]; then
+            echo "::warning::Downloaded file is suspiciously small ($SIZE bytes) -- URL likely returned an HTML error page. Build will proceed without NDI."
+            exit 0
+          fi
+          if ! sudo installer -verboseR -pkg /tmp/ndi-sdk.pkg -target /; then
+            echo "::warning::NDI SDK installer failed. Build will proceed without NDI."
+            exit 0
+          fi
+          for d in \
+            "/Library/NDI SDK for Apple" \
+            "/Library/NDI Advanced SDK for Apple" \
+            "/Applications/NDI 6 SDK" \
+            "/Applications/NDI SDK for Apple"; do
+            if [ -d "$d" ]; then
+              echo "NDI_SDK_DIR=$d" >> "$GITHUB_ENV"
+              echo "Found SDK at $d"
+              exit 0
+            fi
+          done
+          echo "::warning::NDI SDK install path not found. Build will proceed without NDI."
+          sudo find /Library /Applications -maxdepth 4 -type d -name "*NDI*" 2>/dev/null || true
+          exit 0
+
+      # ---- Install dependencies and build ----
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build Next.js app
+        working-directory: artifacts/imported-app
+        run: pnpm run build
+
+      - name: Compile Electron main process
+        working-directory: artifacts/imported-app
+        run: pnpm run electron:build
+
+      # Two separate, OS-gated package steps so each platform only ever sees
+      # its own signing secrets. Using a single step with a ternary like
+      # `runner.os == 'Windows' && secrets.WIN_CSC_LINK || secrets.MAC_CSC_LINK`
+      # is unsafe in GitHub Actions: if the left value is empty/unset it falls
+      # through to the right side, which on a Windows runner would try to sign
+      # the .exe with the macOS .p12.
+      - name: Package Windows installer
+        if: runner.os == 'Windows'
+        working-directory: artifacts/imported-app
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Authenticode signing. Build still succeeds unsigned when unset.
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: pnpm exec electron-builder --config electron-builder.yml --win --publish=never
+
+      - name: Package macOS installer
+        if: runner.os == 'macOS'
+        working-directory: artifacts/imported-app
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Developer ID signing. Build still succeeds unsigned when unset.
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          # Notarization (used only when CSC_LINK is also set).
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm exec electron-builder --config electron-builder.yml --mac --publish=never
+
+      # ---- Upload as workflow artifact ----
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: ${{ matrix.artifact_glob }}
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all installers
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: installers-*
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            VERSION=$(node -p "require('./artifacts/imported-app/package.json').version")
+            echo "name=v${VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute checksums
+        run: |
+          cd dist
+          (cd . && for f in *; do shasum -a 256 "$f" >> SHA256SUMS.txt; done)
+          cat SHA256SUMS.txt
+
+      - name: Update download manifest with sizes + SHA-256
+        run: |
+          node artifacts/imported-app/scripts/update-download-manifest.mjs --dir "$(pwd)/dist"
+          cp artifacts/imported-app/public/downloads/manifest.json dist/manifest.json
+          cat dist/manifest.json
+
+      # ---- Sign the manifest + checksums with minisign so security-conscious
+      # admins can verify the chain end-to-end (the displayed SHA-256s on
+      # /download are only as trustworthy as the host serving them; a detached
+      # signature lets users verify against a maintainer-held key whose public
+      # half is published out-of-band — see public/downloads/minisign.pub and
+      # the README in this directory).
+      #
+      # Gracefully skipped when MINISIGN_KEY is not configured: the release
+      # still ships, just without .minisig sidecars (mirrors the unsigned-
+      # installer fallback for CSC_LINK above).
+      - name: Sign manifest + checksums (minisign)
+        id: sign_manifest
+        env:
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MINISIGN_KEY:-}" ]; then
+            echo "::notice::MINISIGN_KEY secret not set — manifest.json and SHA256SUMS.txt will be published without .minisig sidecars. See .github/workflows/README.md → 'Signing the download manifest' for setup."
+            exit 0
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends minisign
+
+          # MINISIGN_KEY is the base64-encoded contents of a minisign.key file
+          # (i.e. `base64 -w 0 minisign.key`). Decode to a tmpfile we discard.
+          KEY_FILE="$(mktemp)"
+          trap 'rm -f "$KEY_FILE"' EXIT
+          printf '%s' "$MINISIGN_KEY" | base64 -d > "$KEY_FILE"
+
+          # The signature's trusted-comment includes the tag so a stolen
+          # signature can't be silently re-used to authenticate a different
+          # release's manifest.
+          COMMENT="ScriptureLive AI ${TAG} — manifest signature"
+
+          for f in manifest.json SHA256SUMS.txt; do
+            echo "Signing dist/$f"
+            if [ -n "${MINISIGN_PASSWORD:-}" ]; then
+              # Encrypted key — feed password via stdin.
+              printf '%s\n' "$MINISIGN_PASSWORD" \
+                | minisign -S -s "$KEY_FILE" -t "$COMMENT" -m "dist/$f"
+            else
+              # Unencrypted key (generated with `minisign -G -W`).
+              minisign -S -s "$KEY_FILE" -t "$COMMENT" -m "dist/$f" < /dev/null
+            fi
+          done
+
+          ls -la dist/*.minisig
+
+          # Self-verify with the committed public key so a mismatch (e.g. the
+          # repo's published pubkey was rotated but the secret wasn't) fails
+          # the release immediately instead of shipping signatures users can't
+          # actually verify.
+          PUB="artifacts/imported-app/public/downloads/minisign.pub"
+          if [ -f "$PUB" ]; then
+            for f in manifest.json SHA256SUMS.txt; do
+              echo "Verifying dist/$f against $PUB"
+              minisign -V -p "$PUB" -m "dist/$f"
+            done
+          else
+            echo "::warning::No public key at $PUB — skipping self-verify. Commit the public half of MINISIGN_KEY there so /download can advertise it."
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: ScriptureLive AI ${{ steps.tag.outputs.name }}
+          generate_release_notes: true
+          # Globbing the .minisig files (rather than listing each one) means
+          # the release still publishes cleanly when the sign-manifest step
+          # was skipped — the glob just matches nothing and softprops/action-
+          # gh-release happily ignores it.
+          files: |
+            dist/*.exe
+            dist/*.dmg
+            dist/SHA256SUMS.txt
+            dist/manifest.json
+            dist/*.minisig
