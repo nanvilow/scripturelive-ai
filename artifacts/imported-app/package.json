@@ -1,6 +1,6 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.5.14",
+  "version": "0.5.15",
   "private": true,
   "main": "dist-electron/main.js",
   "pnpm": {
@@ -32,7 +32,7 @@
     "electron:build": "tsc -p electron/tsconfig.json && node scripts/download-whisper-assets.mjs",
     "electron:dev": "pnpm run electron:build && cross-env NEXT_DEV_URL=http://localhost:3000 electron dist-electron/main.js",
     "package": "pnpm run build && pnpm run electron:build && electron-builder --config electron-builder.yml && pnpm run downloads:manifest",
-    "package:win": "pnpm run build && pnpm run electron:build && electron-builder --config electron-builder.yml --win && pnpm run downloads:manifest",
+    "package:win": "pnpm run build && pnpm run electron:build && electron-builder --config electron-builder.yml --win --publish never && pnpm run downloads:manifest",
     "package:mac": "pnpm run build && pnpm run electron:build && electron-builder --config electron-builder.yml --mac && pnpm run downloads:manifest",
     "downloads:manifest": "node scripts/update-download-manifest.mjs"
   },
