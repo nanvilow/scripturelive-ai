@@ -156,7 +156,7 @@ function render(s){
   // toggled the Live Display HIDDEN switch. We paint a solid black
   // frame while keeping the NDI connection alive, so vMix/OBS don't
   // lose the source. The current slide stays staged upstream, so the
-  // moment `blanked` flips back to false the renderer snaps straight
+  // moment "blanked" flips back to false the renderer snaps straight
   // back to whatever was on air — no re-cue required.
   if(s.blanked){
     var bkey='__blanked__';
