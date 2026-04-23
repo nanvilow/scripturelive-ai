@@ -2393,7 +2393,11 @@ export function LogosShell() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Live Display panel-local state (UX only — does not change broadcast logic)
-  const [displaySize, setDisplaySize] = useState(0.85)
+  // Default to 1.0 so the Live Display frame fills its panel the same
+  // way the Preview frame does. Operators previously saw a smaller
+  // Live frame (0.85) by default and asked for it to match Preview;
+  // the SIZE slider still lets them shrink down to inspect padding.
+  const [displaySize, setDisplaySize] = useState(1)
   // displayHidden is mirrored into the store as `outputBlanked` so the
   // global broadcaster can push a black frame to the congregation
   // screen AND the NDI feed. Without the store wire-through the HIDDEN
