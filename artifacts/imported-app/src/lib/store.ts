@@ -32,6 +32,14 @@ export type BibleTranslation = string
 export type DisplayMode = 'full' | 'lower-third' | 'lower-third-black'
 export type OutputDestination = 'window' | 'ndi' | 'both'
 
+export interface MediaLibraryItem {
+  id: string
+  name: string
+  url: string
+  kind: 'image' | 'video'
+  size?: number
+}
+
 export interface BibleVerse {
   reference: string
   text: string
@@ -271,6 +279,19 @@ interface AppState {
   setCurrentSongSections: (s: SongSection[]) => void
   currentLyricIndex: number
   setCurrentLyricIndex: (i: number) => void
+
+  // Media library — persisted (item #16). Items reference files in
+  // the server-side `uploads/` directory by URL. They survive an app
+  // restart so the operator never has to re-upload service media.
+  mediaLibrary: MediaLibraryItem[]
+  setMediaLibrary: (items: MediaLibraryItem[]) => void
+  addMediaLibraryItem: (item: MediaLibraryItem) => void
+  removeMediaLibraryItem: (id: string) => void
+  // Per-item display fit (cover / contain / etc) selected in the
+  // Media panel. Persisted alongside the library so the operator's
+  // chosen framing for each clip survives a relaunch.
+  mediaFitById: Record<string, string>
+  setMediaFit: (id: string, fit: string) => void
 
   // Schedule (EasyWorship-style running order)
   schedule: ScheduleItem[]
@@ -520,6 +541,24 @@ export const useAppStore = create<AppState>()(
       currentLyricIndex: 0,
       setCurrentLyricIndex: (i) => set({ currentLyricIndex: i }),
 
+      // Media library (item #16)
+      mediaLibrary: [],
+      setMediaLibrary: (items) => set({ mediaLibrary: items }),
+      addMediaLibraryItem: (item) =>
+        set((state) => ({
+          mediaLibrary: [item, ...state.mediaLibrary.filter((m) => m.id !== item.id)],
+        })),
+      removeMediaLibraryItem: (id) =>
+        set((state) => ({
+          mediaLibrary: state.mediaLibrary.filter((m) => m.id !== id),
+          mediaFitById: Object.fromEntries(
+            Object.entries(state.mediaFitById).filter(([k]) => k !== id),
+          ),
+        })),
+      mediaFitById: {},
+      setMediaFit: (id, fit) =>
+        set((state) => ({ mediaFitById: { ...state.mediaFitById, [id]: fit } })),
+
       // Schedule
       schedule: [],
       selectedScheduleItemId: null,
@@ -644,6 +683,9 @@ export const useAppStore = create<AppState>()(
         activeLibraryTab: state.activeLibraryTab,
         sermonNotes: state.sermonNotes,
         mediaViewMode: state.mediaViewMode,
+        // Item #16 — uploaded media + per-item fit survive restart.
+        mediaLibrary: state.mediaLibrary,
+        mediaFitById: state.mediaFitById,
       }),
     }
   )

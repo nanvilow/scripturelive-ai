@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { readFile, unlink, mkdir, stat } from 'fs/promises'
+import { readFile, unlink, mkdir, stat, readdir } from 'fs/promises'
 import { createReadStream, createWriteStream } from 'fs'
 import { join, extname } from 'path'
 import { randomUUID } from 'crypto'
@@ -72,6 +72,22 @@ function extFromMime(mime: string, fallback: string): string {
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
+
+    // Item #16 — list mode. The Media panel calls this on mount to
+    // figure out which uploads still exist on disk, so it can prune
+    // any stale entries from the persisted library before showing
+    // them to the operator (avoids broken thumbnails after the user
+    // wipes their uploads/ folder out-of-band).
+    if (searchParams.get('list') === '1') {
+      try {
+        await mkdir(UPLOADS_DIR, { recursive: true })
+        const names = await readdir(UPLOADS_DIR)
+        return NextResponse.json({ files: names })
+      } catch {
+        return NextResponse.json({ files: [] })
+      }
+    }
+
     const filename = searchParams.get('file')
 
     if (!filename || !isValidFilename(filename)) {
