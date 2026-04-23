@@ -67,6 +67,11 @@ import {
 import { BibleLookupCompact } from '@/components/layout/library-compact'
 import { TopToolbar, TransportBar } from '@/components/layout/easyworship-shell'
 import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from '@/components/ui/resizable'
+import {
   parseVerseReference,
   getNextChapter,
   getPrevChapter,
@@ -2775,34 +2780,71 @@ export function LogosShell() {
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#0a0d14] text-zinc-100 dark">
       <TopToolbar outputActive={outputActive} toggleOutput={toggleOutput} />
 
-      {/* Main grid — two rows × four/three columns of rounded card panels */}
-      <div className="flex-1 min-h-0 grid grid-rows-[1.05fr_1fr] gap-2 p-2 overflow-hidden">
-        {/* Top row */}
-        <div className="grid gap-2 min-h-0 grid-cols-[minmax(260px,1fr)_minmax(0,1.2fr)_minmax(0,1.2fr)_minmax(260px,1fr)]">
-          <LiveTranscriptionCard />
-          <PreviewCard />
-          <LiveDisplayCard
-            size={displaySize}
-            setSize={setDisplaySize}
-            hidden={displayHidden}
-            setHidden={setDisplayHidden}
-            auto={autoAdvance}
-            setAuto={setAutoAdvance}
-            onPrev={onPrev}
-            onSendLive={onSendLive}
-            onNext={onNext}
-            isLive={isLive}
-            onClearLive={clearLive}
-          />
-          <ScriptureFeedCard />
-        </div>
-
-        {/* Bottom row */}
-        <div className="grid gap-2 min-h-0 grid-cols-3">
-          <ChapterNavigatorCard />
-          <DetectedVersesCard />
-          <MediaCard />
-        </div>
+      {/* Main workspace — broadcast-style draggable dividers between every
+          panel. react-resizable-panels persists sizes per autoSaveId so
+          the operator's layout survives restarts. */}
+      <div className="flex-1 min-h-0 p-2 overflow-hidden">
+        <ResizablePanelGroup
+          direction="vertical"
+          autoSaveId="logos-shell-rows"
+          className="gap-0"
+        >
+          <ResizablePanel defaultSize={52} minSize={25}>
+            <ResizablePanelGroup
+              direction="horizontal"
+              autoSaveId="logos-shell-top-cols"
+              className="gap-0"
+            >
+              <ResizablePanel defaultSize={22} minSize={12} className="pr-1 pb-1">
+                <LiveTranscriptionCard />
+              </ResizablePanel>
+              <ResizableHandle withHandle className="bg-transparent hover:bg-zinc-700/40 transition-colors" />
+              <ResizablePanel defaultSize={28} minSize={15} className="px-1 pb-1">
+                <PreviewCard />
+              </ResizablePanel>
+              <ResizableHandle withHandle className="bg-transparent hover:bg-zinc-700/40 transition-colors" />
+              <ResizablePanel defaultSize={28} minSize={15} className="px-1 pb-1">
+                <LiveDisplayCard
+                  size={displaySize}
+                  setSize={setDisplaySize}
+                  hidden={displayHidden}
+                  setHidden={setDisplayHidden}
+                  auto={autoAdvance}
+                  setAuto={setAutoAdvance}
+                  onPrev={onPrev}
+                  onSendLive={onSendLive}
+                  onNext={onNext}
+                  isLive={isLive}
+                  onClearLive={clearLive}
+                />
+              </ResizablePanel>
+              <ResizableHandle withHandle className="bg-transparent hover:bg-zinc-700/40 transition-colors" />
+              <ResizablePanel defaultSize={22} minSize={12} className="pl-1 pb-1">
+                <ScriptureFeedCard />
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </ResizablePanel>
+          <ResizableHandle withHandle className="bg-transparent hover:bg-zinc-700/40 transition-colors" />
+          <ResizablePanel defaultSize={48} minSize={20}>
+            <ResizablePanelGroup
+              direction="horizontal"
+              autoSaveId="logos-shell-bottom-cols"
+              className="gap-0"
+            >
+              <ResizablePanel defaultSize={33} minSize={15} className="pr-1 pt-1">
+                <ChapterNavigatorCard />
+              </ResizablePanel>
+              <ResizableHandle withHandle className="bg-transparent hover:bg-zinc-700/40 transition-colors" />
+              <ResizablePanel defaultSize={33} minSize={15} className="px-1 pt-1">
+                <DetectedVersesCard />
+              </ResizablePanel>
+              <ResizableHandle withHandle className="bg-transparent hover:bg-zinc-700/40 transition-colors" />
+              <ResizablePanel defaultSize={34} minSize={15} className="pl-1 pt-1">
+                <MediaCard />
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
 
       <TransportBar
