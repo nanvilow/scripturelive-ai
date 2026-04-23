@@ -81,7 +81,19 @@ export function OutputBroadcaster() {
         displayRatio: settings.displayRatio,
         textScale: settings.textScale,
         textAlign: settings.textAlign,
+        // Independent NDI display mode — the congregation renderer
+        // respects this when it sees `?ndi=1` on the URL (the NDI
+        // sender's hidden window), so vMix/OBS can receive a Lower
+        // Third even while the projector stays at Full Screen.
+        ndiDisplayMode: settings.ndiDisplayMode,
       }
+      // BLACK / HIDDEN — operator hit the "Black" transport button or
+      // toggled the HIDDEN control. The current slide stays staged in
+      // the store so un-blanking instantly restores it; meanwhile
+      // every downstream output renders solid black (the congregation
+      // route watches for `blanked:true` and blacks its overlay, so
+      // NDI keeps running rather than losing its source).
+      const blanked = !!s.outputBlanked
       // Operator hasn't put anything on air yet → secondary screen
       // shows the centred WassMedia splash. Flag flips false the
       // moment any slide goes live (and stays false for the rest of
@@ -100,6 +112,7 @@ export function OutputBroadcaster() {
             showStartupLogo,
             displayMode: settings.displayMode,
             settings: settingsBlock,
+            blanked,
           }
         : {
             type: 'clear' as const,
@@ -111,6 +124,7 @@ export function OutputBroadcaster() {
             showStartupLogo,
             displayMode: settings.displayMode,
             settings: settingsBlock,
+            blanked,
           }
     }
 

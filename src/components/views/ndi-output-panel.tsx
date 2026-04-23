@@ -9,6 +9,7 @@ import { useNdi } from '@/lib/use-electron'
 import { StageDisplayControls } from '@/components/views/stage-display-controls'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { useAppStore } from '@/lib/store'
 
 /**
  * One-click NDI panel.
@@ -29,6 +30,11 @@ export function NdiOutputPanel() {
   const [busy, setBusy] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [sourceName, setSourceName] = useState('ScriptureLive AI')
+  // NDI-only display mode — independent from the secondary-screen
+  // `displayMode`. Lets the operator run the projector at Full Screen
+  // while feeding vMix/OBS a Lower Third (v0.5.5 spec).
+  const ndiDisplayMode = useAppStore((s) => s.settings.ndiDisplayMode)
+  const updateSettings = useAppStore((s) => s.updateSettings)
 
   if (!desktop) {
     return (
@@ -177,6 +183,42 @@ export function NdiOutputPanel() {
           playback audio through your existing AV mixer (vMix audio in,
           Wirecast audio source, OBS audio bus) — that&apos;s what keeps
           audio sync rock solid in a live service.
+        </div>
+
+        {/* NDI Display Mode — independent of the projector's displayMode */}
+        <div className="rounded-md border border-border/60 bg-muted/10 p-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-[11px] font-semibold text-foreground">NDI Display Mode</div>
+              <p className="text-[10px] text-muted-foreground leading-snug">
+                Affects the NDI feed only. Your secondary screen stays on its own mode.
+              </p>
+            </div>
+            <div className="flex gap-1 shrink-0">
+              <button
+                onClick={() => updateSettings({ ndiDisplayMode: 'full' })}
+                className={cn(
+                  'h-7 px-2.5 rounded-md border text-[10px] uppercase tracking-wider transition-colors',
+                  ndiDisplayMode === 'full'
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+                    : 'border-border bg-background hover:bg-muted/40 text-muted-foreground',
+                )}
+              >
+                Full Screen
+              </button>
+              <button
+                onClick={() => updateSettings({ ndiDisplayMode: 'lower-third' })}
+                className={cn(
+                  'h-7 px-2.5 rounded-md border text-[10px] uppercase tracking-wider transition-colors',
+                  ndiDisplayMode === 'lower-third'
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+                    : 'border-border bg-background hover:bg-muted/40 text-muted-foreground',
+                )}
+              >
+                Lower Third
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Advanced disclosure */}

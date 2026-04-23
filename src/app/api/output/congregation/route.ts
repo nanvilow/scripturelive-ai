@@ -152,6 +152,22 @@ function dropLiveVideoCache(){
 
 function render(s){
   if(!s){$('output').innerHTML='';$('output').classList.add('hidden');lastRenderKey='';dropLiveVideoCache();return}
+  // BLACK / HIDDEN — operator has hit the "Black" transport button or
+  // toggled the Live Display HIDDEN switch. We paint a solid black
+  // frame while keeping the NDI connection alive, so vMix/OBS don't
+  // lose the source. The current slide stays staged upstream, so the
+  // moment `blanked` flips back to false the renderer snaps straight
+  // back to whatever was on air — no re-cue required.
+  if(s.blanked){
+    var bkey='__blanked__';
+    if(bkey===lastRenderKey)return;
+    lastRenderKey=bkey;
+    dropLiveVideoCache();
+    $('output').innerHTML='';
+    $('output').style.background='#000';
+    $('output').classList.remove('hidden');
+    return;
+  }
   // When the operator hits "Disconnect secondary screen" the broadcaster
   // sends type:'clear'. Honor it as a true blank (black) frame so the
   // congregation TV goes dark instead of showing the themed background.

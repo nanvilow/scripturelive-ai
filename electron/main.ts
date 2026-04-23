@@ -62,6 +62,7 @@ type NdiStartOptions = NdiServiceStartOptions & {
 }
 import { FrameCapture } from './frame-capture'
 import { setupAutoUpdater, runManualCheck, getUpdateState, openReleasesPage } from './updater'
+import { isWhisperAvailable, transcribeWav } from './whisper-service'
 
 const isDev = !app.isPackaged
 
@@ -112,6 +113,31 @@ function getFreePort(): Promise<number> {
   })
 }
 
+// Pin the internal Next.js server to a stable port so the renderer's
+// localStorage (zustand persist: OpenAI key, schedule, sermon notes,
+// settings, etc.) stays in the SAME origin across launches. With a
+// random port every launch the origin changes and Chromium scopes
+// localStorage per-origin, so all persisted state silently disappears.
+// If the preferred port is taken (e.g. another instance running, or
+// some unrelated app squatting on it) we fall back to a dynamic port,
+// which means data from the last launch will appear empty for THIS
+// session only — better than failing to launch.
+async function getPinnedPort(preferred = 47330): Promise<number> {
+  return new Promise((resolve) => {
+    const srv = createServer()
+    srv.unref()
+    srv.once('error', async () => {
+      console.warn(`[port] preferred ${preferred} unavailable, using dynamic (settings will look empty this session)`)
+      try { resolve(await getFreePort()) } catch { resolve(preferred) }
+    })
+    srv.listen(preferred, '127.0.0.1', () => {
+      const a = srv.address()
+      const p = (a && typeof a === 'object') ? a.port : preferred
+      srv.close(() => resolve(p))
+    })
+  })
+}
+
 function getUserDbPath(): string {
   const dir = path.join(app.getPath('userData'), 'db')
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
@@ -132,7 +158,7 @@ async function startNextServer(): Promise<string> {
     return process.env.NEXT_DEV_URL || 'http://localhost:3000'
   }
 
-  const port = await getFreePort()
+  const port = await getPinnedPort()
   const dbPath = getUserDbPath()
   const standaloneDir = path.join(process.resourcesPath, 'app', '.next', 'standalone')
   const serverEntry = path.join(standaloneDir, 'server.js')
@@ -577,6 +603,27 @@ function setupIpc() {
       title: 'ScriptureLive — Stage Display',
     })
     return { ok: true }
+  })
+
+  // ── Local Whisper IPC ───────────────────────────────────────────
+  // Base Mode calls into the bundled whisper.cpp binary. We expose
+  // two handlers: availability probe (used by Settings to show the
+  // model status badge) and actual transcription per audio chunk.
+  ipcMain.handle('whisper:is-available', () => {
+    const r = isWhisperAvailable()
+    return r.ok ? { ok: true } : { ok: false, reason: r.reason }
+  })
+
+  ipcMain.handle('whisper:transcribe', async (_e, wavBuffer: ArrayBuffer, language: string) => {
+    try {
+      const buf = Buffer.from(wavBuffer)
+      const text = await transcribeWav(buf, language || 'en')
+      return { ok: true, text }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error('[whisper] transcribe failed:', message)
+      return { ok: false, error: message }
+    }
   })
 
   ndi.on('frame', (count) => {

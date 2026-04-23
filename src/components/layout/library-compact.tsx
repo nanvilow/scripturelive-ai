@@ -58,6 +58,8 @@ export function BibleLookupCompact() {
     addToVerseHistory,
     settings,
     addScheduleItem,
+    navigatorRequestedRef,
+    clearNavigatorRequestedRef,
   } = useAppStore()
 
   const [loading, setLoading] = useState(false)
@@ -176,6 +178,29 @@ export function BibleLookupCompact() {
     },
     [searchQuery, loadChapter],
   )
+
+  // v0.5.4 T005 — When the Detected Verses card single-clicks a
+  // reference it pushes the token "<reference>\0<timestamp>" into
+  // the store. We strip the timestamp, drop the text into the
+  // search box so the operator sees what loaded, trigger the same
+  // chapter load as the Lookup button, and clear the signal. The
+  // timestamp suffix guarantees repeated clicks on the same
+  // reference still fire the effect (React diffs the full string).
+  useEffect(() => {
+    if (!navigatorRequestedRef) return
+    const ref = navigatorRequestedRef.split('\u0000')[0]
+    if (!ref) {
+      clearNavigatorRequestedRef()
+      return
+    }
+    const parsed = parseVerseReference(ref)
+    setSearchQuery(ref)
+    if (parsed) {
+      void loadChapter(parsed.book, parsed.chapter, parsed.verseStart)
+    }
+    clearNavigatorRequestedRef()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigatorRequestedRef])
 
   // Track the last Enter press so we can implement the
   // "press Enter twice to go live" gesture per spec:

@@ -1321,6 +1321,7 @@ function DetectedVersesCard() {
     setLiveSlideIndex,
     setIsLive,
     settings,
+    requestNavigatorRef,
   } = useAppStore()
 
   // Long detected verses (whole passages, paraphrases, multi-verse
@@ -1439,10 +1440,18 @@ function DetectedVersesCard() {
               return (
                 <div
                   key={`${v.reference}-${i}`}
-                  onClick={() => sendDetected(v, false)}
+                  onClick={() => {
+                    // v0.5.4 T005 — In addition to staging the slide in
+                    // Preview, push the reference to the Chapter
+                    // Navigator so the operator can read surrounding
+                    // context without retyping the reference. Double-
+                    // click still pushes the verse to Live.
+                    sendDetected(v, false)
+                    requestNavigatorRef(v.reference)
+                  }}
                   onDoubleClick={() => sendDetected(v, true)}
                   className="rounded border border-zinc-800/70 bg-zinc-900/40 hover:border-emerald-500/40 hover:bg-zinc-900 px-2 py-1.5 cursor-pointer transition-colors select-none"
-                  title={`Click → schedule · Double-click → live · Detection accuracy: ${pct}%`}
+                  title={`Click → schedule + open in Chapter Navigator · Double-click → live · Detection accuracy: ${pct}%`}
                 >
                   <div className="flex items-center justify-between gap-2 mb-0.5">
                     <span className="text-[10px] font-semibold text-emerald-300">
@@ -2215,7 +2224,15 @@ export function LogosShell() {
 
   // Live Display panel-local state (UX only — does not change broadcast logic)
   const [displaySize, setDisplaySize] = useState(0.85)
-  const [displayHidden, setDisplayHidden] = useState(false)
+  // displayHidden is mirrored into the store as `outputBlanked` so the
+  // global broadcaster can push a black frame to the congregation
+  // screen AND the NDI feed. Without the store wire-through the HIDDEN
+  // toggle only dimmed the in-app Live Display thumbnail and the
+  // projector stayed lit — the exact bug T003 was filed against.
+  const outputBlanked = useAppStore((s) => s.outputBlanked)
+  const setOutputBlanked = useAppStore((s) => s.setOutputBlanked)
+  const displayHidden = outputBlanked
+  const setDisplayHidden = setOutputBlanked
   // Auto-go-live mode is now a store flag so both the Live Display
   // "AUTO" toggle and the new AUTO pill in Live Transcription drive
   // the same state.
@@ -2323,10 +2340,13 @@ export function LogosShell() {
   }, [setLiveSlideIndex, setIsLive, sendToOutput])
 
   const goBlack = useCallback(() => {
-    setLiveSlideIndex(-1)
-    setIsLive(true)
-    sendToOutput(null, true)
-  }, [setLiveSlideIndex, setIsLive, sendToOutput])
+    // Toggle the store-wide BLACK flag. The broadcaster stamps
+    // `blanked:true` on every subsequent payload and the congregation
+    // route paints a solid black frame, so the projector and the NDI
+    // feed both go dark instantly. Flipping it back off snaps straight
+    // back to whatever was staged, without re-cueing the slide.
+    setOutputBlanked(!outputBlanked)
+  }, [setOutputBlanked, outputBlanked])
 
   const goLogo = useCallback(() => {
     // Logo is a transient overlay that doesn't live in the slide deck,
