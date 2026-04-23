@@ -326,6 +326,17 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     ;(window as unknown as { __selectedMicrophoneId?: string | null }).__selectedMicrophoneId = selectedMicId
   }, [selectedMicId])
 
+  // Mirror the operator's OpenAI API key into a global so the
+  // (hookless) Whisper hook can read it when posting audio chunks
+  // to /api/transcribe. The hook stays decoupled from the store so
+  // it can be tested in isolation and matches the browser hook's
+  // shape exactly.
+  const userOpenaiKey = useAppStore((s) => s.settings.userOpenaiKey)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    ;(window as unknown as { __userOpenaiKey?: string | null }).__userOpenaiKey = userOpenaiKey
+  }, [userOpenaiKey])
+
   // ── Handle speech commands from store (start / stop / reset) ───────
   useEffect(() => {
     if (speechCommand === 'start') {
