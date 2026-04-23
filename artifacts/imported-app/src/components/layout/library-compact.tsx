@@ -213,16 +213,93 @@ export function BibleLookupCompact() {
   // live).
   const lastEnterRef = useRef<{ query: string; at: number }>({ query: '', at: 0 })
 
-  const goPrev = () => {
+  // Stage a verse into Preview without re-adding it to the schedule.
+  // The verse-list single-click handler intentionally adds to the
+  // schedule, but the ◀ ▶ arrows step through verses rapidly and we
+  // don't want every tap to spam a new schedule entry. So this
+  // lightweight helper just builds the slide and points Preview at
+  // it; Live is left alone.
+  const previewVerseOnly = useCallback(
+    (chap: BibleChapter, verseNum: number) => {
+      const v = chap.verses.find((x) => x.verse === verseNum)
+      if (!v) return
+      const reference = `${chap.book} ${chap.chapter}:${verseNum}`
+      const slide: Slide = {
+        id: `slide-${Date.now()}`,
+        type: 'verse',
+        title: reference,
+        subtitle: chap.translation,
+        content: v.text.split('\n').filter(Boolean),
+        background: settings.congregationScreenTheme,
+      }
+      const s = useAppStore.getState()
+      s.setSlides([slide])
+      s.setPreviewSlideIndex(0)
+      // Cache for verse history so it shows up in recents.
+      addToVerseHistory({
+        reference,
+        text: v.text,
+        translation: chap.translation,
+        book: chap.book,
+        chapter: chap.chapter,
+        verseStart: verseNum,
+      })
+      // Scroll the now-focused verse into view in the verse list.
+      requestAnimationFrame(() => {
+        const el = versesRef.current?.querySelector<HTMLElement>(`[data-verse="${verseNum}"]`)
+        el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      })
+    },
+    [settings.congregationScreenTheme, addToVerseHistory],
+  )
+
+  // ◀ / ▶ arrows step through individual verses (item #14). When the
+  // operator hits the start or end of a chapter we wrap into the
+  // adjacent chapter and focus its last / first verse so they can
+  // scrub through a passage without typing references.
+  const goPrev = useCallback(async () => {
     if (!chapter) return
+    const verses = chapter.verses
+    const current = activeVerse ?? verses[0].verse
+    const idx = verses.findIndex((v) => v.verse === current)
+    if (idx > 0) {
+      const prev = verses[idx - 1].verse
+      setActiveVerse(prev)
+      previewVerseOnly(chapter, prev)
+      return
+    }
+    // At verse 1 → load previous chapter, focus last verse.
     const p = getPrevChapter(chapter.book, chapter.chapter)
-    if (p) void loadChapter(p.book, p.chapter)
-  }
-  const goNext = () => {
+    if (!p) return
+    const res = await loadChapter(p.book, p.chapter)
+    if (res) {
+      const last = res.chapter.verses[res.chapter.verses.length - 1].verse
+      setActiveVerse(last)
+      previewVerseOnly(res.chapter, last)
+    }
+  }, [chapter, activeVerse, loadChapter, previewVerseOnly])
+
+  const goNext = useCallback(async () => {
     if (!chapter) return
+    const verses = chapter.verses
+    const current = activeVerse ?? verses[0].verse
+    const idx = verses.findIndex((v) => v.verse === current)
+    if (idx >= 0 && idx < verses.length - 1) {
+      const next = verses[idx + 1].verse
+      setActiveVerse(next)
+      previewVerseOnly(chapter, next)
+      return
+    }
+    // At last verse → roll into next chapter, focus verse 1.
     const n = getNextChapter(chapter.book, chapter.chapter)
-    if (n) void loadChapter(n.book, n.chapter)
-  }
+    if (!n) return
+    const res = await loadChapter(n.book, n.chapter)
+    if (res) {
+      const first = res.chapter.verses[0].verse
+      setActiveVerse(first)
+      previewVerseOnly(res.chapter, first)
+    }
+  }, [chapter, activeVerse, loadChapter, previewVerseOnly])
 
   // Thin wrapper kept for the inline verse-list onClick handlers.
   // Single click → preview only (live=false), double click → live.
@@ -403,7 +480,7 @@ export function BibleLookupCompact() {
             size="sm"
             variant="ghost"
             className="h-6 w-6 p-0 text-zinc-400 hover:text-amber-300 hover:bg-zinc-800"
-            title="Previous chapter"
+            title="Previous verse"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
           </Button>
@@ -420,7 +497,7 @@ export function BibleLookupCompact() {
             size="sm"
             variant="ghost"
             className="h-6 w-6 p-0 text-zinc-400 hover:text-amber-300 hover:bg-zinc-800"
-            title="Next chapter"
+            title="Next verse"
           >
             <ChevronRight className="h-3.5 w-3.5" />
           </Button>
