@@ -1,0 +1,175 @@
+NDI + OUTPUT SYNC (Core Behavior)
+
+All visual output settings applied in Display Mode must also apply to the NDI output in real time:
+
+Secondary screen ratio
+Text size (secondary screen)
+Typography & Appearance
+
+NDI should not have its own conflicting visual system. One source of truth. No double styling chaos.
+
+NDI OUTPUT MODE (Independent Control)
+
+Under NDI settings, add a Display Mode selector (NDI only):
+
+Full Screen
+Lower Third
+
+This must:
+
+Affect NDI output only
+NOT affect Output Display (which remains full screen always)
+DISPLAY CONSISTENCY (Preview vs Live)
+
+Right now your UI is lying to the user 😅
+
+Fix:
+
+Live Display frame = exact same dimensions as Preview
+Frame borders/guide box in Live = identical to Preview
+What you see in Preview = what goes Live (no surprises)
+AUDIO SYSTEM (This is where things usually break badly)
+
+Add global audio controls:
+
+Master Volume slider
+Microphone input control (gain + mute toggle)
+
+Behavior:
+
+Audio meter only moves when actual sound is present
+No ghost activity when nothing is playing
+
+Playback logic:
+
+Media plays silently inside app by default
+Audio still goes to:
+NDI output
+External outputs (like OBS Studio, vMix, Wirecast)
+
+Headphone icon:
+
+When OFF → silent in-app
+When ON → user hears playback locally
+
+NDI must:
+
+Always receive synced audio + video
+No mute bug when video is playing
+REMOVE NOISE (UI CLEANUP)
+
+Disable these notifications completely:
+
+“Connected”
+“Connected (poll)”
+
+No popups. No spam. This is production software, not a chat app.
+
+SMART UI INTERACTIONS
+
+Auto-close trays instantly after selection:
+
+Output Display selection
+Full Screen toggle
+Microphone selection
+
+No extra clicks. Speed matters.
+
+HISTORY & QUEUE CONTROL
+
+Add:
+
+Clear button for History
+Clear button for Queue
+
+One click = wipe clean.
+
+RESIZABLE PANELS (CRITICAL UX)
+
+Implement draggable layout:
+
+Click + hold between panels
+Drag to resize
+
+Behavior like:
+
+Wirecast
+vMix
+EasyWorship
+
+No fixed UI. Let users breathe.
+
+MEDIA PERSISTENCE
+
+Media column should:
+
+Save uploaded files on app exit
+Reload them automatically on next launch
+
+No one wants to re-import every time. That’s pain.
+
+BACKGROUND UPLOAD UI
+
+Current text:
+
+“Upload a background image for Bible display and slides, too big”
+
+Fix:
+
+Make it concise
+Keep UI clean
+
+Suggested:
+
+“Upload background for Bible & slides”
+
+SPEECH RECOGNITION
+
+Limit to:
+
+English only
+
+No multi-language confusion or false detection.
+
+BIBLE VERSE SYSTEM (This one needs precision)
+
+When verse is detected:
+
+Send to:
+Detected Verses column
+Chapter Navigator
+
+Interaction rules:
+
+Single click → send to:
+Preview
+Chapter Navigator
+Double click → send directly to:
+Live Display
+
+Also:
+
+Chapter Navigator should:
+Show next verse
+Allow quick navigation
+UPDATE SYSTEM (Currently broken)
+
+When user clicks Check Updates:
+
+Show clear status:
+“App is up to date” OR
+“Update available”
+
+Right now it’s dead silent—which feels like the button is fake.
+
+FINAL REALITY CHECK
+
+What you’re building is not just an app—it’s competing behavior-wise with tools like OBS Studio and vMix.
+
+That means:
+
+Zero ambiguity
+Zero laggy UI
+Zero “why didn’t that apply?” moments
+
+Everything must feel instant, predictable, and locked in.

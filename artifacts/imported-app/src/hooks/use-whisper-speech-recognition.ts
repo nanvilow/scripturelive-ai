@@ -1,26 +1,22 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createWavRecorder, type WavRecorder } from '@/lib/whisper-recorder'
 
 /**
  * Whisper-based speech recognition hook for the desktop (Electron) build.
  *
- * Mirrors the interface of `useSpeechRecognition` (the browser Web Speech
- * implementation) so `SpeechProvider` can pick between the two without
- * caring which engine is active.
+ * Supports TWO engines, switchable at runtime via window.__aiMode:
+ *   - 'openai': MediaRecorder → webm/opus → POST /api/transcribe with
+ *               X-OpenAI-Key header. Fast (~1 s/chunk), higher accuracy,
+ *               requires internet + paid key.
+ *   - 'base'  : Web Audio PCM capture → WAV bytes → IPC to the bundled
+ *               whisper.cpp (window.scriptureLive.whisper.transcribe).
+ *               Offline, no key, ~2-4 s/chunk, slightly lower accuracy.
  *
- * Strategy:
- *   - Open the user's chosen microphone via getUserMedia.
- *   - Record overlapping ~5 s audio chunks with MediaRecorder (webm/opus
- *     when available, mp4 on Safari).
- *   - POST each chunk to /api/transcribe (server-side OpenAI Whisper).
- *   - Stitch returned text into a running transcript and emit each
- *     newly-finalised chunk through the onResult callback so the
- *     SpeechProvider's verse-detection logic keeps working unchanged.
- *
- * This is the only path that actually transcribes inside the packaged
- * desktop app — Chromium's built-in webkitSpeechRecognition can never
- * reach Google's STT servers from Electron (no embedded API key).
+ * The failsafe in SpeechProvider auto-switches 'openai' → 'base' when
+ * the key is missing or the network refuses, so operators never get a
+ * dead-silent detection panel after a WiFi blip.
  */
 
 const CHUNK_MS = 4500 // length of each audio segment posted to Whisper
@@ -35,6 +31,23 @@ interface UseWhisperSpeechRecognitionReturn {
   startListening: (onResult?: (text: string) => void) => void
   stopListening: () => void
   resetTranscript: () => void
+}
+
+type AiMode = 'base' | 'openai'
+function currentAiMode(): AiMode {
+  const w = (typeof window !== 'undefined'
+    ? (window as unknown as { __aiMode?: AiMode })
+    : undefined)
+  return w?.__aiMode === 'openai' ? 'openai' : 'base'
+}
+
+interface WhisperBridge {
+  transcribe(buf: ArrayBuffer, language?: string): Promise<{ ok: boolean; text?: string; error?: string }>
+}
+function getWhisperBridge(): WhisperBridge | null {
+  if (typeof window === 'undefined') return null
+  const sl = (window as unknown as { scriptureLive?: { whisper?: WhisperBridge } }).scriptureLive
+  return sl?.whisper || null
 }
 
 function pickMimeType(): string {
@@ -64,19 +77,17 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
   const transcriptRef = useRef('')
   const streamRef = useRef<MediaStream | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
+  const wavRecorderRef = useRef<WavRecorder | null>(null)
   const chunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  // Each segment is uploaded independently; keep them ordered so we
-  // don't append a faster late response before an earlier one.
   const segmentSeqRef = useRef(0)
   const nextEmitSeqRef = useRef(0)
   const pendingByIdRef = useRef<Map<number, string>>(new Map())
   const stopRequestedRef = useRef(false)
-  // Session generation token — bumped on every stop / reset. In-flight
-  // upload promises captured at start time are checked against the
-  // current sessionRef before mutating state, so a chunk that resolves
-  // AFTER the operator hits stop or reset is silently dropped instead
-  // of bleeding into the next session's transcript.
   const sessionRef = useRef(0)
+  // Mode chosen at session start — if the operator flips modes mid-
+  // session we finish transcribing the in-flight chunks through the
+  // originally-chosen engine to avoid mixing.
+  const modeRef = useRef<AiMode>('base')
 
   const isSupported =
     typeof window !== 'undefined' &&
@@ -85,8 +96,6 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
     typeof MediaRecorder !== 'undefined'
 
   const resetTranscript = useCallback(() => {
-    // Bump the session token so any in-flight uploads from the previous
-    // session resolve into a no-op instead of repopulating the transcript.
     sessionRef.current += 1
     transcriptRef.current = ''
     setTranscript('')
@@ -94,8 +103,6 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
     nextEmitSeqRef.current = segmentSeqRef.current
   }, [])
 
-  // Drain any in-order completed segments and append to the running
-  // transcript + invoke onResult so verse detection runs.
   const drainOrdered = useCallback(() => {
     while (pendingByIdRef.current.has(nextEmitSeqRef.current)) {
       const id = nextEmitSeqRef.current
@@ -111,10 +118,7 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
     }
   }, [])
 
-  const uploadSegment = useCallback(async (blob: Blob, id: number, sessionAtCapture: number) => {
-    // Drop late responses from a previous session (operator already
-    // hit stop or reset). Without this, a slow Whisper response can
-    // append text into the next session's transcript.
+  const uploadOpenAi = useCallback(async (blob: Blob, id: number, sessionAtCapture: number) => {
     const stillCurrent = () => sessionRef.current === sessionAtCapture
     if (blob.size < MIN_BYTES) {
       if (!stillCurrent()) return
@@ -126,11 +130,6 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
       const fd = new FormData()
       fd.append('audio', blob, 'chunk.webm')
       fd.append('language', 'en')
-      // The renderer pulls the operator's OpenAI key from a global
-      // mirror that SpeechProvider keeps in sync with the Zustand
-      // store. We send it as a header so the same /api/transcribe
-      // route works in dev (env-based) and in the packaged desktop
-      // app (no env vars exist on the customer's PC).
       const win = window as unknown as { __userOpenaiKey?: string | null }
       const userKey = win.__userOpenaiKey || ''
       const headers: Record<string, string> = {}
@@ -138,9 +137,6 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
       const r = await fetch('/api/transcribe', { method: 'POST', body: fd, headers })
       if (!stillCurrent()) return
       if (!r.ok) {
-        // Try to surface the server's JSON error payload — operators
-        // need actionable text ("missing API key", "rate limit") not
-        // just the bare HTTP code.
         let detail = `HTTP ${r.status}`
         try {
           const j = (await r.json()) as { error?: string }
@@ -158,17 +154,45 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
       pendingByIdRef.current.set(id, '')
       drainOrdered()
       const msg = e instanceof Error ? e.message : String(e)
-      console.warn('[whisper] segment failed:', msg)
-      // Surface a soft error but keep listening — single chunk failures
-      // shouldn't kill the whole session.
+      console.warn('[whisper:openai] segment failed:', msg)
       setError(`Transcription chunk failed: ${msg}`)
+    }
+  }, [drainOrdered])
+
+  const uploadBase = useCallback(async (wav: ArrayBuffer, id: number, sessionAtCapture: number) => {
+    const stillCurrent = () => sessionRef.current === sessionAtCapture
+    if (wav.byteLength < MIN_BYTES) {
+      if (!stillCurrent()) return
+      pendingByIdRef.current.set(id, '')
+      drainOrdered()
+      return
+    }
+    const bridge = getWhisperBridge()
+    if (!bridge) {
+      if (!stillCurrent()) return
+      pendingByIdRef.current.set(id, '')
+      drainOrdered()
+      setError('Base Model is only available in the desktop app. Switch to OpenAI Mode to transcribe in this environment.')
+      return
+    }
+    try {
+      const r = await bridge.transcribe(wav, 'en')
+      if (!stillCurrent()) return
+      if (!r.ok) throw new Error(r.error || 'Local Whisper failed')
+      pendingByIdRef.current.set(id, (r.text || '').trim())
+      drainOrdered()
+    } catch (e) {
+      if (!stillCurrent()) return
+      pendingByIdRef.current.set(id, '')
+      drainOrdered()
+      const msg = e instanceof Error ? e.message : String(e)
+      console.warn('[whisper:base] segment failed:', msg)
+      setError(`Base Model chunk failed: ${msg}`)
     }
   }, [drainOrdered])
 
   const stopListening = useCallback(() => {
     stopRequestedRef.current = true
-    // Bump session BEFORE tearing down state so any in-flight upload
-    // promises see the new generation and bail out.
     sessionRef.current += 1
     onResultRef.current = undefined
     pendingByIdRef.current.clear()
@@ -182,6 +206,11 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
     if (rec && rec.state !== 'inactive') {
       try { rec.stop() } catch { /* ignore */ }
     }
+    const wav = wavRecorderRef.current
+    wavRecorderRef.current = null
+    if (wav) {
+      try { wav.stop() } catch { /* ignore */ }
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => { try { t.stop() } catch { /* ignore */ } })
       streamRef.current = null
@@ -193,27 +222,17 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
       setError('Audio recording is not available in this environment.')
       return
     }
-    // Re-entry guard: if a session is already running, fully tear it
-    // down before starting a new one. Without this a double-click on
-    // "Detect Verses Now" would open a second mic stream and a second
-    // chunk timer while orphaning the first set of refs.
-    if (recorderRef.current || streamRef.current || chunkTimerRef.current) {
+    if (recorderRef.current || wavRecorderRef.current || streamRef.current || chunkTimerRef.current) {
       stopListening()
     }
-    // Open a brand new session. Each upload promise captures this id
-    // and ignores its own resolution if the operator stops/resets.
     sessionRef.current += 1
     const sessionAtStart = sessionRef.current
+    modeRef.current = currentAiMode()
     onResultRef.current = onResult
     stopRequestedRef.current = false
     setError(null)
 
-    // Pull mic preference from window-level store getter to avoid a
-    // store dependency in this hook (kept symmetric with the browser
-    // hook). SpeechProvider will have already requested permission.
-    const win = window as unknown as {
-      __selectedMicrophoneId?: string | null
-    }
+    const win = window as unknown as { __selectedMicrophoneId?: string | null }
     const deviceId = win.__selectedMicrophoneId || undefined
 
     const constraints: MediaStreamConstraints = deviceId
@@ -221,58 +240,75 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
       : { audio: { echoCancellation: true, noiseSuppression: true } }
 
     navigator.mediaDevices.getUserMedia(constraints)
-      .then((stream) => {
+      .then(async (stream) => {
         if (stopRequestedRef.current) {
           stream.getTracks().forEach((t) => t.stop())
           return
         }
         streamRef.current = stream
-        const mimeType = pickMimeType()
-        let recorder: MediaRecorder
-        try {
-          recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : 'MediaRecorder unavailable'
-          setError(`Microphone capture failed: ${msg}`)
-          return
-        }
-        recorderRef.current = recorder
 
-        // The recorder fires `dataavailable` whenever we call
-        // `requestData()` (and once more on `stop`). We rotate the
-        // recorder every CHUNK_MS so each blob is a self-contained
-        // webm fragment Whisper can decode without context.
-        recorder.ondataavailable = (ev) => {
-          if (!ev.data || ev.data.size === 0) return
-          const id = segmentSeqRef.current++
-          uploadSegment(ev.data, id, sessionAtStart)
-        }
-        recorder.onerror = (ev) => {
-          const e = (ev as unknown as { error?: { message?: string } }).error
-          setError(`Recorder error: ${e?.message || 'unknown'}`)
-        }
-
-        recorder.start()
-        setIsListening(true)
-
-        chunkTimerRef.current = setInterval(() => {
-          const r = recorderRef.current
-          if (!r || stopRequestedRef.current) return
-          if (r.state === 'recording') {
-            try {
-              // Stop & restart so each blob is a complete container
-              // (Whisper rejects mid-stream webm fragments).
-              r.stop()
-            } catch { /* ignore */ }
-            const fresh = mimeType
-              ? new MediaRecorder(stream, { mimeType })
-              : new MediaRecorder(stream)
-            fresh.ondataavailable = recorder.ondataavailable
-            fresh.onerror = recorder.onerror
-            recorderRef.current = fresh
-            try { fresh.start() } catch { /* ignore */ }
+        if (modeRef.current === 'openai') {
+          // Existing MediaRecorder path — produces webm/opus chunks
+          // the /api/transcribe endpoint can hand straight to Whisper.
+          const mimeType = pickMimeType()
+          let recorder: MediaRecorder
+          try {
+            recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : 'MediaRecorder unavailable'
+            setError(`Microphone capture failed: ${msg}`)
+            return
           }
-        }, CHUNK_MS)
+          recorderRef.current = recorder
+          recorder.ondataavailable = (ev) => {
+            if (!ev.data || ev.data.size === 0) return
+            const id = segmentSeqRef.current++
+            uploadOpenAi(ev.data, id, sessionAtStart)
+          }
+          recorder.onerror = (ev) => {
+            const e = (ev as unknown as { error?: { message?: string } }).error
+            setError(`Recorder error: ${e?.message || 'unknown'}`)
+          }
+          recorder.start()
+          setIsListening(true)
+
+          chunkTimerRef.current = setInterval(() => {
+            const r = recorderRef.current
+            if (!r || stopRequestedRef.current) return
+            if (r.state === 'recording') {
+              try { r.stop() } catch { /* ignore */ }
+              const fresh = mimeType
+                ? new MediaRecorder(stream, { mimeType })
+                : new MediaRecorder(stream)
+              fresh.ondataavailable = recorder.ondataavailable
+              fresh.onerror = recorder.onerror
+              recorderRef.current = fresh
+              try { fresh.start() } catch { /* ignore */ }
+            }
+          }, CHUNK_MS)
+        } else {
+          // Base Mode: raw PCM via Web Audio → 16 kHz mono WAV →
+          // Electron IPC → bundled whisper.cpp.
+          try {
+            const wavRec = await createWavRecorder(stream)
+            wavRecorderRef.current = wavRec
+            setIsListening(true)
+            chunkTimerRef.current = setInterval(async () => {
+              const rec = wavRecorderRef.current
+              if (!rec || stopRequestedRef.current) return
+              try {
+                const buf = await rec.flush()
+                const id = segmentSeqRef.current++
+                uploadBase(buf, id, sessionAtStart)
+              } catch (e) {
+                console.warn('[whisper:base] flush failed:', e)
+              }
+            }, CHUNK_MS)
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            setError(`Base Model capture failed: ${msg}`)
+          }
+        }
       })
       .catch((e) => {
         const msg = e instanceof Error ? e.message : String(e)
@@ -285,7 +321,7 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
         }
         setIsListening(false)
       })
-  }, [isSupported, uploadSegment])
+  }, [isSupported, uploadOpenAi, uploadBase, stopListening])
 
   useEffect(() => {
     return () => { stopListening() }

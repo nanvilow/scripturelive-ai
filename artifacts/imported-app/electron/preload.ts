@@ -72,6 +72,12 @@ const api = {
       return () => ipcRenderer.removeListener('ndi:status', handler)
     },
   },
+  whisper: {
+    isAvailable: (): Promise<{ ok: boolean; reason?: string }> =>
+      ipcRenderer.invoke('whisper:is-available'),
+    transcribe: (wavBuffer: ArrayBuffer, language?: string): Promise<{ ok: boolean; text?: string; error?: string }> =>
+      ipcRenderer.invoke('whisper:transcribe', wavBuffer, language || 'en'),
+  },
   output: {
     openWindow: (
       opts?: { displayId?: number },
