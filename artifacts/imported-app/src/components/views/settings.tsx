@@ -950,82 +950,15 @@ export function SettingsView() {
         </CardContent>
       </Card>
 
-      {/* Bible Download & Upload */}
-      <Card className="bg-card border-border">
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-2">
-            <BookOpen className="h-5 w-5 text-primary" />
-            <div>
-              <CardTitle className="text-base">Bible Download & Import</CardTitle>
-              <CardDescription>Download Bibles from public sources or import your own</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <Label className="text-sm font-medium mb-2 block">Download Public Domain Bibles</Label>
-            <p className="text-xs text-muted-foreground mb-3">
-              These Bibles are in the public domain and free to use. Click to download as text files.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {[
-                { name: 'King James Version (KJV)', url: 'https://raw.githubusercontent.com/thiagobodruk/bible/master/json/en_kjv.json' },
-                { name: 'Webster Bible (WEB)', url: 'https://raw.githubusercontent.com/thiagobodruk/bible/master/json/en_webster.json' },
-                { name: 'American Standard (ASV)', url: 'https://raw.githubusercontent.com/thiagobodruk/bible/master/json/en_asv.json' },
-                { name: 'Young\'s Literal (YLT)', url: 'https://raw.githubusercontent.com/thiagobodruk/bible/master/json/en_ylt.json' },
-              ].map((bible) => (
-                <a
-                  key={bible.name}
-                  href={bible.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  download
-                  className={cn(
-                    'flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors border',
-                    'bg-muted border-border hover:bg-primary/10 hover:border-primary/30 hover:text-primary text-foreground'
-                  )}
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  {bible.name}
-                </a>
-              ))}
-            </div>
-          </div>
-
-          <Separator />
-
-          <div>
-            <Label className="text-sm font-medium mb-2 block">Import Bible File</Label>
-            <p className="text-xs text-muted-foreground mb-3">
-              Upload a Bible text file (.txt or .json). The app uses the bible-api.com service for verse lookups, which supports 17 translations automatically.
-            </p>
-            <div className="flex items-center gap-2">
-              <input
-                type="file"
-                accept=".txt,.json,.csv"
-                className="text-xs text-muted-foreground file:mr-2 file:py-1.5 file:px-3 file:rounded-md file:border file:border-border file:bg-muted file:text-xs file:font-medium hover:file:bg-primary/10 file:cursor-pointer"
-                onChange={(e) => {
-                  const file = e.target.files?.[0]
-                  if (file) {
-                    toast.success(`Imported: ${file.name}. The Bible lookup uses the online API (17 translations available).`)
-                    e.target.value = ''
-                  }
-                }}
-              />
-            </div>
-            <Card className="bg-blue-500/5 border-blue-500/20 mt-3">
-              <CardContent className="p-3 flex items-start gap-2">
-                <Eye className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
-                <p className="text-xs text-blue-300/80">
-                  Bible verse lookups are powered by the free bible-api.com service, which supports 17 English translations including KJV, NIV, ESV, NLT, and more. No local Bible file is needed for lookups.
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Offline Bible translations — full-Bible cache for no-internet services */}
+      {/* Offline Bible translations — full-Bible cache for no-internet
+          services. The old "Bible Download & Import" card was removed
+          (operator feedback v0.5.x): the public-domain JSON links were
+          confusing because they downloaded raw files the app didn't
+          ingest, and the file-upload widget only flashed a toast — it
+          never actually imported anything. The offline-translations
+          panel below already covers the real use case (caching whole
+          translations into the local DB), so the misleading card was
+          replaced rather than fixed. */}
       <BibleOfflineDownloads />
 
       {/* Reset */}
