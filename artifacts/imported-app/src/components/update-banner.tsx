@@ -6,6 +6,10 @@ import remarkBreaks from 'remark-breaks'
 import { useDesktop, type UpdateState } from '@/lib/use-electron'
 import { cleanReleaseNotes } from '@/lib/release-notes'
 
+// Mirrors the publish.owner/publish.repo block in electron-builder.yml.
+// Used to build a "View on GitHub" link to the canonical release page.
+const GITHUB_RELEASES_BASE = 'https://github.com/nanvilow/scripturelive-ai/releases'
+
 function formatPercent(p: number): string {
   if (!Number.isFinite(p)) return '0%'
   return `${Math.max(0, Math.min(100, Math.round(p)))}%`
@@ -19,6 +23,16 @@ function getNotes(state: UpdateState): string {
     return cleanReleaseNotes(state.releaseNotes)
   }
   return ''
+}
+
+function getReleaseUrl(state: UpdateState): string | null {
+  if (state.status !== 'available' && state.status !== 'downloaded') return null
+  const v = state.version?.trim()
+  if (!v) return `${GITHUB_RELEASES_BASE}/latest`
+  // electron-updater hands us bare semvers (e.g. "1.4.2"). GitHub release
+  // tags are conventionally prefixed with "v", but tolerate either form.
+  const tag = v.startsWith('v') ? v : `v${v}`
+  return `${GITHUB_RELEASES_BASE}/tag/${encodeURIComponent(tag)}`
 }
 
 export function UpdateBanner() {
@@ -69,6 +83,7 @@ export function UpdateBanner() {
   const showInstall = state.status === 'downloaded'
   const notes = getNotes(state)
   const hasNotes = notes.length > 0
+  const releaseUrl = getReleaseUrl(state)
 
   return (
     <div
@@ -130,6 +145,30 @@ export function UpdateBanner() {
               </ReactMarkdown>
             </div>
           )}
+          {releaseUrl && showNotes && (
+            <div className="mt-2 text-right">
+              <a
+                href={releaseUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                View full release notes on GitHub →
+              </a>
+            </div>
+          )}
+        </div>
+      )}
+      {releaseUrl && (!hasNotes || !showNotes) && (
+        <div className="border-t border-border/60 pt-2 text-right">
+          <a
+            href={releaseUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs font-medium text-primary hover:underline"
+          >
+            View full release notes on GitHub →
+          </a>
         </div>
       )}
     </div>
