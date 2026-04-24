@@ -93,10 +93,11 @@ const updater_1 = require("./updater");
 // ── Replit-hosted speech-to-text proxy ────────────────────────────────
 // The bundled Next.js standalone server in this Electron app forwards
 // every /api/transcribe request to this URL. The OpenAI key never lives
-// on the customer's PC — it sits as an env secret on the api-server
-// deployment on Replit. To rotate the deployment URL, change this
-// constant, run `pnpm version` + the build/push workflow, and ship.
-const DEFAULT_TRANSCRIBE_PROXY_URL = 'https://scripturelive-ai-api.replit.app/api/transcribe';
+// on the customer's PC — it sits as an env secret on the Replit
+// deployment that serves this URL. To rotate the deployment URL,
+// change this constant, run `pnpm version` + the build/push workflow,
+// and ship.
+const DEFAULT_TRANSCRIBE_PROXY_URL = 'https://scripturelive.replit.app/api/transcribe';
 const isDev = !electron_1.app.isPackaged;
 // ── Chromium command-line flags ───────────────────────────────────
 // Best-effort flags to coax Web Speech / mic capture into working in
@@ -423,6 +424,7 @@ function buildAppMenu() {
     const isMac = process.platform === 'darwin';
     const checkForUpdatesItem = {
         label: 'Check for Updates…',
+        accelerator: 'CmdOrCtrl+Shift+U',
         click: () => { void handleManualUpdateCheck(); },
     };
     const template = [];

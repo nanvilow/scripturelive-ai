@@ -66,11 +66,12 @@ import { setupAutoUpdater, runManualCheck, getUpdateState } from './updater'
 // ── Replit-hosted speech-to-text proxy ────────────────────────────────
 // The bundled Next.js standalone server in this Electron app forwards
 // every /api/transcribe request to this URL. The OpenAI key never lives
-// on the customer's PC — it sits as an env secret on the api-server
-// deployment on Replit. To rotate the deployment URL, change this
-// constant, run `pnpm version` + the build/push workflow, and ship.
+// on the customer's PC — it sits as an env secret on the Replit
+// deployment that serves this URL. To rotate the deployment URL,
+// change this constant, run `pnpm version` + the build/push workflow,
+// and ship.
 const DEFAULT_TRANSCRIBE_PROXY_URL =
-  'https://scripturelive-ai-api.replit.app/api/transcribe'
+  'https://scripturelive.replit.app/api/transcribe'
 
 const isDev = !app.isPackaged
 
