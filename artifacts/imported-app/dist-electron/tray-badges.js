@@ -63,7 +63,12 @@ const COLORS = {
  */
 async function renderBadgedIcon(baseIconPath, size, color) {
     const sharp = (await Promise.resolve().then(() => __importStar(require('sharp')))).default;
-    const dotDiameter = Math.max(5, Math.round(size * 0.5));
+    // Sized to be clearly visible at a glance without obscuring the
+    // base logo. 0.36 is the upper end of the typical OS-vendor unread-
+    // badge ratio (Slack, Outlook, Discord all sit in 0.30-0.40); going
+    // higher (we tried 0.50 first) buried the cross-and-book logo on
+    // both 16px tray icons and the macOS source size.
+    const dotDiameter = Math.max(5, Math.round(size * 0.36));
     const stroke = Math.max(1, Math.round(dotDiameter * 0.16));
     const offset = Math.max(0, Math.round(size * 0.02));
     const svg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${dotDiameter}" height="${dotDiameter}">` +
