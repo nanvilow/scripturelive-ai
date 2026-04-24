@@ -748,8 +748,12 @@ function PreviewCard() {
           (just chapter prev/next mirrors plus a spacer) since the
           authoritative chapter nav already lives in the header — we
           just need the height. */}
-      <div className="border-t border-zinc-800/60 px-3 py-2 flex items-center justify-end gap-3 bg-zinc-900/30 shrink-0">
-        <div className="h-7 flex items-center" aria-hidden />
+      <div
+        className="border-t border-zinc-800/60 px-3 py-2 flex items-center justify-end gap-3 bg-zinc-900/30 shrink-0"
+        aria-hidden="true"
+        role="presentation"
+      >
+        <div className="h-7" />
       </div>
       {/* Preview transport — Play / Pause + scrubbable seek bar. Only
           rendered for media-video preview slides; controls the actual

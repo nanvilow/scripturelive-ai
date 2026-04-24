@@ -79,3 +79,40 @@ Deferred to v0.5.5 (told user explicitly): NDI audio capture, media sound monito
   - **Failsafe in `SpeechProvider`:** writes `window.__aiMode` every render. If operator is on `openai` without a key → coerces to `base` + toast. If on `base` but the bundled model is missing AND the operator has a key → coerces to `openai` + toast. Detection never goes dark on a lost internet connection or a stale install.
   - **Latency trade-off (known):** Base ≈ 2–4 s per 5 s chunk on a typical PC vs ~1 s on OpenAI. Documented in the Settings card copy. v0.6 roadmap: switch Base to long-lived `whisper-server` for near-realtime streaming.
   - **No `.github/workflows/` edits needed** — the download script runs inside `pnpm run electron:build`, which the existing release-desktop workflow already invokes before electron-builder. User's hand-edited workflow file on GitHub is untouched.
+
+## v0.5.6–v0.5.23 (2026-04-23 → 2026-04-24) — Windows installer + launch fixes
+
+- v0.5.6–v0.5.18: progressive CI fixes for the GitHub Actions Windows
+  release pipeline (electron-builder version pin 33.4.11, signtoolOptions
+  schema, nested standalone path, --publish never, root vs artifact-level
+  electron-builder.yml drift).
+- v0.5.19–v0.5.22: fixed "Next standalone server missing" launch crash.
+  In the pnpm monorepo on Next 16, `outputFileTracingRoot` AND
+  `turbopack.root` must both point to the workspace root — accepting the
+  nested `.next/standalone/artifacts/imported-app/server.js` path. Updated
+  `electron/main.ts` startNextServer + icon resolution and
+  `electron-builder.yml` extraResources for `static/` and `public/` to land
+  in the nested location.
+- v0.5.23: aligned the **root** `electron-builder.yml` (used by the
+  redundant root rebuild whose `.exe` is the actual installer artifact) so
+  it ships the same nested layout. First-launch confirmed working.
+
+## v0.5.24 (2026-04-24) — Preview vs Live Display visual twins
+
+- **Home shell layout fix.** PreviewCard had no bottom transport strip
+  while LiveDisplayCard has an always-visible Mic / Vol / Prev / GoLive /
+  Next strip below its body. With both columns equal width in the
+  ResizablePanelGroup, Live Display's body ended up shorter than
+  Preview's by exactly the strip height, so the inner 16:9 stage frames
+  rendered at different sizes side-by-side. Operators reported the two
+  stages should be visual twins.
+- Fix: added a height-matched `aria-hidden`/`role="presentation"` empty
+  bottom strip to PreviewCard with the same `border-t / px-3 py-2 / h-7`
+  inner sizing as Live Display's. Pure vertical-rhythm symmetry — no new
+  controls or behaviour. Both card bodies now reserve identical space so
+  the staged-vs-live frames render at exactly the same size.
+- CI workflow optimization (commit `be6dbc9`) is in effect for v0.5.24+
+  — drops the duplicate "Build Next.js app" + "Package Windows
+  installer" steps and caches whisper-bundle + electron downloads.
+  Expected build time ~10 min (down from ~20 min).
+
