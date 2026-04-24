@@ -97,7 +97,7 @@ Deferred to v0.5.5 (told user explicitly): NDI audio capture, media sound monito
   redundant root rebuild whose `.exe` is the actual installer artifact) so
   it ships the same nested layout. First-launch confirmed working.
 
-## v0.5.27 (pending — 2026-04-24) — Single cloud Whisper engine
+## v0.5.27 (2026-04-24) — Single cloud Whisper engine
 
 - **Collapsed dual AI Detection Mode (Base ↔ OpenAI) into a single
   cloud-only Whisper path.** Operators no longer have to paste an OpenAI
