@@ -26,8 +26,12 @@ app.use(
   }),
 );
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// JSON / urlencoded body parsing — kept BEFORE the router. The
+// /api/transcribe route uses multer for multipart form-data, so it
+// will short-circuit before these JSON parsers ever see the body
+// (multer reads the raw stream itself).
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
 app.use("/api", router);
 

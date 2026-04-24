@@ -62,7 +62,15 @@ type NdiStartOptions = NdiServiceStartOptions & {
 }
 import { FrameCapture } from './frame-capture'
 import { setupAutoUpdater, runManualCheck, getUpdateState } from './updater'
-import { isWhisperAvailable, transcribeWav, diagnose as diagnoseWhisper, killActiveWhisperChildren } from './whisper-service'
+
+// ── Replit-hosted speech-to-text proxy ────────────────────────────────
+// The bundled Next.js standalone server in this Electron app forwards
+// every /api/transcribe request to this URL. The OpenAI key never lives
+// on the customer's PC — it sits as an env secret on the api-server
+// deployment on Replit. To rotate the deployment URL, change this
+// constant, run `pnpm version` + the build/push workflow, and ship.
+const DEFAULT_TRANSCRIBE_PROXY_URL =
+  'https://scripturelive-ai-api.replit.app/api/transcribe'
 
 const isDev = !app.isPackaged
 
@@ -220,6 +228,11 @@ async function startNextServer(): Promise<string> {
       NODE_ENV: 'production',
       DATABASE_URL: `file:${dbPath}`,
       SCRIPTURELIVE_UPLOADS_DIR: uploadsDir,
+      // Tell the standalone Next.js /api/transcribe route where to
+      // forward audio chunks when no local OPENAI_API_KEY is set
+      // (the only case in a customer's installed build).
+      TRANSCRIBE_PROXY_URL:
+        process.env.TRANSCRIBE_PROXY_URL || DEFAULT_TRANSCRIBE_PROXY_URL,
       ELECTRON_RUN_AS_NODE: '1',
     },
     stdio: 'pipe',
@@ -687,45 +700,6 @@ function setupIpc() {
     return { ok: true }
   })
 
-  // ── Local Whisper IPC ───────────────────────────────────────────
-  // Base Mode calls into the bundled whisper.cpp binary. We expose
-  // two handlers: availability probe (used by Settings to show the
-  // model status badge) and actual transcription per audio chunk.
-  ipcMain.handle('whisper:is-available', () => {
-    const r = isWhisperAvailable()
-    return r.ok ? { ok: true } : { ok: false, reason: r.reason }
-  })
-
-  ipcMain.handle('whisper:transcribe', async (_e, wavBuffer: ArrayBuffer, language: string) => {
-    try {
-      const buf = Buffer.from(wavBuffer)
-      const text = await transcribeWav(buf, language || 'en')
-      return { ok: true, text }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error('[whisper] transcribe failed:', message)
-      return { ok: false, error: message }
-    }
-  })
-
-  // Operator-facing self-test: lists every file in whisper-bundle,
-  // runs `whisper-cli --help` to prove the binary is actually
-  // launchable on this machine, and returns the structured result so
-  // the Settings panel can render it verbatim. Surfaces the missing
-  // DLL / wrong arch / corrupt model class of bugs that otherwise
-  // collapse into the unhelpful "whisper-cli exited with code 1"
-  // toast at runtime.
-  ipcMain.handle('whisper:diagnose', async () => {
-    try {
-      const d = await diagnoseWhisper()
-      return { ok: true, diagnostics: d }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error('[whisper] diagnose failed:', message)
-      return { ok: false, error: message }
-    }
-  })
-
   ndi.on('frame', (count) => {
     broadcastNdiStatus({ ...ndi.getStatus(), frameCount: count })
   })
@@ -846,11 +820,7 @@ app.whenReady().then(async () => {
 //      thread alive until NDIlib_destroy is called. Without it the
 //      Electron process itself can hang on exit.
 //
-//   3. In-flight whisper-cli children (heavyweight 58 MB model loaded
-//      in RAM) won't die with the parent on every Windows version —
-//      we kill them explicitly via the whisper-service registry.
-//
-//   4. Async cleanup handlers can race with Electron's quit sequence;
+//   3. Async cleanup handlers can race with Electron's quit sequence;
 //      a watchdog forces app.exit(0) after 4 s if anything hangs.
 //
 // shutdown() is idempotent — it runs at most once even if both
@@ -896,13 +866,6 @@ function shutdown(): void {
   // requests immediately. taskkill is fire-and-forget on Windows.
   forceKillNextTree()
 
-  // Kill any in-flight whisper-cli children so the bundled binary
-  // doesn't keep the model resident.
-  try {
-    const n = killActiveWhisperChildren()
-    if (n > 0) console.log(`[shutdown] killed ${n} in-flight whisper child${n === 1 ? '' : 'ren'}`)
-  } catch { /* ignore */ }
-
   // Tear down frame capture + NDI sender. These are async but we
   // intentionally do NOT await them — the watchdog above guarantees
   // exit either way, and waiting risks hanging on a stuck native call.
@@ -932,23 +895,6 @@ app.on('before-quit', () => {
   // window-all-closed.
   shutdown()
 })
-
-// Bug #2 — surface whisper bundle availability at app boot so the
-// operator can see binary status in the main-process log without
-// opening DevTools. We only log here; the renderer's Settings ▸ AI
-// Mode card still owns the user-facing diagnostics rendering.
-app.whenReady().then(() => {
-  try {
-    const r = isWhisperAvailable()
-    if (r.ok) {
-      console.log('[whisper] startup probe OK — local Base Model is available')
-    } else {
-      console.warn('[whisper] startup probe FAILED:', r.reason)
-    }
-  } catch (e) {
-    console.warn('[whisper] startup probe threw:', e instanceof Error ? e.message : String(e))
-  }
-}).catch(() => { /* whenReady never rejects in practice; this is paranoia */ })
 
 app.on('window-all-closed', () => {
   // Windows-only app per spec — never linger after the last window

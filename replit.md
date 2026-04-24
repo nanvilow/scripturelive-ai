@@ -97,6 +97,65 @@ Deferred to v0.5.5 (told user explicitly): NDI audio capture, media sound monito
   redundant root rebuild whose `.exe` is the actual installer artifact) so
   it ships the same nested layout. First-launch confirmed working.
 
+## v0.5.27 (pending — 2026-04-24) — Single cloud Whisper engine
+
+- **Collapsed dual AI Detection Mode (Base ↔ OpenAI) into a single
+  cloud-only Whisper path.** Operators no longer have to paste an OpenAI
+  key, no longer hit "model file missing" errors on Base, and there is no
+  more letter-dropping audio path feeding the live broadcast.
+- **New: api-server `/api/transcribe` route** at
+  `artifacts/api-server/src/routes/transcribe.ts`. Multer (memory, 25 MB)
+  + `openai` SDK on `gpt-4o-mini-transcribe`, English-locked, biased
+  toward Bible vocabulary by a system prompt, silence short-circuit for
+  sub-1 KB chunks. Reads `OPENAI_API_KEY` (Replit Deployment Secret) so
+  the desktop installer ships with NO keys.
+- **Next.js `/api/transcribe` is now a thin proxy.** If
+  `OPENAI_API_KEY`/`AI_INTEGRATIONS_OPENAI_*` env exists it calls OpenAI
+  directly (dev convenience); otherwise it forwards the multipart body
+  upstream to `TRANSCRIBE_PROXY_URL`. Electron main injects
+  `TRANSCRIBE_PROXY_URL=https://scripturelive-ai-api.replit.app/api/transcribe`
+  into the spawned Next standalone server so the user PC needs zero env
+  vars. **TODO before "ship it": confirm/update that hostname after
+  deploying api-server.**
+- **Renderer hook rewritten cloud-only** (`src/hooks/use-whisper-speech-recognition.ts`).
+  Single MediaRecorder loop, 4500 ms chunks, ≥6 KB to upload (silence
+  drop). Hardened error paths: stream tracks now stop cleanly if
+  MediaRecorder construction throws or chunk-rotate fails mid-session
+  (no more stuck mic capture).
+- **Settings UI purged.** Removed AiDetectionModeCard +
+  UpgradeToOpenAiDialog + OpenAiKeyField + BaseModelDiagnosticsButton +
+  WhisperDiagnosticsView from `src/components/views/settings.tsx`.
+  Pruned now-unused lucide icons. Speech Recognition card now shows just
+  microphone selection.
+- **Store fields removed** from `src/lib/store.ts`: `aiMode`,
+  `userOpenaiKey`, `whisperAutoFallbackToOpenAI` plus their defaults.
+  Operators with old localStorage values keep them harmlessly until
+  next reset; nothing reads them anymore.
+- **Electron whisper-service GONE.** Deleted
+  `electron/whisper-service.ts`, dropped `whisper:*` IPC handlers from
+  `electron/main.ts` + the `whisper` bridge from `electron/preload.ts`,
+  removed `killActiveWhisperChildren` from shutdown sequence and the
+  startup probe log line. Recompiled `dist-electron/main.js` +
+  `preload.js` so they no longer `require("./whisper-service")`.
+- **Build pipeline trimmed:** `package.json` `electron:build` no longer
+  runs `scripts/download-whisper-assets.mjs`; both
+  `artifacts/imported-app/electron-builder.yml` and the root
+  `electron-builder.yml` no longer ship `electron/whisper-bundle/` as
+  `extraResources`. Installer drops ~70 MB.
+- **Verified end-to-end.** api-server `/api/healthz` → `{status:ok}`;
+  `/api/transcribe` with bad audio → 500 with mapped OpenAI error;
+  silent micro-chunk → `{text:""}`; missing field → 400. The earlier
+  "letter-drop" garble in NDI/SDR output (#4 "his purpose"→"hi purpo e")
+  came from the local Base engine being driven by a 16 kHz
+  ScriptProcessorNode — that path is gone, so the live broadcaster
+  receives clean Bible text only.
+- **Known follow-ups (not yet shipped):** public proxy hardening
+  (per-IP rate limit, restricted CORS, optional shared-secret token);
+  optional cleanup of dead `scripts/download-whisper-assets.mjs` +
+  `electron/whisper-bundle/` directory + the CI cache step that warmed
+  it. None of these block "ship it" — they tighten the operational
+  surface area after launch.
+
 ## v0.5.24 (2026-04-24) — Preview vs Live Display visual twins
 
 - **Home shell layout fix.** PreviewCard had no bottom transport strip

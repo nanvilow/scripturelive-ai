@@ -132,35 +132,6 @@ export interface AppSettings {
   referenceTextShadow?: boolean
   referenceTextScale?: number
   referenceTextAlign?: 'left' | 'center' | 'right' | 'justify'
-  // ── Bug #1C — auto-fallback to OpenAI on low-confidence chunks ──
-  // When the operator is on Base Mode and a chunk's heuristic
-  // confidence falls below the threshold (transcript-cleaner.ts),
-  // the renderer re-sends the same WAV to /api/transcribe so the
-  // operator sees the cleaner OpenAI text instead of the fragmented
-  // base output. No-op when no OpenAI key is configured. Optional /
-  // undefined → defaults to true so existing installs benefit
-  // immediately without a settings migration.
-  whisperAutoFallbackToOpenAI?: boolean
-  // User-supplied OpenAI API key for the Whisper transcription
-  // pipeline. In dev/Replit the route falls back to the integration
-  // proxy creds (AI_INTEGRATIONS_OPENAI_*); on the user's installed
-  // desktop build those env vars don't exist, so the key entered here
-  // is the only way speech-to-text works. Stored locally only — never
-  // sent to anything other than api.openai.com via the local route.
-  userOpenaiKey: string | null
-  // ── AI Detection Mode ──────────────────────────────────────────
-  // Which speech engine drives live scripture detection:
-  //   'base'   – bundled local Whisper (whisper.cpp + ggml-base.en-q5_1),
-  //              offline, no API key, slower (~2-4s per 5s chunk).
-  //   'openai' – api.openai.com/v1/audio/transcriptions via the user's
-  //              OpenAI key. Faster (~1s) and higher accuracy on accents
-  //              and noisy rooms. Requires internet + paid API usage.
-  // Defaults to 'base' so a fresh install works offline immediately,
-  // with a gentle nudge inviting the operator to upgrade for better
-  // accuracy. The failsafe in SpeechProvider auto-falls-back to
-  // 'base' if 'openai' is selected but the key is missing / invalid /
-  // offline, so a lost internet connection never kills detection.
-  aiMode: 'base' | 'openai'
   // ── NDI-only display mode ──────────────────────────────────────
   // The secondary screen and NDI used to share `displayMode`, which
   // forced operators to choose ONE layout for both. Production
@@ -458,12 +429,6 @@ const defaultSettings: AppSettings = {
   referenceTextShadow: undefined,
   referenceTextScale: undefined,
   referenceTextAlign: undefined,
-  // Bug #1C — default ON so Base Mode operators with a configured key
-  // get OpenAI cleanup automatically when whisper.cpp produces a
-  // fragmented chunk. Operators without a key see no behaviour change.
-  whisperAutoFallbackToOpenAI: true,
-  userOpenaiKey: null,
-  aiMode: 'base',
   congregationScreenTheme: 'minimal',
   // English-only per v0.5.5 spec — the multi-language picker was a
   // footgun because Whisper's Base model is English-only and the

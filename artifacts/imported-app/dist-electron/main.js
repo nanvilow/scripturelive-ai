@@ -90,7 +90,13 @@ function fatalError(stage, err) {
 }
 const frame_capture_1 = require("./frame-capture");
 const updater_1 = require("./updater");
-const whisper_service_1 = require("./whisper-service");
+// ── Replit-hosted speech-to-text proxy ────────────────────────────────
+// The bundled Next.js standalone server in this Electron app forwards
+// every /api/transcribe request to this URL. The OpenAI key never lives
+// on the customer's PC — it sits as an env secret on the api-server
+// deployment on Replit. To rotate the deployment URL, change this
+// constant, run `pnpm version` + the build/push workflow, and ship.
+const DEFAULT_TRANSCRIBE_PROXY_URL = 'https://scripturelive-ai-api.replit.app/api/transcribe';
 const isDev = !electron_1.app.isPackaged;
 // ── Chromium command-line flags ───────────────────────────────────
 // Best-effort flags to coax Web Speech / mic capture into working in
@@ -246,6 +252,10 @@ async function startNextServer() {
             NODE_ENV: 'production',
             DATABASE_URL: `file:${dbPath}`,
             SCRIPTURELIVE_UPLOADS_DIR: uploadsDir,
+            // Tell the standalone Next.js /api/transcribe route where to
+            // forward audio chunks when no local OPENAI_API_KEY is set
+            // (the only case in a customer's installed build).
+            TRANSCRIBE_PROXY_URL: process.env.TRANSCRIBE_PROXY_URL || DEFAULT_TRANSCRIBE_PROXY_URL,
             ELECTRON_RUN_AS_NODE: '1',
         },
         stdio: 'pipe',
@@ -359,11 +369,16 @@ async function handleManualUpdateCheck() {
         });
     }
     else if (state.status === 'available') {
+        // Auto-download is OFF (operator-driven download flow). The
+        // renderer's UpdateNotifier will show an "Update Available — Click
+        // To Download" popup at the same moment, so this dialog just
+        // confirms the check found something and points the operator at
+        // the popup. Keeps every download decision inside the app.
         await showDialog({
             type: 'info',
             title: 'Check for Updates',
             message: 'Update available',
-            detail: `Version ${state.version} is downloading in the background. You'll be prompted to restart when it's ready.`,
+            detail: `Version ${state.version} is ready to download. Click Download in the popup to get it.`,
             buttons: ['OK'],
         });
     }
@@ -392,17 +407,16 @@ async function handleManualUpdateCheck() {
         }
     }
     else if (state.status === 'error') {
-        const choice = await showDialog({
+        // No browser-redirect button — operator wants the entire update
+        // flow to stay inside the app. Surface the friendly message and
+        // let the operator try Check for Updates again later.
+        await showDialog({
             type: 'warning',
             title: 'Check for Updates',
             message: "Couldn't check for updates",
-            detail: `${state.message}\n\nYou can download the latest installer from the releases page instead.`,
-            buttons: ['Open releases page', 'OK'],
-            defaultId: 1,
-            cancelId: 1,
+            detail: `${state.message}\n\nTry Check for Updates again when you have a stable internet connection.`,
+            buttons: ['OK'],
         });
-        if (choice.response === 0)
-            (0, updater_1.openReleasesPage)();
     }
 }
 function buildAppMenu() {
@@ -429,16 +443,18 @@ function buildAppMenu() {
             ],
         });
     }
-    template.push({ role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' }, {
-        role: 'help',
-        submenu: [
-            ...(isMac ? [] : [checkForUpdatesItem, { type: 'separator' }]),
-            {
-                label: 'View Releases on GitHub',
-                click: () => { (0, updater_1.openReleasesPage)(); },
-            },
-        ],
-    });
+    template.push({ role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' }, 
+    // Help menu only appears on non-Mac platforms. On macOS the
+    // Check for Updates… item already lives under the app menu, and
+    // since "View Releases on GitHub" was removed (browser redirect,
+    // conflicts with the in-app update flow), the Help submenu would
+    // be empty on Mac. Skipping it altogether avoids a blank menu.
+    ...(isMac
+        ? []
+        : [{
+                role: 'help',
+                submenu: [checkForUpdatesItem],
+            }]));
     electron_1.Menu.setApplicationMenu(electron_1.Menu.buildFromTemplate(template));
 }
 function broadcastNdiStatus(status) {
@@ -702,44 +718,6 @@ function setupIpc() {
         });
         return { ok: true };
     });
-    // ── Local Whisper IPC ───────────────────────────────────────────
-    // Base Mode calls into the bundled whisper.cpp binary. We expose
-    // two handlers: availability probe (used by Settings to show the
-    // model status badge) and actual transcription per audio chunk.
-    electron_1.ipcMain.handle('whisper:is-available', () => {
-        const r = (0, whisper_service_1.isWhisperAvailable)();
-        return r.ok ? { ok: true } : { ok: false, reason: r.reason };
-    });
-    electron_1.ipcMain.handle('whisper:transcribe', async (_e, wavBuffer, language) => {
-        try {
-            const buf = Buffer.from(wavBuffer);
-            const text = await (0, whisper_service_1.transcribeWav)(buf, language || 'en');
-            return { ok: true, text };
-        }
-        catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            console.error('[whisper] transcribe failed:', message);
-            return { ok: false, error: message };
-        }
-    });
-    // Operator-facing self-test: lists every file in whisper-bundle,
-    // runs `whisper-cli --help` to prove the binary is actually
-    // launchable on this machine, and returns the structured result so
-    // the Settings panel can render it verbatim. Surfaces the missing
-    // DLL / wrong arch / corrupt model class of bugs that otherwise
-    // collapse into the unhelpful "whisper-cli exited with code 1"
-    // toast at runtime.
-    electron_1.ipcMain.handle('whisper:diagnose', async () => {
-        try {
-            const d = await (0, whisper_service_1.diagnose)();
-            return { ok: true, diagnostics: d };
-        }
-        catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            console.error('[whisper] diagnose failed:', message);
-            return { ok: false, error: message };
-        }
-    });
     ndi.on('frame', (count) => {
         broadcastNdiStatus({ ...ndi.getStatus(), frameCount: count });
     });
@@ -876,11 +854,7 @@ electron_1.app.whenReady().then(async () => {
 //      thread alive until NDIlib_destroy is called. Without it the
 //      Electron process itself can hang on exit.
 //
-//   3. In-flight whisper-cli children (heavyweight 58 MB model loaded
-//      in RAM) won't die with the parent on every Windows version —
-//      we kill them explicitly via the whisper-service registry.
-//
-//   4. Async cleanup handlers can race with Electron's quit sequence;
+//   3. Async cleanup handlers can race with Electron's quit sequence;
 //      a watchdog forces app.exit(0) after 4 s if anything hangs.
 //
 // shutdown() is idempotent — it runs at most once even if both
@@ -936,14 +910,6 @@ function shutdown() {
     // Kill the Next.js server tree FIRST so it stops accepting new
     // requests immediately. taskkill is fire-and-forget on Windows.
     forceKillNextTree();
-    // Kill any in-flight whisper-cli children so the bundled binary
-    // doesn't keep the model resident.
-    try {
-        const n = (0, whisper_service_1.killActiveWhisperChildren)();
-        if (n > 0)
-            console.log(`[shutdown] killed ${n} in-flight whisper child${n === 1 ? '' : 'ren'}`);
-    }
-    catch { /* ignore */ }
     // Tear down frame capture + NDI sender. These are async but we
     // intentionally do NOT await them — the watchdog above guarantees
     // exit either way, and waiting risks hanging on a stuck native call.
