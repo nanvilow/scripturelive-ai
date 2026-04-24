@@ -131,6 +131,103 @@ The Apple app-specific password can't be inspected programmatically, so the
 workflow always emits a notice reminding the team to re-issue it whenever the
 owning Apple ID password is rotated.
 
+### Defensive signature check at publish time
+
+The cert-expiry workflow gives the team early warning, but if a rotation is
+missed anyway the build will quietly produce **unsigned** installers and
+historically would still have published them — end users would only find out
+when SmartScreen / Gatekeeper warnings started landing in support tickets.
+
+To close that gap, two jobs gate the GitHub Release:
+
+- **`verify-macos`** runs on `macos-latest`, downloads any `mac-installer*`
+  artifacts, mounts each `.dmg`, and runs the full Apple verification stack
+  on the bundled `.app`:
+  - `codesign --verify --deep --strict` (the seal is intact and the bundle
+    is signed),
+  - `spctl -a -vvv --type execute` (Gatekeeper would accept it on first
+    launch — this is the check that proves notarization succeeded), and
+  - `xcrun stapler validate` (a notarization ticket is stapled, so first
+    launch works even when the user is offline).
+
+  When the build doesn't produce any macOS artifacts (the current state),
+  the job logs a `::notice::` and exits cleanly so it doesn't block
+  Windows-only releases.
+
+- **`release`** runs on `ubuntu-latest`, depends on both `build` and
+  `verify-macos`, and verifies every downloaded `.exe` with
+  `osslsigncode verify` against the runner's system CA bundle. Unsigned
+  binaries, malformed Authenticode blobs, and signatures whose chain
+  doesn't validate all fail the step **before** `softprops/action-gh-release`
+  is invoked.
+
+When either job fails, it logs a clear `::error::` message that points back
+at this README's
+[Certificate expiry warnings & rotation](#certificate-expiry-warnings--rotation)
+section. The Windows build artifacts (`windows-installer`,
+`windows-latest-yml`, `windows-blockmap`) keep their 14-day retention, so
+debugging the unsigned build doesn't require a rebuild.
+
+#### Intentionally publishing an unsigned release
+
+For one-off dev/testing releases where unsigned installers are acceptable,
+there are three opt-outs (any one is sufficient — both jobs honor all
+three):
+
+1. **Workflow input** — trigger from **Actions → Release ScriptureLive AI
+   Desktop → Run workflow** and tick the **Publish even if installers fail
+   signature verification** box (the `allow_unsigned` input).
+2. **Annotated tag message** — include the literal string `[unsigned-release]`
+   in the annotated tag's message, e.g.
+
+   ```bash
+   git tag -a v0.2.0-rc1 -m "Pre-release smoke build [unsigned-release]"
+   git push origin v0.2.0-rc1
+   ```
+
+   Both jobs check out the repo and read the tag annotation via
+   `git for-each-ref --format='%(contents)' refs/tags/<tag>`.
+3. **Tagged-commit message** — include `[unsigned-release]` in the commit
+   the tag points at. Useful when releasing via lightweight tags or when
+   you prefer the marker to live in commit history. Both jobs read the
+   message deterministically via `git log -1 --format=%B '<tag>^{commit}'`,
+   which dereferences both annotated and lightweight tags to their
+   underlying commit (so this works regardless of whether the workflow was
+   triggered by a tag push or by `workflow_dispatch`).
+
+In every case both jobs log a `::warning::` explaining which opt-out fired,
+so the unsigned status is still visible at a glance in the Actions UI.
+
+#### Artifact naming contract (fail-closed)
+
+The `verify-macos` job is fail-closed in two ways:
+
+1. **Inventory before download.** Before touching `actions/download-artifact`,
+   the job calls the GitHub Actions REST API
+   (`GET /repos/{repo}/actions/runs/{run_id}/artifacts`, requires
+   `permissions.actions: read`) and filters the result for names matching
+   `^mac-installer($|-)`. The job's behavior is deterministic from there:
+   - Inventory finds **zero** matching artifacts → log `::notice::`,
+     `has_mac=false`, skip download and verification cleanly. This is the
+     legitimate path for Windows-only releases.
+   - Inventory finds **≥1** matching artifact → `has_mac=true`, the
+     download step runs **without** `continue-on-error`, and the verify
+     step asserts that at least one `.dmg` ended up in `dist/` before
+     looping. Any transient download failure or empty payload fails the
+     job (and therefore the release).
+2. **Single source of truth for Mac artifacts.** The `release` job
+   intentionally does **not** download or publish `mac-installer*`
+   artifacts — only `verify-macos` is allowed to handle them. If you later
+   add `dist/*.dmg` to the publish file list, do the download inside
+   `verify-macos` (where they're already verified) or wire up a separate
+   fail-closed download in `release` first.
+
+Whenever you add a macOS build step, name its `actions/upload-artifact`
+either exactly `mac-installer` or with a `mac-installer-` prefix (e.g.
+`mac-installer-arm64`, `mac-installer-x64`) so the inventory regex picks
+it up automatically. Any other name will be invisible to the inventory
+step and the macOS guard will not engage.
+
 ### Rotating `WIN_CSC_LINK` (Windows Authenticode)
 
 1. Order or renew the certificate from your CA (DigiCert, Sectigo, SSL.com,

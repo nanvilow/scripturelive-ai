@@ -10,6 +10,11 @@ on:
         description: "Optional tag name to publish under"
         required: false
         type: string
+      allow_unsigned:
+        description: "Publish even if installers fail signature verification (intentional dev/unsigned releases only)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -81,12 +86,206 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  verify-macos:
+    name: Verify macOS notarization
+    needs: build
+    runs-on: macos-latest
+    # `actions: read` is required so the inventory step can call the
+    # `/runs/<id>/artifacts` API to deterministically detect mac-installer
+    # uploads (instead of inferring from a possibly-failed download).
+    permissions:
+      contents: read
+      actions: read
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    steps:
+      # We need the repo (and its tags) checked out so the opt-out step can
+      # read annotated-tag messages — `actions/download-artifact` alone
+      # doesn't give us git history.
+      - name: Checkout (for tag annotation reads)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch tag annotations
+        run: git fetch --tags --force
+
+      - name: Inventory mac-installer artifacts in this run
+        id: inventory
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Ask the Actions API directly which artifacts this workflow run
+          # produced. This is the only way to distinguish "build didn't
+          # upload any mac-installer artifacts" (legitimate Windows-only
+          # release) from "download-artifact had a transient failure"
+          # (must fail closed). `actions/download-artifact` with
+          # continue-on-error conflates the two and is fail-OPEN.
+          names=$(gh api -H "Accept: application/vnd.github+json" \
+            --paginate \
+            "/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
+            --jq '.artifacts[].name' \
+            | { grep -E '^mac-installer($|-)' || true; })
+
+          if [ -z "$names" ]; then
+            echo "has_mac=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=No macOS installers in this release::Build did not upload any mac-installer* artifacts; spctl/stapler verification has nothing to do."
+          else
+            echo "has_mac=true" >> "$GITHUB_OUTPUT"
+            echo "Mac-installer artifacts present in this run:"
+            printf '  - %s\n' $names
+          fi
+
+      # Note: NO continue-on-error here. If the build uploaded a
+      # mac-installer artifact (per the inventory step) but the download
+      # fails for transient reasons, we want the job — and the release —
+      # to fail rather than silently ship un-notarized DMGs.
+      - name: Download macOS installers
+        if: steps.inventory.outputs.has_mac == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mac-installer*
+          path: dist
+          merge-multiple: true
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Determine unsigned-release opt-out
+        id: optout
+        env:
+          DISPATCH_FLAG: ${{ inputs.allow_unsigned }}
+          TAG_NAME: ${{ steps.tag.outputs.name }}
+        run: |
+          opt_out=false
+          reason=""
+          if [ "$DISPATCH_FLAG" = "true" ]; then
+            opt_out=true
+            reason="workflow_dispatch input allow_unsigned=true"
+          elif [ -n "$TAG_NAME" ]; then
+            # Read the marker from git directly (not from the event payload —
+            # `github.event.head_commit.message` is not reliably populated for
+            # tag-push events, especially when the tag points at a commit that
+            # isn't HEAD of any branch). `<tag>^{commit}` dereferences both
+            # annotated and lightweight tags to their underlying commit.
+            commit_msg=$(git log -1 --format='%B' "$TAG_NAME^{commit}" 2>/dev/null || true)
+            tag_msg=$(git for-each-ref --format='%(contents)' "refs/tags/$TAG_NAME" 2>/dev/null || true)
+            if printf '%s' "$commit_msg" | grep -qE '\[unsigned-release\]'; then
+              opt_out=true
+              reason="commit pointed to by $TAG_NAME contains [unsigned-release] marker"
+            elif printf '%s' "$tag_msg" | grep -qE '\[unsigned-release\]'; then
+              # Annotated tags carry their own message separate from the
+              # commit — bypass via
+              # `git tag -a vX.Y.Z -m "... [unsigned-release]"`.
+              opt_out=true
+              reason="annotated tag message for $TAG_NAME contains [unsigned-release] marker"
+            fi
+          fi
+          if [ "$opt_out" = "true" ]; then
+            echo "::warning title=Unsigned release allowed::Skipping macOS notarization verification ($reason). End users will see Gatekeeper warnings."
+          fi
+          echo "value=$opt_out" >> "$GITHUB_OUTPUT"
+
+      - name: Verify macOS code-signing + notarization
+        if: steps.inventory.outputs.has_mac == 'true' && steps.optout.outputs.value != 'true'
+        env:
+          INVENTORY_HAS_MAC: ${{ steps.inventory.outputs.has_mac }}
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+
+          ROTATION_DOC=".github/workflows/README.md → 'Certificate expiry warnings & rotation'"
+          fail() {
+            echo "::error title=Un-notarized macOS installer in release::$1"
+            echo "::error::Rotate the Apple Developer ID certificate / app-specific password following $ROTATION_DOC."
+            echo "::error::To intentionally publish an unsigned/dev build, re-run via workflow_dispatch with allow_unsigned=true, or include the marker [unsigned-release] in either the tagged commit's message or the annotated tag message."
+            exit 1
+          }
+
+          dmg_files=(dist/*.dmg)
+          # Cross-job assertion: if the inventory step saw mac-installer
+          # artifacts but no .dmg made it to disk, something went wrong with
+          # the download (or the artifact contained no DMG). Fail closed —
+          # never let an inventoried-but-unverified mac artifact through.
+          if [ ${#dmg_files[@]} -eq 0 ]; then
+            fail "Inventory reported mac-installer artifacts in this run but no .dmg files were extracted to dist/. Refusing to publish — investigate the download step."
+          fi
+
+          for f in "${dmg_files[@]}"; do
+            name=$(basename "$f")
+            echo "::group::Verify $name"
+
+            # Mount the DMG read-only and locate the .app inside it. The .app
+            # is what Gatekeeper actually evaluates on first launch.
+            mount_output=$(hdiutil attach -nobrowse -readonly -noautoopen "$f")
+            mountpoint=$(printf '%s\n' "$mount_output" | tail -n1 | awk -F'\t' '{print $NF}' | sed 's/^[[:space:]]*//')
+            if [ -z "$mountpoint" ] || [ ! -d "$mountpoint" ]; then
+              echo "::endgroup::"
+              fail "Failed to mount $name (hdiutil output: $mount_output)."
+            fi
+
+            # Always tear the mount down, even on failure paths.
+            cleanup() { hdiutil detach "$mountpoint" -force >/dev/null 2>&1 || true; }
+
+            app_path=$(find "$mountpoint" -maxdepth 2 -name '*.app' -print -quit)
+            if [ -z "$app_path" ]; then
+              cleanup
+              echo "::endgroup::"
+              fail "$name does not contain a .app bundle."
+            fi
+
+            # 1. The bundle is signed and the seal is consistent (no tampering).
+            if ! codesign --verify --deep --strict --verbose=2 "$app_path"; then
+              cleanup
+              echo "::endgroup::"
+              fail "$name's .app bundle is unsigned or its code-signature seal is broken."
+            fi
+
+            # 2. Gatekeeper accepts it. With Apple notarization in place this
+            #    prints `source=Notarized Developer ID`. Unsigned or
+            #    un-notarized bundles produce a non-zero exit and a clear
+            #    rejection reason in stderr.
+            if ! spctl -a -vvv --type execute "$app_path"; then
+              cleanup
+              echo "::endgroup::"
+              fail "$name's .app bundle was rejected by Gatekeeper (likely missing notarization)."
+            fi
+
+            # 3. The notarization ticket is stapled (so first launch works
+            #    even when the user is offline). Apple's notarytool flow
+            #    inside electron-builder staples post-notarization, so a
+            #    missing ticket means notarization was skipped or failed.
+            if ! xcrun stapler validate "$app_path"; then
+              cleanup
+              echo "::endgroup::"
+              fail "$name has no notarization ticket stapled to its .app bundle."
+            fi
+
+            cleanup
+            echo "::endgroup::"
+          done
+
   release:
     name: Publish GitHub Release
-    needs: build
+    needs: [build, verify-macos]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
+      # Needed so the opt-out step can read annotated-tag messages.
+      - name: Checkout (for tag annotation reads)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch tag annotations
+        run: git fetch --tags --force
+
       - name: Download installer
         uses: actions/download-artifact@v4
         with:
@@ -107,6 +306,11 @@ jobs:
           path: dist
         continue-on-error: true
 
+      # macOS installers (if any) are gated entirely by the verify-macos job;
+      # they are NOT downloaded or published from this job. If a future change
+      # adds .dmg files to the publish list below, do it in verify-macos (where
+      # they're already verified) or wire up a fail-closed download here too.
+
       - name: List artifacts
         run: ls -la dist
 
@@ -118,6 +322,87 @@ jobs:
           else
             echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Determine unsigned-release opt-out
+        id: optout
+        env:
+          DISPATCH_FLAG: ${{ inputs.allow_unsigned }}
+          TAG_NAME: ${{ steps.tag.outputs.name }}
+        run: |
+          opt_out=false
+          reason=""
+          if [ "$DISPATCH_FLAG" = "true" ]; then
+            opt_out=true
+            reason="workflow_dispatch input allow_unsigned=true"
+          elif [ -n "$TAG_NAME" ]; then
+            # Read the marker from git directly (not from the event payload —
+            # `github.event.head_commit.message` is not reliably populated for
+            # tag-push events, especially when the tag points at a commit that
+            # isn't HEAD of any branch). `<tag>^{commit}` dereferences both
+            # annotated and lightweight tags to their underlying commit.
+            commit_msg=$(git log -1 --format='%B' "$TAG_NAME^{commit}" 2>/dev/null || true)
+            tag_msg=$(git for-each-ref --format='%(contents)' "refs/tags/$TAG_NAME" 2>/dev/null || true)
+            if printf '%s' "$commit_msg" | grep -qE '\[unsigned-release\]'; then
+              opt_out=true
+              reason="commit pointed to by $TAG_NAME contains [unsigned-release] marker"
+            elif printf '%s' "$tag_msg" | grep -qE '\[unsigned-release\]'; then
+              # Also honor `[unsigned-release]` in the annotated tag message
+              # (`git tag -a -m "... [unsigned-release]"`).
+              opt_out=true
+              reason="annotated tag message for $TAG_NAME contains [unsigned-release] marker"
+            fi
+          fi
+          if [ "$opt_out" = "true" ]; then
+            echo "::warning title=Unsigned release allowed::Skipping installer signature verification ($reason). End users will see SmartScreen / Gatekeeper warnings."
+          fi
+          echo "value=$opt_out" >> "$GITHUB_OUTPUT"
+
+      - name: Install signature verification tools
+        if: steps.optout.outputs.value != 'true'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends osslsigncode
+
+      - name: Verify Windows installer signatures
+        if: steps.optout.outputs.value != 'true'
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+
+          ROTATION_DOC=".github/workflows/README.md → 'Certificate expiry warnings & rotation'"
+          fail() {
+            echo "::error title=Unsigned installer in release::$1"
+            echo "::error::Rotate the signing certificates following $ROTATION_DOC."
+            echo "::error::To intentionally publish an unsigned/dev build, re-run via workflow_dispatch with allow_unsigned=true, or include the marker [unsigned-release] in either the HEAD commit message or the annotated tag message."
+            echo "::error::The unsigned build artifacts have been retained on this run for 14 days (windows-installer / windows-latest-yml / windows-blockmap) so you can debug without rebuilding."
+            exit 1
+          }
+
+          # macOS notarization is gated separately by the verify-macos job,
+          # which this job depends on, so we only need to re-verify .exe
+          # files here. We still fail closed if no installers reached the
+          # release job at all.
+          exe_files=(dist/*.exe)
+          if [ ${#exe_files[@]} -eq 0 ]; then
+            fail "No .exe installers were found in dist/ to verify — refusing to publish an empty Windows release."
+          fi
+
+          for f in "${exe_files[@]}"; do
+            name=$(basename "$f")
+            echo "::group::Verify Authenticode signature: $name"
+            # `osslsigncode verify` exits non-zero for unsigned files,
+            # malformed signatures, or chain validation failures. We pin it
+            # to the system CA bundle so signatures from public CAs
+            # (DigiCert, Sectigo, SSL.com, etc.) validate end-to-end.
+            if ! osslsigncode verify \
+                  -CAfile /etc/ssl/certs/ca-certificates.crt \
+                  -TSA-CAfile /etc/ssl/certs/ca-certificates.crt \
+                  -in "$f"; then
+              echo "::endgroup::"
+              fail "$name is not Authenticode-signed (or its signature failed verification)."
+            fi
+            echo "::endgroup::"
+          done
 
       - name: Compute checksums
         run: |
