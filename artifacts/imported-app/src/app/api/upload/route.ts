@@ -161,6 +161,45 @@ export async function GET(request: NextRequest) {
   }
 }
 
+/**
+ * Cheap existence probe for a single uploaded file.
+ *
+ * The Media panel calls this before staging an item on Preview/Live so
+ * a file that vanished mid-session (operator cleared their AppData
+ * uploads folder out-of-band, an antivirus quarantined it, the disk
+ * detached, …) can never be cued on air. We stat the file only — no
+ * body, no buffering — so the round-trip is sub-millisecond on the
+ * loopback Next server inside Electron.
+ *
+ * Returns 200 with `Content-Length` of the file when it exists, 404
+ * otherwise. Mirrors the GET ?file=… semantics so client code can use
+ * the same URL with `method: 'HEAD'`.
+ */
+export async function HEAD(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const filename = searchParams.get('file')
+    if (!filename || !isValidFilename(filename)) {
+      return new NextResponse(null, { status: 400 })
+    }
+    const filepath = join(UPLOADS_DIR, filename)
+    try {
+      const info = await stat(filepath)
+      return new NextResponse(null, {
+        status: 200,
+        headers: {
+          'Content-Type': getContentType(filename),
+          'Content-Length': info.size.toString(),
+        },
+      })
+    } catch {
+      return new NextResponse(null, { status: 404 })
+    }
+  } catch {
+    return new NextResponse(null, { status: 500 })
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const ctype = (request.headers.get('content-type') || '').toLowerCase()

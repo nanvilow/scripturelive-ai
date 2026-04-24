@@ -38,6 +38,7 @@ import {
   Upload,
   Film,
   ImageIcon,
+  ImageOff,
   Play,
   Pause,
   SkipBack,
@@ -1861,15 +1862,23 @@ function MediaItemsView({
   mode,
   selectedId,
   stagedItemId,
+  brokenIds,
   onItemClick,
   onRemove,
+  onBroken,
 }: {
   items: MediaItem[]
   mode: MediaViewModeId
   selectedId: string | null
   stagedItemId: string | null
+  // Set of item ids whose underlying file failed to load mid-session.
+  // Such tiles render a "missing" placeholder + a prominent Remove
+  // affordance, and their click handler is no-op'd in the parent so
+  // the operator can't accidentally stage a dead file on air.
+  brokenIds: ReadonlySet<string>
   onItemClick: (m: MediaItem) => void
   onRemove: (id: string) => void
+  onBroken: (id: string) => void
 }) {
   // ── Thumb grid (Large / Medium / Small Icons) ────────────────────
   // The three icon modes share one render branch and just swap the
@@ -1884,37 +1893,50 @@ function MediaItemsView({
         {items.map((m) => {
           const active = m.id === selectedId
           const staged = m.id === stagedItemId
+          const broken = brokenIds.has(m.id)
           return (
             <div
               key={m.id}
               onClick={() => onItemClick(m)}
               className={cn(
                 'group relative rounded border bg-zinc-950 overflow-hidden cursor-pointer transition-colors',
-                active
+                broken
+                  ? 'border-rose-500/50 ring-1 ring-rose-500/30'
+                  : active
                   ? 'border-fuchsia-500/60 ring-1 ring-fuchsia-500/40'
                   : 'border-zinc-800 hover:border-zinc-700',
               )}
               title={
-                staged
+                broken
+                  ? 'File missing on disk — remove this entry'
+                  : staged
                   ? 'Click again to send to live'
                   : 'Click to replace preview with this media'
               }
             >
               <div className="aspect-video bg-black flex items-center justify-center">
-                {m.kind === 'video' ? (
+                {broken ? (
+                  <div className="flex flex-col items-center gap-1 text-rose-400">
+                    <ImageOff className="h-5 w-5" />
+                    <span className="text-[8px] uppercase tracking-wider font-bold">File missing</span>
+                  </div>
+                ) : m.kind === 'video' ? (
                   <video
                     src={m.url}
                     muted
                     playsInline
                     preload="metadata"
                     className="w-full h-full object-contain"
+                    onError={() => onBroken(m.id)}
                   />
                 ) : (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={m.url}
                     alt={m.name}
+                    decoding="async"
                     className="w-full h-full object-contain"
+                    onError={() => onBroken(m.id)}
                   />
                 )}
               </div>
@@ -1963,32 +1985,40 @@ function MediaItemsView({
         {items.map((m) => {
           const active = m.id === selectedId
           const staged = m.id === stagedItemId
+          const broken = brokenIds.has(m.id)
           return (
             <div
               key={m.id}
               onClick={() => onItemClick(m)}
               className={cn(
                 'group relative flex items-center gap-2 rounded border bg-zinc-950 overflow-hidden cursor-pointer transition-colors p-1.5',
-                active
+                broken
+                  ? 'border-rose-500/50 ring-1 ring-rose-500/30'
+                  : active
                   ? 'border-fuchsia-500/60 ring-1 ring-fuchsia-500/40'
                   : 'border-zinc-800 hover:border-zinc-700',
               )}
             >
               <div className="w-12 h-12 shrink-0 bg-black flex items-center justify-center rounded overflow-hidden">
-                {m.kind === 'video' ? (
+                {broken ? (
+                  <ImageOff className="h-5 w-5 text-rose-400" />
+                ) : m.kind === 'video' ? (
                   <video
                     src={m.url}
                     muted
                     playsInline
                     preload="metadata"
                     className="w-full h-full object-cover"
+                    onError={() => onBroken(m.id)}
                   />
                 ) : (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={m.url}
                     alt={m.name}
+                    decoding="async"
                     className="w-full h-full object-cover"
+                    onError={() => onBroken(m.id)}
                   />
                 )}
               </div>
@@ -2003,7 +2033,11 @@ function MediaItemsView({
                     <ImageIcon className="h-2.5 w-2.5 text-fuchsia-300" />
                   )}
                   {m.kind === 'video' ? 'Video' : 'Image'}
-                  {staged && (
+                  {broken ? (
+                    <span className="ml-1 px-1 rounded bg-rose-600/80 text-white uppercase tracking-wider font-bold text-[8px]">
+                      Missing
+                    </span>
+                  ) : staged && (
                     <span className="ml-1 px-1 rounded bg-amber-500/80 text-black uppercase tracking-wider font-bold text-[8px]">
                       In Preview
                     </span>
@@ -2038,6 +2072,7 @@ function MediaItemsView({
         {items.map((m) => {
           const active = m.id === selectedId
           const staged = m.id === stagedItemId
+          const broken = brokenIds.has(m.id)
           return (
             <button
               type="button"
@@ -2045,18 +2080,26 @@ function MediaItemsView({
               onClick={() => onItemClick(m)}
               className={cn(
                 'group flex items-center gap-2 px-1.5 py-1 rounded text-left transition-colors',
-                active
+                broken
+                  ? 'bg-rose-500/10 text-rose-300'
+                  : active
                   ? 'bg-fuchsia-500/15 text-fuchsia-200'
                   : 'text-zinc-300 hover:bg-zinc-900',
               )}
             >
-              {m.kind === 'video' ? (
+              {broken ? (
+                <ImageOff className="h-3 w-3 text-rose-400 shrink-0" />
+              ) : m.kind === 'video' ? (
                 <Film className="h-3 w-3 text-fuchsia-300 shrink-0" />
               ) : (
                 <ImageIcon className="h-3 w-3 text-fuchsia-300 shrink-0" />
               )}
-              <span className="text-[10px] truncate flex-1">{m.name}</span>
-              {staged && (
+              <span className={cn('text-[10px] truncate flex-1', broken && 'line-through opacity-70')}>{m.name}</span>
+              {broken ? (
+                <span className="text-[8px] uppercase tracking-wider font-bold px-1 rounded bg-rose-600/80 text-white">
+                  Missing
+                </span>
+              ) : staged && (
                 <span className="text-[8px] uppercase tracking-wider font-bold px-1 rounded bg-amber-500/80 text-black">
                   Preview
                 </span>
@@ -2088,6 +2131,7 @@ function MediaItemsView({
       {items.map((m) => {
         const active = m.id === selectedId
         const staged = m.id === stagedItemId
+        const broken = brokenIds.has(m.id)
         return (
           <button
             type="button"
@@ -2095,19 +2139,27 @@ function MediaItemsView({
             onClick={() => onItemClick(m)}
             className={cn(
               'group w-full grid grid-cols-[1fr_5rem_4rem_1.25rem] gap-2 px-1.5 py-1 items-center text-left transition-colors',
-              active
+              broken
+                ? 'bg-rose-500/10 text-rose-300'
+                : active
                 ? 'bg-fuchsia-500/15 text-fuchsia-200'
                 : 'text-zinc-300 hover:bg-zinc-900',
             )}
           >
             <span className="flex items-center gap-1.5 truncate">
-              {m.kind === 'video' ? (
+              {broken ? (
+                <ImageOff className="h-3 w-3 text-rose-400 shrink-0" />
+              ) : m.kind === 'video' ? (
                 <Film className="h-3 w-3 text-fuchsia-300 shrink-0" />
               ) : (
                 <ImageIcon className="h-3 w-3 text-fuchsia-300 shrink-0" />
               )}
-              <span className="truncate">{m.name}</span>
-              {staged && (
+              <span className={cn('truncate', broken && 'line-through opacity-70')}>{m.name}</span>
+              {broken ? (
+                <span className="text-[8px] uppercase tracking-wider font-bold px-1 rounded bg-rose-600/80 text-white shrink-0">
+                  Missing
+                </span>
+              ) : staged && (
                 <span className="text-[8px] uppercase tracking-wider font-bold px-1 rounded bg-amber-500/80 text-black shrink-0">
                   Preview
                 </span>
@@ -2166,12 +2218,30 @@ function MediaCard() {
   const items = mediaLibrary
   const fitById = mediaFitById as Record<string, MediaFit>
 
+  // Track items whose file failed to load mid-session — populated
+  // by <video>/<img> onError handlers in the grid below. We keep the
+  // entries in the library (so the operator sees them and can
+  // explicitly remove them) but render them with a "Missing" badge
+  // and refuse to stage them on air.
+  const [brokenIds, setBrokenIds] = useState<ReadonlySet<string>>(new Set())
+  const markBroken = useCallback((id: string) => {
+    setBrokenIds((prev) => {
+      if (prev.has(id)) return prev
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
+  }, [])
+
   // On mount, ask the server which uploads still exist on disk and
   // prune any persisted entries whose underlying file is gone (e.g.
-  // the operator wiped the uploads/ folder, or the file was lost in
-  // a desktop reinstall). Anything still on disk stays — we never
-  // synthesise placeholder names for files we don't recognise so the
-  // grid stays clean.
+  // the file was lost when an older build wrote uploads under the
+  // install dir and the auto-updater wiped them, or the operator
+  // cleared %APPDATA%/scripture-live-ai/uploads). Anything still on
+  // disk stays — we never synthesise placeholder names for files we
+  // don't recognise so the grid stays clean. When we DO drop entries,
+  // the operator gets a single explanatory toast so the shrunken
+  // library doesn't look like a bug.
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -2186,8 +2256,15 @@ function MediaCard() {
           const fname = m2 ? decodeURIComponent(m2[1]) : ''
           return !fname || onDisk.has(fname)
         })
-        if (surviving.length !== mediaLibrary.length) {
+        const dropped = mediaLibrary.length - surviving.length
+        if (dropped > 0) {
           setMediaLibrary(surviving)
+          toast.info(
+            dropped === 1
+              ? 'Removed 1 media item whose file was no longer on disk.'
+              : `Removed ${dropped} media items whose files were no longer on disk.`,
+            { duration: 6000 },
+          )
         }
       } catch {
         /* offline first launch — keep persisted entries as-is */
@@ -2311,8 +2388,48 @@ function MediaCard() {
   // 1st click on an item → wipe the preview and replace it with the
   // selected media (preview-only, not on air). 2nd click on the same
   // item → push that media to the live display + secondary screen.
+  //
+  // Broken items are refused at the door so the operator can never
+  // accidentally cue a missing file on air. We do TWO checks:
+  //   (a) the cached `brokenIds` set populated by thumbnail onError
+  //       handlers in grid/tiles modes — instant rejection, no
+  //       network round-trip.
+  //   (b) a fresh HEAD probe to /api/upload?file=… — covers list and
+  //       details modes (no thumbnails to error out earlier) AND the
+  //       race where a file vanished after a successful thumbnail
+  //       load. The probe hits the loopback Next server inside
+  //       Electron so it's sub-millisecond.
   const onItemClick = useCallback(
-    (item: MediaItem) => {
+    async (item: MediaItem) => {
+      if (brokenIds.has(item.id)) {
+        toast.error(
+          `${item.name} can't be played — its file is missing. Remove it and re-upload.`,
+        )
+        return
+      }
+      // Pre-stage existence probe. Network errors are treated as
+      // "probably fine" — the slide-renderer and SSE broadcast will
+      // surface a real failure if the asset is genuinely gone, and
+      // we'd rather not block a cue on a transient blip.
+      try {
+        const probe = await fetch(item.url, { method: 'HEAD', cache: 'no-store' })
+        if (!probe.ok) {
+          // Only the explicit 404 means "the file is gone for good" —
+          // mark it broken so subsequent clicks fail instantly without
+          // another round-trip. For other non-2xx statuses (transient
+          // 5xx, 403, etc.) we still refuse the cue but don't poison
+          // the entry permanently.
+          if (probe.status === 404) markBroken(item.id)
+          toast.error(
+            probe.status === 404
+              ? `${item.name} can't be played — its file is missing. Remove it and re-upload.`
+              : `${item.name} can't be played right now (server returned ${probe.status}). Try again or re-upload.`,
+          )
+          return
+        }
+      } catch {
+        /* probe failed — proceed; downstream will catch a real error */
+      }
       setSelectedId(item.id)
       if (stagedItemId !== item.id) {
         // First click: stage it on the preview pane only.
@@ -2345,6 +2462,8 @@ function MediaCard() {
       setLiveSlideIndex,
       setIsLive,
       setHasShownContent,
+      brokenIds,
+      markBroken,
     ]
   )
 
@@ -2535,8 +2654,10 @@ function MediaCard() {
             mode={mediaViewMode}
             selectedId={selectedId}
             stagedItemId={stagedItemId}
+            brokenIds={brokenIds}
             onItemClick={onItemClick}
             onRemove={remove}
+            onBroken={markBroken}
           />
         )}
       </div>
