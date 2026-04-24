@@ -200,6 +200,76 @@ uploaded, and those artifacts (`windows-installer`, `windows-latest-yml`,
 `windows-blockmap`) keep their 14-day retention so debugging that path
 doesn't require a rebuild.
 
+#### Pinning the expected publisher
+
+The three checks above prove the installer is signed by *some* publicly-
+trusted CA. They do **not** prove *which* publisher signed it — so a
+dev/test certificate, a leaked certificate, or the wrong company's
+certificate accidentally loaded into `WIN_CSC_LINK` / `MAC_CSC_LINK`
+would still pass every check, and end users would download an installer
+that runs without warnings but is signed by the wrong identity.
+
+To close that gap, set two repository **variables** (Settings → Secrets
+and variables → Actions → **Variables** tab — *not* Secrets, since these
+are non-sensitive and should be visible in the workflow UI):
+
+| Variable name                   | Value                                                                                                |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `EXPECTED_WIN_PUBLISHER_CN`     | Subject Common Name on the Windows Authenticode certificate, exactly as the CA issued it (e.g. `ScriptureLive AI Inc`). |
+| `EXPECTED_MAC_SIGNING_IDENTITY` | The leaf `Authority=` line from `codesign --display --verbose=4`, e.g. `Developer ID Application: ScriptureLive AI Inc (ABCDE12345)`. |
+
+When set, the three signature checks pin the publisher in three places
+(matching the same defense-in-depth split the rest of this section uses —
+build-side on Windows, build-side on macOS, release-side on Linux):
+
+- **Build-time Windows check** extracts the leaf cert's CN via
+  `Get-AuthenticodeSignature`'s
+  `SignerCertificate.GetNameInfo(SimpleName, false)` and fails if it
+  doesn't equal `EXPECTED_WIN_PUBLISHER_CN`.
+- **`verify-macos`** runs `codesign --display --verbose=4` against the
+  bundled `.app`, takes the first `Authority=` line (the leaf), and
+  fails if it doesn't equal `EXPECTED_MAC_SIGNING_IDENTITY`. (`spctl`
+  passes for any valid notarized Developer ID build, including the
+  wrong company's, so this is the check that actually pins identity on
+  the Mac side.)
+- **Release-time Windows check** parses the `Subject:` DN from
+  `osslsigncode verify` output, extracts `/CN=…`, and fails if it
+  doesn't equal `EXPECTED_WIN_PUBLISHER_CN`. Different OS, different
+  tool, different CA store than the build-time check above.
+
+When either variable is **unset**, the corresponding check logs a
+`::notice::` and accepts any signed installer. This keeps fresh forks
+(which haven't ordered a code-signing cert yet) from breaking, but means
+the pin only protects you once you've configured it. Set them as soon as
+the cert is in place.
+
+##### Updating the pin during a publisher-name change
+
+If you ever rename the signing organization (rebrand, M&A, or you switch
+from one Developer Team to another), the new certificate the CA issues
+will have a different Subject CN / `Authority=` leaf, and the existing
+pin will start failing the build. To roll over cleanly:
+
+1. Order the new certificate as usual and load it into the
+   `WIN_CSC_LINK` (or `MAC_CSC_LINK`) **secret** following
+   [Rotating `WIN_CSC_LINK`](#rotating-win_csc_link-windows-authenticode)
+   / [Rotating `MAC_CSC_LINK`](#rotating-mac_csc_link-apple-developer-id-application).
+2. Run a workflow_dispatch build (no tag) and read the
+   `Signer CN (extracted):` / `Leaf Authority (extracted):` line that
+   the verify step prints in the job log. That is the new value
+   verbatim — copy it (whitespace included).
+3. In **Settings → Secrets and variables → Actions → Variables**, edit
+   `EXPECTED_WIN_PUBLISHER_CN` (or `EXPECTED_MAC_SIGNING_IDENTITY`) and
+   paste the new value.
+4. Trigger another workflow_dispatch build to confirm the pinned check
+   now passes.
+
+If you want to keep both old and new certs valid in parallel during a
+transition, do the swap in step 3 right before you cut the first release
+that uses the new cert, *not* before — pin failures are loud (red
+workflow runs) and you don't want them firing on releases that are still
+signing with the previous cert.
+
 #### Intentionally publishing an unsigned release
 
 For one-off dev/testing releases where unsigned installers are acceptable,

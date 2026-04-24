@@ -126,15 +126,33 @@ jobs:
       - name: Verify Windows installer signatures (build-time)
         if: steps.optout.outputs.value != 'true'
         shell: pwsh
+        env:
+          EXPECTED_WIN_PUBLISHER_CN: ${{ vars.EXPECTED_WIN_PUBLISHER_CN }}
         run: |
           $ErrorActionPreference = 'Stop'
           $rotationDoc = ".github/workflows/README.md -> 'Certificate expiry warnings & rotation'"
+          $pinDoc = ".github/workflows/README.md -> 'Defensive signature check at publish time' -> 'Pinning the expected publisher'"
 
           function Fail([string]$msg) {
             Write-Host "::error title=Unsigned installer in build::$msg"
             Write-Host "::error::Rotate the signing certificates following $rotationDoc."
             Write-Host "::error::To intentionally publish an unsigned/dev build, re-run via workflow_dispatch with allow_unsigned=true, or include the marker [unsigned-release] in either the tagged commit's message or the annotated tag message."
             exit 1
+          }
+
+          function FailPublisher([string]$msg) {
+            Write-Host "::error title=Wrong signing publisher in build::$msg"
+            Write-Host "::error::Update the EXPECTED_WIN_PUBLISHER_CN repo variable (or the WIN_CSC_LINK secret) following $pinDoc."
+            exit 1
+          }
+
+          $expectedCn = $env:EXPECTED_WIN_PUBLISHER_CN
+          if ([string]::IsNullOrWhiteSpace($expectedCn)) {
+            Write-Host "::notice title=Publisher pin not configured::Repo variable EXPECTED_WIN_PUBLISHER_CN is unset; signed installers from any publicly-trusted CA will be accepted. Set it to your CN (e.g. 'ScriptureLive AI Inc') to fail the build if the wrong cert is loaded into WIN_CSC_LINK. See $pinDoc."
+            $expectedCn = $null
+          } else {
+            $expectedCn = $expectedCn.Trim()
+            Write-Host "Expected Windows publisher CN: $expectedCn"
           }
 
           $exes = @(Get-ChildItem -Path 'artifacts/imported-app/release' -Filter '*.exe' -File -ErrorAction SilentlyContinue)
@@ -224,6 +242,25 @@ jobs:
             if (-not $timestamped) {
               Write-Host "::endgroup::"
               Fail "$($exe.Name) was signed but is missing an RFC3161 timestamp counter-signature. The installer would stop validating the day the signing certificate expires (Get-AuthenticodeSignature.TimeStamperCertificate is null). Public timestamp servers (DigiCert, Sectigo, GlobalSign, etc.) are occasionally unavailable; re-run the build, or if a specific TSA is configured in electron-builder check that it returned successfully."
+            }
+
+            # Publisher pin: confirm the signer Subject CN matches the
+            # expected publisher. `GetNameInfo(SimpleName, false)` returns
+            # the leaf cert's CN as a plain string, regardless of how the
+            # rest of the DN is escaped/ordered.
+            if ($expectedCn -and $sig.SignerCertificate) {
+              $actualCn = $sig.SignerCertificate.GetNameInfo(
+                [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,
+                $false)
+              if ([string]::IsNullOrWhiteSpace($actualCn)) {
+                Write-Host "::endgroup::"
+                FailPublisher "$($exe.Name) is signed but the signer Subject CN could not be extracted (raw subject: $($sig.SignerCertificate.Subject))."
+              }
+              Write-Host "Signer CN (extracted): $actualCn"
+              if ($actualCn.Trim() -ne $expectedCn) {
+                Write-Host "::endgroup::"
+                FailPublisher "$($exe.Name) is signed by '$actualCn' but EXPECTED_WIN_PUBLISHER_CN is pinned to '$expectedCn'. A dev/test, leaked, or wrong-company certificate may have been loaded into WIN_CSC_LINK."
+              }
             }
 
             Write-Host "::endgroup::"
@@ -363,17 +400,30 @@ jobs:
         if: steps.inventory.outputs.has_mac == 'true' && steps.optout.outputs.value != 'true'
         env:
           INVENTORY_HAS_MAC: ${{ steps.inventory.outputs.has_mac }}
+          EXPECTED_MAC_SIGNING_IDENTITY: ${{ vars.EXPECTED_MAC_SIGNING_IDENTITY }}
         run: |
           set -uo pipefail
           shopt -s nullglob
 
           ROTATION_DOC=".github/workflows/README.md → 'Certificate expiry warnings & rotation'"
+          PIN_DOC=".github/workflows/README.md → 'Defensive signature check at publish time' → 'Pinning the expected publisher'"
           fail() {
             echo "::error title=Un-notarized macOS installer in release::$1"
             echo "::error::Rotate the Apple Developer ID certificate / app-specific password following $ROTATION_DOC."
             echo "::error::To intentionally publish an unsigned/dev build, re-run via workflow_dispatch with allow_unsigned=true, or include the marker [unsigned-release] in either the tagged commit's message or the annotated tag message."
             exit 1
           }
+          fail_publisher() {
+            echo "::error title=Wrong signing identity in release::$1"
+            echo "::error::Update the EXPECTED_MAC_SIGNING_IDENTITY repo variable (or the MAC_CSC_LINK secret) following $PIN_DOC."
+            exit 1
+          }
+
+          if [ -z "${EXPECTED_MAC_SIGNING_IDENTITY:-}" ]; then
+            echo "::notice title=Publisher pin not configured::Repo variable EXPECTED_MAC_SIGNING_IDENTITY is unset; any notarized Developer ID identity will be accepted. Set it to your codesign Authority leaf (e.g. 'Developer ID Application: ScriptureLive AI Inc (ABCDE12345)') to fail the build if the wrong cert is loaded into MAC_CSC_LINK. See $PIN_DOC."
+          else
+            echo "Expected macOS signing identity: $EXPECTED_MAC_SIGNING_IDENTITY"
+          fi
 
           dmg_files=(dist/*.dmg)
           # Cross-job assertion: if the inventory step saw mac-installer
@@ -432,6 +482,33 @@ jobs:
               cleanup
               echo "::endgroup::"
               fail "$name has no notarization ticket stapled to its .app bundle."
+            fi
+
+            # 4. Publisher pin: confirm the leaf Authority on the bundle
+            #    matches the expected Developer ID identity. This catches
+            #    a leaked or wrong-company .p12 being loaded into
+            #    MAC_CSC_LINK — `spctl` would still pass for any valid
+            #    notarized Developer ID build. `codesign --display`
+            #    writes Authority= lines to stderr; the first one is the
+            #    leaf (e.g. `Developer ID Application: Acme Inc (TEAMID)`).
+            if [ -n "${EXPECTED_MAC_SIGNING_IDENTITY:-}" ]; then
+              cs_output=$(codesign --display --verbose=4 "$app_path" 2>&1) || {
+                cleanup
+                echo "::endgroup::"
+                fail_publisher "$name: codesign --display failed; cannot extract signing Authority. Output: $cs_output"
+              }
+              actual_identity=$(printf '%s\n' "$cs_output" | grep -m1 '^Authority=' | sed 's/^Authority=//')
+              if [ -z "$actual_identity" ]; then
+                cleanup
+                echo "::endgroup::"
+                fail_publisher "$name: codesign output contained no Authority= line; cannot verify publisher pin."
+              fi
+              echo "Leaf Authority (extracted): $actual_identity"
+              if [ "$actual_identity" != "$EXPECTED_MAC_SIGNING_IDENTITY" ]; then
+                cleanup
+                echo "::endgroup::"
+                fail_publisher "$name is signed by '$actual_identity' but EXPECTED_MAC_SIGNING_IDENTITY is pinned to '$EXPECTED_MAC_SIGNING_IDENTITY'. A dev/test, leaked, or wrong-company certificate may have been loaded into MAC_CSC_LINK."
+              fi
             fi
 
             cleanup
@@ -532,11 +609,14 @@ jobs:
 
       - name: Verify Windows installer signatures
         if: steps.optout.outputs.value != 'true'
+        env:
+          EXPECTED_WIN_PUBLISHER_CN: ${{ vars.EXPECTED_WIN_PUBLISHER_CN }}
         run: |
           set -uo pipefail
           shopt -s nullglob
 
           ROTATION_DOC=".github/workflows/README.md → 'Certificate expiry warnings & rotation'"
+          PIN_DOC=".github/workflows/README.md → 'Defensive signature check at publish time' → 'Pinning the expected publisher'"
           fail() {
             echo "::error title=Unsigned installer in release::$1"
             echo "::error::Rotate the signing certificates following $ROTATION_DOC."
@@ -544,6 +624,18 @@ jobs:
             echo "::error::The unsigned build artifacts have been retained on this run for 14 days (windows-installer / windows-latest-yml / windows-blockmap) so you can debug without rebuilding."
             exit 1
           }
+          fail_publisher() {
+            echo "::error title=Wrong signing publisher in release::$1"
+            echo "::error::Update the EXPECTED_WIN_PUBLISHER_CN repo variable (or the WIN_CSC_LINK secret) following $PIN_DOC."
+            echo "::error::The unsigned/wrong-publisher build artifacts have been retained on this run for 14 days (windows-installer / windows-latest-yml / windows-blockmap) so you can debug without rebuilding."
+            exit 1
+          }
+
+          if [ -z "${EXPECTED_WIN_PUBLISHER_CN:-}" ]; then
+            echo "::notice title=Publisher pin not configured::Repo variable EXPECTED_WIN_PUBLISHER_CN is unset; signed installers from any publicly-trusted CA will be accepted. Set it to your CN (e.g. 'ScriptureLive AI Inc') to fail the release if the wrong cert is loaded into WIN_CSC_LINK. See $PIN_DOC."
+          else
+            echo "Expected Windows publisher CN: $EXPECTED_WIN_PUBLISHER_CN"
+          fi
 
           # macOS notarization is gated separately by the verify-macos job,
           # which this job depends on, so we only need to re-verify .exe
@@ -563,22 +655,26 @@ jobs:
             # (DigiCert, Sectigo, SSL.com, etc.) validate end-to-end.
             #
             # We capture the output (using `tee` so the log still streams
-            # in real time) and then assert on the timestamp lines.
-            # osslsigncode prints `Timestamp Verification: ok` only when an
-            # RFC3161 timestamp counter-signature is attached AND its TSA
-            # chain validates against -TSA-CAfile. A signed-but-not-
-            # timestamped installer is the failure mode we're guarding
-            # against here: it ships fine today and silently breaks the
-            # day the signing cert's `notAfter` passes (often years
-            # later). Fail closed.
+            # in real time) and then run two follow-up assertions on it:
+            #   1. `Timestamp Verification: ok` — proves an RFC3161
+            #      timestamp counter-signature is attached AND its TSA
+            #      chain validates against -TSA-CAfile. A signed-but-not-
+            #      timestamped installer ships fine today and silently
+            #      breaks the day the signing cert's `notAfter` passes
+            #      (often years later). Fail closed.
+            #   2. The signer Subject CN matches EXPECTED_WIN_PUBLISHER_CN
+            #      (when configured) — proves *which* publisher signed it,
+            #      not just that some publicly-trusted CA did.
             verify_log=$(mktemp)
             if ! osslsigncode verify \
                   -CAfile /etc/ssl/certs/ca-certificates.crt \
                   -TSA-CAfile /etc/ssl/certs/ca-certificates.crt \
                   -in "$f" 2>&1 | tee "$verify_log"; then
+              rm -f "$verify_log"
               echo "::endgroup::"
               fail "$name is not Authenticode-signed (or its signature failed verification)."
             fi
+
             # Match osslsigncode's positive timestamp line tolerantly so
             # leading whitespace, future capitalization tweaks, or minor
             # punctuation/wording drift between versions don't false-
@@ -595,9 +691,49 @@ jobs:
               # "Timestamp is not available", "Timestamp Verification:
               # failed", or no timestamp section at all).
               ts_line=$(grep -iE '^[[:space:]]*(Timestamp|TSA)' "$verify_log" || echo "<no Timestamp lines in osslsigncode output>")
+              rm -f "$verify_log"
               echo "::endgroup::"
               fail "$name is signed but is missing a verifiable RFC3161 timestamp counter-signature ($ts_line). Without a timestamp the installer would stop validating the day the signing cert expires. The build-time check on Windows should have caught this; if it didn't, the timestamp signing-server may have been transiently unavailable — re-run the build."
             fi
+
+            # Publisher pin: extract the signer Subject CN from
+            # osslsigncode's `Subject:` line (format
+            # `Subject: /C=.../O=.../CN=Publisher Name`) and require an
+            # exact match against EXPECTED_WIN_PUBLISHER_CN. The
+            # build-time signtool check pins the same value, so this is a
+            # defense-in-depth backstop running on a different OS, with a
+            # different tool, against a different CA store.
+            if [ -n "${EXPECTED_WIN_PUBLISHER_CN:-}" ]; then
+              # Grab the "Subject:" line for the signer (the first one in
+              # osslsigncode output is the leaf). The DN is slash-separated
+              # and the CN is always rendered as `/CN=...`.
+              subject_line=$(grep -m1 '^Subject:' "$verify_log" || true)
+              if [ -z "$subject_line" ]; then
+                rm -f "$verify_log"
+                echo "::endgroup::"
+                fail_publisher "$name: osslsigncode output contained no Subject: line; cannot verify publisher pin. Inspect the verification log above."
+              fi
+              # Strip everything up through "/CN=" then up to the next "/"
+              # (or end of line). osslsigncode does not escape "/" inside
+              # CN values for the certificates a public CA issues for code
+              # signing, so a simple cut is safe in practice.
+              actual_cn=$(printf '%s\n' "$subject_line" \
+                | sed -n 's|.*/CN=\([^/]*\).*|\1|p' \
+                | sed 's/[[:space:]]*$//')
+              if [ -z "$actual_cn" ]; then
+                rm -f "$verify_log"
+                echo "::endgroup::"
+                fail_publisher "$name: failed to parse Subject CN from osslsigncode output ('$subject_line')."
+              fi
+              echo "Signer CN (extracted): $actual_cn"
+              if [ "$actual_cn" != "$EXPECTED_WIN_PUBLISHER_CN" ]; then
+                rm -f "$verify_log"
+                echo "::endgroup::"
+                fail_publisher "$name is signed by '$actual_cn' but EXPECTED_WIN_PUBLISHER_CN is pinned to '$EXPECTED_WIN_PUBLISHER_CN'. A dev/test, leaked, or wrong-company certificate may have been loaded into WIN_CSC_LINK."
+              fi
+            fi
+
+            rm -f "$verify_log"
             echo "::endgroup::"
           done
 
