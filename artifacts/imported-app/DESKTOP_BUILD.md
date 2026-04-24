@@ -344,6 +344,24 @@ workflow-failure email to repo admins) at 30 days remaining. Step-by-step
 rotation instructions for each secret live in
 `.github/workflows/README.md` → **Certificate expiry warnings & rotation**.
 
+As a defence-in-depth backstop in case a rotation is missed,
+`release-desktop.yml` adds two verification jobs that gate the GitHub
+Release:
+
+- A `verify-macos` job (`macos-latest`) mounts every `.dmg`, then runs
+  `codesign --verify --deep --strict`, `spctl -a -vvv --type execute`, and
+  `xcrun stapler validate` on the bundled `.app` — refusing to publish if
+  the bundle is unsigned, rejected by Gatekeeper, or missing a stapled
+  notarization ticket.
+- The `release` job (`ubuntu-latest`) re-verifies every downloaded `.exe`
+  with `osslsigncode verify` against the runner's system CA bundle.
+
+There's an opt-out for intentional dev releases — re-run the workflow with
+the `allow_unsigned` input ticked, or include the marker `[unsigned-release]`
+in either the annotated tag message or the HEAD commit message. See
+`.github/workflows/README.md` → **Defensive signature check at publish time**
+for the exact mechanics.
+
 ## How NDI is broadcast
 
 1. The desktop app starts the bundled Next.js server on a random local port.
