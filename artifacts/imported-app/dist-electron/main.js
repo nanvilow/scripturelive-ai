@@ -118,6 +118,7 @@ electron_1.app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-requ
 const ndi = new ndi_service_1.NdiService();
 let frameCapture = null;
 let mainWindow = null;
+let tray = null;
 let nextProcess = null;
 let appBaseUrl = '';
 let ndiTransition = Promise.resolve();
@@ -418,6 +419,102 @@ async function handleManualUpdateCheck() {
             detail: `${state.message}\n\nTry Check for Updates again when you have a stable internet connection.`,
             buttons: ['OK'],
         });
+    }
+}
+/**
+ * Surface (or recreate) the main window from the tray. The operator may
+ * have minimized, hidden behind congregation/stage outputs, or — once we
+ * support background-tray operation — let the last window close while
+ * the app keeps running. Re-create against `appBaseUrl` if the window
+ * has been disposed; otherwise just unminimize, show and focus it.
+ */
+async function showMainWindow() {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized())
+            mainWindow.restore();
+        if (!mainWindow.isVisible())
+            mainWindow.show();
+        mainWindow.focus();
+        return;
+    }
+    if (appBaseUrl) {
+        try {
+            await createMainWindow(appBaseUrl);
+            mainWindow?.focus();
+        }
+        catch (err) {
+            console.error('[tray] failed to recreate main window:', err);
+        }
+    }
+}
+/**
+ * Resolve the tray icon. Windows tray slots render at 16×16 logical
+ * pixels — handing electron a 512px PNG produces a blurry, oversized
+ * blob next to the system clock — so we explicitly resize. The icon
+ * lives next to the bundled web assets (extraResources copies the
+ * standalone tree to resources/app/) when packaged, and inside the
+ * artifact's public/ folder when running from source.
+ */
+function resolveTrayIconPath() {
+    if (electron_1.app.isPackaged) {
+        return node_path_1.default.join(process.resourcesPath, 'app', '.next', 'standalone', 'artifacts', 'imported-app', 'public', 'icon-192.png');
+    }
+    return node_path_1.default.join(__dirname, '..', 'public', 'icon-192.png');
+}
+function buildTrayMenu() {
+    return electron_1.Menu.buildFromTemplate([
+        {
+            label: 'Check for Updates…',
+            click: () => { void handleManualUpdateCheck(); },
+        },
+        {
+            label: 'Show Main Window',
+            click: () => { void showMainWindow(); },
+        },
+        { type: 'separator' },
+        {
+            label: 'Quit',
+            click: () => { electron_1.app.quit(); },
+        },
+    ]);
+}
+/**
+ * Pin a tray (system notification area) icon while the app runs so
+ * operators can trigger Check for Updates… without surfacing the
+ * main window — useful when the console is minimized behind the
+ * congregation / stage outputs during a live service.
+ *
+ * Tray creation is best-effort: some Linux desktops without a system
+ * tray (e.g. plain GNOME without TopIcons) will throw, and we don't
+ * want to take down the whole app over a missing system widget.
+ */
+function setupTray() {
+    try {
+        const iconPath = resolveTrayIconPath();
+        let image = electron_1.nativeImage.createFromPath(iconPath);
+        if (image.isEmpty()) {
+            console.warn('[tray] icon image empty at', iconPath, '— skipping tray setup');
+            return;
+        }
+        if (process.platform === 'win32' || process.platform === 'linux') {
+            // Resize so the icon doesn't render as a fuzzy giant in the
+            // notification area. macOS template icons are sized differently
+            // and we'd want a separate monochrome asset for proper menu-bar
+            // rendering, so leave the original image alone there.
+            image = image.resize({ width: 16, height: 16, quality: 'best' });
+        }
+        tray = new electron_1.Tray(image);
+        tray.setToolTip('ScriptureLive AI');
+        tray.setContextMenu(buildTrayMenu());
+        // Single-click on Windows / double-click on macOS surfaces the main
+        // window — matches the convention every other tray-resident app
+        // (Slack, Zoom, Discord) uses.
+        tray.on('click', () => { void showMainWindow(); });
+        tray.on('double-click', () => { void showMainWindow(); });
+    }
+    catch (err) {
+        console.error('[tray] init failed (non-fatal):', err);
+        tray = null;
     }
 }
 function buildAppMenu() {
@@ -793,6 +890,12 @@ electron_1.app.whenReady().then(async () => {
     catch (err) {
         console.error('[updater] init failed (non-fatal):', err);
     }
+    try {
+        setupTray();
+    }
+    catch (err) {
+        console.error('[tray] init failed (non-fatal):', err);
+    }
     // ── Auto-start NDI sender ─────────────────────────────────────
     // The whole point of "one-click NDI" is that the user shouldn't have
     // to click anything. As soon as the app is up and the NDI runtime is
@@ -912,6 +1015,15 @@ function shutdown() {
     // Kill the Next.js server tree FIRST so it stops accepting new
     // requests immediately. taskkill is fire-and-forget on Windows.
     forceKillNextTree();
+    // Tear down the tray icon synchronously so it disappears from the
+    // notification area the moment the operator quits — otherwise the
+    // ghost icon lingers until the user mouses over it.
+    try {
+        if (tray && !tray.isDestroyed())
+            tray.destroy();
+    }
+    catch { /* ignore */ }
+    tray = null;
     // Tear down frame capture + NDI sender. These are async but we
     // intentionally do NOT await them — the watchdog above guarantees
     // exit either way, and waiting risks hanging on a stuck native call.
