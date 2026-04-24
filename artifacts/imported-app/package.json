@@ -1,6 +1,6 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.5.26",
+  "version": "0.5.27",
   "private": true,
   "main": "dist-electron/main.js",
   "pnpm": {
@@ -29,7 +29,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
-    "electron:build": "tsc -p electron/tsconfig.json && node scripts/download-whisper-assets.mjs",
+    "electron:build": "tsc -p electron/tsconfig.json",
     "electron:dev": "pnpm run electron:build && cross-env NEXT_DEV_URL=http://localhost:3000 electron dist-electron/main.js",
     "package": "pnpm run build && pnpm run electron:build && electron-builder --config electron-builder.yml && pnpm run downloads:manifest",
     "package:win": "pnpm run build && pnpm run electron:build && electron-builder --config electron-builder.yml --win --publish never && pnpm run downloads:manifest",
@@ -97,6 +97,7 @@
     "react-resizable-panels": "^3.0.3",
     "react-syntax-highlighter": "^15.6.1",
     "recharts": "^2.15.4",
+    "remark-breaks": "^4.0.0",
     "sharp": "^0.34.3",
     "sonner": "^2.0.6",
     "tailwind-merge": "^3.3.1",
