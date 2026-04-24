@@ -119,8 +119,39 @@ const FS_MULT={sm:.85,md:1,lg:1.25,xl:1.5};
 // feed: it ignores the operator's projector displayMode and instead
 // honours settings.ndiDisplayMode so vMix/OBS can receive a Lower
 // Third while the projector stays Full Screen (or vice-versa).
+//
+// FORCE_TRANSPARENT / FORCE_LT / FORCE_POS are the legacy NDI overlay
+// flags that the old /api/output/ndi route used to honour. They now
+// flow into this single renderer so Preview, the secondary screen
+// AND NDI render the SAME slide.content with the SAME fit logic —
+// the NDI route is a thin redirect that just forwards these params.
 var IS_NDI=false;
-try{IS_NDI=(new URLSearchParams(location.search).get('ndi')==='1');}catch(e){}
+var FORCE_TRANSPARENT=false;
+var FORCE_LT=false;
+var FORCE_POS=null;
+try{
+  var __qp=new URLSearchParams(location.search);
+  IS_NDI=(__qp.get('ndi')==='1');
+  FORCE_TRANSPARENT=(__qp.get('transparent')==='1');
+  FORCE_LT=(__qp.get('lowerThird')==='1');
+  var __p=__qp.get('position');
+  if(__p==='top'||__p==='bottom')FORCE_POS=__p;
+}catch(e){}
+// Drop body / stage / output backgrounds when running as an NDI
+// alpha-keyed overlay so vMix/OBS receives a clean matte. Done at
+// load time (not in render) so the very first paint already carries
+// the transparent fill — preventing a one-frame black flash. The
+// stylesheet sets html / body / #stage / #output to solid #000 by
+// default (so the projector window is opaque), so all four surfaces
+// must be flipped here when transparent mode is requested.
+if(FORCE_TRANSPARENT){
+  try{
+    document.documentElement.style.background='transparent';
+    document.body.style.background='transparent';
+    var __st=document.getElementById('stage');if(__st)__st.style.background='transparent';
+    var __op=document.getElementById('output');if(__op)__op.style.background='transparent';
+  }catch(e){}
+}
 let es=null,reconnects=0;
 const $=id=>document.getElementById(id);
 // Hash of the last rendered payload — render() bails out if the next
@@ -298,8 +329,17 @@ function render(s){
   if(!(s.slide&&s.slide.type==='media'&&s.slide.mediaKind==='video'&&s.slide.mediaUrl)){
     dropLiveVideoCache();
   }
-  // Reset any prior forced-black background on normal renders.
-  $('output').style.background='';
+  // Reset any prior forced-black background on normal renders. In
+  // transparent NDI overlay mode we must keep #output transparent
+  // (and re-assert #stage transparency) on every render so a
+  // subsequent media slide that briefly forced #000 doesn't leave
+  // the alpha matte tinted black on the next text slide.
+  if(FORCE_TRANSPARENT){
+    $('output').style.background='transparent';
+    var __stR=document.getElementById('stage');if(__stR)__stR.style.background='transparent';
+  }else{
+    $('output').style.background='';
+  }
   // Skip the rebuild entirely if the payload is identical to what's
   // already on screen. Without this guard the secondary display
   // flickered every time we rebroadcast settings or the poll raced
@@ -313,16 +353,30 @@ function render(s){
     lastRenderKey=key;
   }catch(e){}
   var slide=s.slide;
-  // NDI surface follows its own independent display mode so the
-  // operator can run the projector full-screen while the NDI feed
-  // shows a lower-third caption (or vice-versa). Falls back to the
-  // projector mode if no NDI mode was chosen yet.
-  var dm=(IS_NDI&&s.settings&&s.settings.ndiDisplayMode)
-    ?s.settings.ndiDisplayMode
-    :(s.displayMode||'full');
+  // Display mode resolution — single source of truth across all
+  // surfaces (Preview, secondary screen, NDI):
+  //   1. FORCE_LT (?lowerThird=1) → operator-pinned NDI overlay,
+  //      always render lower-third regardless of any setting. Used
+  //      by the legacy NDI-as-overlay capture mode.
+  //   2. NDI surface (?ndi=1) → independent ndiDisplayMode if set.
+  //   3. Projector / secondary screen → operator's main displayMode.
+  // Falls back to 'full' when nothing else is set.
+  var dm=FORCE_LT
+    ?'lower-third'
+    :((IS_NDI&&s.settings&&s.settings.ndiDisplayMode)
+      ?s.settings.ndiDisplayMode
+      :(s.displayMode||'full'));
   var st=s.settings||{};
   applyRatio(st.displayRatio||'fill');
   if(!slide){
+    // Transparent NDI overlay surface: render NOTHING when nothing is
+    // on air so vMix/OBS sees a clean alpha frame instead of a themed
+    // gradient panel covering its program output.
+    if(FORCE_TRANSPARENT){
+      $('output').innerHTML='';
+      $('output').classList.remove('hidden');
+      return;
+    }
     // Render themed background only — never a black void
     var tkE=(st.congregationScreenTheme||'minimal');
     var tcE=themes[tkE]||'theme-minimal';
@@ -440,7 +494,11 @@ function render(s){
     txt='<div class="slide-text" style="opacity:.3;font-size:'+fs.text+'">'+(slide.title||'')+'</div>';
   }
   if(isLT){
-    var pos=st.lowerThirdPosition==='top'?'top':'bottom';
+    // FORCE_POS (?position=top|bottom) wins over the operator's
+    // lowerThirdPosition setting so the legacy NDI overlay capture
+    // can pin its bar to the top of the frame even while the
+    // projector keeps its bar at the bottom.
+    var pos=FORCE_POS?FORCE_POS:(st.lowerThirdPosition==='top'?'top':'bottom');
     // Map the lowerThirdHeight enum ('sm'|'md'|'lg') to the same
     // percentage the operator preview uses so all three surfaces
     // (preview, secondary screen, NDI) render identical bar heights.
@@ -473,7 +531,13 @@ function render(s){
   }else{
     var ta=st.textAlign||'center';
     var jc=ta==='left'?'flex-start':ta==='right'?'flex-end':'center';
-    $('output').innerHTML='<div class="'+tc+'" style="width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';'+fontStyle+'">'+bg+'<div class="slide-content" style="text-align:'+ta+';'+fontStyle+'">'+ref+txt+'</div></div>';
+    // Transparent NDI overlay surface: skip the themed gradient class
+    // and the custom background image so vMix/OBS still receives a
+    // clean alpha matte even if the operator runs the legacy "NDI as
+    // overlay" capture in full-screen mode (i.e. without lowerThird=1).
+    var fsTheme=FORCE_TRANSPARENT?'':tc;
+    var fsBg=FORCE_TRANSPARENT?'':bg;
+    $('output').innerHTML='<div class="'+fsTheme+'" style="width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';'+fontStyle+'">'+fsBg+'<div class="slide-content" style="text-align:'+ta+';'+fontStyle+'">'+ref+txt+'</div></div>';
   }
   $('output').classList.remove('hidden');
 }

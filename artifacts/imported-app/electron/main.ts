@@ -422,25 +422,31 @@ function setupIpc() {
           onStatus: (msg) => broadcastNdiStatus({ ...ndi.getStatus(), captureMessage: msg }),
         })
         const layout = opts.layout === 'ndi' ? 'ndi' : 'mirror'
-        // The ?ndi=1 flag tells the congregation renderer this surface
-        // is the NDI feed, so it follows settings.ndiDisplayMode (the
-        // operator's independent NDI display mode) instead of the
-        // projector's displayMode. Without it the NDI Display Mode
-        // setting in Settings → NDI was silently ignored.
-        let capturePath = '/api/output/congregation?ndi=1'
+        // Single text engine: every NDI capture mode now points at
+        // the same congregation renderer that the secondary screen
+        // and the in-app preview share, so Preview = Output Display
+        // = NDI render the SAME slide.content with the SAME font /
+        // wrap / fit logic. The legacy `/api/output/ndi` route had
+        // its own renderer that hard-truncated long verses to three
+        // lines and ignored the operator's typography settings.
+        //
+        // The `?ndi=1` flag tells the renderer this surface is the
+        // NDI feed (independent ndiDisplayMode + force-mute audio).
+        // The `?lowerThird=1` / `?transparent=1` / `?position=` flags
+        // are the legacy NDI overlay knobs the renderer also honours
+        // so vMix / OBS users can still pin a transparent lower-third
+        // bar on top of their existing program output.
+        const params = new URLSearchParams()
+        params.set('ndi', '1')
         let transparent = false
         if (layout === 'ndi') {
           transparent = opts.transparent !== false
           const lt = opts.lowerThird || {}
-          const params = new URLSearchParams()
           if (transparent) params.set('transparent', '1')
           if (lt.enabled) params.set('lowerThird', '1')
           if (lt.position === 'top') params.set('position', 'top')
-          if (lt.branding) params.set('branding', lt.branding.slice(0, 80))
-          if (lt.accent) params.set('accent', lt.accent.replace(/[^0-9a-fA-F]/g, '').slice(0, 6))
-          const qs = params.toString()
-          capturePath = '/api/output/ndi' + (qs ? `?${qs}` : '')
         }
+        const capturePath = `/api/output/congregation?${params.toString()}`
         await frameCapture.start({
           width: opts.width,
           height: opts.height,
