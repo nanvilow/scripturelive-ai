@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, MenuItemConstructorOptions, Tray, nativeImage, ipcMain, shell, screen, dialog, session } from 'electron'
+import { app, BrowserWindow, Menu, MenuItemConstructorOptions, Tray, nativeImage, ipcMain, shell, screen, dialog, session, Notification } from 'electron'
 import path from 'node:path'
 import { spawn, ChildProcess } from 'node:child_process'
 import { createServer } from 'node:net'
@@ -99,6 +99,16 @@ let tray: Tray | null = null
 let nextProcess: ChildProcess | null = null
 let appBaseUrl = ''
 let ndiTransition: Promise<unknown> = Promise.resolve()
+// Set the moment any explicit-quit code path runs (tray Quit, app menu
+// Quit / Cmd+Q, updater restart, fatal error → app.quit()). The main
+// window's `close` handler reads this to decide between
+// "hide-to-tray" (default for the X button) and "really close".
+let isQuitting = false
+// Tracks whether we've already shown the "still running in the tray"
+// hint THIS session, so multiple hide cycles don't spam the operator.
+// First-ever hide is also gated by a marker file in userData (see
+// `maybeShowTrayHint`).
+let trayHintShownThisSession = false
 
 function serializeNdi<T>(fn: () => Promise<T>): Promise<T> {
   const next = ndiTransition.then(() => fn(), () => fn())
@@ -289,8 +299,33 @@ async function createMainWindow(url: string) {
     shell.openExternal(target)
     return { action: 'deny' }
   })
-  await mainWindow.loadURL(url)
+  // Hide-to-tray on close. The operator complaint we're solving:
+  // closing the main console window during a live service used to
+  // call shutdown(), which killed the Next.js server and the NDI
+  // sender mid-broadcast. Now the X button just hides the window —
+  // NDI keeps flowing, the bundled Next server keeps serving the
+  // congregation/stage outputs, and the auto-updater keeps running.
+  // The operator brings it back from the tray.
+  //
+  // Three carve-outs let the app actually exit:
+  //   1. `isQuitting` is true — set by `before-quit`, fires for
+  //      every explicit Quit path (tray menu, app menu / Cmd+Q,
+  //      updater restart, fatal errors that call app.quit()).
+  //   2. No tray exists (e.g. tray init failed on a Linux desktop
+  //      without a system tray). Without a way back into the app,
+  //      hide-to-tray would be a one-way trap, so let close happen
+  //      and `window-all-closed` will quit cleanly.
+  //   3. The window is being destroyed during shutdown.
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return
+    if (!tray || tray.isDestroyed()) return
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    event.preventDefault()
+    try { mainWindow.hide() } catch { /* ignore */ }
+    void maybeShowTrayHint()
+  })
   mainWindow.on('closed', () => { mainWindow = null })
+  await mainWindow.loadURL(url)
 }
 
 async function showDialog(opts: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
@@ -400,10 +435,11 @@ async function handleManualUpdateCheck() {
 
 /**
  * Surface (or recreate) the main window from the tray. The operator may
- * have minimized, hidden behind congregation/stage outputs, or — once we
- * support background-tray operation — let the last window close while
- * the app keeps running. Re-create against `appBaseUrl` if the window
- * has been disposed; otherwise just unminimize, show and focus it.
+ * have minimized the console, hidden behind congregation/stage outputs,
+ * or — with hide-to-tray on close — let the X button send it to the
+ * tray while the app keeps running. Re-create against `appBaseUrl` if
+ * the window has been disposed; otherwise just unminimize, show and
+ * focus it.
  */
 async function showMainWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -420,6 +456,71 @@ async function showMainWindow() {
       console.error('[tray] failed to recreate main window:', err)
     }
   }
+}
+
+/**
+ * Tell the operator the app is still running in the tray after the
+ * very first time they close the main window. Persisted by a marker
+ * file in userData so subsequent installs / launches don't nag — and
+ * we additionally gate by an in-memory flag so the same session
+ * can't repeat-fire it (operator could close, reopen, close again).
+ *
+ * Best-effort throughout: file IO failures, missing notification
+ * support, and balloon errors all degrade silently rather than
+ * blocking the hide.
+ */
+async function maybeShowTrayHint(): Promise<void> {
+  if (trayHintShownThisSession) return
+  trayHintShownThisSession = true
+
+  let markerPath = ''
+  try {
+    markerPath = path.join(app.getPath('userData'), 'tray-hint-shown.flag')
+    if (fs.existsSync(markerPath)) return
+  } catch { /* fall through and try to show it anyway */ }
+
+  // Write the marker BEFORE actually showing the notification so a
+  // crash mid-show doesn't cause the hint to fire forever.
+  try {
+    if (markerPath) fs.writeFileSync(markerPath, new Date().toISOString())
+  } catch { /* ignore — worst case we show it again next launch */ }
+
+  const title = 'ScriptureLive AI is still running'
+  const body = 'The app is still in the system tray — your NDI feed and outputs are unaffected. Click the tray icon to bring the window back, or right-click the tray icon and choose Quit to exit.'
+
+  try {
+    if (Notification.isSupported()) {
+      const n = new Notification({
+        title,
+        body,
+        icon: resolveTrayIconPath(),
+        silent: true,
+      })
+      n.on('click', () => { void showMainWindow() })
+      n.show()
+      return
+    }
+  } catch (err) {
+    console.warn('[tray-hint] desktop notification failed:', err)
+  }
+
+  // Notification unsupported (some Linux desktops, headless test
+  // runs). Fall back to a Windows tray balloon when available — and
+  // otherwise just log it; the operator can still find the tray icon
+  // on their own.
+  if (process.platform === 'win32' && tray && !tray.isDestroyed()) {
+    try {
+      tray.displayBalloon({
+        title,
+        content: body,
+        iconType: 'info',
+      })
+      return
+    } catch (err) {
+      console.warn('[tray-hint] tray balloon failed:', err)
+    }
+  }
+  console.log('[tray-hint]', title, '—', body)
 }
 
 /**
@@ -1154,21 +1255,44 @@ function shutdown(): void {
 
 app.on('before-quit', () => {
   // Fires for EVERY quit path (Cmd+Q, app.quit(), updater restart,
-  // window close). Centralising shutdown here means we clean up
-  // even when the user uses a code path that bypasses
-  // window-all-closed.
+  // window close). Setting `isQuitting` here is what lets the main
+  // window's `close` handler tell "operator clicked the X" (hide to
+  // tray) apart from "we're really exiting" (let close happen).
+  isQuitting = true
+  // Centralising shutdown here means we clean up even when the user
+  // uses a code path that bypasses window-all-closed.
   shutdown()
 })
 
 app.on('window-all-closed', () => {
-  // Windows-only app per spec — never linger after the last window
-  // closes. Closed should mean dead.
+  // With hide-to-tray enabled, this event normally won't fire from the
+  // operator's X-button click — the main window's `close` handler
+  // calls preventDefault() and just hides the window, so it's still
+  // technically open. We DO get this event when:
+  //   - the operator hit Quit (tray menu / app menu / Cmd+Q): in that
+  //     case `isQuitting` is already true and shutdown() is in flight
+  //     via before-quit, so we just need to call app.quit() so
+  //     Electron's normal exit completes.
+  //   - the tray failed to initialize on a desktop with no system tray:
+  //     hide-to-tray is bypassed, the close goes through, and we get
+  //     here for real. shutdown() + app.quit() — closed = dead.
+  //
+  // Either way, calling shutdown() (idempotent) + app.quit() is safe.
+  // What we must NOT do is quit just because every BrowserWindow is
+  // gone but the operator is intentionally running headless from the
+  // tray — that path doesn't reach this handler at all (the hidden
+  // mainWindow still counts as a window).
   shutdown()
   try { app.quit() } catch { /* ignore */ }
 })
 
 app.on('activate', async () => {
-  if (BrowserWindow.getAllWindows().length === 0 && appBaseUrl) {
-    await createMainWindow(appBaseUrl)
+  // macOS dock click / dock activation. With hide-to-tray, the main
+  // window often EXISTS but is hidden — `showMainWindow` already
+  // handles "exists hidden → unhide", "minimized → restore", and
+  // "destroyed → recreate" in one place, so route activate through
+  // it instead of only recreating when no windows are left.
+  if (appBaseUrl) {
+    await showMainWindow()
   }
 })
