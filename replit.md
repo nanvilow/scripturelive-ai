@@ -50,3 +50,10 @@ Key features and architectural decisions include:
 - **Electron Builder**: Used for packaging desktop applications.
 - **Multer**: For handling multipart form data in the `api-server`'s `/api/transcribe` route.
 - **OpenAI SDK**: Used in the `api-server` for transcription.
+
+# Release History
+
+- **v0.5.27** (2026-04-24): Single cloud Whisper engine. Replaced local + dual-mode Whisper with the Replit-hosted `/api/transcribe` proxy, baked the proxy URL into the Electron main process, removed the OpenAI key UI / AI Detection Mode card / `whisper-service.ts` / `whisper:*` IPC bridge, added a tray icon with status badge, `CmdOrCtrl+Shift+U` "Check for Updates" accelerator, markdown release notes in the in-app banner, and a "Verified by GitHub" badge on the download page.
+  - **GitHub state**: tag `v0.5.27` on origin = commit `889fa30e` (REST-API squash of 16 local checkpoints on top of v0.5.26 `33e4a5d`). Build is at <https://github.com/nanvilow/scripturelive-ai/actions> and the release will appear at <https://github.com/nanvilow/scripturelive-ai/releases/tag/v0.5.27>.
+  - **Workflow file caveat**: changes to `.github/workflows/release-desktop.yml` from local Tasks #25/#26 (build-time `signtool` check, `verify-macos` job) were *not* pushed because the Replit-provided `GITHUB_TOKEN` lacks the `workflows: write` scope. The v0.5.26 workflow on origin still builds and ships v0.5.27 unchanged. To bring those CI improvements over, the user must push them from a local terminal that has a token with `workflow` scope.
+  - **Local vs origin tag**: a local `v0.5.27` tag exists on `f2a78c8` (the un-squashed local HEAD); origin's `v0.5.27` is the squashed `889fa30e`. Cosmetic only — origin is the source of truth for CI.
