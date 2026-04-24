@@ -737,6 +737,20 @@ function PreviewCard() {
           )}
         </div>
       </div>
+      {/* Symmetry strip — mirrors Live Display's always-visible
+          bottom transport row (Mic / Vol / Prev / Go Live / Next) so
+          both cards reserve the same vertical real estate. Without
+          this, the Preview body has more room than Live Display and
+          the 16:9 stages render at different sizes side-by-side.
+          Operators specifically asked for the two stages to be
+          visual twins so they can A/B compare what's queued vs
+          what's live without optical illusions. Kept content-light
+          (just chapter prev/next mirrors plus a spacer) since the
+          authoritative chapter nav already lives in the header — we
+          just need the height. */}
+      <div className="border-t border-zinc-800/60 px-3 py-2 flex items-center justify-end gap-3 bg-zinc-900/30 shrink-0">
+        <div className="h-7 flex items-center" aria-hidden />
+      </div>
       {/* Preview transport — Play / Pause + scrubbable seek bar. Only
           rendered for media-video preview slides; controls the actual
           <video data-surface="preview"> element so scrubs apply
