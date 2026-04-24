@@ -189,3 +189,13 @@
 .live-indicator {
   animation: live-pulse 1.5s ease-in-out infinite;
 }
+
+/* Indeterminate progress bar: a short segment slides across the track. */
+@keyframes indeterminate-progress {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+.indeterminate-bar {
+  animation: indeterminate-progress 1.4s ease-in-out infinite;
+}

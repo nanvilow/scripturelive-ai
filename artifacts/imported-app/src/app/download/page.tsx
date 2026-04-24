@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Apple, Download, Monitor, ShieldCheck, ShieldAlert, Sparkles, Wifi, ArrowLeft, Cpu, HardDrive, AlertTriangle, Copy, Check, Fingerprint, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
 
 // Cap the in-browser verification at ~600 MB. Above this we skip hashing
@@ -159,21 +160,54 @@ function formatProgress(received: number, total: number | null): string {
   return `${mb} / ${totalMb} MB · ${pct}%`
 }
 
+function IndeterminateBar() {
+  // A short segment that slides across the track. Visually distinct from
+  // the determinate bar so users can tell hashing from downloading.
+  return (
+    <div
+      className="relative h-2 w-full overflow-hidden rounded-full bg-primary/20"
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
+      <div className="indeterminate-bar absolute inset-y-0 left-0 w-1/4 rounded-full bg-primary" />
+    </div>
+  )
+}
+
 function VerifyBadge({ state }: { state: VerifyState }) {
   if (state.kind === 'idle') return null
   if (state.kind === 'downloading') {
+    const hasTotal = state.total !== null && state.total > 0
+    const pct = hasTotal
+      ? Math.min(100, Math.round((state.received / (state.total as number)) * 100))
+      : null
     return (
-      <div className="flex items-center gap-2 rounded-md border border-border/70 bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
-        <Loader2 className="h-3 w-3 animate-spin" />
-        <span>Downloading… {formatProgress(state.received, state.total)}</span>
+      <div className="flex flex-col gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
+        <div className="flex items-center gap-2">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          <span>Downloading… {formatProgress(state.received, state.total)}</span>
+        </div>
+        {pct === null ? (
+          <IndeterminateBar />
+        ) : (
+          <Progress
+            value={pct}
+            aria-label={`Downloading installer, ${pct}% complete`}
+            className="h-1.5"
+          />
+        )}
       </div>
     )
   }
   if (state.kind === 'hashing') {
     return (
-      <div className="flex items-center gap-2 rounded-md border border-border/70 bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
-        <Loader2 className="h-3 w-3 animate-spin" />
-        <span>Verifying SHA-256…</span>
+      <div className="flex flex-col gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
+        <div className="flex items-center gap-2">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          <span>Verifying SHA-256…</span>
+        </div>
+        <IndeterminateBar />
       </div>
     )
   }
