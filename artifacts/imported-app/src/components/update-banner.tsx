@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import { useDesktop, type UpdateState } from '@/lib/use-electron'
+import { cleanReleaseNotes } from '@/lib/release-notes'
 
 function formatPercent(p: number): string {
   if (!Number.isFinite(p)) return '0%'
@@ -12,7 +13,10 @@ function formatPercent(p: number): string {
 
 function getNotes(state: UpdateState): string {
   if (state.status === 'available' || state.status === 'downloaded') {
-    return (state.releaseNotes ?? '').trim()
+    // Run the raw notes through cleanReleaseNotes so the GitHub
+    // "Full Changelog" footer and "New Contributors" boilerplate
+    // don't dominate the markdown render in the banner.
+    return cleanReleaseNotes(state.releaseNotes)
   }
   return ''
 }
