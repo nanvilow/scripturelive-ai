@@ -158,6 +158,61 @@ const $=id=>document.getElementById(id);
 // payload is identical, which prevents the flash that came from rapid
 // SSE + poll double-fire and from re-broadcasting the same settings.
 let lastRenderKey='';
+// Fingerprint of just the visible SLIDE (not settings). applyRender
+// uses this to decide whether the operator's change actually swapped
+// the slide content (→ fade is appropriate) or just adjusted a knob
+// like font size, theme, or NDI display mode (→ instant swap, no
+// fade). On the NDI surface this is critical: every setting tweak
+// used to fade-to-black for slideTransitionDuration ms = a visible
+// strobe on vMix / OBS / Studio Monitor.
+let lastSlideFingerprint='';
+function slideFingerprint(s){
+  if(!s)return '__none__';
+  if(s.blanked)return '__blanked__';
+  if(s.type==='clear')return s.showStartupLogo?'__logo__':'__clear__';
+  var sl=s.slide;
+  if(!sl)return '__empty__';
+  // Only the fields that visibly change the slide. Transport flags
+  // (mediaPaused, mediaCurrentTime) are intentionally OUT — toggling
+  // play/pause must not refire a fade.
+  var contentJoin='';
+  if(sl.content&&sl.content.join)contentJoin=sl.content.join('\\u241F');
+  return [
+    sl.id||'',
+    sl.type||'',
+    sl.title||'',
+    sl.subtitle||'',
+    sl.background||'',
+    sl.mediaUrl||'',
+    sl.mediaKind||'',
+    sl.mediaFit||'',
+    contentJoin,
+    s.displayMode||'',
+  ].join('|');
+}
+// Subset of settings that actually change what render() draws. Used
+// in the render-key so the captured page only rebuilds DOM when one
+// of these changes — not when an unrelated setting (OpenAI key,
+// transcription provider, audio rail toggle, recent-search list, …)
+// gets rebroadcast. Keys here MUST mirror the fields render() reads
+// off st.X below.
+function settingsRenderKey(st){
+  if(!st)return '';
+  return JSON.stringify({
+    th: st.congregationScreenTheme,
+    bg: st.customBackground,
+    rt: st.displayRatio,
+    fs: st.fontSize,
+    ff: st.fontFamily,
+    sh: st.textShadow,
+    ts: st.textScale,
+    ta: st.textAlign,
+    ref: st.showReferenceOnOutput,
+    nd: st.ndiDisplayMode,
+    lh: st.lowerThirdHeight,
+    lp: st.lowerThirdPosition,
+  });
+}
 
 // Compute clamp() font sizes that scale with the viewport so text is
 // always readable but never overflows. fontSize picks the base, and
@@ -248,8 +303,16 @@ function applyRender(s){
   if(dur<0)dur=0;if(dur>4000)dur=4000;
   var el=$('output');
   if(el)el.style.setProperty('--slide-fade-ms',(style==='cut'?0:dur)+'ms');
-  // Cut, no duration, or initial paint → swap straight away.
-  if(style==='cut'||dur<=0||!lastRenderKey){
+  // Decide whether this update is a true SLIDE change (worth fading)
+  // or a settings-only adjustment (must NOT fade, otherwise every
+  // operator slider drag flashes the NDI receiver). The fingerprint
+  // intentionally excludes settings, audio, and transport flags.
+  var nextFp=slideFingerprint(s);
+  var isSlideChange=(nextFp!==lastSlideFingerprint);
+  lastSlideFingerprint=nextFp;
+  // Cut, no duration, initial paint, or settings-only change →
+  // swap straight away with no fade-out / fade-in.
+  if(style==='cut'||dur<=0||!lastRenderKey||!isSlideChange){
     if(pendingFade){clearTimeout(pendingFade);pendingFade=null;el&&el.classList.remove('fading');}
     render(s);
     applyAudio(s);
@@ -344,11 +407,17 @@ function render(s){
   // already on screen. Without this guard the secondary display
   // flickered every time we rebroadcast settings or the poll raced
   // an SSE message.
+  //
+  // The render-key now narrows the st:* slot to only the SETTINGS THAT
+  // RENDER() ACTUALLY READS (see settingsRenderKey above). Including
+  // the entire settings blob — as the previous version did — meant
+  // every transcription / audio / unrelated tweak fired a full DOM
+  // rebuild on the NDI capture window, which is the dominant cause
+  // of receiver flicker. IS_NDI stays in the key so the NDI surface
+  // refreshes whenever ndiDisplayMode flips, even if the projector's
+  // displayMode and slide are otherwise unchanged.
   try{
-    // Include IS_NDI in the render key so the NDI surface refreshes
-    // whenever ndiDisplayMode flips, even if the projector's
-    // displayMode and slide are otherwise unchanged.
-    var key=JSON.stringify({sl:s.slide,dm:s.displayMode,st:s.settings,ndi:IS_NDI});
+    var key=JSON.stringify({sl:s.slide,dm:s.displayMode,st:settingsRenderKey(s.settings),ndi:IS_NDI});
     if(key===lastRenderKey)return;
     lastRenderKey=key;
   }catch(e){}
@@ -444,8 +513,13 @@ function render(s){
         else{var p=existingVid.play();if(p&&p.catch)p.catch(function(){});}
       }catch(e){}
       // Keep render-key in sync so the next non-transport change still
-      // triggers a real rebuild.
-      try{lastRenderKey=JSON.stringify({sl:slide,dm:s.displayMode,st:s.settings});}catch(e){}
+      // triggers a real rebuild. MUST mirror the canonical key shape
+      // computed at render() entry (narrowed settings via
+      // settingsRenderKey + IS_NDI), otherwise the next update sees a
+      // shape mismatch, fails the early-bail check, and rebuilds the
+      // DOM unnecessarily — costing us the very flicker-avoidance
+      // this branch exists to provide.
+      try{lastRenderKey=JSON.stringify({sl:slide,dm:s.displayMode,st:settingsRenderKey(s.settings),ndi:IS_NDI});}catch(e){}
       return;
     }
     // NDI surface stays muted: the NDI sender captures raw frames, not

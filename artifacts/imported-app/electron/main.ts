@@ -414,6 +414,26 @@ function setupIpc() {
         return { ok: false, error: ndi.unavailableReason() || 'NDI runtime not available' }
       }
       try {
+        // Persistent-stream guard. The renderer fires `ndi:start` on
+        // every operator click of the big green button, including the
+        // common case where the sender is ALREADY running with the
+        // same settings (the auto-start at boot put it on the air).
+        // Tearing down the offscreen capture window here kills any
+        // playing <video>, makes vMix / OBS lose the source for a
+        // beat, and re-acquire — the very flicker we are trying to
+        // fix. Short-circuit when nothing has changed.
+        const cur = ndi.getStatus()
+        if (
+          cur.running &&
+          frameCapture &&
+          cur.source === (opts.name || 'ScriptureLive AI') &&
+          cur.width === opts.width &&
+          cur.height === opts.height &&
+          cur.fps === opts.fps
+        ) {
+          broadcastNdiStatus(cur)
+          return { ok: true, status: cur }
+        }
         if (frameCapture) { await frameCapture.stop(); frameCapture = null }
         await ndi.start(opts)
         frameCapture = new FrameCapture({
