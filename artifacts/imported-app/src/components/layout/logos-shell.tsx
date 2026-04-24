@@ -121,7 +121,14 @@ function Card({
         </div>
         {actions && <div className="flex items-center gap-1 shrink-0">{actions}</div>}
       </header>
-      <div className={cn('flex-1 min-h-0 flex flex-col', bodyClassName)}>{children}</div>
+      {/* Default: vertical scroll on, horizontal off. When the operator
+          drags a divider and the panel content gets taller than the
+          panel, the wheel/trackpad must always be able to reach it.
+          Cards that own a fixed-aspect surface (Preview / Live Display)
+          or manage their own internal scroll override this via
+          `bodyClassName="overflow-hidden …"` — twMerge swaps the
+          overflow keyword cleanly. */}
+      <div className={cn('flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden', bodyClassName)}>{children}</div>
     </section>
   )
 }
@@ -692,7 +699,7 @@ function PreviewCard() {
           </Button>
         </div>
       }
-      bodyClassName="bg-black flex flex-col"
+      bodyClassName="bg-black flex flex-col overflow-hidden"
     >
       <div className="flex-1 min-h-0 flex items-stretch p-2 gap-2">
         {/* LEFT audio rail — sits OUTSIDE the preview frame on the
@@ -1103,7 +1110,7 @@ function LiveDisplayCard({
           </button>
         </div>
       }
-      bodyClassName="bg-black"
+      bodyClassName="bg-black overflow-hidden"
     >
       <div className="flex-1 min-h-0 flex items-stretch p-2 gap-2 relative">
         <div className="flex-1 min-w-0 flex items-center justify-center relative">
