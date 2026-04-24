@@ -9,7 +9,7 @@ publish:
     releaseType: release
 directories:
   app: artifacts/imported-app
-  output: artifacts/imported-app/release
+  output: release
   buildResources: artifacts/imported-app/build-resources
 files:
   - dist-electron/**/*
