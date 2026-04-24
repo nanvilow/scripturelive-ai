@@ -1,11 +1,60 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Apple, Download, Monitor, ShieldCheck, Sparkles, Wifi, ArrowLeft, Cpu, HardDrive, AlertTriangle, Copy, Check, Fingerprint } from 'lucide-react'
+import { Apple, Download, Monitor, ShieldCheck, ShieldAlert, Sparkles, Wifi, ArrowLeft, Cpu, HardDrive, AlertTriangle, Copy, Check, Fingerprint, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
+
+// Cap the in-browser verification at ~600 MB. Above this we skip hashing
+// and let the browser do a normal streaming download — SubtleCrypto.digest
+// requires the full buffer in memory and large blobs trip OOM on mobile
+// and low-RAM machines.
+const MAX_VERIFY_BYTES = 600 * 1024 * 1024
+
+// Trigger a normal browser download via a transient <a download> click.
+// Used as the fallback when the file is too big to hash in-browser.
+// We deliberately avoid `window.location.href = ...` here because that
+// would trigger a top-level navigation and tear down our verification
+// status badge mid-flow.
+function triggerAnchorDownload(href: string) {
+  if (typeof document === 'undefined') return
+  const a = document.createElement('a')
+  a.href = href
+  a.download = ''
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+}
+
+type VerifyState =
+  | { kind: 'idle' }
+  | { kind: 'downloading'; received: number; total: number | null }
+  | { kind: 'hashing' }
+  | { kind: 'verified' }
+  | { kind: 'mismatch'; actual: string }
+  | { kind: 'fallback'; reason: string }
+  | { kind: 'error'; message: string }
+
+function webCryptoAvailable(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.crypto !== 'undefined' &&
+    typeof window.crypto.subtle?.digest === 'function' &&
+    typeof ReadableStream !== 'undefined'
+  )
+}
+
+function bufferToHex(buf: ArrayBuffer): string {
+  const arr = new Uint8Array(buf)
+  let out = ''
+  for (let i = 0; i < arr.length; i++) {
+    out += arr[i].toString(16).padStart(2, '0')
+  }
+  return out
+}
 
 type ManifestFile = {
   label: string
@@ -102,6 +151,80 @@ function ChecksumRow({ sha256 }: { sha256: string | null }) {
   )
 }
 
+function formatProgress(received: number, total: number | null): string {
+  const mb = (received / (1024 * 1024)).toFixed(1)
+  if (total === null || total === 0) return `${mb} MB`
+  const totalMb = (total / (1024 * 1024)).toFixed(1)
+  const pct = Math.min(100, Math.round((received / total) * 100))
+  return `${mb} / ${totalMb} MB · ${pct}%`
+}
+
+function VerifyBadge({ state }: { state: VerifyState }) {
+  if (state.kind === 'idle') return null
+  if (state.kind === 'downloading') {
+    return (
+      <div className="flex items-center gap-2 rounded-md border border-border/70 bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        <span>Downloading… {formatProgress(state.received, state.total)}</span>
+      </div>
+    )
+  }
+  if (state.kind === 'hashing') {
+    return (
+      <div className="flex items-center gap-2 rounded-md border border-border/70 bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        <span>Verifying SHA-256…</span>
+      </div>
+    )
+  }
+  if (state.kind === 'verified') {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1.5 text-[11px] font-medium text-emerald-300"
+      >
+        <ShieldCheck className="h-3.5 w-3.5" />
+        <span>Verified — SHA-256 matches the manifest.</span>
+      </div>
+    )
+  }
+  if (state.kind === 'mismatch') {
+    return (
+      <div
+        role="alert"
+        className="rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-300"
+      >
+        <div className="flex items-center gap-2 font-medium">
+          <ShieldAlert className="h-3.5 w-3.5" />
+          <span>Hash mismatch — do not run this file.</span>
+        </div>
+        <div className="mt-1 break-all font-mono text-[10px] text-red-200/90">
+          got {state.actual}
+        </div>
+      </div>
+    )
+  }
+  if (state.kind === 'fallback') {
+    return (
+      <div className="flex items-start gap-2 rounded-md border border-border/70 bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
+        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+        <span>{state.reason}</span>
+      </div>
+    )
+  }
+  // error
+  return (
+    <div
+      role="alert"
+      className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-200"
+    >
+      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+      <span>Couldn&apos;t verify in-browser ({state.message}). The download still works — verify with the SHA-256 above.</span>
+    </div>
+  )
+}
+
 function detectPlatform(): PlatformKey | null {
   if (typeof navigator === 'undefined') return null
   const ua = navigator.userAgent.toLowerCase()
@@ -119,14 +242,93 @@ export default function DownloadPage() {
   const [manifest, setManifest] = useState<Manifest | null>(null)
   const [loading, setLoading] = useState(true)
   const [detected, setDetected] = useState<PlatformKey | null>(null)
+  const [verifyStates, setVerifyStates] = useState<Record<string, VerifyState>>({})
+  const [cryptoOk, setCryptoOk] = useState(false)
 
   useEffect(() => {
     setDetected(detectPlatform())
+    setCryptoOk(webCryptoAvailable())
     fetch('/api/download/manifest', { cache: 'no-store' })
       .then((r) => r.json())
       .then((m: Manifest) => setManifest(m))
       .finally(() => setLoading(false))
   }, [])
+
+  const setVerify = useCallback((key: string, state: VerifyState) => {
+    setVerifyStates((prev) => ({ ...prev, [key]: state }))
+  }, [])
+
+  const startVerifiedDownload = useCallback(
+    async (key: PlatformKey, file: ManifestFile) => {
+      if (!file.sha256) return
+      const url = `/api/download/${key}`
+      setVerify(key, { kind: 'downloading', received: 0, total: file.size ?? null })
+      try {
+        const res = await fetch(url, { cache: 'no-store' })
+        if (!res.ok || !res.body) {
+          throw new Error(`HTTP ${res.status}`)
+        }
+        const lenHeader = res.headers.get('Content-Length')
+        const total = lenHeader ? Number(lenHeader) : file.size ?? null
+        if (total !== null && total > MAX_VERIFY_BYTES) {
+          try { await res.body.cancel() } catch {}
+          setVerify(key, { kind: 'fallback', reason: 'File is too large to verify in-browser — download started; verify with the SHA-256 above.' })
+          triggerAnchorDownload(url)
+          return
+        }
+
+        const reader = res.body.getReader()
+        const chunks: Uint8Array[] = []
+        let received = 0
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (!value) continue
+          received += value.byteLength
+          if (received > MAX_VERIFY_BYTES) {
+            try { await reader.cancel() } catch {}
+            setVerify(key, { kind: 'fallback', reason: 'File is too large to verify in-browser — download started; verify with the SHA-256 above.' })
+            triggerAnchorDownload(url)
+            return
+          }
+          chunks.push(value)
+          setVerify(key, { kind: 'downloading', received, total })
+        }
+
+        const blob = new Blob(chunks as BlobPart[])
+
+        // Save the bytes we just downloaded to disk so the user keeps the
+        // exact same content we're about to hash.
+        const objectUrl = URL.createObjectURL(blob)
+        try {
+          const a = document.createElement('a')
+          a.href = objectUrl
+          a.download = file.filename
+          a.rel = 'noopener'
+          document.body.appendChild(a)
+          a.click()
+          document.body.removeChild(a)
+        } finally {
+          // Defer revoke so the browser can start the save dialog.
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
+        }
+
+        setVerify(key, { kind: 'hashing' })
+        const buf = await blob.arrayBuffer()
+        const digest = await crypto.subtle.digest('SHA-256', buf)
+        const actual = bufferToHex(digest)
+        if (actual.toLowerCase() === file.sha256.toLowerCase()) {
+          setVerify(key, { kind: 'verified' })
+        } else {
+          setVerify(key, { kind: 'mismatch', actual })
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error'
+        setVerify(key, { kind: 'error', message })
+      }
+    },
+    [setVerify],
+  )
 
   const cards: { key: PlatformKey; icon: React.ReactNode; sub: string }[] = useMemo(() => [
     { key: 'win-x64', icon: <Monitor className="h-6 w-6" />, sub: 'NSIS installer · 64-bit' },
@@ -216,22 +418,65 @@ export default function DownloadPage() {
                     <span>v{manifest?.version ?? '—'}</span>
                   </div>
                   <ChecksumRow sha256={file?.sha256 ?? null} />
-                  <Button
-                    asChild={available}
-                    disabled={!available || loading}
-                    className={cn('w-full gap-2', recommended && available && 'bg-primary')}
-                    variant={available ? 'default' : 'outline'}
-                  >
-                    {available ? (
-                      <a href={`/api/download/${key}`} download>
-                        <Download className="h-4 w-4" /> Download
-                      </a>
-                    ) : (
-                      <span className="inline-flex items-center justify-center gap-2">
-                        <AlertTriangle className="h-4 w-4" /> Build pending
-                      </span>
-                    )}
-                  </Button>
+                  {(() => {
+                    const verifyState = verifyStates[key] ?? { kind: 'idle' as const }
+                    const canVerify = available && cryptoOk && !!file?.sha256
+                    const inProgress = verifyState.kind === 'downloading' || verifyState.kind === 'hashing'
+                    if (!available) {
+                      return (
+                        <Button disabled className="w-full gap-2" variant="outline">
+                          <span className="inline-flex items-center justify-center gap-2">
+                            <AlertTriangle className="h-4 w-4" /> Build pending
+                          </span>
+                        </Button>
+                      )
+                    }
+                    if (canVerify) {
+                      return (
+                        <Button
+                          type="button"
+                          disabled={loading || inProgress}
+                          onClick={() => file && startVerifiedDownload(key, file)}
+                          className={cn('w-full gap-2', recommended && 'bg-primary')}
+                          variant="default"
+                        >
+                          {inProgress ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Download className="h-4 w-4" />
+                          )}
+                          {inProgress ? 'Downloading…' : 'Download'}
+                        </Button>
+                      )
+                    }
+                    // Fallback: no Web Crypto, or no expected hash to compare
+                    // against — let the browser do a plain download.
+                    return (
+                      <>
+                        <Button
+                          asChild
+                          disabled={loading}
+                          className={cn('w-full gap-2', recommended && 'bg-primary')}
+                          variant="default"
+                        >
+                          <a href={`/api/download/${key}`} download>
+                            <Download className="h-4 w-4" /> Download
+                          </a>
+                        </Button>
+                        {!cryptoOk && file?.sha256 && (
+                          <div className="flex items-start gap-2 rounded-md border border-border/70 bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
+                            <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                            <span>
+                              In-browser verification isn&apos;t supported in
+                              this browser. Compare the SHA-256 above with
+                              the command below after downloading.
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    )
+                  })()}
+                  <VerifyBadge state={verifyStates[key] ?? { kind: 'idle' }} />
                   {!available && !loading && (
                     <p className="text-[10px] text-muted-foreground leading-snug">
                       First cloud build pending. The GitHub Actions pipeline at
