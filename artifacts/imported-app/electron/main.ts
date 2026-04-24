@@ -61,7 +61,7 @@ type NdiStartOptions = NdiServiceStartOptions & {
   }
 }
 import { FrameCapture } from './frame-capture'
-import { setupAutoUpdater, runManualCheck, getUpdateState } from './updater'
+import { setupAutoUpdater, runManualCheck, getUpdateState, onUpdateState, triggerUpdateDownload, type UpdateState } from './updater'
 
 // ── Replit-hosted speech-to-text proxy ────────────────────────────────
 // The bundled Next.js standalone server in this Electron app forwards
@@ -440,12 +440,105 @@ function resolveTrayIconPath(): string {
   return path.join(__dirname, '..', 'public', 'icon-192.png')
 }
 
-function buildTrayMenu(): Menu {
-  return Menu.buildFromTemplate([
-    {
+/**
+ * Render the current updater state as a single line suitable for the
+ * tray tooltip / informational menu header. Returns `null` when there's
+ * nothing worth surfacing (idle / silent not-available result), in which
+ * case callers should fall back to the bare app name.
+ */
+function trayStatusLine(state: UpdateState): string | null {
+  switch (state.status) {
+    case 'idle':
+    case 'not-available':
+      return null
+    case 'checking':
+      return 'Checking for updates…'
+    case 'available':
+      return `Update available — v${state.version}`
+    case 'downloading':
+      return `Downloading update… ${Math.round(state.percent)}%`
+    case 'downloaded':
+      return `Update ready to install — restart to apply v${state.version}`
+    case 'error':
+      return "Couldn't check for updates"
+  }
+}
+
+function trayTooltip(state: UpdateState): string {
+  const line = trayStatusLine(state)
+  return line ? `ScriptureLive AI — ${line}` : 'ScriptureLive AI'
+}
+
+/**
+ * Short tag suitable for `tray.setTitle()` on macOS — appears next to
+ * the menu-bar icon as plain text. Kept very short (~6 chars) so it
+ * doesn't crowd other menu-bar items. No-op on Windows / Linux where
+ * `setTitle` is unsupported.
+ */
+function trayTitle(state: UpdateState): string {
+  switch (state.status) {
+    case 'downloading':
+      return `↓ ${Math.round(state.percent)}%`
+    case 'available':
+      return '● update'
+    case 'downloaded':
+      return '● restart'
+    default:
+      return ''
+  }
+}
+
+function buildTrayMenu(state: UpdateState): Menu {
+  const items: MenuItemConstructorOptions[] = []
+
+  // Status header — a disabled informational row so the operator can
+  // see "Update available", "Downloading 42%", etc. at the top of the
+  // menu instead of having to read the tooltip. Skipped when there's
+  // nothing interesting to surface (idle / silently up to date).
+  const statusLine = trayStatusLine(state)
+  if (statusLine) {
+    items.push({ label: statusLine, enabled: false })
+    items.push({ type: 'separator' })
+  }
+
+  // Contextual primary action driven by the current update state. The
+  // generic "Check for Updates…" item is replaced with the most useful
+  // next step the operator can take right now.
+  if (state.status === 'available') {
+    items.push({
+      label: `Download Update (v${state.version})`,
+      click: () => {
+        // Hand off to the same in-process download trigger the
+        // renderer toast and Settings card use, so all three paths
+        // share the in-flight guard, status check, and friendly
+        // error normalization. Ignored when no update is available
+        // (e.g. state changed between menu render and click).
+        void triggerUpdateDownload()
+      },
+    })
+  } else if (state.status === 'downloading') {
+    items.push({
+      label: `Downloading… ${Math.round(state.percent)}%`,
+      enabled: false,
+    })
+  } else if (state.status === 'downloaded') {
+    items.push({
+      label: `Restart Now to Install v${state.version}`,
+      click: () => {
+        void (async () => {
+          const { autoUpdater } = await import('electron-updater')
+          setImmediate(() => autoUpdater.quitAndInstall(false, true))
+        })()
+      },
+    })
+  } else {
+    items.push({
       label: 'Check for Updates…',
       click: () => { void handleManualUpdateCheck() },
-    },
+    })
+  }
+
+  items.push(
     {
       label: 'Show Main Window',
       click: () => { void showMainWindow() },
@@ -455,7 +548,58 @@ function buildTrayMenu(): Menu {
       label: 'Quit',
       click: () => { app.quit() },
     },
-  ])
+  )
+
+  return Menu.buildFromTemplate(items)
+}
+
+/**
+ * Push the latest updater state into the tray's tooltip, contextual
+ * menu, and (on macOS) menu-bar title. Throttling for the chatty
+ * `downloading` status happens at the call site — here we just render.
+ */
+function applyTrayState(state: UpdateState) {
+  if (!tray || tray.isDestroyed()) return
+  try {
+    tray.setToolTip(trayTooltip(state))
+    tray.setContextMenu(buildTrayMenu(state))
+    if (process.platform === 'darwin') {
+      tray.setTitle(trayTitle(state))
+    }
+  } catch (err) {
+    console.error('[tray] failed to apply update state (non-fatal):', err)
+  }
+}
+
+// Throttle handle for the high-frequency `downloading` updates.
+// electron-updater fires download-progress dozens of times per second
+// for a multi-megabyte installer; rebuilding the tray menu that often
+// would thrash the OS shell. We coalesce to at most ~2 redraws/second
+// and always render the final state when status flips to something
+// other than `downloading` (so the operator never sees a stale 99%).
+let trayThrottleHandle: NodeJS.Timeout | null = null
+let trayThrottlePending: UpdateState | null = null
+function scheduleTrayUpdate(state: UpdateState) {
+  if (state.status === 'downloading') {
+    trayThrottlePending = state
+    if (trayThrottleHandle) return
+    trayThrottleHandle = setTimeout(() => {
+      trayThrottleHandle = null
+      const pending = trayThrottlePending
+      trayThrottlePending = null
+      if (pending) applyTrayState(pending)
+    }, 500)
+    return
+  }
+  // Non-downloading transitions are rare and important — flush
+  // immediately and cancel any queued progress redraw so we don't
+  // overwrite "Update ready to install" with a stale "99%".
+  if (trayThrottleHandle) {
+    clearTimeout(trayThrottleHandle)
+    trayThrottleHandle = null
+    trayThrottlePending = null
+  }
+  applyTrayState(state)
 }
 
 /**
@@ -484,13 +628,20 @@ function setupTray() {
       image = image.resize({ width: 16, height: 16, quality: 'best' })
     }
     tray = new Tray(image)
-    tray.setToolTip('ScriptureLive AI')
-    tray.setContextMenu(buildTrayMenu())
+    // Seed tooltip / menu / (mac) title from whatever the updater
+    // already knows. setupAutoUpdater runs before setupTray, but the
+    // first network check is delayed 10s so this is normally `idle`.
+    applyTrayState(getUpdateState())
     // Single-click on Windows / double-click on macOS surfaces the main
     // window — matches the convention every other tray-resident app
     // (Slack, Zoom, Discord) uses.
     tray.on('click', () => { void showMainWindow() })
     tray.on('double-click', () => { void showMainWindow() })
+    // Keep the tray tooltip / menu / mac title in lockstep with the
+    // updater so the operator can glance at the notification area
+    // and tell whether an update is being checked, downloading, or
+    // ready to install — without opening the menu.
+    onUpdateState(scheduleTrayUpdate)
   } catch (err) {
     console.error('[tray] init failed (non-fatal):', err)
     tray = null
