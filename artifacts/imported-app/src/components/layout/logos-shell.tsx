@@ -101,7 +101,14 @@ function Card({
   return (
     <section
       className={cn(
-        'flex flex-col min-h-0 rounded-xl border border-zinc-800/70 bg-zinc-950/60 shadow-sm overflow-hidden',
+        // h-full is critical — without it each Card sizes to its content
+        // height. Live Display's 16:9 stage frame forces it taller than
+        // Preview / Detect Verses / Scripture Feed, so the row of cards
+        // ends up at four different bottom edges. With h-full every Card
+        // fills its parent ResizablePanel and the row aligns perfectly
+        // top and bottom (same applies to the bottom row: Chapter
+        // Navigator, Detected Verses, Media all line up).
+        'flex flex-col h-full min-h-0 rounded-xl border border-zinc-800/70 bg-zinc-950/60 shadow-sm overflow-hidden',
         className,
       )}
     >
