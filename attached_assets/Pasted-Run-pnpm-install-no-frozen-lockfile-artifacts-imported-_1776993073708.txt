@@ -1,0 +1,177 @@
+Run pnpm install --no-frozen-lockfile
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+Scope: all 9 workspace projects
+Lockfile is up to date, resolution step is skipped
+Packages: +1392
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 0, reused 0, downloaded 1, added 0
+Progress: resolved 0, reused 0, downloaded 15, added 0
+Progress: resolved 0, reused 0, downloaded 17, added 4
+Progress: resolved 0, reused 0, downloaded 30, added 4
+Progress: resolved 0, reused 0, downloaded 60, added 13
+Progress: resolved 0, reused 0, downloaded 63, added 16
+Progress: resolved 0, reused 0, downloaded 64, added 16
+Progress: resolved 0, reused 0, downloaded 73, added 17
+Progress: resolved 0, reused 0, downloaded 74, added 17
+Progress: resolved 0, reused 0, downloaded 75, added 17
+Progress: resolved 0, reused 0, downloaded 76, added 17
+Progress: resolved 0, reused 0, downloaded 77, added 20
+Progress: resolved 0, reused 0, downloaded 78, added 20
+Progress: resolved 0, reused 0, downloaded 81, added 20
+Progress: resolved 0, reused 0, downloaded 96, added 24
+Progress: resolved 0, reused 0, downloaded 121, added 31
+Progress: resolved 0, reused 0, downloaded 181, added 51
+Progress: resolved 0, reused 0, downloaded 214, added 59
+Progress: resolved 0, reused 0, downloaded 247, added 70
+Progress: resolved 0, reused 0, downloaded 271, added 76
+Progress: resolved 0, reused 0, downloaded 278, added 78
+Progress: resolved 0, reused 0, downloaded 283, added 79
+Progress: resolved 0, reused 0, downloaded 283, added 80
+Progress: resolved 0, reused 0, downloaded 288, added 80
+Progress: resolved 0, reused 0, downloaded 290, added 82
+Progress: resolved 0, reused 0, downloaded 293, added 82
+Progress: resolved 0, reused 0, downloaded 294, added 83
+Progress: resolved 0, reused 0, downloaded 295, added 83
+Progress: resolved 0, reused 0, downloaded 296, added 83
+Progress: resolved 0, reused 0, downloaded 297, added 83
+Progress: resolved 0, reused 0, downloaded 298, added 83
+Progress: resolved 0, reused 0, downloaded 299, added 83
+Progress: resolved 0, reused 0, downloaded 299, added 84
+Progress: resolved 0, reused 0, downloaded 300, added 84
+Progress: resolved 0, reused 0, downloaded 310, added 86
+Progress: resolved 0, reused 0, downloaded 334, added 93
+Progress: resolved 0, reused 0, downloaded 354, added 98
+Progress: resolved 0, reused 0, downloaded 362, added 101
+Progress: resolved 0, reused 0, downloaded 386, added 106
+Progress: resolved 0, reused 0, downloaded 430, added 120
+Progress: resolved 0, reused 0, downloaded 455, added 126
+Progress: resolved 0, reused 0, downloaded 479, added 134
+Progress: resolved 0, reused 0, downloaded 487, added 136
+Progress: resolved 0, reused 0, downloaded 533, added 152
+Progress: resolved 0, reused 0, downloaded 556, added 156
+Progress: resolved 0, reused 0, downloaded 619, added 177
+Progress: resolved 0, reused 0, downloaded 620, added 177
+Progress: resolved 0, reused 0, downloaded 647, added 188
+Progress: resolved 0, reused 0, downloaded 654, added 189
+Progress: resolved 0, reused 0, downloaded 713, added 208
+Progress: resolved 0, reused 0, downloaded 728, added 212
+Progress: resolved 0, reused 0, downloaded 742, added 216
+Progress: resolved 0, reused 0, downloaded 743, added 216
+Progress: resolved 0, reused 0, downloaded 796, added 233
+Progress: resolved 0, reused 0, downloaded 825, added 241
+Progress: resolved 0, reused 0, downloaded 898, added 263
+Progress: resolved 0, reused 0, downloaded 937, added 274
+Progress: resolved 0, reused 0, downloaded 996, added 291
+Progress: resolved 0, reused 0, downloaded 1013, added 296
+Progress: resolved 0, reused 0, downloaded 1044, added 307
+Progress: resolved 0, reused 0, downloaded 1103, added 324
+Progress: resolved 0, reused 0, downloaded 1154, added 339
+Progress: resolved 0, reused 0, downloaded 1207, added 356
+Progress: resolved 0, reused 0, downloaded 1241, added 368
+Progress: resolved 0, reused 0, downloaded 1243, added 369
+Progress: resolved 0, reused 0, downloaded 1244, added 369
+Progress: resolved 0, reused 0, downloaded 1245, added 369
+Progress: resolved 0, reused 0, downloaded 1255, added 372
+Progress: resolved 0, reused 0, downloaded 1276, added 378
+Progress: resolved 0, reused 0, downloaded 1322, added 392
+Progress: resolved 0, reused 0, downloaded 1337, added 474
+Progress: resolved 0, reused 0, downloaded 1337, added 602
+Progress: resolved 0, reused 0, downloaded 1337, added 780
+Progress: resolved 0, reused 0, downloaded 1337, added 877
+Progress: resolved 0, reused 0, downloaded 1337, added 993
+Progress: resolved 0, reused 0, downloaded 1337, added 1211
+Progress: resolved 0, reused 0, downloaded 1337, added 1216
+Progress: resolved 0, reused 0, downloaded 1337, added 1218
+Progress: resolved 0, reused 0, downloaded 1337, added 1331
+Progress: resolved 0, reused 0, downloaded 1337, added 1392
+Progress: resolved 0, reused 0, downloaded 1337, added 1392, done
+node_modules/@swc/core postinstall$ node postinstall.js
+node_modules/esbuild postinstall$ node install.js
+node_modules/unrs-resolver postinstall$ napi-postinstall unrs-resolver 1.11.1 check
+node_modules/@swc/core postinstall: Done
+node_modules/esbuild postinstall: Done
+node_modules/unrs-resolver postinstall: Done
+artifacts/imported-app postinstall$ node -e "process.exit(0)"
+. preinstall$ sh -c 'rm -f package-lock.json yarn.lock; case "$npm_config_user_agent" in pnpm/*) ;; *) echo "Use pnpm instead" >&2; exit 1 ;; esac'
+artifacts/imported-app postinstall: Done
+. preinstall: Done
+╭ Warning ─────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│   Ignored build scripts: @parcel/watcher@2.5.6, @prisma/client@6.19.3,       │
+│   @prisma/engines@6.19.3, electron@33.4.11, es5-ext@0.10.64, koffi@2.16.1,   │
+│   prisma@6.19.3, sharp@0.34.5.                                               │
+│   Run "pnpm approve-builds" to pick which dependencies should be allowed     │
+│   to run scripts.                                                            │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Done in 1m 33.6s using pnpm v10.33.2
+33s
+Run pnpm run build
+  
+> workspace@0.0.0 build D:\a\scripturelive-ai\scripturelive-ai
+> pnpm run typecheck && pnpm -r --if-present --filter "!@workspace/mockup-sandbox" run build
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+> workspace@0.0.0 typecheck D:\a\scripturelive-ai\scripturelive-ai
+> pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-present run typecheck
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+> workspace@0.0.0 typecheck:libs D:\a\scripturelive-ai\scripturelive-ai
+> tsc --build
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+Scope: 4 of 9 workspace projects
+artifacts/api-server typecheck$ tsc -p tsconfig.json --noEmit
+artifacts/mockup-sandbox typecheck$ tsc -p tsconfig.json --noEmit
+artifacts/api-server typecheck: Done
+scripts typecheck$ tsc -p tsconfig.json --noEmit
+scripts typecheck: Done
+artifacts/mockup-sandbox typecheck: Done
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+Scope: 8 of 9 workspace projects
+artifacts/imported-app build$ cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build
+artifacts/imported-app build: Prisma schema loaded from prisma\schema.prisma
+artifacts/imported-app build: ✔ Generated Prisma Client (v6.19.3) to .\src\generated\prisma-client in 155ms
+artifacts/imported-app build: Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+artifacts/imported-app build: Tip: Interested in query caching in just a few lines of code? Try Accelerate today! https://pris.ly/tip-3-accelerate
+artifacts/imported-app build: ⚠ No build cache found. Please configure build caching for faster rebuilds. Read more: https://nextjs.org/docs/messages/no-cache
+artifacts/imported-app build: Attention: Next.js now collects completely anonymous telemetry regarding usage.
+artifacts/imported-app build: This information is used to shape Next.js' roadmap and prioritize features.
+artifacts/imported-app build: You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+artifacts/imported-app build: https://nextjs.org/telemetry
+artifacts/imported-app build: ▲ Next.js 16.2.4 (Turbopack)
+artifacts/imported-app build:   Creating an optimized production build ...
+artifacts/imported-app build: > Build error occurred
+artifacts/imported-app build: Error: Turbopack build failed with 1 errors:
+artifacts/imported-app build: ./src/app
+artifacts/imported-app build: Error: Next.js inferred your workspace root, but it may not be correct.
+artifacts/imported-app build:     We couldn't find the Next.js package (next/package.json) from the project directory: D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app\src\app
+artifacts/imported-app build:      To fix this, set turbopack.root in your Next.js config, or ensure the Next.js package is resolvable from this directory.
+artifacts/imported-app build:     Note: For security and performance reasons, files outside of the project directory will not be compiled.
+artifacts/imported-app build:     See https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopack#root-directory for more information.
+artifacts/imported-app build:     at ignore-listed frames
+artifacts/imported-app build: Failed
+D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/imported-app@0.5.20 build: `cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build`
+Exit status 1
+ ELIFECYCLE  Command failed with exit code 1.
+Error: Process completed with exit code 1.
+0s
+0s
+0s
+0s
+0s
+Post job cleanup.
+Pruning is unnecessary.
+3s
+Post job cleanup.
+"C:\Program Files\Git\bin\git.exe" version
+git version 2.53.0.windows.2
+Temporarily overriding HOME='D:\a\_temp\7ef17fbe-94b4-44ea-9791-de021fd2c44b' before making global git config changes
+Adding repository directory to the temporary git global config as a safe directory
+"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\scripturelive-ai\scripturelive-ai
+"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+http.https://github.com/.extraheader
+"C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
