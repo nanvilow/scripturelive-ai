@@ -1,4 +1,10 @@
+import path from "path";
 import type { NextConfig } from "next";
+
+// Workspace root (two levels up: artifacts/imported-app -> repo root). The
+// `next` package itself, along with most other deps, lives in the hoisted
+// node_modules at this root — Turbopack must be told where to look.
+const workspaceRoot = path.join(__dirname, "..", "..");
 
 const nextConfig: NextConfig = {
   // Standalone output is needed when the app is packaged inside the Electron
@@ -11,6 +17,13 @@ const nextConfig: NextConfig = {
   // top level. Pinning the tracing root to this artifact's directory forces
   // Next to emit `server.js` directly under `.next/standalone/`.
   outputFileTracingRoot: __dirname,
+  // Setting outputFileTracingRoot above also narrows Turbopack's auto-detected
+  // workspace root, which then can't resolve the hoisted `next` package.
+  // Explicitly point Turbopack at the real workspace root so module resolution
+  // walks up into the hoisted node_modules.
+  turbopack: {
+    root: workspaceRoot,
+  },
   allowedDevOrigins: process.env.REPLIT_DEV_DOMAIN
     ? [process.env.REPLIT_DEV_DOMAIN]
     : [],
