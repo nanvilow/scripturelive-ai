@@ -16,7 +16,7 @@ The core application, "Imported App," is a Next.js 16 application using Prisma a
 Key features and architectural decisions include:
 
 - **NDI Integration:** The application supports browser-only NDI output and a native NDI sender via an Electron wrapper using the `grandiose` binding for desktop builds.
-- **Dynamic Downloads:** A `/download` page provides OS-detecting downloads, streaming files from `/api/download/<platform>` based on `public/downloads/manifest.json`.
+- **Dynamic Downloads:** A `/download` page provides OS-detecting downloads, streaming files from `/api/download/<platform>` based on `public/downloads/manifest.json`. The "Verify your download" card also exposes a drag-and-drop / file-picker zone that re-hashes installers already on disk by streaming them through `hash-wasm`'s incremental SHA-256 (so it works for files larger than the in-browser fetch cap), matched to the manifest entry by filename with a manual platform-pick fallback.
 - **Speech Recognition:**
     - The system previously supported both a local Base engine (whisper.cpp) and OpenAI Whisper.
     - The current architecture has consolidated to a **single cloud-only Whisper path**. The `api-server` now hosts a `/api/transcribe` route using `gpt-4o-mini-transcribe` with `OPENAI_API_KEY` from Replit Deployment Secrets.

@@ -1,8 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Apple, Download, Monitor, ShieldCheck, ShieldAlert, Sparkles, Wifi, ArrowLeft, Cpu, HardDrive, AlertTriangle, Copy, Check, Fingerprint, Loader2 } from 'lucide-react'
+import { Apple, Download, Monitor, ShieldCheck, ShieldAlert, Sparkles, Wifi, ArrowLeft, Cpu, HardDrive, AlertTriangle, Copy, Check, Fingerprint, Loader2, Upload, X } from 'lucide-react'
+import { createSHA256 } from 'hash-wasm'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
@@ -48,6 +49,21 @@ function webCryptoAvailable(): boolean {
   )
 }
 
+// The local "drop installer here" zone has a different capability profile
+// from the in-browser download path: it streams via File.stream() into
+// hash-wasm (WASM-backed incremental SHA-256), so it does NOT need
+// crypto.subtle.digest. Gating both on `webCryptoAvailable` would needlessly
+// hide the local verifier in non-secure-context browsers where WebCrypto's
+// subtle API isn't exposed but File.stream and WASM still are.
+function localVerifyAvailable(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof File !== 'undefined' &&
+    typeof File.prototype.stream === 'function' &&
+    typeof WebAssembly !== 'undefined'
+  )
+}
+
 function bufferToHex(buf: ArrayBuffer): string {
   const arr = new Uint8Array(buf)
   let out = ''
@@ -56,6 +72,14 @@ function bufferToHex(buf: ArrayBuffer): string {
   }
   return out
 }
+
+type LocalVerifyState =
+  | { kind: 'idle' }
+  | { kind: 'reading'; filename: string; received: number; total: number; platform: PlatformKey }
+  | { kind: 'verified'; filename: string; platform: PlatformKey }
+  | { kind: 'mismatch'; filename: string; platform: PlatformKey; actual: string; expected: string }
+  | { kind: 'unmatched'; file: File }
+  | { kind: 'error'; filename: string; message: string }
 
 type ManifestFile = {
   label: string
@@ -259,6 +283,82 @@ function VerifyBadge({ state }: { state: VerifyState }) {
   )
 }
 
+function LocalVerifyBadge({ state }: { state: LocalVerifyState }) {
+  if (state.kind === 'idle') return null
+  if (state.kind === 'reading') {
+    const hasTotal = state.total > 0
+    const pct = hasTotal
+      ? Math.min(100, Math.round((state.received / state.total) * 100))
+      : null
+    return (
+      <div className="flex flex-col gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
+        <div className="flex items-center gap-2">
+          <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+          <span className="truncate">
+            Hashing <span className="font-mono text-foreground/90">{state.filename}</span> · {formatProgress(state.received, state.total)}
+          </span>
+        </div>
+        {pct === null ? <IndeterminateBar /> : <Progress value={pct} aria-label={`Hashing local file, ${pct}% complete`} className="h-1.5" />}
+      </div>
+    )
+  }
+  if (state.kind === 'verified') {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-start gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1.5 text-[11px] font-medium text-emerald-300"
+      >
+        <ShieldCheck className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+        <span>
+          Verified — <span className="font-mono">{state.filename}</span> matches the manifest SHA-256 for {state.platform}.
+        </span>
+      </div>
+    )
+  }
+  if (state.kind === 'mismatch') {
+    return (
+      <div
+        role="alert"
+        className="rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-300"
+      >
+        <div className="flex items-start gap-2 font-medium">
+          <ShieldAlert className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          <span>
+            Hash mismatch — <span className="font-mono">{state.filename}</span> does not match the manifest for {state.platform}. Do not run this file.
+          </span>
+        </div>
+        <div className="mt-1 break-all font-mono text-[10px] text-red-200/90">
+          got      {state.actual}
+          {'\n'}expected {state.expected}
+        </div>
+      </div>
+    )
+  }
+  if (state.kind === 'unmatched') {
+    return (
+      <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-200">
+        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+        <span>
+          <span className="font-mono">{state.file.name}</span> doesn&apos;t match an installer filename in the manifest. Pick the platform to verify against:
+        </span>
+      </div>
+    )
+  }
+  // error
+  return (
+    <div
+      role="alert"
+      className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-200"
+    >
+      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+      <span>
+        Couldn&apos;t verify <span className="font-mono">{state.filename}</span> ({state.message}).
+      </span>
+    </div>
+  )
+}
+
 function detectPlatform(): PlatformKey | null {
   if (typeof navigator === 'undefined') return null
   const ua = navigator.userAgent.toLowerCase()
@@ -278,10 +378,18 @@ export default function DownloadPage() {
   const [detected, setDetected] = useState<PlatformKey | null>(null)
   const [verifyStates, setVerifyStates] = useState<Record<string, VerifyState>>({})
   const [cryptoOk, setCryptoOk] = useState(false)
+  const [localOk, setLocalOk] = useState(false)
+  const [localVerify, setLocalVerify] = useState<LocalVerifyState>({ kind: 'idle' })
+  const [dragActive, setDragActive] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  // Bumped each time a new file is chosen so any in-flight stream-read loop
+  // can detect that it should abandon work and not stomp on the new state.
+  const verifyTokenRef = useRef(0)
 
   useEffect(() => {
     setDetected(detectPlatform())
     setCryptoOk(webCryptoAvailable())
+    setLocalOk(localVerifyAvailable())
     fetch('/api/download/manifest', { cache: 'no-store' })
       .then((r) => r.json())
       .then((m: Manifest) => setManifest(m))
@@ -291,6 +399,126 @@ export default function DownloadPage() {
   const setVerify = useCallback((key: string, state: VerifyState) => {
     setVerifyStates((prev) => ({ ...prev, [key]: state }))
   }, [])
+
+  // Map a local file's name back to a PlatformKey by exact (case-insensitive)
+  // filename match against the manifest. Returns null when the user has
+  // renamed the installer or grabbed something we don't know about.
+  const matchPlatformByFilename = useCallback(
+    (filename: string): PlatformKey | null => {
+      if (!manifest) return null
+      const lower = filename.toLowerCase()
+      for (const key of ['win-x64', 'mac-arm64', 'mac-x64'] as PlatformKey[]) {
+        const f = manifest.files[key]
+        if (f?.filename && f.filename.toLowerCase() === lower) return key
+      }
+      return null
+    },
+    [manifest],
+  )
+
+  // Stream the local file through hash-wasm's incremental SHA-256 so we
+  // never need the whole file resident in memory — that's what makes this
+  // work for installers larger than the in-browser download cap.
+  const verifyLocalFile = useCallback(
+    async (file: File, platform: PlatformKey) => {
+      if (!manifest) return
+      const expected = manifest.files[platform]?.sha256
+      if (!expected) {
+        setLocalVerify({
+          kind: 'error',
+          filename: file.name,
+          message: 'No SHA-256 in the manifest for this platform yet.',
+        })
+        return
+      }
+      const token = ++verifyTokenRef.current
+      setLocalVerify({
+        kind: 'reading',
+        filename: file.name,
+        received: 0,
+        total: file.size,
+        platform,
+      })
+      try {
+        const hasher = await createSHA256()
+        hasher.init()
+        const reader = file.stream().getReader()
+        let received = 0
+        let lastUiUpdate = 0
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (token !== verifyTokenRef.current) {
+            try { await reader.cancel() } catch {}
+            return
+          }
+          if (done) break
+          if (!value) continue
+          hasher.update(value)
+          received += value.byteLength
+          // Throttle React re-renders for big files (~10 updates/sec ceiling).
+          const now = performance.now()
+          if (now - lastUiUpdate > 100 || received === file.size) {
+            lastUiUpdate = now
+            setLocalVerify({
+              kind: 'reading',
+              filename: file.name,
+              received,
+              total: file.size,
+              platform,
+            })
+          }
+        }
+        if (token !== verifyTokenRef.current) return
+        const actual = hasher.digest('hex')
+        if (actual.toLowerCase() === expected.toLowerCase()) {
+          setLocalVerify({ kind: 'verified', filename: file.name, platform })
+        } else {
+          setLocalVerify({
+            kind: 'mismatch',
+            filename: file.name,
+            platform,
+            actual,
+            expected,
+          })
+        }
+      } catch (err) {
+        if (token !== verifyTokenRef.current) return
+        const message = err instanceof Error ? err.message : 'Unknown error'
+        setLocalVerify({ kind: 'error', filename: file.name, message })
+      }
+    },
+    [manifest],
+  )
+
+  const onLocalFilePicked = useCallback(
+    (file: File) => {
+      // Cancel any in-flight verification so it can't overwrite our new state.
+      verifyTokenRef.current++
+      const matched = matchPlatformByFilename(file.name)
+      if (matched) {
+        void verifyLocalFile(file, matched)
+      } else {
+        setLocalVerify({ kind: 'unmatched', file })
+      }
+    },
+    [matchPlatformByFilename, verifyLocalFile],
+  )
+
+  const clearLocalVerify = useCallback(() => {
+    verifyTokenRef.current++
+    setLocalVerify({ kind: 'idle' })
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }, [])
+
+  const onDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      setDragActive(false)
+      const file = e.dataTransfer.files?.[0]
+      if (file) onLocalFilePicked(file)
+    },
+    [onLocalFilePicked],
+  )
 
   const startVerifiedDownload = useCallback(
     async (key: PlatformKey, file: ManifestFile) => {
@@ -536,6 +764,105 @@ export default function DownloadPage() {
             (use the copy button next to the hash). This is especially important while the installers are
             unsigned.
           </p>
+
+          {/* Local file drop zone — re-verify an installer the user already
+              has on disk (e.g. downloaded earlier or grabbed straight from
+              GitHub Releases) without re-downloading or shelling out. The
+              hash is computed by streaming the file through hash-wasm so it
+              works for installers larger than the in-browser fetch cap. */}
+          {localOk && (
+            <div className="mt-4">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="text-[11px] font-semibold text-foreground">
+                  Already have the installer? Drop it here to verify
+                </div>
+                {localVerify.kind !== 'idle' && (
+                  <button
+                    type="button"
+                    onClick={clearLocalVerify}
+                    className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  >
+                    <X className="h-3 w-3" /> Clear
+                  </button>
+                )}
+              </div>
+              <div
+                onDragEnter={(e) => { e.preventDefault(); setDragActive(true) }}
+                onDragOver={(e) => { e.preventDefault(); setDragActive(true) }}
+                onDragLeave={(e) => { e.preventDefault(); setDragActive(false) }}
+                onDrop={onDrop}
+                onClick={() => fileInputRef.current?.click()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    fileInputRef.current?.click()
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+                aria-label="Drop installer file here, or click to choose one"
+                className={cn(
+                  'flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed px-4 py-6 text-center text-[11px] transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50',
+                  dragActive
+                    ? 'border-primary/60 bg-primary/10 text-foreground'
+                    : 'border-border bg-muted/30 text-muted-foreground hover:border-border/80 hover:bg-muted/50',
+                )}
+              >
+                <Upload className={cn('h-5 w-5', dragActive ? 'text-primary' : 'text-muted-foreground')} />
+                <div>
+                  <span className="font-medium text-foreground">Drop installer here</span>{' '}
+                  <span className="text-muted-foreground">or click to browse</span>
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  We hash the file in your browser — nothing is uploaded.
+                </div>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept=".exe,.dmg,.zip,.blockmap,application/octet-stream"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) onLocalFilePicked(file)
+                  // Reset so picking the same file again still triggers onChange.
+                  e.target.value = ''
+                }}
+              />
+              <div className="mt-2 space-y-2">
+                <LocalVerifyBadge state={localVerify} />
+                {localVerify.kind === 'unmatched' && manifest && (
+                  <div className="flex flex-wrap gap-2">
+                    {(['win-x64', 'mac-arm64', 'mac-x64'] as PlatformKey[]).map((key) => {
+                      const f = manifest.files[key]
+                      if (!f?.sha256) return null
+                      return (
+                        <Button
+                          key={key}
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-[11px]"
+                          onClick={() => verifyLocalFile(localVerify.file, key)}
+                        >
+                          Verify against {f.label || key}
+                        </Button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          {!localOk && (
+            <div className="mt-4 flex items-start gap-2 rounded-md border border-border/70 bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
+              <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <span>
+                In-browser file verification isn&apos;t supported in this
+                browser. Use the SHA-256 commands below instead.
+              </span>
+            </div>
+          )}
           <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
             <span>Verifying multiple installers? Grab a single file:</span>
             <a
