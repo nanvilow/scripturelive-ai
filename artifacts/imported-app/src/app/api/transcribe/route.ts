@@ -12,187 +12,182 @@ import OpenAI from 'openai'
  * The renderer in the desktop build records short audio chunks via
  * MediaRecorder (webm/opus) and POSTs them here as multipart form-data.
  *
- * Auth strategy (in priority order):
- *   1. X-OpenAI-Key header — supplied by the renderer from the user's
- *      Settings page. This is the ONLY path that works in the packaged
- *      desktop installer, because the Replit AI Integrations env vars
- *      do not exist on the customer's PC.
- *   2. AI_INTEGRATIONS_OPENAI_* env vars — Replit-only proxy creds for
- *      development inside Replit's container.
- *   3. OPENAI_API_KEY env var — for self-hosted operators who set it
- *      via the OS environment.
+ * ─── Resolution strategy (Option A — Replit-hosted proxy) ─────────────
+ *
+ * The OpenAI key NEVER ships inside the customer's Electron install. We
+ * resolve a target in this order:
+ *
+ *   1. `OPENAI_API_KEY`               — direct call to OpenAI. Used when
+ *                                       this Next.js server is itself
+ *                                       deployed on Replit with the
+ *                                       secret set.
+ *   2. `AI_INTEGRATIONS_OPENAI_*`    — Replit AI Integrations proxy creds
+ *                                       for in-Replit dev / preview.
+ *   3. `TRANSCRIBE_PROXY_URL`         — forward this request as-is to a
+ *                                       remote proxy (the api-server
+ *                                       artifact deployed on Replit).
+ *                                       The bundled Electron app sets
+ *                                       this env when it spawns the
+ *                                       Next.js standalone server, so
+ *                                       customers' machines never see
+ *                                       an OpenAI key.
+ *   else                              503.
  */
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
+const BIBLE_PROMPT =
+  'The speaker is delivering a Christian sermon and may quote the Bible. ' +
+  'Common Bible book names: Genesis, Exodus, Leviticus, Numbers, Deuteronomy, ' +
+  'Joshua, Judges, Ruth, Samuel, Kings, Chronicles, Ezra, Nehemiah, Esther, ' +
+  'Job, Psalms, Proverbs, Ecclesiastes, Song of Solomon, Isaiah, Jeremiah, ' +
+  'Lamentations, Ezekiel, Daniel, Hosea, Joel, Amos, Obadiah, Jonah, Micah, ' +
+  'Nahum, Habakkuk, Zephaniah, Haggai, Zechariah, Malachi, Matthew, Mark, ' +
+  'Luke, John, Acts, Romans, Corinthians, Galatians, Ephesians, Philippians, ' +
+  'Colossians, Thessalonians, Timothy, Titus, Philemon, Hebrews, James, Peter, ' +
+  'Jude, Revelation. Common terms: Jesus, Christ, Lord, God, Holy Spirit, ' +
+  'gospel, salvation, righteousness, kingdom, covenant, prophet, apostle, ' +
+  'disciple, faith, grace, mercy, sin, repentance, baptism, communion, amen.'
+
 interface ClientSpec {
   baseURL?: string
   apiKey: string
 }
 
-// Cache one OpenAI client per (baseURL|apiKey) tuple so we don't spin
-// up a fresh HTTPS agent for every chunk. LRU-capped at 8 entries —
-// enough for a few rotating keys in dev plus the proxy slot, but
-// bounded so a long-lived process can't grow the map indefinitely
-// (e.g. a public preview that sees random keys for hours).
-const CLIENT_CACHE_MAX = 8
-const clientCache = new Map<string, OpenAI>()
-function getClientFor(spec: ClientSpec | null): OpenAI | null {
-  if (!spec) return null
-  const cacheKey = `${spec.baseURL || 'https://api.openai.com/v1'}|${spec.apiKey.slice(0, 12)}`
-  const existing = clientCache.get(cacheKey)
-  if (existing) {
-    // Touch — re-insert to mark as most-recently-used.
-    clientCache.delete(cacheKey)
-    clientCache.set(cacheKey, existing)
-    return existing
-  }
-  const fresh = new OpenAI(spec.baseURL ? { baseURL: spec.baseURL, apiKey: spec.apiKey } : { apiKey: spec.apiKey })
-  clientCache.set(cacheKey, fresh)
-  // Evict oldest entries while over cap.
-  while (clientCache.size > CLIENT_CACHE_MAX) {
-    const oldest = clientCache.keys().next().value
-    if (oldest === undefined) break
-    clientCache.delete(oldest)
-  }
-  return fresh
-}
+let cachedClient: { spec: ClientSpec; client: OpenAI } | null = null
 
-function resolveClientSpec(req: NextRequest): ClientSpec | null {
-  // 1) User-supplied key from Settings (works on installed desktop app).
-  const headerKey = req.headers.get('x-openai-key')?.trim()
-  if (headerKey) return { apiKey: headerKey }
-  // 2) Replit AI Integrations proxy (dev only).
+function resolveClientSpec(): ClientSpec | null {
+  const envKey = process.env.OPENAI_API_KEY
+  if (envKey) return { apiKey: envKey }
   const proxyKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY
   const proxyBase = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
   if (proxyKey && proxyBase) return { apiKey: proxyKey, baseURL: proxyBase }
-  // 3) Plain env var fallback.
-  const envKey = process.env.OPENAI_API_KEY
-  if (envKey) return { apiKey: envKey }
   return null
 }
 
-// Same-origin gate. /api/transcribe spends server-side OpenAI credits,
-// so we refuse cross-origin POSTs to keep a public-facing dev URL from
-// being scraped into a free transcription endpoint. The desktop
-// (Electron) renderer loads the same Next.js origin, so requests there
-// pass this check naturally. We compare Origin / Referer against the
-// request host, falling back to the absence of an Origin header (which
-// browsers omit for same-origin form-data POSTs only sometimes — we
-// also accept that case).
-function isSameOriginRequest(req: NextRequest): boolean {
-  const origin = req.headers.get('origin')
-  const referer = req.headers.get('referer')
-  const host = req.headers.get('host')
-  if (!host) return false
-  const expected = new Set([host, `localhost:${host.split(':')[1] || ''}`])
-  const sources = [origin, referer].filter(Boolean) as string[]
-  if (sources.length === 0) {
-    // Same-origin form POSTs sometimes ship with no Origin/Referer.
-    // Accept only when both are absent (cross-origin requests almost
-    // always carry one or the other).
-    return true
+function getClient(): OpenAI | null {
+  const spec = resolveClientSpec()
+  if (!spec) return null
+  if (
+    cachedClient &&
+    cachedClient.spec.apiKey === spec.apiKey &&
+    cachedClient.spec.baseURL === spec.baseURL
+  ) {
+    return cachedClient.client
   }
-  for (const src of sources) {
-    try {
-      const u = new URL(src)
-      if (expected.has(u.host)) return true
-    } catch { /* malformed — reject */ }
-  }
-  return false
+  const client = spec.baseURL
+    ? new OpenAI({ apiKey: spec.apiKey, baseURL: spec.baseURL })
+    : new OpenAI({ apiKey: spec.apiKey })
+  cachedClient = { spec, client }
+  return client
+}
+
+function pickExtAndMime(incomingType: string): { ext: string; mime: string } {
+  const t = (incomingType || '').toLowerCase()
+  if (t.includes('wav') || t.includes('x-wav')) return { ext: 'wav', mime: 'audio/wav' }
+  if (t.includes('mp3') || t.includes('mpeg')) return { ext: 'mp3', mime: 'audio/mpeg' }
+  if (t.includes('ogg')) return { ext: 'ogg', mime: 'audio/ogg' }
+  if (t.includes('m4a') || t.includes('mp4') || t.includes('aac'))
+    return { ext: 'm4a', mime: 'audio/mp4' }
+  if (t.includes('flac')) return { ext: 'flac', mime: 'audio/flac' }
+  if (t.includes('webm')) return { ext: 'webm', mime: t }
+  return { ext: 'webm', mime: t || 'audio/webm' }
+}
+
+// ── Forward to remote proxy ────────────────────────────────────────────
+// When OPENAI_API_KEY is absent (the Electron-bundled standalone case),
+// the request is forwarded as-is to TRANSCRIBE_PROXY_URL — typically the
+// api-server artifact deployed on Replit at
+// https://<your-deployment>.replit.app/api/transcribe.
+//
+// The proxy receives a fresh multipart form-data body so we don't have
+// to pipe the raw request stream (Edge / Node fetch wrappers handle the
+// body correctly when you pass FormData directly).
+async function forwardToProxy(
+  proxyUrl: string,
+  audio: Blob,
+  language: string,
+): Promise<Response> {
+  const fd = new FormData()
+  fd.append('audio', audio, 'chunk.bin')
+  fd.append('language', language)
+  return fetch(proxyUrl, { method: 'POST', body: fd })
 }
 
 export async function POST(request: NextRequest) {
-  if (!isSameOriginRequest(request)) {
-    return NextResponse.json(
-      { error: 'Cross-origin requests are not permitted.' },
-      { status: 403 },
-    )
-  }
-  const spec = resolveClientSpec(request)
-  const openai = getClientFor(spec)
-  if (!openai) {
-    return NextResponse.json(
-      {
-        error:
-          'No OpenAI key configured. Open Settings → Voice Recognition and paste your OpenAI API key (starts with sk-…) to enable speech-to-text.',
-      },
-      { status: 503 },
-    )
-  }
-
+  let form: FormData
   try {
-    const form = await request.formData()
-    const file = form.get('audio')
-    if (!(file instanceof Blob)) {
-      return NextResponse.json({ error: 'Missing "audio" file' }, { status: 400 })
-    }
-    if (file.size < 1024) {
-      // Below ~1KB Whisper returns gibberish or empty — treat as silence.
-      return NextResponse.json({ text: '' })
-    }
-    const lang = (form.get('language') as string | null) || 'en'
+    form = await request.formData()
+  } catch {
+    return NextResponse.json({ error: 'Invalid multipart body' }, { status: 400 })
+  }
+  const file = form.get('audio')
+  if (!(file instanceof Blob)) {
+    return NextResponse.json({ error: 'Missing "audio" file' }, { status: 400 })
+  }
+  if (file.size < 1024) {
+    return NextResponse.json({ text: '' })
+  }
+  const lang = (form.get('language') as string | null) || 'en'
 
-    // Wrap the Blob as a File so the SDK can submit it with a filename
-    // (Whisper sniffs the format from the extension).
-    //
-    // Architect feedback — preserve the original MIME so the Bug #1C
-    // Base→OpenAI fallback path (which sends 16 kHz mono WAV) doesn't
-    // get mis-tagged as webm/opus and fail provider-side sniffing.
-    // Browser MediaRecorder still defaults to webm; the WAV path only
-    // fires from the desktop renderer's low-confidence fallback.
-    const incomingType = (file.type || '').toLowerCase()
-    let ext: string
-    let mime: string
-    if (incomingType.includes('wav') || incomingType.includes('x-wav')) {
-      ext = 'wav'; mime = 'audio/wav'
-    } else if (incomingType.includes('mp3') || incomingType.includes('mpeg')) {
-      ext = 'mp3'; mime = 'audio/mpeg'
-    } else if (incomingType.includes('ogg')) {
-      ext = 'ogg'; mime = 'audio/ogg'
-    } else if (incomingType.includes('m4a') || incomingType.includes('mp4') || incomingType.includes('aac')) {
-      // Some Safari / iOS recorders emit audio/mp4 or audio/x-m4a.
-      // Whisper accepts both; OpenAI sniffing prefers the .m4a
-      // extension over .mp4 because mp4 can also mean video.
-      ext = 'm4a'; mime = 'audio/mp4'
-    } else if (incomingType.includes('flac')) {
-      ext = 'flac'; mime = 'audio/flac'
-    } else if (incomingType.includes('webm')) {
-      ext = 'webm'; mime = incomingType
-    } else {
-      // Unknown / empty MIME — preserve whatever the client sent
-      // instead of forcing webm, which previously caused mp4/m4a
-      // chunks to be mis-tagged. Fall back to webm only when the
-      // client gave us nothing at all (matches the pre-patch default).
-      ext = 'webm'
-      mime = incomingType || 'audio/webm'
+  // Resolution path 1+2: we have credentials → call OpenAI directly.
+  const openai = getClient()
+  if (openai) {
+    try {
+      const { ext, mime } = pickExtAndMime(file.type || '')
+      const named = new File([file], `chunk.${ext}`, { type: mime })
+      const result = await openai.audio.transcriptions.create({
+        file: named,
+        model: 'gpt-4o-mini-transcribe',
+        language: 'en',
+        prompt: BIBLE_PROMPT,
+        response_format: 'json',
+      })
+      const text = (result?.text || '').trim()
+      return NextResponse.json({ text })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Transcription failed'
+      console.error('[transcribe] direct OpenAI call failed:', msg)
+      if (/Incorrect API key|401|Invalid.*api.*key|authentication/i.test(msg)) {
+        return NextResponse.json(
+          { error: 'OpenAI rejected the API key configured on the server.' },
+          { status: 401 },
+        )
+      }
+      return NextResponse.json({ error: msg }, { status: 500 })
     }
-    const named = new File([file], `chunk.${ext}`, { type: mime })
+  }
 
-    const result = await openai.audio.transcriptions.create({
-      file: named,
-      model: 'gpt-4o-mini-transcribe',
-      language: lang,
-      response_format: 'json',
-    })
-
-    const text = (result?.text || '').trim()
-    return NextResponse.json({ text })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Transcription failed'
-    console.error('[transcribe] failed:', msg)
-    // Surface a clearer message for the most common operator-facing
-    // failure: bad / expired key. The OpenAI SDK throws a string that
-    // includes "Incorrect API key" or "401" — translate that into
-    // operator-grade guidance.
-    if (/Incorrect API key|401|Invalid.*api.*key|authentication/i.test(msg)) {
+  // Resolution path 3: forward to remote Replit-hosted proxy.
+  const proxyUrl = process.env.TRANSCRIBE_PROXY_URL
+  if (proxyUrl) {
+    try {
+      const upstream = await forwardToProxy(proxyUrl, file, lang)
+      const body = await upstream.text()
+      return new NextResponse(body, {
+        status: upstream.status,
+        headers: { 'Content-Type': upstream.headers.get('Content-Type') || 'application/json' },
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Proxy request failed'
+      console.error('[transcribe] proxy forward failed:', msg)
       return NextResponse.json(
-        { error: 'OpenAI rejected the API key. Open Settings → Voice Recognition and paste a valid key (starts with sk-…).' },
-        { status: 401 },
+        {
+          error:
+            'Speech-to-text proxy is unreachable. Check your internet connection and try again.',
+        },
+        { status: 502 },
       )
     }
-    return NextResponse.json({ error: msg }, { status: 500 })
   }
+
+  return NextResponse.json(
+    {
+      error:
+        'Speech-to-text is not configured on this server. Set OPENAI_API_KEY or TRANSCRIBE_PROXY_URL.',
+    },
+    { status: 503 },
+  )
 }
