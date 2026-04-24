@@ -400,6 +400,7 @@ function buildAppMenu() {
   const isMac = process.platform === 'darwin'
   const checkForUpdatesItem: MenuItemConstructorOptions = {
     label: 'Check for Updates…',
+    accelerator: 'CmdOrCtrl+Shift+U',
     click: () => { void handleManualUpdateCheck() },
   }
 
