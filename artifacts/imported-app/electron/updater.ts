@@ -47,6 +47,41 @@ function normalizeNotes(info: UpdateInfo): { notes?: string; name?: string } {
   return { notes, name: info.releaseName ?? undefined }
 }
 
+/**
+ * Translate the raw electron-updater / GitHub error into a short,
+ * operator-friendly sentence. The default error includes a 200-line
+ * HTTP header dump and a misleading "double check that your
+ * authentication token is correct" line that GitHub returns for ANY
+ * 404 on the releases.atom endpoint — including the perfectly normal
+ * cases of "no releases published yet" and "repo is private".
+ *
+ * We keep the original message under the hood (the dev console still
+ * sees it via the autoUpdater logger) but only surface the friendly
+ * version to the renderer so the operator gets a clear next step.
+ */
+function friendlyUpdateError(raw: string): string {
+  const m = (raw || '').toString()
+  if (/releases\.atom/.test(m) && /\b404\b/.test(m)) {
+    return 'No published releases found yet. Open the Releases page to download the latest installer manually.'
+  }
+  if (/\b401\b|\b403\b/.test(m) || /authentication token/i.test(m)) {
+    return 'GitHub repository requires authentication. Open the Releases page to download manually.'
+  }
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(m)) {
+    return "Can't reach GitHub. Check your internet connection and try again."
+  }
+  if (/ETIMEDOUT|ECONNRESET|network timeout/i.test(m)) {
+    return 'Update server timed out. Try again in a moment, or open the Releases page.'
+  }
+  if (/cannot find latest\.yml|HttpError: 404/i.test(m)) {
+    return 'No update metadata found on this release. Open the Releases page to download manually.'
+  }
+  // Trim hideously long messages (electron-updater dumps full HTTP
+  // headers) so the toast stays readable. First line + 140 chars max.
+  const firstLine = m.split('\n')[0] || m
+  return firstLine.length > 140 ? firstLine.slice(0, 137) + '…' : firstLine
+}
+
 async function safeCheck() {
   if (
     currentState.status === 'checking' ||
@@ -58,8 +93,8 @@ async function safeCheck() {
   try {
     await autoUpdater.checkForUpdates()
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    broadcast({ status: 'error', message })
+    const raw = err instanceof Error ? err.message : String(err)
+    broadcast({ status: 'error', message: friendlyUpdateError(raw) })
   }
 }
 
@@ -98,11 +133,25 @@ export function setupAutoUpdater(opts: { getMainWindow: () => BrowserWindow | nu
     broadcast({ status: 'downloaded', version: info.version, releaseNotes: notes, releaseName: name })
   })
   autoUpdater.on('error', (err: Error) => {
-    broadcast({ status: 'error', message: err?.message || String(err) })
+    const raw = err?.message || String(err)
+    broadcast({ status: 'error', message: friendlyUpdateError(raw) })
   })
 
   ipcMain.handle('updater:get-state', () => currentState)
   ipcMain.handle('updater:check', async () => {
+    // In dev / unpackaged builds electron-updater refuses to run.
+    // Surface a clear actionable status instead of pretending the
+    // check ran — otherwise the operator sees the button "do nothing"
+    // and assumes it's broken.
+    if (!app.isPackaged) {
+      const devState: UpdateState = {
+        status: 'error',
+        message:
+          'Update checks only run in the installed desktop build. Open the Releases page to download the latest installer.',
+      }
+      broadcast(devState)
+      return devState
+    }
     await safeCheck()
     return currentState
   })
@@ -113,8 +162,17 @@ export function setupAutoUpdater(opts: { getMainWindow: () => BrowserWindow | nu
     setImmediate(() => autoUpdater.quitAndInstall(false, true))
     return { ok: true }
   })
+  // Lets the renderer's Settings card open the Releases page in the
+  // user's default browser. Used as the "always works" fallback when
+  // the auto-updater check returns a 404 / auth error / no metadata.
+  ipcMain.handle('updater:open-releases', () => {
+    openReleasesPage()
+    return { ok: true }
+  })
 
-  // Skip in dev — electron-updater refuses to run unpackaged anyway.
+  // Skip the periodic check in dev — electron-updater refuses to run
+  // unpackaged anyway. Manual checks via the IPC handler still fire
+  // (and now return a friendly dev-mode error instead of a no-op).
   if (!app.isPackaged) {
     broadcast({ status: 'idle' })
     return

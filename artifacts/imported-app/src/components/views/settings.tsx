@@ -1863,9 +1863,12 @@ type ScriptureLiveUpdaterBridge = {
     getState?: () => Promise<UpdaterState>
     check?: () => Promise<UpdaterState>
     install?: () => Promise<{ ok: boolean; error?: string }>
+    openReleasesPage?: () => Promise<{ ok: boolean }>
     onState?: (cb: (s: UpdaterState) => void) => () => void
   }
 }
+
+const RELEASES_URL = 'https://github.com/nanvilow/scripturelive-ai/releases/latest'
 
 function HelpAndUpdatesCard() {
   const [checking, setChecking] = useState(false)
@@ -1905,8 +1908,32 @@ function HelpAndUpdatesCard() {
     }
   }, [isElectron])
 
+  // Open the GitHub Releases page as a fallback when the auto-updater
+  // can't reach a published release (404, auth required, missing
+  // latest.yml, dev build, offline, etc.). The Electron bridge routes
+  // through shell.openExternal so it lands in the user's default
+  // browser; if the IPC call throws (or we're not in Electron) we
+  // fall through to window.open so the button NEVER dead-ends.
+  const openReleasesPage = async () => {
+    const bridge = (window as unknown as { scriptureLive?: ScriptureLiveUpdaterBridge })
+      .scriptureLive
+    const openFn = bridge?.updater?.openReleasesPage
+    if (isElectron && openFn) {
+      try {
+        await openFn()
+        return
+      } catch {
+        /* IPC failed — fall through to the browser fallback below */
+      }
+    }
+    window.open(RELEASES_URL, '_blank', 'noreferrer')
+  }
+
   const checkForUpdates = async () => {
     setChecking(true)
+    // Optimistic: flip to 'checking' immediately so the operator sees
+    // a loading state even before the IPC round-trip resolves.
+    setState({ status: 'checking' })
     try {
       const bridge = (window as unknown as { scriptureLive?: ScriptureLiveUpdaterBridge })
         .scriptureLive
@@ -1925,25 +1952,32 @@ function HelpAndUpdatesCard() {
         } else if (r.status === 'checking') {
           toast.info('Already checking for updates…')
         } else if (r.status === 'error') {
-          toast.error(`Update check failed: ${r.message}`)
+          // Show the friendly message PLUS an action so the operator
+          // can recover with one click instead of staring at a dead
+          // "error" pill. The toast action opens the GitHub Releases
+          // page via the main-process shell.
+          toast.error(`Update check failed: ${r.message}`, {
+            action: { label: 'Open Releases', onClick: () => { void openReleasesPage() } },
+            duration: 8000,
+          })
         } else {
-          // status === 'idle' — happens in unpackaged dev builds where
-          // electron-updater refuses to run. Tell the operator instead
-          // of silently lying about being on the latest version.
-          toast.info('Update checks are only available in the installed desktop build.')
+          toast.info('Update checks are only available in the installed desktop build.', {
+            action: { label: 'Open Releases', onClick: () => { void openReleasesPage() } },
+          })
         }
       } else {
-        // Browser fallback: open the releases page so the user can
-        // grab the installer manually.
-        window.open(
-          'https://github.com/nanvilow/scripturelive-ai/releases/latest',
-          '_blank',
-          'noreferrer',
-        )
+        // Browser fallback: open the releases page directly so the
+        // user can grab the installer manually.
+        window.open(RELEASES_URL, '_blank', 'noreferrer')
         toast.info('Opened the GitHub Releases page.')
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Update check failed')
+      const msg = e instanceof Error ? e.message : 'Update check failed'
+      setState({ status: 'error', message: msg })
+      toast.error(msg, {
+        action: { label: 'Open Releases', onClick: () => { void openReleasesPage() } },
+        duration: 8000,
+      })
     } finally {
       setChecking(false)
     }
@@ -2027,10 +2061,29 @@ function HelpAndUpdatesCard() {
               Restart &amp; Install
             </Button>
           ) : (
-            <Button onClick={checkForUpdates} disabled={checking} className="gap-2 shrink-0">
-              <RefreshCcw className={cn('h-4 w-4', checking && 'animate-spin')} />
-              {checking ? 'Checking…' : 'Check Now'}
-            </Button>
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Always-available fallback: when the auto-updater can't
+                  reach a published release (404 / private repo / no
+                  latest.yml / offline / dev build) the operator still
+                  has a one-click path to the GitHub Releases page so
+                  the button NEVER becomes a dead-end. */}
+              {state.status === 'error' && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => { void openReleasesPage() }}
+                  className="gap-2"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  Open Releases
+                </Button>
+              )}
+              <Button onClick={checkForUpdates} disabled={checking} className="gap-2">
+                <RefreshCcw className={cn('h-4 w-4', checking && 'animate-spin')} />
+                {checking ? 'Checking…' : 'Check Now'}
+              </Button>
+            </div>
           )}
         </div>
 
