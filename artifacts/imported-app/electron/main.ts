@@ -62,6 +62,7 @@ type NdiStartOptions = NdiServiceStartOptions & {
 }
 import { FrameCapture } from './frame-capture'
 import { setupAutoUpdater, runManualCheck, getUpdateState, onUpdateState, triggerUpdateDownload, type UpdateState } from './updater'
+import { renderBadgedIcon, type BadgeColor } from './tray-badges'
 
 // ── Replit-hosted speech-to-text proxy ────────────────────────────────
 // The bundled Next.js standalone server in this Electron app forwards
@@ -570,6 +571,44 @@ function trayTooltip(state: UpdateState): string {
   return line ? `ScriptureLive AI — ${line}` : 'ScriptureLive AI'
 }
 
+// ── Tray icon badging ─────────────────────────────────────────────────
+// Pre-rendered badge variants of the base tray icon (one per color),
+// populated asynchronously by `prepareTrayBadges()` once at startup.
+// Until they finish rendering — and on platforms / icon paths where
+// sharp fails — `trayImageFor()` falls back to the bare base image so
+// the tray is never blank.
+//
+// `lastTrayImage` is a small memo to skip redundant `tray.setImage()`
+// calls when the badge color hasn't changed (e.g. successive
+// `downloading` progress ticks all map to the same orange variant).
+const trayBadgedImages: Partial<Record<BadgeColor, Electron.NativeImage>> = {}
+let trayBaseImage: Electron.NativeImage | null = null
+let lastTrayImage: Electron.NativeImage | null = null
+
+/**
+ * Map an updater state to the badge color drawn on the tray icon, or
+ * `null` for states where the bare icon is appropriate (idle, silent
+ * not-available, transient checking). Kept in sync with the colors
+ * referenced in `trayTitle()` so all three surfaces — tooltip, mac
+ * menu-bar title, tray icon badge — agree on what state the operator
+ * is looking at.
+ */
+function badgeColorFor(state: UpdateState): BadgeColor | null {
+  switch (state.status) {
+    case 'available': return 'blue'
+    case 'downloading': return 'orange'
+    case 'downloaded': return 'green'
+    case 'error': return 'red'
+    default: return null
+  }
+}
+
+function trayImageFor(state: UpdateState): Electron.NativeImage | null {
+  const color = badgeColorFor(state)
+  if (!color) return trayBaseImage
+  return trayBadgedImages[color] ?? trayBaseImage
+}
+
 /**
  * Short tag suitable for `tray.setTitle()` on macOS — appears next to
  * the menu-bar icon as plain text. Kept very short (~6 chars) so it
@@ -667,8 +706,48 @@ function applyTrayState(state: UpdateState) {
     if (process.platform === 'darwin') {
       tray.setTitle(trayTitle(state))
     }
+    // Swap the tray icon itself so the operator can see "update
+    // available" / "downloading" / "ready to install" without having
+    // to hover for the tooltip. Colored dot variants are pre-rendered
+    // in `prepareTrayBadges()`; before they're ready (or if rendering
+    // failed) `trayImageFor()` returns the base image and we fall back
+    // to tooltip / menu / mac title, which still convey the state.
+    const target = trayImageFor(state)
+    if (target && !target.isEmpty() && target !== lastTrayImage) {
+      tray.setImage(target)
+      lastTrayImage = target
+    }
   } catch (err) {
     console.error('[tray] failed to apply update state (non-fatal):', err)
+  }
+}
+
+/**
+ * Generate one badged variant per color from the base tray icon.
+ * Runs once at tray init time, off the critical path: if it succeeds
+ * we re-apply the current updater state so any badge that should
+ * already be visible (e.g. operator launches with an update queued)
+ * appears as soon as the renders complete. If it fails — sharp's
+ * native binding missing on an exotic platform, the icon path
+ * unreadable — we log and the tray simply stays bare-iconed; tooltip,
+ * menu, and mac title still report the state.
+ */
+async function prepareTrayBadges(baseIconPath: string, size: number) {
+  const colors: BadgeColor[] = ['blue', 'orange', 'green', 'red']
+  try {
+    const renders = await Promise.all(
+      colors.map(c => renderBadgedIcon(baseIconPath, size, c)),
+    )
+    colors.forEach((c, i) => { trayBadgedImages[c] = renders[i] })
+    if (tray && !tray.isDestroyed()) applyTrayState(getUpdateState())
+  } catch (err) {
+    // Most likely cause is sharp's native binding failing to load
+    // (asarUnpack mis-config, libvips ABI mismatch on an exotic
+    // distro, missing platform variant). Tray remains bare-iconed;
+    // tooltip / menu / mac title still convey update state. Distinct
+    // log prefix `[tray-badge-disabled]` is intentional so support can
+    // grep launch.log for it without wading through other tray logs.
+    console.warn('[tray-badge-disabled] badge pre-render failed (non-fatal, falling back to plain icon):', err)
   }
 }
 
@@ -721,6 +800,12 @@ function setupTray() {
       console.warn('[tray] icon image empty at', iconPath, '— skipping tray setup')
       return
     }
+    // Tray slots render at very different physical sizes per platform:
+    // 16×16 in Windows / Linux notification areas, ~22pt on a macOS
+    // menu bar (Electron handles the macOS scaling, so we keep the
+    // 192px source). `badgeSize` matches the size we hand to `Tray`
+    // so the colored dot is a consistent fraction of the visible icon.
+    const badgeSize = (process.platform === 'win32' || process.platform === 'linux') ? 16 : 192
     if (process.platform === 'win32' || process.platform === 'linux') {
       // Resize so the icon doesn't render as a fuzzy giant in the
       // notification area. macOS template icons are sized differently
@@ -729,6 +814,14 @@ function setupTray() {
       image = image.resize({ width: 16, height: 16, quality: 'best' })
     }
     tray = new Tray(image)
+    trayBaseImage = image
+    lastTrayImage = image
+    // Kick off badge pre-render off the critical path. setupTray must
+    // stay sync (it's called from app.whenReady alongside window
+    // creation), and the first updater state worth badging arrives
+    // 10s+ later when the auto-update check runs — sharp + 4 PNG
+    // composites comfortably finish in that window.
+    void prepareTrayBadges(iconPath, badgeSize)
     // Seed tooltip / menu / (mac) title from whatever the updater
     // already knows. setupAutoUpdater runs before setupTray, but the
     // first network check is delayed 10s so this is normally `idle`.
