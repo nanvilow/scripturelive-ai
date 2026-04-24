@@ -137,9 +137,39 @@ export async function POST(request: NextRequest) {
 
     // Wrap the Blob as a File so the SDK can submit it with a filename
     // (Whisper sniffs the format from the extension).
-    const named = new File([file], 'chunk.webm', {
-      type: file.type || 'audio/webm',
-    })
+    //
+    // Architect feedback — preserve the original MIME so the Bug #1C
+    // Base→OpenAI fallback path (which sends 16 kHz mono WAV) doesn't
+    // get mis-tagged as webm/opus and fail provider-side sniffing.
+    // Browser MediaRecorder still defaults to webm; the WAV path only
+    // fires from the desktop renderer's low-confidence fallback.
+    const incomingType = (file.type || '').toLowerCase()
+    let ext: string
+    let mime: string
+    if (incomingType.includes('wav') || incomingType.includes('x-wav')) {
+      ext = 'wav'; mime = 'audio/wav'
+    } else if (incomingType.includes('mp3') || incomingType.includes('mpeg')) {
+      ext = 'mp3'; mime = 'audio/mpeg'
+    } else if (incomingType.includes('ogg')) {
+      ext = 'ogg'; mime = 'audio/ogg'
+    } else if (incomingType.includes('m4a') || incomingType.includes('mp4') || incomingType.includes('aac')) {
+      // Some Safari / iOS recorders emit audio/mp4 or audio/x-m4a.
+      // Whisper accepts both; OpenAI sniffing prefers the .m4a
+      // extension over .mp4 because mp4 can also mean video.
+      ext = 'm4a'; mime = 'audio/mp4'
+    } else if (incomingType.includes('flac')) {
+      ext = 'flac'; mime = 'audio/flac'
+    } else if (incomingType.includes('webm')) {
+      ext = 'webm'; mime = incomingType
+    } else {
+      // Unknown / empty MIME — preserve whatever the client sent
+      // instead of forcing webm, which previously caused mp4/m4a
+      // chunks to be mis-tagged. Fall back to webm only when the
+      // client gave us nothing at all (matches the pre-patch default).
+      ext = 'webm'
+      mime = incomingType || 'audio/webm'
+    }
+    const named = new File([file], `chunk.${ext}`, { type: mime })
 
     const result = await openai.audio.transcriptions.create({
       file: named,

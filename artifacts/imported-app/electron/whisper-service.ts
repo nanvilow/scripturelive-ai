@@ -49,8 +49,65 @@ export function killActiveWhisperChildren(): number {
  */
 
 // Filenames must match what scripts/download-whisper-assets.mjs produces.
-const BINARY_NAME = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli'
+//
+// Bug #2 — whisper.cpp upstream renamed the CLI binary across releases:
+//   pre-2024-Q3 builds shipped `main.exe`
+//   2024-Q3 .. 2025-Q1 builds shipped `whisper-cli.exe`
+//   2025-Q2+ builds dropped the `-cli` suffix to `whisper.exe`
+// Operators reported "whisper-cli.exe is deprecated" because their
+// installer happened to ship a newer binary. We probe the bundle for
+// every known name in priority order and use whichever exists, so a
+// future asset-downloader bump doesn't strand the desktop build.
+//
+// We still report `whisper-cli` in error strings as the user-facing
+// label because that's what the Settings diagnostics has shown for
+// every shipped version — keeping the label stable avoids confusing
+// support threads.
+const WIN_BINARY_CANDIDATES = ['whisper-cli.exe', 'whisper.exe', 'main.exe']
+const POSIX_BINARY_CANDIDATES = ['whisper-cli', 'whisper', 'main']
+const BINARY_CANDIDATES = process.platform === 'win32'
+  ? WIN_BINARY_CANDIDATES
+  : POSIX_BINARY_CANDIDATES
+// Display-only: shown in errors when none of the candidates resolves.
+const BINARY_DISPLAY_NAME = BINARY_CANDIDATES[0]
 const MODEL_NAME = 'ggml-base.en-q5_1.bin'
+
+// Cache the resolved binary per bundle dir so we don't restat every
+// transcription. The cache key is the bundle dir because dev vs
+// packaged paths differ; both share this single module instance.
+const resolvedBinaryByBundle = new Map<string, string | null>()
+// Architect feedback — if a candidate exists on disk but is broken
+// (corrupt PE, missing DLL, ENOEXEC, repeated non-zero exit) we mark
+// it bad so resolveBinaryName falls through to the next candidate on
+// the very next call. Without this the cache pins us to the broken
+// first match and every chunk fails the same way.
+const badBinariesByBundle = new Map<string, Set<string>>()
+function markBinaryBad(bundle: string, name: string): void {
+  let s = badBinariesByBundle.get(bundle)
+  if (!s) { s = new Set(); badBinariesByBundle.set(bundle, s) }
+  s.add(name)
+  // Invalidate the resolved cache so the next call picks a different
+  // candidate. We do NOT delete the bad-set; spawn errors are sticky
+  // for the lifetime of the process to avoid a hot-loop.
+  resolvedBinaryByBundle.delete(bundle)
+  console.warn(`[whisper] marked binary as bad: ${name} in ${bundle}`)
+}
+function resolveBinaryName(bundle: string): string | null {
+  const cached = resolvedBinaryByBundle.get(bundle)
+  if (cached !== undefined) return cached
+  const bad = badBinariesByBundle.get(bundle) || new Set<string>()
+  for (const cand of BINARY_CANDIDATES) {
+    if (bad.has(cand)) continue
+    try {
+      if (fs.existsSync(path.join(bundle, cand))) {
+        resolvedBinaryByBundle.set(bundle, cand)
+        return cand
+      }
+    } catch { /* keep trying */ }
+  }
+  resolvedBinaryByBundle.set(bundle, null)
+  return null
+}
 
 // 16 kHz × 16 bit × mono = 32 000 bytes per second of PCM.
 // We require ≥ 0.5 s of audio for a meaningful chunk; whisper-cli is
@@ -79,9 +136,16 @@ function resolveBundleDir(): string {
 
 export function isWhisperAvailable(): { ok: true } | { ok: false; reason: string } {
   const bundle = resolveBundleDir()
-  const bin = path.join(bundle, BINARY_NAME)
+  const binName = resolveBinaryName(bundle)
+  if (!binName) {
+    return {
+      ok: false,
+      reason: `Missing whisper binary in ${bundle}. Looked for ${BINARY_CANDIDATES.join(' / ')}. Reinstall the app.`,
+    }
+  }
+  const bin = path.join(bundle, binName)
   const model = path.join(bundle, MODEL_NAME)
-  if (!fs.existsSync(bin)) return { ok: false, reason: `Missing ${BINARY_NAME} in ${bundle}. Reinstall the app.` }
+  if (!fs.existsSync(bin)) return { ok: false, reason: `Missing ${binName} in ${bundle}. Reinstall the app.` }
   if (!fs.existsSync(model)) return { ok: false, reason: `Missing ${MODEL_NAME} in ${bundle}. Reinstall the app.` }
   // Catch a truncated / corrupted model that exists but is unusable.
   // Without this check whisper-cli loads the model, segfaults inside
@@ -118,7 +182,8 @@ export async function transcribeWav(wavBytes: Buffer, language = 'en'): Promise<
   }
 
   const bundle = resolveBundleDir()
-  const bin = path.join(bundle, BINARY_NAME)
+  const binName = resolveBinaryName(bundle) || BINARY_DISPLAY_NAME
+  const bin = path.join(bundle, binName)
   const model = path.join(bundle, MODEL_NAME)
 
   // Bounce the byte blob through a temp file — whisper-cli reads from
@@ -170,7 +235,16 @@ export async function transcribeWav(wavBytes: Buffer, language = 'en'): Promise<
     })
 
     if (spawnError) {
-      throw new Error(`Failed to launch whisper-cli (${(spawnError as NodeJS.ErrnoException).code || 'spawn error'}): ${(spawnError as Error).message}`)
+      // Architect feedback — ENOEXEC / EACCES / EPERM is a strong
+      // signal the picked binary is broken. Mark it bad and let the
+      // caller's next chunk fall through to the next candidate name
+      // on disk. We still surface the original error for diagnostics
+      // so the operator's log line is unambiguous.
+      const code = (spawnError as NodeJS.ErrnoException).code || 'spawn error'
+      if (code === 'ENOEXEC' || code === 'EACCES' || code === 'EPERM') {
+        markBinaryBad(bundle, binName)
+      }
+      throw new Error(`Failed to launch whisper-cli (${code}): ${(spawnError as Error).message}`)
     }
     if (exitCode !== 0) {
       // Combine stderr + stdout tails so the operator can see what
@@ -178,6 +252,15 @@ export async function transcribeWav(wavBytes: Buffer, language = 'en'): Promise<
       // GGML diagnostics to stdout, not stderr). Truncate to keep
       // the IPC payload small.
       const tail = (stderr + '\n' + stdout).trim().slice(-400)
+      // If the binary itself rejected its own argv ("unknown argument"
+      // / "bad command"), treat that as "wrong-version binary" and
+      // fall through on the next chunk too. We deliberately do NOT
+      // mark bad on a normal model-load / decode failure — those
+      // happen in field conditions (silent WAV, locked GPU, etc.) and
+      // wouldn't be cured by switching binaries.
+      if (/unknown\s+arg|invalid\s+option|usage:|bad\s+command/i.test(tail)) {
+        markBinaryBad(bundle, binName)
+      }
       throw new Error(`whisper-cli exited with code ${exitCode}${tail ? ': ' + tail : ' (no diagnostic output)'}`)
     }
 
@@ -242,14 +325,20 @@ export interface WhisperDiagnostics {
 
 export async function diagnose(): Promise<WhisperDiagnostics> {
   const bundle = resolveBundleDir()
-  const binPath = path.join(bundle, BINARY_NAME)
+  // resolveBinaryName probes the bundle dir for every known whisper.cpp
+  // CLI name (Bug #2). When nothing matches we still surface
+  // BINARY_DISPLAY_NAME so the diagnostics card has a stable label
+  // pointing the operator at what the asset downloader was expected to
+  // produce.
+  const binName = resolveBinaryName(bundle) || BINARY_DISPLAY_NAME
+  const binPath = path.join(bundle, binName)
   const modelPath = path.join(bundle, MODEL_NAME)
   const out: WhisperDiagnostics = {
     bundleDir: bundle,
     isPackaged: app.isPackaged,
     platform: process.platform,
     arch: process.arch,
-    binary: { name: BINARY_NAME, path: binPath, exists: fs.existsSync(binPath) },
+    binary: { name: binName, path: binPath, exists: fs.existsSync(binPath) },
     model: { name: MODEL_NAME, path: modelPath, exists: fs.existsSync(modelPath) },
     files: [],
     available: isWhisperAvailable(),

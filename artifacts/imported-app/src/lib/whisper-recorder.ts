@@ -9,6 +9,16 @@
  *
  * This file is intentionally framework-agnostic — the speech hook
  * imports it for Base Mode only.
+ *
+ * Bug #2 — operator request was for explicit "audio normalisation":
+ * convert to 16 kHz mono 16-bit PCM WAV before sending to whisper.cpp.
+ * This module ALREADY does exactly that:
+ *   - resample → TARGET_SR (16 kHz)             (see startRecorder below)
+ *   - downmix to a single channel               (Float32Array → mono)
+ *   - encode PCM16 with a 44-byte RIFF header   (encodeWav)
+ * No functional change needed — this comment exists so future readers
+ * can confirm the pipeline meets the upstream whisper.cpp requirement
+ * without re-deriving it from the encoder details below.
  */
 
 export interface WavRecorder {

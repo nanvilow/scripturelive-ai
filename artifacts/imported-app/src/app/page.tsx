@@ -2,6 +2,7 @@
 
 import { SpeechProvider } from '@/components/providers/speech-provider'
 import { OutputBroadcaster } from '@/components/providers/output-broadcaster'
+import { LiveTranslationSync } from '@/components/providers/live-translation-sync'
 import { UpdateNotifier } from '@/components/providers/update-notifier'
 import { LogosShell } from '@/components/layout/logos-shell'
 import { SettingsView } from '@/components/views/settings'
@@ -70,6 +71,10 @@ export default function Home() {
           / text-scale / theme tweaks land on the secondary screen
           immediately instead of after a refresh. */}
       <OutputBroadcaster />
+      {/* Bug #6 — keeps the live verse slide in sync with the
+          operator's currently selected translation, in place,
+          without taking the slide off air. */}
+      <LiveTranslationSync />
       {/* Surfaces a small toast when a new release is detected on launch
           (or by the 4-hour interval check), so the operator never has
           to dig into Settings to find out an update exists. */}

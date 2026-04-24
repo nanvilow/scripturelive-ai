@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createWavRecorder, type WavRecorder } from '@/lib/whisper-recorder'
+import { cleanTranscriptText, transcriptChunkConfidence } from '@/lib/transcript-cleaner'
 
 /**
  * Whisper-based speech recognition hook for the desktop (Electron) build.
@@ -155,7 +156,9 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
       const j = (await r.json()) as { text?: string; error?: string }
       if (!stillCurrent()) return
       if (j.error) throw new Error(j.error)
-      pendingByIdRef.current.set(id, (j.text || '').trim())
+      // Bug #1A — clean the OpenAI text the same way as Base Mode so
+      // both engines feed the same downstream detection pipeline.
+      pendingByIdRef.current.set(id, cleanTranscriptText(j.text || ''))
       drainOrdered()
     } catch (e) {
       if (!stillCurrent()) return
@@ -187,7 +190,71 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
       const r = await bridge.transcribe(wav, 'en')
       if (!stillCurrent()) return
       if (!r.ok) throw new Error(r.error || 'Local Whisper failed')
-      pendingByIdRef.current.set(id, (r.text || '').trim())
+      // Bug #1A — pre-clean before downstream consumers.
+      let text = cleanTranscriptText(r.text || '')
+
+      // Bug #1C — auto-fallback to OpenAI on low-confidence chunks.
+      // The whisper.cpp binary doesn't return a real confidence score,
+      // so we use a surface-stat heuristic (fragment / no-vowel
+      // ratios) defined in transcript-cleaner. When the operator has
+      // an OpenAI key configured AND the auto-fallback toggle is on,
+      // we re-send the same WAV bytes to /api/transcribe and use that
+      // result instead. Skipped when the chunk is empty (no opinion)
+      // or when the operator turned the toggle off in Settings.
+      const winFb = window as unknown as {
+        __userOpenaiKey?: string | null
+        __whisperAutoFallback?: boolean
+      }
+      const fallbackOn = winFb.__whisperAutoFallback !== false
+      const userKey = winFb.__userOpenaiKey || ''
+      const conf = transcriptChunkConfidence(text)
+      if (text && fallbackOn && userKey && conf < 0.55) {
+        // Architect feedback — fallback fetch is awaited inside the
+        // segment-ordering loop, so a hung request would freeze
+        // transcript progression for downstream chunks. Cap the
+        // fallback at 8 s with AbortController; on timeout we keep
+        // the original base-mode text and move on.
+        const ctrl = new AbortController()
+        const fbTimer = setTimeout(() => ctrl.abort(), 8000)
+        try {
+          const fd = new FormData()
+          // The /api/transcribe route now preserves the WAV MIME so
+          // the OpenAI SDK gets the right file extension for sniffing.
+          // Sending audio/wav + chunk.wav so the route's switch lands
+          // in the WAV branch.
+          fd.append('audio', new Blob([wav], { type: 'audio/wav' }), 'chunk.wav')
+          fd.append('language', 'en')
+          const headers: Record<string, string> = { 'X-OpenAI-Key': userKey }
+          const resp = await fetch('/api/transcribe', {
+            method: 'POST',
+            body: fd,
+            headers,
+            signal: ctrl.signal,
+          })
+          if (resp.ok) {
+            const j = (await resp.json()) as { text?: string }
+            const cleaned = cleanTranscriptText(j.text || '')
+            if (cleaned) {
+              console.log(`[whisper:base→openai] low-confidence chunk (${conf.toFixed(2)}) re-transcribed`)
+              text = cleaned
+            }
+          }
+        } catch (e) {
+          // Fallback failures are non-fatal — keep the base text. The
+          // operator already has the noisy chunk in front of them and
+          // a network blip during fallback shouldn't make it worse.
+          const msg = e instanceof Error ? e.message : String(e)
+          if (ctrl.signal.aborted) {
+            console.warn('[whisper:base→openai] fallback timed out (kept base text)')
+          } else {
+            console.warn('[whisper:base→openai] fallback failed:', msg)
+          }
+        } finally {
+          clearTimeout(fbTimer)
+        }
+      }
+
+      pendingByIdRef.current.set(id, text)
       drainOrdered()
     } catch (e) {
       if (!stillCurrent()) return

@@ -1234,6 +1234,9 @@ export function SettingsView() {
 function AiDetectionModeCard() {
   const aiMode = useAppStore((s) => s.settings.aiMode)
   const userOpenaiKey = useAppStore((s) => s.settings.userOpenaiKey)
+  // Bug #1C — auto-fallback toggle (Base Mode → OpenAI on low conf).
+  // Optional setting; treat undefined as ON for fresh installs.
+  const whisperAutoFallback = useAppStore((s) => s.settings.whisperAutoFallbackToOpenAI)
   const updateSettings = useAppStore((s) => s.updateSettings)
   const [showUpgrade, setShowUpgrade] = useState(false)
   const [baseStatus, setBaseStatus] = useState<
@@ -1418,6 +1421,36 @@ function AiDetectionModeCard() {
           Failsafe: if OpenAI Mode loses internet or the key is rejected, detection
           automatically falls back to Base Model so the service never goes dark.
         </p>
+
+        {/* Bug #1C — operator-facing toggle for the auto-fallback
+            from Base Mode to OpenAI when whisper.cpp returns a
+            fragmented chunk. Only shown when the operator has actually
+            configured a key (otherwise the toggle is a no-op and just
+            adds confusion). Default is ON so first-time setup
+            "just works" without surfacing a hidden setting. */}
+        {userOpenaiKey && (
+          <Card className="bg-muted/30 border-border/60">
+            <CardContent className="p-3 flex items-start gap-3">
+              <Sparkles className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-foreground">Auto-cleanup with OpenAI</p>
+                <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">
+                  When the local Base Model produces a fragmented chunk
+                  ("Chri t Je u…"), automatically re-transcribe just
+                  that snippet with your OpenAI key for a cleaner result.
+                  Costs only fire on the affected chunks.
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                aria-label="Auto-cleanup with OpenAI"
+                checked={whisperAutoFallback !== false}
+                onChange={(e) => updateSettings({ whisperAutoFallbackToOpenAI: e.target.checked })}
+                className="h-4 w-4 mt-1 shrink-0 accent-amber-500"
+              />
+            </CardContent>
+          </Card>
+        )}
 
         {/* Operator-facing self-test for the bundled offline engine.
             Only shown in the desktop app (browser dev mode has no IPC

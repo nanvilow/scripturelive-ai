@@ -132,6 +132,15 @@ export interface AppSettings {
   referenceTextShadow?: boolean
   referenceTextScale?: number
   referenceTextAlign?: 'left' | 'center' | 'right' | 'justify'
+  // ── Bug #1C — auto-fallback to OpenAI on low-confidence chunks ──
+  // When the operator is on Base Mode and a chunk's heuristic
+  // confidence falls below the threshold (transcript-cleaner.ts),
+  // the renderer re-sends the same WAV to /api/transcribe so the
+  // operator sees the cleaner OpenAI text instead of the fragmented
+  // base output. No-op when no OpenAI key is configured. Optional /
+  // undefined → defaults to true so existing installs benefit
+  // immediately without a settings migration.
+  whisperAutoFallbackToOpenAI?: boolean
   // User-supplied OpenAI API key for the Whisper transcription
   // pipeline. In dev/Replit the route falls back to the integration
   // proxy creds (AI_INTEGRATIONS_OPENAI_*); on the user's installed
@@ -228,6 +237,12 @@ interface AppState {
   // Slides
   slides: Slide[]
   setSlides: (s: Slide[]) => void
+  // Bug #6 — non-destructive single-slide patch. Unlike setSlides
+  // (which resets previewSlideIndex/liveSlideIndex), this preserves
+  // every other store field so the LiveTranslationSync provider can
+  // swap a verse slide's text in place without yanking the slide off
+  // air mid-service.
+  replaceSlide: (index: number, patch: Partial<Slide>) => void
   previewSlideIndex: number
   setPreviewSlideIndex: (i: number) => void
   liveSlideIndex: number
@@ -443,6 +458,10 @@ const defaultSettings: AppSettings = {
   referenceTextShadow: undefined,
   referenceTextScale: undefined,
   referenceTextAlign: undefined,
+  // Bug #1C — default ON so Base Mode operators with a configured key
+  // get OpenAI cleanup automatically when whisper.cpp produces a
+  // fragmented chunk. Operators without a key see no behaviour change.
+  whisperAutoFallbackToOpenAI: true,
   userOpenaiKey: null,
   aiMode: 'base',
   congregationScreenTheme: 'minimal',
@@ -516,6 +535,14 @@ export const useAppStore = create<AppState>()(
       // Slides
       slides: [],
       setSlides: (s) => set({ slides: s, previewSlideIndex: 0, liveSlideIndex: -1 }),
+      replaceSlide: (index, patch) =>
+        set((state) => {
+          if (index < 0 || index >= state.slides.length) return {}
+          const nextSlides = state.slides.map((sl, i) =>
+            i === index ? { ...sl, ...patch } : sl,
+          )
+          return { slides: nextSlides }
+        }),
       previewSlideIndex: 0,
       setPreviewSlideIndex: (i) => set({ previewSlideIndex: i }),
       liveSlideIndex: -1,

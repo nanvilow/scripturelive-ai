@@ -97,15 +97,68 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       'i','you','he','she','they','we','my','your','our','their','his','her','its',
       'shall','will','have','has','had','am','are','do','did','done',
     ])
+    // Bug #1B — when whisper drops letters mid-word ("Chri t" for
+    // "Christ", "Je u" for "Jesus") the bigrams become meaningless
+    // tokens that previously failed every comparison. We accept both
+    // tokens of length ≥ 2 here AND credit prefix / Levenshtein-1
+    // matches against verse words below so garbled chunks still snap.
     const tokenize = (s: string) =>
       s.toLowerCase().replace(/[^a-z0-9\s']/g, ' ').split(/\s+/)
-        .filter((w) => w.length > 2 && !STOP.has(w))
+        .filter((w) => w.length >= 2 && !STOP.has(w))
     const verseWords = tokenize(verse)
     if (!verseWords.length) return 0
-    const spokenSet = new Set(tokenize(spoken))
+    const spokenTokens = tokenize(spoken)
+    const spokenSet = new Set(spokenTokens)
+
+    // Helper — Levenshtein distance, capped at 2 (cheaper for our
+    // single-edit fuzzy match: a deletion / substitution / insertion).
+    const lev2 = (a: string, b: string): number => {
+      if (a === b) return 0
+      const la = a.length, lb = b.length
+      if (Math.abs(la - lb) > 2) return 3
+      // Two-row DP
+      let prev = new Array(lb + 1)
+      let curr = new Array(lb + 1)
+      for (let j = 0; j <= lb; j++) prev[j] = j
+      for (let i = 1; i <= la; i++) {
+        curr[0] = i
+        let rowMin = curr[0]
+        for (let j = 1; j <= lb; j++) {
+          const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1
+          curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
+          if (curr[j] < rowMin) rowMin = curr[j]
+        }
+        if (rowMin > 2) return 3
+        ;[prev, curr] = [curr, prev]
+      }
+      return prev[lb]
+    }
+
     let hit = 0
-    for (const w of verseWords) if (spokenSet.has(w)) hit++
-    return hit / verseWords.length
+    for (const vw of verseWords) {
+      if (spokenSet.has(vw)) { hit++; continue }
+      // Prefix match — "chri" ⇒ "christ" (≥ 3 chars to avoid noise).
+      let matched = false
+      for (const sp of spokenTokens) {
+        if (sp.length >= 3 && vw.length >= sp.length + 1 && vw.startsWith(sp)) {
+          matched = true
+          break
+        }
+        // Levenshtein-1 match for words ≥ 4 chars on both sides ("sin"
+        // vs "in" is too weak, but "salvation" vs "salavation" wins).
+        if (sp.length >= 4 && vw.length >= 4 && lev2(sp, vw) <= 1) {
+          matched = true
+          break
+        }
+      }
+      // Architect feedback — partial-credit weight tightened from
+      // 0.85 to 0.6 to keep false-positive pressure low at the
+      // 0.4 / 0.32 commit thresholds. Real quotations still cross
+      // easily because they pile up many partial AND exact matches;
+      // a passing keyword collision rarely accumulates enough.
+      if (matched) hit += 0.6
+    }
+    return Math.min(1, hit / verseWords.length)
   }
 
   // Update the ref in an effect (not during render) to satisfy ESLint react-hooks/refs
@@ -149,8 +202,21 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       const minKeywords = hasAttribution ? 2 : 3
       const minWords = hasAttribution ? 3 : 4
       const throttle = hasAttribution ? 500 : 800
+      // Bug #1B — drop the `references.length === 0` gate so we ALSO
+      // run the fuzzy text-search snap when whisper *did* parse a
+      // reference. This rescues the common pattern where the speaker
+      // says the reference clearly ("Romans 8:2") but whisper garbles
+      // the body ("Chri t Je u… law of in and death") — without this
+      // the operator's congregation sees the noisy raw body, but with
+      // it we substitute the canonical Bible text from the matched hit.
+      //
+      // Cross-path dedupe (architect feedback): we now seed the
+      // text-search dedupe set with any references the explicit-
+      // reference path will process below in the same chunk. That
+      // way if whisper extracted "Romans 8:2" AND text-search finds
+      // the same canonical "Romans 8:2", only one path commits — the
+      // explicit-reference loop, which has the better confidence.
       if (
-        references.length === 0 &&
         allWords.length >= minWords &&
         keywords.length >= minKeywords &&
         now - lastTextSearchAtRef.current > throttle
@@ -174,7 +240,17 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             const best = ranked[0]
             const top = best?.hit
             const sim = best?.sim ?? 0
-            if (top && !processedTextHitsRef.current.has(top.reference)) {
+            // Cross-path dedupe: if the explicit-reference loop
+            // below is already going to handle this same reference
+            // (e.g., whisper got the citation right but the body
+            // was garbled), skip the text-search commit so we don't
+            // double-add to Detected Verses / Verse History or
+            // potentially auto-live twice.
+            const willHandleBelow = top
+              ? references.includes(top.reference) ||
+                processedRefsRef.current.has(top.reference)
+              : false
+            if (top && !willHandleBelow && !processedTextHitsRef.current.has(top.reference)) {
               // Threshold is relaxed to 0.32 when an attribution
               // phrase preceded the candidate — paraphrasing styles
               // ("the Word of God tells us that we are more than
@@ -244,7 +320,14 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
 
       for (const detectedRef of detectedRefs) {
         const ref = detectedRef.reference
-        if (processedRefsRef.current.has(ref)) continue
+        // Architect feedback (round 2) — also dedupe against the
+        // text-search committed set, otherwise an earlier text-search
+        // hit for R followed by a later invocation that explicitly
+        // parses R would commit R twice (once per path). Keeping the
+        // sets separate is fine for diagnostics but the skip clause
+        // here treats them as a unified "already handled this session"
+        // membership check.
+        if (processedRefsRef.current.has(ref) || processedTextHitsRef.current.has(ref)) continue
         processedRefsRef.current = new Set(processedRefsRef.current).add(ref)
 
         try {
@@ -336,6 +419,16 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     if (typeof window === 'undefined') return
     ;(window as unknown as { __userOpenaiKey?: string | null }).__userOpenaiKey = userOpenaiKey
   }, [userOpenaiKey])
+
+  // Bug #1C — mirror the auto-fallback toggle into a window global so
+  // the (hookless) Whisper hook can read it without coupling to the
+  // store. Treat undefined as true (fresh-install default).
+  const autoFallback = useAppStore((s) => s.settings.whisperAutoFallbackToOpenAI)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    ;(window as unknown as { __whisperAutoFallback?: boolean }).__whisperAutoFallback =
+      autoFallback !== false
+  }, [autoFallback])
 
   // ── AI Mode mirror + failsafe ──────────────────────────────────
   // The renderer's Whisper hook reads window.__aiMode at every

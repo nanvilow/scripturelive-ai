@@ -927,6 +927,23 @@ app.on('before-quit', () => {
   shutdown()
 })
 
+// Bug #2 — surface whisper bundle availability at app boot so the
+// operator can see binary status in the main-process log without
+// opening DevTools. We only log here; the renderer's Settings ▸ AI
+// Mode card still owns the user-facing diagnostics rendering.
+app.whenReady().then(() => {
+  try {
+    const r = isWhisperAvailable()
+    if (r.ok) {
+      console.log('[whisper] startup probe OK — local Base Model is available')
+    } else {
+      console.warn('[whisper] startup probe FAILED:', r.reason)
+    }
+  } catch (e) {
+    console.warn('[whisper] startup probe threw:', e instanceof Error ? e.message : String(e))
+  }
+}).catch(() => { /* whenReady never rejects in practice; this is paranoia */ })
+
 app.on('window-all-closed', () => {
   // Windows-only app per spec — never linger after the last window
   // closes. Closed should mean dead.
