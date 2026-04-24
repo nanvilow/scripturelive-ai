@@ -6,3 +6,9 @@ id = "-UTyq5izHA9Qp0GO3Jhh6"
 uri = "file://exports/ScriptureLive-AI-v0.5.24-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.24 — source ZIP (run BUILD.bat on Windows)"
+
+[[outputs]]
+id = "Sm3PFShEDt27OU7pwOWP8"
+uri = "file://exports/ScriptureLive-AI-v0.5.27-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.27 — final (cloud Whisper + tray + shortcut)"
