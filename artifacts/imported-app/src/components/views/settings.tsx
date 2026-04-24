@@ -147,6 +147,14 @@ export function SettingsView() {
       // the "Reset to defaults" button returns the feed to a clean
       // Full Screen state (v0.5.5 additions).
       ndiDisplayMode: 'full',
+      // Reference typography overrides (Bug #5): clearing these to
+      // undefined re-couples the reference label to the body
+      // typography defaults above — matching a fresh install.
+      referenceFontFamily: undefined,
+      referenceFontSize: undefined,
+      referenceTextShadow: undefined,
+      referenceTextScale: undefined,
+      referenceTextAlign: undefined,
     })
     setSelectedTranslation('KJV')
     toast.success('Settings reset to defaults')
@@ -811,6 +819,46 @@ export function SettingsView() {
                     </button>
                   )
                 })}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground flex items-center justify-between">
+                <span>Reference Text Scale</span>
+                <span className="text-[11px] font-mono text-primary">
+                  {Math.round((settings.referenceTextScale ?? settings.textScale ?? 1) * 100)}%
+                </span>
+              </Label>
+              <input
+                type="range"
+                min={0.5}
+                max={2}
+                step={0.05}
+                value={settings.referenceTextScale ?? settings.textScale ?? 1}
+                onChange={(e) =>
+                  updateSettings({ referenceTextScale: parseFloat(e.target.value) })
+                }
+                className="w-full h-2 rounded-full bg-muted accent-primary cursor-pointer"
+              />
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                <button
+                  onClick={() => updateSettings({ referenceTextScale: 0.75 })}
+                  className="hover:text-foreground transition-colors"
+                >
+                  Smaller
+                </button>
+                <button
+                  onClick={() => updateSettings({ referenceTextScale: 1 })}
+                  className="hover:text-foreground transition-colors"
+                >
+                  100%
+                </button>
+                <button
+                  onClick={() => updateSettings({ referenceTextScale: 1.5 })}
+                  className="hover:text-foreground transition-colors"
+                >
+                  Larger
+                </button>
               </div>
             </div>
 
