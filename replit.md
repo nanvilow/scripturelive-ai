@@ -1,118 +1,52 @@
-# Workspace
+# Overview
 
-## User Preferences (STANDING RULES — never skip)
+This project is a pnpm workspace monorepo utilizing TypeScript, designed to build a Next.js application called "Imported App" which is integrated into the workspace. The primary goal is to provide a robust platform for scripture-related services, including live congregation output, NDI integration for broadcasting, and advanced speech recognition capabilities. The system is designed for both web and desktop environments (via Electron), offering features like dynamic downloads for desktop clients and real-time slide updates. A key ambition is to offer a streamlined, cloud-powered Whisper transcription service for enhanced user experience and reduced operational complexity.
 
-- **After EVERY fix / version bump, build and present a fresh ZIP** of
-  `artifacts/imported-app/` so the user can download it and run
-  `BUILD.bat` on their Windows PC. Naming convention:
-  `exports/ScriptureLive-AI-v<version>-source.zip`. Exclude
-  `node_modules`, `.next`, `dist-electron`, `release`, `.turbo`, `.git`,
-  `*.tsbuildinfo`, `build-log.txt`. Always use the `present_asset` tool
-  to surface the zip — never assume the user will find it on their own.
-- Bump the `BUILD.bat` banner version string to match the current
-  `package.json` version on every release.
+# User Preferences
 
-## Overview
+- **After EVERY fix / version bump, build and present a fresh ZIP** of `artifacts/imported-app/` so the user can download it and run `BUILD.bat` on their Windows PC. Naming convention: `exports/ScriptureLive-AI-v<version>-source.zip`. Exclude `node_modules`, `.next`, `dist-electron`, `release`, `.turbo`, `.git`, `*.tsbuildinfo`, `build-log.txt`. Always use the `present_asset` tool to surface the zip — never assume the user will find it on their own.
+- Bump the `BUILD.bat` banner version string to match the current `package.json` version on every release.
 
-pnpm workspace monorepo using TypeScript. Each package manages its own dependencies. The root preview now runs an imported Next.js app named "Imported App" from `artifacts/imported-app`.
+# System Architecture
 
-## Stack
+The project is structured as a pnpm monorepo using Node.js 24 and TypeScript 5.9. It features an Express 5 API server, PostgreSQL with Drizzle ORM, and Zod for validation. API codegen is handled by Orval from an OpenAPI spec, and bundling uses esbuild.
+
+The core application, "Imported App," is a Next.js 16 application using Prisma and SQLite. It handles `/` and `/api` routes, while the workspace's API server is routed to `/__api-server` to prevent conflicts.
+
+Key features and architectural decisions include:
+
+- **NDI Integration:** The application supports browser-only NDI output and a native NDI sender via an Electron wrapper using the `grandiose` binding for desktop builds.
+- **Dynamic Downloads:** A `/download` page provides OS-detecting downloads, streaming files from `/api/download/<platform>` based on `public/downloads/manifest.json`.
+- **Speech Recognition:**
+    - The system previously supported both a local Base engine (whisper.cpp) and OpenAI Whisper.
+    - The current architecture has consolidated to a **single cloud-only Whisper path**. The `api-server` now hosts a `/api/transcribe` route using `gpt-4o-mini-transcribe` with `OPENAI_API_KEY` from Replit Deployment Secrets.
+    - The Next.js `/api/transcribe` acts as a thin proxy, forwarding requests to the `api-server` if local OpenAI keys are not configured.
+    - The renderer uses a single `MediaRecorder` loop for 4500 ms chunks, uploading only chunks ≥6 KB.
+- **Persistence:** Next.js port is pinned to 47330 to ensure consistent `localStorage` origin for Electron builds, preventing loss of persisted settings across restarts.
+- **UI/UX:**
+    - Branding uses `public/logo.png` (1664x928) for various icons.
+    - `NdiToggleButton` provides one-click NDI control, with advanced settings moved to a dedicated settings panel.
+    - The Live Display and Preview stages are visually symmetrical, with height-matched empty strips for consistent sizing.
+    - Redundant UI elements like "Clear Schedule" button and the bottom-bar hint strip have been removed.
+    - Master volume control is integrated into the Live Output panel header.
+    - The "Live Display SIZE" slider has been removed to prevent accidental adjustments.
+
+# External Dependencies
 
 - **Monorepo tool**: pnpm workspaces
-- **Node.js version**: 24
-- **Package manager**: pnpm
-- **TypeScript version**: 5.9
-- **API framework**: Express 5
-- **Database**: PostgreSQL + Drizzle ORM
+- **Node.js**: 24
+- **TypeScript**: 5.9
+- **API Framework**: Express 5
+- **Database**: PostgreSQL
+- **ORM**: Drizzle ORM
 - **Validation**: Zod (`zod/v4`), `drizzle-zod`
-- **API codegen**: Orval (from OpenAPI spec)
-- **Build**: esbuild (CJS bundle)
-- **Imported app**: Next.js 16, Prisma, SQLite (`artifacts/imported-app/db/custom.db`)
-
-## Key Commands
-
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- `pnpm --filter @workspace/api-server run dev` — run API server locally
-- `pnpm --filter @workspace/imported-app run dev` — run the imported Next.js app
-
-## Imported App Notes
-
-- The uploaded archive was imported into `artifacts/imported-app`.
-- The archive's `.env` and `.git` contents were intentionally not imported.
-- The imported app owns both `/` and `/api` preview routes so its built-in Next API routes work.
-- The starter API server was moved from `/api` to `/__api-server` to avoid route conflicts.
-- Wireless congregation output is served from `/api/output/congregation` and receives live slide updates via `/api/output` Server-Sent Events.
-- Browser-only NDI: open the congregation output page fullscreen and capture that browser window with NDI Tools, OBS, vMix, or Wirecast.
-- Built-in NDI (desktop app): an Electron wrapper in `artifacts/imported-app/electron/` adds a native NDI sender via the `grandiose` binding. The renderer talks to the main process through a `contextIsolation` preload. Build with `pnpm --filter @workspace/imported-app run package:win` (on Windows) or `package:mac` (on macOS). See `artifacts/imported-app/DESKTOP_BUILD.md` for the full guide.
-- Public desktop downloads: `/download` is a polished OS-detecting download page; it reads `public/downloads/manifest.json` and streams files via `/api/download/<platform>`. Drop built `.exe` / `.dmg` files into `public/downloads/` (or set `externalReleaseUrl` in the manifest to redirect to GitHub Releases). The dashboard shows a prominent "Download for Windows / macOS" CTA linking to it.
-- Branding: the new ScriptureLive AI logo lives at `artifacts/imported-app/public/logo.png` (1664x928 PNG). Square icons (favicons + Electron app icon) are generated from it via `sharp` into `public/icon-{16,32,192,512}.png`, `public/apple-touch-icon.png`, and `build-resources/icon.png` (used by `electron-builder` for the installer / window icon).
-
-See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
-
-## v0.5.3 (2026-04-22) — Whisper speech + UX polish
-
-- **Whisper speech transcription for the desktop app.** Chromium-in-Electron has no embedded Google STT key, so the browser `webkitSpeechRecognition` path bounces forever inside packaged builds. Added `src/app/api/transcribe/route.ts` (multipart audio → OpenAI `gpt-4o-mini-transcribe` via the Replit AI Integrations proxy — no user API key needed) and `src/hooks/use-whisper-speech-recognition.ts` (rotates a MediaRecorder every 4.5 s and posts each chunk to `/api/transcribe`). `SpeechProvider` now calls BOTH the browser hook and the Whisper hook (Rules of Hooks safe — `IS_ELECTRON` is computed once at module load) and routes commands to whichever engine matches the runtime. The selected microphone id is mirrored to `window.__selectedMicrophoneId` so the hookless Whisper engine can read it.
-- **NDI single-toggle button (item #1).** New `NdiToggleButton` in `easyworship-shell.tsx` calls `desktop.ndi.start/stop` directly on click. ON AIR state is shown by a red glowing dot (CSS `box-shadow` halo). Advanced settings (source name, status) live in a small chevron-popover next to the toggle.
-- **Top-bar polish.** Removed `Clear Schedule` button from the toolbar (item #14). Removed the bottom-bar `⏎ Live · ←→ Nav · Esc Clear` hint strip. Moved the master volume control out of the toolbar and into the Live Output panel header (item #11) — same `GlobalVolumeControl` component, just rendered next to the slide it actually affects.
-- **Live Display SIZE slider removed (item #10).** Operators kept dragging it accidentally and shrinking the live output mid-service. Live preview now always renders at the natural slide aspect.
-- **Suppressed `Connected (poll)` flash on the congregation window (item #8).** SSE already shows the badge once on connect; the 1.5 s poll runs silently underneath.
-
-## v0.5.4 (2026-04-23) — Operator-supplied OpenAI key + UX cleanup
-
-- **Speech recognition now works on the customer's PC.** Root cause: `/api/transcribe` only honored `AI_INTEGRATIONS_OPENAI_*` env vars (Replit-only). The packaged installer has no such env vars, so every chunk returned 503 "Transcription service is not configured". Fix: route now resolves credentials in priority order — (1) `X-OpenAI-Key` header from the renderer, (2) Replit proxy env vars (dev), (3) `OPENAI_API_KEY` env var (self-hosted). Renderer reads the operator's key from `settings.userOpenaiKey` (mirrored to `window.__userOpenaiKey` by `SpeechProvider`) and sends it on every transcribe POST. Settings → Voice Recognition has a new password-style input with Save / Test buttons; the Test button posts a sub-1 KB blob so it verifies the key path WITHOUT spending a Whisper credit.
-- **NDI dropdown removed.** The chevron popover next to `NdiToggleButton` is gone. Live operations are one click on / one click off — the advanced settings live in Settings → NDI.
-- **Settings → Help & Updates card.** New section shows current version (v0.5.4), a Check for Updates button (calls `window.scriptureLive.updater.check()` in Electron via the existing preload bridge; opens GitHub Releases in browser as fallback), and three quick links to docs / troubleshooting / bug report.
-- **`clientCache` in `/api/transcribe` is LRU-capped at 8 entries** so a long-running dev server can't accumulate stale OpenAI client objects.
-
-Deferred to v0.5.5 (told user explicitly): NDI audio capture, media sound monitor, smooth media transitions, full Preview/Live independence, send-to-live stops preview, lower-third re-fit, custom-background preview shrink, resizable panels, HIDDEN→output broadcast wire-through, auto-close trays, detected-verse → Chapter Navigator focus.
-
-## v0.5.5 (2026-04-23) — Critical persistence fix
-
-- **Pinned the internal Next.js port to 47330.** Root cause of "OpenAI key disappears every restart" (and silently every other persisted setting too — schedule, sermon notes, voice prefs): `electron/main.ts` called `getFreePort()` on every launch, so the renderer loaded `http://127.0.0.1:<random>`. Chromium scopes `localStorage` per-origin, so a different port = a different origin = empty storage. Fixed by `getPinnedPort(47330)` which prefers a fixed port and falls back to dynamic only if 47330 is squatted (warning logged; persisted state will look empty for that ONE session, then come back next launch when 47330 is free again).
-- This single 30-line change fixes ALL persisted settings, not just the OpenAI key. Speech recognition now keeps working across restarts because the key the renderer reads from `settings.userOpenaiKey` actually survives a relaunch.
-- **Dual AI detection mode (Base ↔ OpenAI).** New `aiMode: 'base' | 'openai'` in `AppSettings` (defaults to `'base'`). Settings surfaces a side-by-side picker with a ⭐ Recommended badge on OpenAI, a gentle nudge banner while on Base, and a 7-step setup dialog (`UpgradeToOpenAiDialog`) with masked key input + Test Connection. Key stays stored only on the PC; sent directly to api.openai.com.
-  - **Base engine (new):** bundled `whisper-cli.exe` (whisper.cpp v1.7.4) + quantized `ggml-base.en-q5_1.bin` (~58 MB) download into `electron/whisper-bundle/` via `scripts/download-whisper-assets.mjs`, chained into `electron:build`. `electron-builder.yml` `extraResources` ships the bundle at `resources/whisper-bundle/`. Installer grows ~70 MB → ~190 MB total.
-  - **Audio pipeline split by mode:** OpenAI Mode keeps the `MediaRecorder` → webm/opus → `/api/transcribe` path. Base Mode uses a new `createWavRecorder()` (Web Audio + `ScriptProcessorNode` for 16 kHz mono PCM → hand-rolled WAV) → IPC `whisper:transcribe` → `electron/whisper-service.ts` spawns whisper-cli on a temp WAV and reads the `-otxt` sidecar.
-  - **Failsafe in `SpeechProvider`:** writes `window.__aiMode` every render. If operator is on `openai` without a key → coerces to `base` + toast. If on `base` but the bundled model is missing AND the operator has a key → coerces to `openai` + toast. Detection never goes dark on a lost internet connection or a stale install.
-  - **Latency trade-off (known):** Base ≈ 2–4 s per 5 s chunk on a typical PC vs ~1 s on OpenAI. Documented in the Settings card copy. v0.6 roadmap: switch Base to long-lived `whisper-server` for near-realtime streaming.
-  - **No `.github/workflows/` edits needed** — the download script runs inside `pnpm run electron:build`, which the existing release-desktop workflow already invokes before electron-builder. User's hand-edited workflow file on GitHub is untouched.
-
-## v0.5.6–v0.5.23 (2026-04-23 → 2026-04-24) — Windows installer + launch fixes
-
-- v0.5.6–v0.5.18: progressive CI fixes for the GitHub Actions Windows
-  release pipeline (electron-builder version pin 33.4.11, signtoolOptions
-  schema, nested standalone path, --publish never, root vs artifact-level
-  electron-builder.yml drift).
-- v0.5.19–v0.5.22: fixed "Next standalone server missing" launch crash.
-  In the pnpm monorepo on Next 16, `outputFileTracingRoot` AND
-  `turbopack.root` must both point to the workspace root — accepting the
-  nested `.next/standalone/artifacts/imported-app/server.js` path. Updated
-  `electron/main.ts` startNextServer + icon resolution and
-  `electron-builder.yml` extraResources for `static/` and `public/` to land
-  in the nested location.
-- v0.5.23: aligned the **root** `electron-builder.yml` (used by the
-  redundant root rebuild whose `.exe` is the actual installer artifact) so
-  it ships the same nested layout. First-launch confirmed working.
-
-## v0.5.24 (2026-04-24) — Preview vs Live Display visual twins
-
-- **Home shell layout fix.** PreviewCard had no bottom transport strip
-  while LiveDisplayCard has an always-visible Mic / Vol / Prev / GoLive /
-  Next strip below its body. With both columns equal width in the
-  ResizablePanelGroup, Live Display's body ended up shorter than
-  Preview's by exactly the strip height, so the inner 16:9 stage frames
-  rendered at different sizes side-by-side. Operators reported the two
-  stages should be visual twins.
-- Fix: added a height-matched `aria-hidden`/`role="presentation"` empty
-  bottom strip to PreviewCard with the same `border-t / px-3 py-2 / h-7`
-  inner sizing as Live Display's. Pure vertical-rhythm symmetry — no new
-  controls or behaviour. Both card bodies now reserve identical space so
-  the staged-vs-live frames render at exactly the same size.
-- CI workflow optimization (commit `be6dbc9`) is in effect for v0.5.24+
-  — drops the duplicate "Build Next.js app" + "Package Windows
-  installer" steps and caches whisper-bundle + electron downloads.
-  Expected build time ~10 min (down from ~20 min).
-
+- **API Codegen**: Orval (from OpenAPI spec)
+- **Build Tool**: esbuild
+- **Frontend Framework**: Next.js 16 (for "Imported App")
+- **Database (Imported App)**: Prisma, SQLite (`artifacts/imported-app/db/custom.db`)
+- **Speech Recognition**: OpenAI `gpt-4o-mini-transcribe` (via Replit AI Integrations proxy and `api-server`)
+- **NDI Integration**: `grandiose` binding (for Electron desktop app)
+- **Image Processing**: `sharp` (for icon generation)
+- **Electron Builder**: Used for packaging desktop applications.
+- **Multer**: For handling multipart form data in the `api-server`'s `/api/transcribe` route.
+- **OpenAI SDK**: Used in the `api-server` for transcription.
