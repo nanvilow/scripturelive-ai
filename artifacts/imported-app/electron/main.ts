@@ -62,7 +62,7 @@ type NdiStartOptions = NdiServiceStartOptions & {
 }
 import { FrameCapture } from './frame-capture'
 import { setupAutoUpdater, runManualCheck, getUpdateState, openReleasesPage } from './updater'
-import { isWhisperAvailable, transcribeWav, diagnose as diagnoseWhisper } from './whisper-service'
+import { isWhisperAvailable, transcribeWav, diagnose as diagnoseWhisper, killActiveWhisperChildren } from './whisper-service'
 
 const isDev = !app.isPackaged
 
@@ -789,13 +789,114 @@ app.whenReady().then(async () => {
   }
 })
 
-app.on('window-all-closed', async () => {
-  try { if (frameCapture) await frameCapture.stop() } catch { /* ignore */ }
-  try { await ndi.stop() } catch { /* ignore */ }
-  if (nextProcess) {
-    try { nextProcess.kill() } catch { /* ignore */ }
+// ── Shutdown ──────────────────────────────────────────────────────
+// Operator complaint: "App still running in Task Manager. Closed should
+// mean dead. No ghosts." On Windows, simply calling app.quit() is not
+// enough because:
+//
+//   1. The bundled Next.js standalone server runs in a SEPARATE Node.js
+//      child process (spawn(process.execPath, [server.js], …)). When
+//      Electron exits, ChildProcess.kill() on Windows only terminates
+//      the IMMEDIATE child via TerminateProcess — any worker threads or
+//      sub-processes Next spawned become orphaned and keep running.
+//      We use `taskkill /pid X /T /F` to nuke the whole process tree.
+//
+//   2. The native NDI runtime (libndi via koffi) keeps a background
+//      thread alive until NDIlib_destroy is called. Without it the
+//      Electron process itself can hang on exit.
+//
+//   3. In-flight whisper-cli children (heavyweight 58 MB model loaded
+//      in RAM) won't die with the parent on every Windows version —
+//      we kill them explicitly via the whisper-service registry.
+//
+//   4. Async cleanup handlers can race with Electron's quit sequence;
+//      a watchdog forces app.exit(0) after 4 s if anything hangs.
+//
+// shutdown() is idempotent — it runs at most once even if both
+// before-quit and window-all-closed fire (which is the normal path).
+let shutdownStarted = false
+function forceKillNextTree(): void {
+  const proc = nextProcess
+  nextProcess = null
+  if (!proc || !proc.pid) return
+  if (process.platform === 'win32') {
+    try {
+      // /T = kill the entire process tree (Next workers, etc.)
+      // /F = force, no graceful shutdown grace period
+      // detached + ignored stdio so taskkill survives our exit and
+      // doesn't tie us up waiting for it.
+      const tk = spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore',
+        detached: true,
+      })
+      tk.unref()
+    } catch { /* fall through to .kill() */ }
   }
-  if (process.platform !== 'darwin') app.quit()
+  // Always also call the JS-level kill as a belt-and-braces signal
+  // (no-op on Windows after taskkill already terminated, but on
+  // POSIX dev runs this is the actual kill).
+  try { proc.kill('SIGKILL') } catch { /* ignore */ }
+}
+function shutdown(): void {
+  if (shutdownStarted) return
+  shutdownStarted = true
+  // Watchdog: if anything below hangs (a stuck NDI thread, a koffi
+  // call that never returns, etc.), force-terminate the Electron
+  // process after 4 s. This guarantees "closed = dead" even if a
+  // native binding misbehaves.
+  const watchdog = setTimeout(() => {
+    try { console.warn('[shutdown] watchdog tripped, forcing app.exit(0)') } catch { /* ignore */ }
+    try { app.exit(0) } catch { /* ignore */ }
+  }, 4000)
+  watchdog.unref?.()
+
+  // Kill the Next.js server tree FIRST so it stops accepting new
+  // requests immediately. taskkill is fire-and-forget on Windows.
+  forceKillNextTree()
+
+  // Kill any in-flight whisper-cli children so the bundled binary
+  // doesn't keep the model resident.
+  try {
+    const n = killActiveWhisperChildren()
+    if (n > 0) console.log(`[shutdown] killed ${n} in-flight whisper child${n === 1 ? '' : 'ren'}`)
+  } catch { /* ignore */ }
+
+  // Tear down frame capture + NDI sender. These are async but we
+  // intentionally do NOT await them — the watchdog above guarantees
+  // exit either way, and waiting risks hanging on a stuck native call.
+  void (async () => {
+    try { if (frameCapture) await frameCapture.stop() } catch { /* ignore */ }
+    frameCapture = null
+    try { await ndi.stop() } catch { /* ignore */ }
+    // Library-level NDIlib_destroy() — releases the background
+    // worker thread the koffi-loaded libndi keeps alive after the
+    // sender is destroyed. Without this Electron's main process can
+    // hang on exit waiting for that thread to wind down.
+    try { ndi.destroy() } catch { /* ignore */ }
+    // Destroy any remaining BrowserWindows so Electron sees zero
+    // windows and proceeds to exit cleanly.
+    try {
+      for (const w of BrowserWindow.getAllWindows()) {
+        try { if (!w.isDestroyed()) w.destroy() } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  })()
+}
+
+app.on('before-quit', () => {
+  // Fires for EVERY quit path (Cmd+Q, app.quit(), updater restart,
+  // window close). Centralising shutdown here means we clean up
+  // even when the user uses a code path that bypasses
+  // window-all-closed.
+  shutdown()
+})
+
+app.on('window-all-closed', () => {
+  // Windows-only app per spec — never linger after the last window
+  // closes. Closed should mean dead.
+  shutdown()
+  try { app.quit() } catch { /* ignore */ }
 })
 
 app.on('activate', async () => {

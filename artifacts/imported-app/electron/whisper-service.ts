@@ -2,8 +2,30 @@ import { app } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
+
+// Track every whisper-cli child we've spawned. The shutdown path
+// (electron/main.ts) calls killActiveWhisperChildren() on quit so
+// an in-flight transcription doesn't hold whisper-cli + the loaded
+// 58 MB ggml model in RAM as a ghost process after the operator
+// closes the app — exactly the "still running in Task Manager"
+// complaint we are fixing.
+const activeChildren = new Set<ChildProcess>()
+export function killActiveWhisperChildren(): number {
+  let killed = 0
+  for (const p of activeChildren) {
+    try {
+      // SIGKILL maps to TerminateProcess on Windows — guaranteed kill,
+      // no graceful-shutdown grace period that whisper-cli wouldn't
+      // honour anyway.
+      p.kill('SIGKILL')
+      killed++
+    } catch { /* ignore */ }
+  }
+  activeChildren.clear()
+  return killed
+}
 
 /**
  * whisper-service — Local (offline) speech-to-text engine.
@@ -130,16 +152,19 @@ export async function transcribeWav(wavBytes: Buffer, language = 'en'): Promise<
 
     await new Promise<void>((resolve) => {
       const p = spawn(bin, args, { windowsHide: true })
+      activeChildren.add(p)
       p.stderr.on('data', (b) => { stderr += b.toString() })
       p.stdout.on('data', (b) => { stdout += b.toString() })
       p.on('error', (e) => {
         // ENOENT = binary missing or wrong path; EACCES = perms;
         // ENOEXEC = wrong arch / corrupt binary. All worth surfacing.
         spawnError = e
+        activeChildren.delete(p)
         resolve()
       })
       p.on('close', (code) => {
         exitCode = code
+        activeChildren.delete(p)
         resolve()
       })
     })

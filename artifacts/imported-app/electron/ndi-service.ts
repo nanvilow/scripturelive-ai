@@ -288,6 +288,27 @@ export class NdiService extends EventEmitter {
     this.status = { running: false, frameCount: this.status.frameCount }
   }
 
+  /**
+   * Library-level teardown — call NDIlib_destroy() once during app
+   * shutdown to release the background threads / memory pools the NDI
+   * runtime allocated at NDIlib_initialize() time. Without this the
+   * koffi-loaded native lib can keep a worker thread alive past
+   * Electron's window-all-closed, which contributes to the "still in
+   * Task Manager" complaint we are fixing. Idempotent — clears the
+   * bindings reference so subsequent calls are no-ops, and the per-
+   * sender stop() above is implicitly called first by shutdown().
+   */
+  destroy(): void {
+    if (this.bindings) {
+      try {
+        this.bindings.destroy()
+      } catch {
+        /* ignore — we're tearing down anyway */
+      }
+      this.bindings = null
+    }
+  }
+
   sendFrame(bgraBuffer: Buffer, width: number, height: number): void {
     if (!this.senderInstance || !this.bindings) return
     try {
