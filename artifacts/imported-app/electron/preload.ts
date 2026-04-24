@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { WhisperDiagnostics } from './whisper-service'
 
 export type NdiLayout = 'mirror' | 'ndi'
 
@@ -81,19 +80,6 @@ const api = {
       return () => ipcRenderer.removeListener('ndi:status', handler)
     },
   },
-  whisper: {
-    isAvailable: (): Promise<{ ok: boolean; reason?: string }> =>
-      ipcRenderer.invoke('whisper:is-available'),
-    transcribe: (wavBuffer: ArrayBuffer, language?: string): Promise<{ ok: boolean; text?: string; error?: string }> =>
-      ipcRenderer.invoke('whisper:transcribe', wavBuffer, language || 'en'),
-    // Returns a structured snapshot of the whisper-bundle (binary +
-    // model + every file shipped beside them) plus the result of a
-    // live `whisper-cli --help` probe so the Settings panel can show
-    // the operator exactly why Base Mode is or isn't working. See
-    // electron/whisper-service.ts → diagnose().
-    diagnose: (): Promise<{ ok: boolean; diagnostics?: WhisperDiagnostics; error?: string }> =>
-      ipcRenderer.invoke('whisper:diagnose'),
-  },
   output: {
     openWindow: (
       opts?: { displayId?: number },
@@ -112,4 +98,3 @@ const api = {
 contextBridge.exposeInMainWorld('scriptureLive', api)
 
 export type ScriptureLiveApi = typeof api
-export type { WhisperDiagnostics } from './whisper-service'
