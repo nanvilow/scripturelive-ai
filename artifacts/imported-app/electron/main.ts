@@ -153,6 +153,36 @@ function getUserDbPath(): string {
   return dbPath
 }
 
+/**
+ * Where uploaded media (images / videos) lives on disk.
+ *
+ * BUG WE'RE FIXING — operator complaint "DATA NOT SAVING":
+ * The Next.js upload route used to write to `process.cwd()/uploads`. In
+ * the packaged app the spawned Next process has cwd = standaloneDir,
+ * which lives INSIDE process.resourcesPath, i.e.
+ *     C:\Program Files\ScriptureLive AI\resources\app\.next\standalone\…\uploads
+ *
+ * Two failure modes flow from that:
+ *   1. On Windows non-admin, writes under Program Files either fail
+ *      silently or get redirected by UAC VirtualStore — the file path
+ *      we hand back in the response then 404s on the next read.
+ *   2. The auto-updater REPLACES the entire resources/app folder on
+ *      every release, wiping every uploaded asset along with it. The
+ *      operator's mediaLibrary survives in localStorage but every URL
+ *      in it points at a file that's been deleted.
+ *
+ * Routing uploads to userData/uploads fixes both: the folder is
+ * always writable (it's per-user AppData), and the auto-updater
+ * never touches it.
+ */
+function getUserUploadsDir(): string {
+  const dir = path.join(app.getPath('userData'), 'uploads')
+  if (!fs.existsSync(dir)) {
+    try { fs.mkdirSync(dir, { recursive: true }) } catch { /* ignore */ }
+  }
+  return dir
+}
+
 async function startNextServer(): Promise<string> {
   if (isDev) {
     return process.env.NEXT_DEV_URL || 'http://localhost:3000'
@@ -177,6 +207,10 @@ async function startNextServer(): Promise<string> {
     throw new Error(`Next standalone server missing at ${serverEntry}`)
   }
 
+  // Resolve uploads folder under userData (writable + survives every
+  // auto-update). The Next.js upload route reads
+  // SCRIPTURELIVE_UPLOADS_DIR and falls back to cwd/uploads in dev.
+  const uploadsDir = getUserUploadsDir()
   nextProcess = spawn(process.execPath, [serverEntry], {
     cwd: standaloneDir,
     env: {
@@ -185,6 +219,7 @@ async function startNextServer(): Promise<string> {
       HOSTNAME: '127.0.0.1',
       NODE_ENV: 'production',
       DATABASE_URL: `file:${dbPath}`,
+      SCRIPTURELIVE_UPLOADS_DIR: uploadsDir,
       ELECTRON_RUN_AS_NODE: '1',
     },
     stdio: 'pipe',

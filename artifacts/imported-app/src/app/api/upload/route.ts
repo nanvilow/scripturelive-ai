@@ -12,7 +12,21 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 600
 
-const UPLOADS_DIR = join(process.cwd(), 'uploads')
+// Where uploaded media is persisted to disk.
+//
+// Operator complaint "DATA NOT SAVING" — in the packaged Electron build
+// `process.cwd()` resolves to the Next standalone folder INSIDE
+// `process.resourcesPath` (i.e. C:\Program Files\…\resources\app\…),
+// which is (a) read-only for non-admin users and (b) wiped on every
+// auto-update. The uploaded file therefore either failed to write or
+// disappeared on the next release, leaving the operator's mediaLibrary
+// pointing at /api/upload?file=<uuid> URLs that all 404.
+//
+// The Electron main process now creates `<userData>/uploads` (writable
+// + update-stable + per-user) and hands the absolute path through via
+// SCRIPTURELIVE_UPLOADS_DIR. We honour that env when present and fall
+// back to `cwd/uploads` for `next dev` (Replit / local dev only).
+const UPLOADS_DIR = process.env.SCRIPTURELIVE_UPLOADS_DIR || join(process.cwd(), 'uploads')
 const MAX_BYTES = 3 * 1024 * 1024 * 1024 // 3 GB
 
 function isValidFilename(filename: string): boolean {
