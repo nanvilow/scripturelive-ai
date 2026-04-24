@@ -90,6 +90,7 @@ function fatalError(stage, err) {
 }
 const frame_capture_1 = require("./frame-capture");
 const updater_1 = require("./updater");
+const whisper_service_1 = require("./whisper-service");
 const isDev = !electron_1.app.isPackaged;
 // ── Chromium command-line flags ───────────────────────────────────
 // Best-effort flags to coax Web Speech / mic capture into working in
@@ -135,6 +136,35 @@ function getFreePort() {
         });
     });
 }
+// Pin the internal Next.js server to a stable port so the renderer's
+// localStorage (zustand persist: OpenAI key, schedule, sermon notes,
+// settings, etc.) stays in the SAME origin across launches. With a
+// random port every launch the origin changes and Chromium scopes
+// localStorage per-origin, so all persisted state silently disappears.
+// If the preferred port is taken (e.g. another instance running, or
+// some unrelated app squatting on it) we fall back to a dynamic port,
+// which means data from the last launch will appear empty for THIS
+// session only — better than failing to launch.
+async function getPinnedPort(preferred = 47330) {
+    return new Promise((resolve) => {
+        const srv = (0, node_net_1.createServer)();
+        srv.unref();
+        srv.once('error', async () => {
+            console.warn(`[port] preferred ${preferred} unavailable, using dynamic (settings will look empty this session)`);
+            try {
+                resolve(await getFreePort());
+            }
+            catch {
+                resolve(preferred);
+            }
+        });
+        srv.listen(preferred, '127.0.0.1', () => {
+            const a = srv.address();
+            const p = (a && typeof a === 'object') ? a.port : preferred;
+            srv.close(() => resolve(p));
+        });
+    });
+}
 function getUserDbPath() {
     const dir = node_path_1.default.join(electron_1.app.getPath('userData'), 'db');
     if (!node_fs_1.default.existsSync(dir))
@@ -153,17 +183,60 @@ function getUserDbPath() {
     }
     return dbPath;
 }
+/**
+ * Where uploaded media (images / videos) lives on disk.
+ *
+ * BUG WE'RE FIXING — operator complaint "DATA NOT SAVING":
+ * The Next.js upload route used to write to `process.cwd()/uploads`. In
+ * the packaged app the spawned Next process has cwd = standaloneDir,
+ * which lives INSIDE process.resourcesPath, i.e.
+ *     C:\Program Files\ScriptureLive AI\resources\app\.next\standalone\…\uploads
+ *
+ * Two failure modes flow from that:
+ *   1. On Windows non-admin, writes under Program Files either fail
+ *      silently or get redirected by UAC VirtualStore — the file path
+ *      we hand back in the response then 404s on the next read.
+ *   2. The auto-updater REPLACES the entire resources/app folder on
+ *      every release, wiping every uploaded asset along with it. The
+ *      operator's mediaLibrary survives in localStorage but every URL
+ *      in it points at a file that's been deleted.
+ *
+ * Routing uploads to userData/uploads fixes both: the folder is
+ * always writable (it's per-user AppData), and the auto-updater
+ * never touches it.
+ */
+function getUserUploadsDir() {
+    const dir = node_path_1.default.join(electron_1.app.getPath('userData'), 'uploads');
+    if (!node_fs_1.default.existsSync(dir)) {
+        try {
+            node_fs_1.default.mkdirSync(dir, { recursive: true });
+        }
+        catch { /* ignore */ }
+    }
+    return dir;
+}
 async function startNextServer() {
     if (isDev) {
         return process.env.NEXT_DEV_URL || 'http://localhost:3000';
     }
-    const port = await getFreePort();
+    const port = await getPinnedPort();
     const dbPath = getUserDbPath();
-    const standaloneDir = node_path_1.default.join(process.resourcesPath, 'app', '.next', 'standalone');
+    // Next.js emits the standalone bundle at
+    //   .next/standalone/<artifact-path-relative-to-workspace-root>/server.js
+    // because outputFileTracingRoot is pinned to the workspace root in
+    // next.config.ts (required so Turbopack can resolve hoisted deps in this
+    // pnpm monorepo). The full standalone tree is copied to resources/app/
+    // by electron-builder's extraResources, so server.js lives at:
+    //   resources/app/.next/standalone/artifacts/imported-app/server.js
+    const standaloneDir = node_path_1.default.join(process.resourcesPath, 'app', '.next', 'standalone', 'artifacts', 'imported-app');
     const serverEntry = node_path_1.default.join(standaloneDir, 'server.js');
     if (!node_fs_1.default.existsSync(serverEntry)) {
         throw new Error(`Next standalone server missing at ${serverEntry}`);
     }
+    // Resolve uploads folder under userData (writable + survives every
+    // auto-update). The Next.js upload route reads
+    // SCRIPTURELIVE_UPLOADS_DIR and falls back to cwd/uploads in dev.
+    const uploadsDir = getUserUploadsDir();
     nextProcess = (0, node_child_process_1.spawn)(process.execPath, [serverEntry], {
         cwd: standaloneDir,
         env: {
@@ -172,6 +245,7 @@ async function startNextServer() {
             HOSTNAME: '127.0.0.1',
             NODE_ENV: 'production',
             DATABASE_URL: `file:${dbPath}`,
+            SCRIPTURELIVE_UPLOADS_DIR: uploadsDir,
             ELECTRON_RUN_AS_NODE: '1',
         },
         stdio: 'pipe',
@@ -207,7 +281,7 @@ async function createMainWindow(url) {
         minHeight: 640,
         backgroundColor: '#0a0a0a',
         icon: process.platform === 'win32'
-            ? node_path_1.default.join(process.resourcesPath, 'app', '.next', 'standalone', 'public', 'icon-512.png')
+            ? node_path_1.default.join(process.resourcesPath, 'app', '.next', 'standalone', 'artifacts', 'imported-app', 'public', 'icon-512.png')
             : undefined,
         webPreferences: {
             preload: node_path_1.default.join(__dirname, 'preload.js'),
@@ -387,6 +461,24 @@ function setupIpc() {
             return { ok: false, error: ndi.unavailableReason() || 'NDI runtime not available' };
         }
         try {
+            // Persistent-stream guard. The renderer fires `ndi:start` on
+            // every operator click of the big green button, including the
+            // common case where the sender is ALREADY running with the
+            // same settings (the auto-start at boot put it on the air).
+            // Tearing down the offscreen capture window here kills any
+            // playing <video>, makes vMix / OBS lose the source for a
+            // beat, and re-acquire — the very flicker we are trying to
+            // fix. Short-circuit when nothing has changed.
+            const cur = ndi.getStatus();
+            if (cur.running &&
+                frameCapture &&
+                cur.source === (opts.name || 'ScriptureLive AI') &&
+                cur.width === opts.width &&
+                cur.height === opts.height &&
+                cur.fps === opts.fps) {
+                broadcastNdiStatus(cur);
+                return { ok: true, status: cur };
+            }
             if (frameCapture) {
                 await frameCapture.stop();
                 frameCapture = null;
@@ -398,25 +490,34 @@ function setupIpc() {
                 onStatus: (msg) => broadcastNdiStatus({ ...ndi.getStatus(), captureMessage: msg }),
             });
             const layout = opts.layout === 'ndi' ? 'ndi' : 'mirror';
-            let capturePath = '/api/output/congregation';
+            // Single text engine: every NDI capture mode now points at
+            // the same congregation renderer that the secondary screen
+            // and the in-app preview share, so Preview = Output Display
+            // = NDI render the SAME slide.content with the SAME font /
+            // wrap / fit logic. The legacy `/api/output/ndi` route had
+            // its own renderer that hard-truncated long verses to three
+            // lines and ignored the operator's typography settings.
+            //
+            // The `?ndi=1` flag tells the renderer this surface is the
+            // NDI feed (independent ndiDisplayMode + force-mute audio).
+            // The `?lowerThird=1` / `?transparent=1` / `?position=` flags
+            // are the legacy NDI overlay knobs the renderer also honours
+            // so vMix / OBS users can still pin a transparent lower-third
+            // bar on top of their existing program output.
+            const params = new URLSearchParams();
+            params.set('ndi', '1');
             let transparent = false;
             if (layout === 'ndi') {
                 transparent = opts.transparent !== false;
                 const lt = opts.lowerThird || {};
-                const params = new URLSearchParams();
                 if (transparent)
                     params.set('transparent', '1');
                 if (lt.enabled)
                     params.set('lowerThird', '1');
                 if (lt.position === 'top')
                     params.set('position', 'top');
-                if (lt.branding)
-                    params.set('branding', lt.branding.slice(0, 80));
-                if (lt.accent)
-                    params.set('accent', lt.accent.replace(/[^0-9a-fA-F]/g, '').slice(0, 6));
-                const qs = params.toString();
-                capturePath = '/api/output/ndi' + (qs ? `?${qs}` : '');
             }
+            const capturePath = `/api/output/congregation?${params.toString()}`;
             await frameCapture.start({
                 width: opts.width,
                 height: opts.height,
@@ -601,6 +702,44 @@ function setupIpc() {
         });
         return { ok: true };
     });
+    // ── Local Whisper IPC ───────────────────────────────────────────
+    // Base Mode calls into the bundled whisper.cpp binary. We expose
+    // two handlers: availability probe (used by Settings to show the
+    // model status badge) and actual transcription per audio chunk.
+    electron_1.ipcMain.handle('whisper:is-available', () => {
+        const r = (0, whisper_service_1.isWhisperAvailable)();
+        return r.ok ? { ok: true } : { ok: false, reason: r.reason };
+    });
+    electron_1.ipcMain.handle('whisper:transcribe', async (_e, wavBuffer, language) => {
+        try {
+            const buf = Buffer.from(wavBuffer);
+            const text = await (0, whisper_service_1.transcribeWav)(buf, language || 'en');
+            return { ok: true, text };
+        }
+        catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error('[whisper] transcribe failed:', message);
+            return { ok: false, error: message };
+        }
+    });
+    // Operator-facing self-test: lists every file in whisper-bundle,
+    // runs `whisper-cli --help` to prove the binary is actually
+    // launchable on this machine, and returns the structured result so
+    // the Settings panel can render it verbatim. Surfaces the missing
+    // DLL / wrong arch / corrupt model class of bugs that otherwise
+    // collapse into the unhelpful "whisper-cli exited with code 1"
+    // toast at runtime.
+    electron_1.ipcMain.handle('whisper:diagnose', async () => {
+        try {
+            const d = await (0, whisper_service_1.diagnose)();
+            return { ok: true, diagnostics: d };
+        }
+        catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error('[whisper] diagnose failed:', message);
+            return { ok: false, error: message };
+        }
+    });
     ndi.on('frame', (count) => {
         broadcastNdiStatus({ ...ndi.getStatus(), frameCount: count });
     });
@@ -693,7 +832,11 @@ electron_1.app.whenReady().then(async () => {
                 width: 1920,
                 height: 1080,
                 fps: 30,
-                path: '/api/output/congregation',
+                // ?ndi=1 → renderer treats this as the NDI surface and uses
+                // settings.ndiDisplayMode (Full / Lower Third) instead of the
+                // projector's displayMode, so the operator's choice in
+                // Settings → NDI actually takes effect.
+                path: '/api/output/congregation?ndi=1',
                 transparent: false,
             });
             broadcastNdiStatus(ndi.getStatus());
@@ -717,24 +860,141 @@ electron_1.app.whenReady().then(async () => {
         console.log('[ndi] runtime not detected — sender not auto-started:', ndi.unavailableReason());
     }
 });
-electron_1.app.on('window-all-closed', async () => {
-    try {
-        if (frameCapture)
-            await frameCapture.stop();
-    }
-    catch { /* ignore */ }
-    try {
-        await ndi.stop();
-    }
-    catch { /* ignore */ }
-    if (nextProcess) {
+// ── Shutdown ──────────────────────────────────────────────────────
+// Operator complaint: "App still running in Task Manager. Closed should
+// mean dead. No ghosts." On Windows, simply calling app.quit() is not
+// enough because:
+//
+//   1. The bundled Next.js standalone server runs in a SEPARATE Node.js
+//      child process (spawn(process.execPath, [server.js], …)). When
+//      Electron exits, ChildProcess.kill() on Windows only terminates
+//      the IMMEDIATE child via TerminateProcess — any worker threads or
+//      sub-processes Next spawned become orphaned and keep running.
+//      We use `taskkill /pid X /T /F` to nuke the whole process tree.
+//
+//   2. The native NDI runtime (libndi via koffi) keeps a background
+//      thread alive until NDIlib_destroy is called. Without it the
+//      Electron process itself can hang on exit.
+//
+//   3. In-flight whisper-cli children (heavyweight 58 MB model loaded
+//      in RAM) won't die with the parent on every Windows version —
+//      we kill them explicitly via the whisper-service registry.
+//
+//   4. Async cleanup handlers can race with Electron's quit sequence;
+//      a watchdog forces app.exit(0) after 4 s if anything hangs.
+//
+// shutdown() is idempotent — it runs at most once even if both
+// before-quit and window-all-closed fire (which is the normal path).
+let shutdownStarted = false;
+function forceKillNextTree() {
+    const proc = nextProcess;
+    nextProcess = null;
+    if (!proc || !proc.pid)
+        return;
+    if (process.platform === 'win32') {
         try {
-            nextProcess.kill();
+            // /T = kill the entire process tree (Next workers, etc.)
+            // /F = force, no graceful shutdown grace period
+            // detached + ignored stdio so taskkill survives our exit and
+            // doesn't tie us up waiting for it.
+            const tk = (0, node_child_process_1.spawn)('taskkill', ['/pid', String(proc.pid), '/T', '/F'], {
+                windowsHide: true,
+                stdio: 'ignore',
+                detached: true,
+            });
+            tk.unref();
+        }
+        catch { /* fall through to .kill() */ }
+    }
+    // Always also call the JS-level kill as a belt-and-braces signal
+    // (no-op on Windows after taskkill already terminated, but on
+    // POSIX dev runs this is the actual kill).
+    try {
+        proc.kill('SIGKILL');
+    }
+    catch { /* ignore */ }
+}
+function shutdown() {
+    if (shutdownStarted)
+        return;
+    shutdownStarted = true;
+    // Watchdog: if anything below hangs (a stuck NDI thread, a koffi
+    // call that never returns, etc.), force-terminate the Electron
+    // process after 4 s. This guarantees "closed = dead" even if a
+    // native binding misbehaves.
+    const watchdog = setTimeout(() => {
+        try {
+            console.warn('[shutdown] watchdog tripped, forcing app.exit(0)');
         }
         catch { /* ignore */ }
+        try {
+            electron_1.app.exit(0);
+        }
+        catch { /* ignore */ }
+    }, 4000);
+    watchdog.unref?.();
+    // Kill the Next.js server tree FIRST so it stops accepting new
+    // requests immediately. taskkill is fire-and-forget on Windows.
+    forceKillNextTree();
+    // Kill any in-flight whisper-cli children so the bundled binary
+    // doesn't keep the model resident.
+    try {
+        const n = (0, whisper_service_1.killActiveWhisperChildren)();
+        if (n > 0)
+            console.log(`[shutdown] killed ${n} in-flight whisper child${n === 1 ? '' : 'ren'}`);
     }
-    if (process.platform !== 'darwin')
+    catch { /* ignore */ }
+    // Tear down frame capture + NDI sender. These are async but we
+    // intentionally do NOT await them — the watchdog above guarantees
+    // exit either way, and waiting risks hanging on a stuck native call.
+    void (async () => {
+        try {
+            if (frameCapture)
+                await frameCapture.stop();
+        }
+        catch { /* ignore */ }
+        frameCapture = null;
+        try {
+            await ndi.stop();
+        }
+        catch { /* ignore */ }
+        // Library-level NDIlib_destroy() — releases the background
+        // worker thread the koffi-loaded libndi keeps alive after the
+        // sender is destroyed. Without this Electron's main process can
+        // hang on exit waiting for that thread to wind down.
+        try {
+            ndi.destroy();
+        }
+        catch { /* ignore */ }
+        // Destroy any remaining BrowserWindows so Electron sees zero
+        // windows and proceeds to exit cleanly.
+        try {
+            for (const w of electron_1.BrowserWindow.getAllWindows()) {
+                try {
+                    if (!w.isDestroyed())
+                        w.destroy();
+                }
+                catch { /* ignore */ }
+            }
+        }
+        catch { /* ignore */ }
+    })();
+}
+electron_1.app.on('before-quit', () => {
+    // Fires for EVERY quit path (Cmd+Q, app.quit(), updater restart,
+    // window close). Centralising shutdown here means we clean up
+    // even when the user uses a code path that bypasses
+    // window-all-closed.
+    shutdown();
+});
+electron_1.app.on('window-all-closed', () => {
+    // Windows-only app per spec — never linger after the last window
+    // closes. Closed should mean dead.
+    shutdown();
+    try {
         electron_1.app.quit();
+    }
+    catch { /* ignore */ }
 });
 electron_1.app.on('activate', async () => {
     if (electron_1.BrowserWindow.getAllWindows().length === 0 && appBaseUrl) {

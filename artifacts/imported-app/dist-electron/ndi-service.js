@@ -178,10 +178,27 @@ class NdiService extends node_events_1.EventEmitter {
         if (!this.bindings) {
             throw new Error(this.unavailableReason() || 'NDI not available');
         }
+        // Persistent-stream rule: vMix / Wirecast / OBS / Studio Monitor
+        // re-acquire a source when our send instance disappears, which
+        // shows up on the receiver as a one-frame black flash and a brief
+        // "no signal" hold — exactly the flicker operators complained
+        // about. So if a sender is already running with the SAME name and
+        // declared format, keep it. The receiver never sees an interruption.
+        // Only when something materially changes (rename, resolution, fps)
+        // do we tear down and rebuild.
+        const wantedName = opts.name || 'ScriptureLive';
+        if (this.senderInstance &&
+            this.status.running &&
+            this.status.source === wantedName &&
+            this.status.width === opts.width &&
+            this.status.height === opts.height &&
+            this.status.fps === opts.fps) {
+            return;
+        }
         if (this.senderInstance)
             await this.stop();
         const settings = {
-            p_ndi_name: opts.name || 'ScriptureLive',
+            p_ndi_name: wantedName,
             p_groups: null,
             // clock_video = true makes NDIlib_send_send_video_v2 block to pace
             // frames at the declared frame rate. This is what gives NDI its
@@ -196,7 +213,7 @@ class NdiService extends node_events_1.EventEmitter {
         this.senderInstance = instance;
         this.status = {
             running: true,
-            source: opts.name,
+            source: wantedName,
             width: opts.width,
             height: opts.height,
             fps: opts.fps,
@@ -215,6 +232,27 @@ class NdiService extends node_events_1.EventEmitter {
             this.senderInstance = null;
         }
         this.status = { running: false, frameCount: this.status.frameCount };
+    }
+    /**
+     * Library-level teardown — call NDIlib_destroy() once during app
+     * shutdown to release the background threads / memory pools the NDI
+     * runtime allocated at NDIlib_initialize() time. Without this the
+     * koffi-loaded native lib can keep a worker thread alive past
+     * Electron's window-all-closed, which contributes to the "still in
+     * Task Manager" complaint we are fixing. Idempotent — clears the
+     * bindings reference so subsequent calls are no-ops, and the per-
+     * sender stop() above is implicitly called first by shutdown().
+     */
+    destroy() {
+        if (this.bindings) {
+            try {
+                this.bindings.destroy();
+            }
+            catch {
+                /* ignore — we're tearing down anyway */
+            }
+            this.bindings = null;
+        }
     }
     sendFrame(bgraBuffer, width, height) {
         if (!this.senderInstance || !this.bindings)
