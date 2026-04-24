@@ -13,7 +13,6 @@ const IS_ELECTRON =
 import { detectVersesInTextWithScore, fetchBibleVerse, PREACHER_ATTRIBUTION } from '@/lib/bible-api'
 import type { BibleSearchHit } from '@/lib/bible-api'
 import type { DetectedVerse } from '@/lib/store'
-import { toast } from 'sonner'
 
 /**
  * SpeechProvider - Persistent speech recognition that survives view navigation.
@@ -408,73 +407,6 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     if (typeof window === 'undefined') return
     ;(window as unknown as { __selectedMicrophoneId?: string | null }).__selectedMicrophoneId = selectedMicId
   }, [selectedMicId])
-
-  // Mirror the operator's OpenAI API key into a global so the
-  // (hookless) Whisper hook can read it when posting audio chunks
-  // to /api/transcribe. The hook stays decoupled from the store so
-  // it can be tested in isolation and matches the browser hook's
-  // shape exactly.
-  const userOpenaiKey = useAppStore((s) => s.settings.userOpenaiKey)
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    ;(window as unknown as { __userOpenaiKey?: string | null }).__userOpenaiKey = userOpenaiKey
-  }, [userOpenaiKey])
-
-  // Bug #1C — mirror the auto-fallback toggle into a window global so
-  // the (hookless) Whisper hook can read it without coupling to the
-  // store. Treat undefined as true (fresh-install default).
-  const autoFallback = useAppStore((s) => s.settings.whisperAutoFallbackToOpenAI)
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    ;(window as unknown as { __whisperAutoFallback?: boolean }).__whisperAutoFallback =
-      autoFallback !== false
-  }, [autoFallback])
-
-  // ── AI Mode mirror + failsafe ──────────────────────────────────
-  // The renderer's Whisper hook reads window.__aiMode at every
-  // startListening() to pick the transcription pipeline. We also
-  // enforce a safety net here: if the operator has selected 'openai'
-  // but has no key configured, we silently coerce the live session
-  // to 'base' (and nudge them via a toast) so detection never goes
-  // dark because of a missing key. Similarly, if the desktop runtime
-  // can't find the bundled whisper-bundle (download failed at build
-  // time), we flip 'base' → 'openai' to keep the session alive.
-  const aiMode = useAppStore((s) => s.settings.aiMode)
-  const updateSettings = useAppStore((s) => s.updateSettings)
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    let effective: 'base' | 'openai' = aiMode
-    // Guard 1: OpenAI Mode without a key → fall back to Base Mode.
-    if (effective === 'openai' && !userOpenaiKey) {
-      effective = 'base'
-      toast.warning('Switched to Base Model (no OpenAI key configured).')
-    }
-    ;(window as unknown as { __aiMode?: 'base' | 'openai' }).__aiMode = effective
-    // Guard 2: If Base Mode was requested but the local engine isn't
-    // installed (Replit browser or a corrupt install), surface a
-    // one-time toast — the hook itself will still accept chunks and
-    // report "Base Model is only available in the desktop app".
-    if (effective === 'base' && typeof window !== 'undefined') {
-      const sl = (window as unknown as {
-        scriptureLive?: { whisper?: { isAvailable: () => Promise<{ ok: boolean; reason?: string }> } }
-      }).scriptureLive
-      const probe = sl?.whisper?.isAvailable
-      if (probe) {
-        probe().then((r) => {
-          if (!r.ok && userOpenaiKey) {
-            ;(window as unknown as { __aiMode?: 'base' | 'openai' }).__aiMode = 'openai'
-            updateSettings({ aiMode: 'openai' })
-            toast.warning('Base Model unavailable — switched to OpenAI Mode.')
-          } else if (!r.ok) {
-            // Leave the user on Base; the hook reports the exact
-            // error on the first chunk so the Settings page nudge
-            // can guide them to add a key.
-            console.warn('[speech] base-model unavailable:', r.reason)
-          }
-        }).catch(() => { /* ignore — non-fatal */ })
-      }
-    }
-  }, [aiMode, userOpenaiKey, updateSettings])
 
   // ── Handle speech commands from store (start / stop / reset) ───────
   useEffect(() => {
