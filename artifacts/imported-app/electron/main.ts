@@ -62,7 +62,7 @@ type NdiStartOptions = NdiServiceStartOptions & {
 }
 import { FrameCapture } from './frame-capture'
 import { setupAutoUpdater, runManualCheck, getUpdateState, openReleasesPage } from './updater'
-import { isWhisperAvailable, transcribeWav } from './whisper-service'
+import { isWhisperAvailable, transcribeWav, diagnose as diagnoseWhisper } from './whisper-service'
 
 const isDev = !app.isPackaged
 
@@ -637,6 +637,24 @@ function setupIpc() {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       console.error('[whisper] transcribe failed:', message)
+      return { ok: false, error: message }
+    }
+  })
+
+  // Operator-facing self-test: lists every file in whisper-bundle,
+  // runs `whisper-cli --help` to prove the binary is actually
+  // launchable on this machine, and returns the structured result so
+  // the Settings panel can render it verbatim. Surfaces the missing
+  // DLL / wrong arch / corrupt model class of bugs that otherwise
+  // collapse into the unhelpful "whisper-cli exited with code 1"
+  // toast at runtime.
+  ipcMain.handle('whisper:diagnose', async () => {
+    try {
+      const d = await diagnoseWhisper()
+      return { ok: true, diagnostics: d }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error('[whisper] diagnose failed:', message)
       return { ok: false, error: message }
     }
   })

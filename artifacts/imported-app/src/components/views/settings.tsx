@@ -60,6 +60,9 @@ import {
   Star,
   ArrowRight,
   ShieldCheck,
+  Stethoscope,
+  AlertTriangle,
+  CheckCircle2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -1222,6 +1225,13 @@ function AiDetectionModeCard() {
           Failsafe: if OpenAI Mode loses internet or the key is rejected, detection
           automatically falls back to Base Model so the service never goes dark.
         </p>
+
+        {/* Operator-facing self-test for the bundled offline engine.
+            Only shown in the desktop app (browser dev mode has no IPC
+            bridge). Surfaces the missing-DLL / corrupt-model class of
+            bugs that otherwise collapse into the unhelpful
+            "whisper-cli exited with code 1" toast. */}
+        {baseStatus.state !== 'browser' && <BaseModelDiagnosticsButton />}
       </CardContent>
 
       {/* ── Upgrade modal ─────────────────────────────────────────── */}
@@ -1235,6 +1245,270 @@ function AiDetectionModeCard() {
         }}
       />
     </Card>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// BASE MODEL DIAGNOSTICS
+// ──────────────────────────────────────────────────────────────────────
+// "Run Diagnostics" button + modal. Calls the Electron-side
+// whisper:diagnose IPC which:
+//   • lists every file in the whisper-bundle (binary, model, DLLs)
+//     with sizes so missing DLLs are obvious
+//   • runs `whisper-cli --help` and reports the exit code +
+//     stdout/stderr tails so a corrupt binary or missing VC++
+//     redistributable is visible
+//   • returns the model SHA-256 prefix so a swap/corruption is
+//     traceable on the support call
+// The whole report is rendered as plain text + a single "Copy to
+// clipboard" action so an operator can paste it back to support
+// without screenshots.
+interface WhisperDiagFile { name: string; size: number }
+interface WhisperDiagnosticsView {
+  bundleDir: string
+  isPackaged: boolean
+  platform: string
+  arch: string
+  binary: { name: string; path: string; exists: boolean; size?: number }
+  model: { name: string; path: string; exists: boolean; size?: number; sha256?: string }
+  files: WhisperDiagFile[]
+  helpProbe?: { ok: boolean; exitCode: number | null; stdoutHead: string; stderrHead: string; spawnError?: string }
+  available: { ok: boolean; reason?: string }
+}
+
+function fmtBytes(n: number | undefined): string {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '—'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(2)} MB`
+}
+
+function BaseModelDiagnosticsButton() {
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [diag, setDiag] = useState<WhisperDiagnosticsView | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const run = async () => {
+    setLoading(true)
+    setError(null)
+    setDiag(null)
+    try {
+      const sl = (window as unknown as {
+        scriptureLive?: { whisper?: { diagnose: () => Promise<{ ok: boolean; diagnostics?: WhisperDiagnosticsView; error?: string }> } }
+      }).scriptureLive
+      const fn = sl?.whisper?.diagnose
+      if (!fn) {
+        setError('Diagnostics is only available in the desktop app.')
+        return
+      }
+      const r = await fn()
+      if (!r.ok || !r.diagnostics) {
+        setError(r.error || 'Diagnostics failed for an unknown reason.')
+        return
+      }
+      setDiag(r.diagnostics)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Auto-run as soon as the dialog opens — saves an extra click on
+  // the support call.
+  useEffect(() => {
+    if (open && !diag && !loading) void run()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
+  const renderReportText = (d: WhisperDiagnosticsView): string => {
+    const lines = [
+      `ScriptureLive Base Model Diagnostics`,
+      `Platform: ${d.platform}/${d.arch}  Packaged: ${d.isPackaged}`,
+      `Bundle dir: ${d.bundleDir}`,
+      ``,
+      `Availability: ${d.available.ok ? 'OK' : 'FAIL — ' + (d.available.reason || '')}`,
+      ``,
+      `Binary: ${d.binary.name}`,
+      `  exists: ${d.binary.exists}   size: ${fmtBytes(d.binary.size)}`,
+      `  path:   ${d.binary.path}`,
+      ``,
+      `Model: ${d.model.name}`,
+      `  exists: ${d.model.exists}   size: ${fmtBytes(d.model.size)}   sha256(prefix): ${d.model.sha256 || '—'}`,
+      `  path:   ${d.model.path}`,
+      ``,
+      `Files in bundle (${d.files.length}):`,
+      ...d.files.map((f) => `  ${f.name.padEnd(30)} ${fmtBytes(f.size)}`),
+      ``,
+      `Binary launch probe (whisper-cli --help):`,
+      d.helpProbe
+        ? `  ok=${d.helpProbe.ok}   exit=${d.helpProbe.exitCode}   spawnError=${d.helpProbe.spawnError || '—'}\n  stdoutHead: ${d.helpProbe.stdoutHead.replace(/\n/g, ' ⏎ ')}\n  stderrHead: ${d.helpProbe.stderrHead.replace(/\n/g, ' ⏎ ')}`
+        : `  (binary not present — skipped)`,
+    ]
+    return lines.join('\n')
+  }
+
+  return (
+    <>
+      <div className="flex items-center justify-between rounded-lg border border-border bg-muted/20 px-3 py-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <Stethoscope className="h-4 w-4 text-emerald-400 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-xs font-semibold">Base Model Diagnostics</p>
+            <p className="text-[11px] text-muted-foreground truncate">
+              Test the bundled offline engine and see exactly why it&apos;s working — or not.
+            </p>
+          </div>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => setOpen(true)}
+          className="shrink-0"
+        >
+          Run Diagnostics
+        </Button>
+      </div>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Stethoscope className="h-4 w-4 text-emerald-400" />
+              Base Model Diagnostics
+            </DialogTitle>
+            <DialogDescription>
+              Verifies the bundled whisper.cpp binary and quantized base.en model. If
+              detection is failing in offline mode, paste this report to support.
+            </DialogDescription>
+          </DialogHeader>
+          {loading && (
+            <div className="text-sm text-muted-foreground py-6 text-center">
+              Running self-test…
+            </div>
+          )}
+          {error && (
+            <div className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              <div className="min-w-0">{error}</div>
+            </div>
+          )}
+          {diag && (
+            <div className="space-y-3 text-xs">
+              <div className={cn(
+                'rounded-md border px-3 py-2 flex items-start gap-2',
+                diag.available.ok
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                  : 'border-rose-500/40 bg-rose-500/10 text-rose-300',
+              )}>
+                {diag.available.ok ? (
+                  <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                )}
+                <div className="min-w-0 text-[12px] font-semibold">
+                  {diag.available.ok
+                    ? 'All checks passed — Base Mode should work.'
+                    : `Not ready: ${diag.available.reason}`}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <div className="rounded-md border border-border p-2">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Binary</p>
+                  <p className="font-mono text-[11px] break-all">{diag.binary.name}</p>
+                  <p className="text-[11px]">exists: <span className={diag.binary.exists ? 'text-emerald-300' : 'text-rose-300'}>{String(diag.binary.exists)}</span></p>
+                  <p className="text-[11px]">size: {fmtBytes(diag.binary.size)}</p>
+                </div>
+                <div className="rounded-md border border-border p-2">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Model</p>
+                  <p className="font-mono text-[11px] break-all">{diag.model.name}</p>
+                  <p className="text-[11px]">exists: <span className={diag.model.exists ? 'text-emerald-300' : 'text-rose-300'}>{String(diag.model.exists)}</span></p>
+                  <p className="text-[11px]">size: {fmtBytes(diag.model.size)}</p>
+                  {diag.model.sha256 && (
+                    <p className="text-[11px] font-mono">sha256: {diag.model.sha256}…</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-md border border-border p-2">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                  Bundle contents ({diag.files.length} file{diag.files.length === 1 ? '' : 's'})
+                </p>
+                <p className="font-mono text-[10px] text-muted-foreground break-all">{diag.bundleDir}</p>
+                <ul className="mt-1 max-h-40 overflow-y-auto font-mono text-[11px] space-y-0.5">
+                  {diag.files.map((f) => (
+                    <li key={f.name} className="flex justify-between gap-2">
+                      <span className="truncate">{f.name}</span>
+                      <span className="text-muted-foreground shrink-0">{fmtBytes(f.size)}</span>
+                    </li>
+                  ))}
+                  {diag.files.length === 0 && (
+                    <li className="text-rose-300">No files found — the bundle is empty.</li>
+                  )}
+                </ul>
+              </div>
+
+              {diag.helpProbe && (
+                <div className={cn(
+                  'rounded-md border p-2',
+                  diag.helpProbe.ok ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-rose-500/40 bg-rose-500/5',
+                )}>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                    whisper-cli --help probe
+                  </p>
+                  <p className="text-[11px]">
+                    ok: <span className={diag.helpProbe.ok ? 'text-emerald-300' : 'text-rose-300'}>{String(diag.helpProbe.ok)}</span>
+                    {' · '}exit: {diag.helpProbe.exitCode === null ? 'null' : diag.helpProbe.exitCode}
+                  </p>
+                  {diag.helpProbe.spawnError && (
+                    <p className="text-[11px] text-rose-300 break-words">spawn error: {diag.helpProbe.spawnError}</p>
+                  )}
+                  {(diag.helpProbe.stdoutHead || diag.helpProbe.stderrHead) && (
+                    <pre className="mt-1 max-h-40 overflow-auto rounded bg-black/40 p-2 text-[10px] leading-snug whitespace-pre-wrap break-words">
+{diag.helpProbe.stdoutHead}
+{diag.helpProbe.stderrHead ? `\n[stderr] ${diag.helpProbe.stderrHead}` : ''}
+                    </pre>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={!diag}
+              onClick={async () => {
+                if (!diag) return
+                try {
+                  await navigator.clipboard.writeText(renderReportText(diag))
+                  toast.success('Diagnostics copied to clipboard.')
+                } catch {
+                  toast.error('Could not copy to clipboard.')
+                }
+              }}
+            >
+              <Copy className="h-3.5 w-3.5 mr-1" /> Copy report
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={loading}
+              onClick={() => void run()}
+            >
+              <RefreshCcw className="h-3.5 w-3.5 mr-1" /> Re-run
+            </Button>
+            <Button type="button" size="sm" onClick={() => setOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 

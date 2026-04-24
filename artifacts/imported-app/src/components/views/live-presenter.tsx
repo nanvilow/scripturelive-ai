@@ -217,12 +217,14 @@ export function LivePresenterView() {
   const toggleOutput = useCallback(() => {
     if (outputActive) {
       setOutputActive(false); setNdiConnected(false)
-      toast.success('Output stopped')
+      /* v0.5.4 T006 — silenced. The output button's own state +
+         the on-screen badge already tell the operator what changed;
+         the toast was the same "Connected"-style spam they asked to
+         remove. */
     } else {
       setOutputActive(true); setNdiConnected(true)
       const url = getCongregationOutputUrl()
       setOutputUrl(url)
-      toast.success('Wireless output started')
       const st = useAppStore.getState()
       const cur = st.liveSlideIndex >= 0 ? st.slides[st.liveSlideIndex] : null
       sendToOutput(cur, st.isLive)

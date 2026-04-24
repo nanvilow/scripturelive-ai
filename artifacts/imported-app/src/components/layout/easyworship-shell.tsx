@@ -1635,11 +1635,14 @@ export function EasyWorshipShell() {
     if (outputActive) {
       setOutputActive(false)
       setNdiConnected(false)
-      toast.success('Output stopped')
+      /* v0.5.4 T006 — Output toggle toasts removed. The Output Display
+         button itself flips its emerald "ON AIR" state, and the status
+         pill on the secondary screen / NDI is hidden. Re-toasting on
+         every click was the same "Connected"-spam the operator asked
+         to silence. */
     } else {
       setOutputActive(true)
       setNdiConnected(true)
-      toast.success('Output started')
       const cur = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
       sendToOutput(cur, isLive)
     }

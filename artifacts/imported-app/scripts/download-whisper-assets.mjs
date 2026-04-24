@@ -161,18 +161,56 @@ async function ensureWhisperBinary() {
   }
   fs.copyFileSync(src, finalBin)
   log(`Installed whisper-cli → ${finalBin}`)
-  // Also copy any DLLs sitting next to the binary (ggml.dll etc).
-  const srcDir = path.dirname(src)
-  for (const ent of fs.readdirSync(srcDir)) {
-    if (/\.dll$/i.test(ent)) {
-      const from = path.join(srcDir, ent)
-      const to = path.join(OUT_DIR, ent)
-      if (!fs.existsSync(to)) {
-        fs.copyFileSync(from, to)
-        log(`Installed DLL → ${to}`)
+  // Also copy EVERY .dll found anywhere in the unzipped archive, not
+  // just the directory next to whisper-cli.exe. v1.8.x sometimes
+  // splits dependencies across Release/, bin/, and lib/ subfolders;
+  // missing even one (ggml-cpu.dll, ggml-base.dll, whisper.dll)
+  // makes whisper-cli load-fail on launch with a Windows side-by-side
+  // error and exit code 1 — the exact symptom operators have reported.
+  const dllsCopied = new Set()
+  const walkForDlls = (dir) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, ent.name)
+      if (ent.isDirectory()) walkForDlls(p)
+      else if (/\.dll$/i.test(ent.name)) {
+        const to = path.join(OUT_DIR, ent.name)
+        // First-write-wins so if two copies exist (e.g. Debug/ vs
+        // Release/), the first walked one is preserved. The archive
+        // root usually lists Release/ first.
+        if (!dllsCopied.has(ent.name) && !fs.existsSync(to)) {
+          fs.copyFileSync(p, to)
+          dllsCopied.add(ent.name)
+          log(`Installed DLL → ${to} (from ${path.relative(OUT_DIR, p)})`)
+        } else if (!dllsCopied.has(ent.name)) {
+          dllsCopied.add(ent.name)
+        }
       }
     }
   }
+  walkForDlls(OUT_DIR)
+  if (dllsCopied.size === 0) {
+    warn('No DLLs found in unzipped archive — whisper-cli will likely fail to launch on user machines.')
+  } else {
+    log(`Hoisted ${dllsCopied.size} DLL(s) next to whisper-cli.exe.`)
+  }
+
+  // Sanity-launch the binary so a broken download fails the build
+  // instead of shipping a binary that crashes on the user's PC. Only
+  // meaningful on Windows hosts (the only place we ship the binary).
+  if (process.platform === 'win32') {
+    const probe = spawnSync(finalBin, ['--help'], { encoding: 'utf8', windowsHide: true })
+    const okOutput = (probe.stdout || '') + (probe.stderr || '')
+    if (probe.error || (probe.status !== 0 && !/usage|whisper/i.test(okOutput))) {
+      warn(`whisper-cli --help probe failed: status=${probe.status} err=${probe.error?.message || ''} out=${okOutput.slice(0, 200)}`)
+      // Don't return false here — a probe failure on a CI runner
+      // (e.g. no audio device, no display) is not the same as a
+      // missing-DLL crash. We log loudly so CI surfaces it but still
+      // package the bundle so the runtime diagnose() can confirm.
+    } else {
+      log('whisper-cli --help probe: OK (binary is launchable).')
+    }
+  }
+
   try { fs.unlinkSync(tmpZip) } catch { /* ignore */ }
   return true
 }

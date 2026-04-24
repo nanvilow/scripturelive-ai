@@ -20,7 +20,15 @@ import { createWavRecorder, type WavRecorder } from '@/lib/whisper-recorder'
  */
 
 const CHUNK_MS = 4500 // length of each audio segment posted to Whisper
-const MIN_BYTES = 6 * 1024 // skip near-silent segments (saves API calls)
+// Compressed Opus chunks (OpenAI path) average ~6 KB for ~5 s of speech,
+// so 6 KB is a sane "is this just silence?" floor for the cloud engine.
+const MIN_OPENAI_BYTES = 6 * 1024
+// Raw 16 kHz × 16-bit × mono PCM is 32 000 bytes per second. A WAV under
+// ~24 KB (= 0.75 s of audio + 44 B header) is the #1 cause of the
+// dreaded "whisper-cli exited with code 1" — whisper.cpp's GGML loader
+// will refuse near-empty audio and exit non-zero with no useful stderr.
+// Filtering at this layer keeps Base Mode from ever sending one.
+const MIN_BASE_PCM_BYTES = 24 * 1024
 
 interface UseWhisperSpeechRecognitionReturn {
   isListening: boolean
@@ -120,7 +128,7 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
 
   const uploadOpenAi = useCallback(async (blob: Blob, id: number, sessionAtCapture: number) => {
     const stillCurrent = () => sessionRef.current === sessionAtCapture
-    if (blob.size < MIN_BYTES) {
+    if (blob.size < MIN_OPENAI_BYTES) {
       if (!stillCurrent()) return
       pendingByIdRef.current.set(id, '')
       drainOrdered()
@@ -161,7 +169,7 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
 
   const uploadBase = useCallback(async (wav: ArrayBuffer, id: number, sessionAtCapture: number) => {
     const stillCurrent = () => sessionRef.current === sessionAtCapture
-    if (wav.byteLength < MIN_BYTES) {
+    if (wav.byteLength < MIN_BASE_PCM_BYTES) {
       if (!stillCurrent()) return
       pendingByIdRef.current.set(id, '')
       drainOrdered()
