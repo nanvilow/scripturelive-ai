@@ -162,11 +162,18 @@ jobs:
           foreach ($exe in $exes) {
             Write-Host "::group::Verify Authenticode signature: $($exe.Name)"
 
-            # Primary check: signtool verify /pa /v — uses the OS Authenticode
-            # policy and prints chain + timestamp details for diagnostics.
+            # Primary check: signtool verify /pa /v /tw — uses the OS
+            # Authenticode policy and prints chain + timestamp details for
+            # diagnostics. The /tw switch issues a warning (visible in the
+            # log) when no RFC3161 timestamp counter-signature is attached
+            # so maintainers can see the diagnostic; the structured
+            # `$sig.TimeStamperCertificate` check below is what actually
+            # fails the build, so a flaky public timestamp server can't
+            # silently produce a sign-but-not-timestamped installer that
+            # would stop validating the day the cert expires.
             $signtoolOk = $false
             if ($signtool) {
-              & $signtool verify /pa /v $exe.FullName
+              & $signtool verify /pa /v /tw $exe.FullName
               if ($LASTEXITCODE -eq 0) { $signtoolOk = $true }
             } else {
               Write-Host "::warning::signtool.exe not located on this runner; falling back to Get-AuthenticodeSignature only."
@@ -182,8 +189,22 @@ jobs:
               Write-Host "Issuer: $($sig.SignerCertificate.Issuer)"
               Write-Host "NotAfter: $($sig.SignerCertificate.NotAfter)"
             }
+            if ($sig.TimeStamperCertificate) {
+              Write-Host "Timestamper: $($sig.TimeStamperCertificate.Subject)"
+              Write-Host "Timestamper NotAfter: $($sig.TimeStamperCertificate.NotAfter)"
+            } else {
+              Write-Host "Timestamper: <none>"
+            }
 
             $psOk = ($sig.Status -eq [System.Management.Automation.SignatureStatus]::Valid)
+            # Authenticode signatures normally include an RFC3161
+            # timestamp counter-signature. Windows trusts the timestamp
+            # (not today's clock vs. signing-cert NotAfter) so the
+            # installer keeps validating after the signing cert expires
+            # (potentially years later, long after anyone associates the
+            # break with this one build). A missing timestamp = ticking
+            # time bomb. Fail closed.
+            $timestamped = ($null -ne $sig.TimeStamperCertificate)
 
             if ($signtool) {
               if (-not $signtoolOk) {
@@ -199,6 +220,10 @@ jobs:
                 Write-Host "::endgroup::"
                 Fail "$($exe.Name) failed Get-AuthenticodeSignature ($($sig.Status): $($sig.StatusMessage))."
               }
+            }
+            if (-not $timestamped) {
+              Write-Host "::endgroup::"
+              Fail "$($exe.Name) was signed but is missing an RFC3161 timestamp counter-signature. The installer would stop validating the day the signing certificate expires (Get-AuthenticodeSignature.TimeStamperCertificate is null). Public timestamp servers (DigiCert, Sectigo, GlobalSign, etc.) are occasionally unavailable; re-run the build, or if a specific TSA is configured in electron-builder check that it returned successfully."
             }
 
             Write-Host "::endgroup::"
@@ -536,12 +561,42 @@ jobs:
             # malformed signatures, or chain validation failures. We pin it
             # to the system CA bundle so signatures from public CAs
             # (DigiCert, Sectigo, SSL.com, etc.) validate end-to-end.
+            #
+            # We capture the output (using `tee` so the log still streams
+            # in real time) and then assert on the timestamp lines.
+            # osslsigncode prints `Timestamp Verification: ok` only when an
+            # RFC3161 timestamp counter-signature is attached AND its TSA
+            # chain validates against -TSA-CAfile. A signed-but-not-
+            # timestamped installer is the failure mode we're guarding
+            # against here: it ships fine today and silently breaks the
+            # day the signing cert's `notAfter` passes (often years
+            # later). Fail closed.
+            verify_log=$(mktemp)
             if ! osslsigncode verify \
                   -CAfile /etc/ssl/certs/ca-certificates.crt \
                   -TSA-CAfile /etc/ssl/certs/ca-certificates.crt \
-                  -in "$f"; then
+                  -in "$f" 2>&1 | tee "$verify_log"; then
               echo "::endgroup::"
               fail "$name is not Authenticode-signed (or its signature failed verification)."
+            fi
+            # Match osslsigncode's positive timestamp line tolerantly so
+            # leading whitespace, future capitalization tweaks, or minor
+            # punctuation/wording drift between versions don't false-
+            # positive a legitimately signed-and-timestamped build. We
+            # still require an explicit positive line — *absence* of the
+            # line still fails the build, preserving fail-closed.
+            # Reference output (osslsigncode 2.x):
+            #   Signature verification: ok
+            #   ...
+            #   Timestamp Verification: ok
+            if ! grep -qiE '^[[:space:]]*Timestamp[[:space:]]+Verification[[:space:]]*:[[:space:]]*ok[[:space:]]*$' "$verify_log"; then
+              # Surface what osslsigncode actually said about the
+              # timestamp so the failure log is self-explanatory (e.g.
+              # "Timestamp is not available", "Timestamp Verification:
+              # failed", or no timestamp section at all).
+              ts_line=$(grep -iE '^[[:space:]]*(Timestamp|TSA)' "$verify_log" || echo "<no Timestamp lines in osslsigncode output>")
+              echo "::endgroup::"
+              fail "$name is signed but is missing a verifiable RFC3161 timestamp counter-signature ($ts_line). Without a timestamp the installer would stop validating the day the signing cert expires. The build-time check on Windows should have caught this; if it didn't, the timestamp signing-server may have been transiently unavailable — re-run the build."
             fi
             echo "::endgroup::"
           done

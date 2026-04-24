@@ -144,14 +144,22 @@ To close that gap, three checks gate the GitHub Release:
   immediately after `pnpm --filter @workspace/imported-app run package:win`
   finishes — and **before** any `actions/upload-artifact` step runs — the job
   walks every `artifacts/imported-app/release/*.exe` and verifies it with
-  both `signtool verify /pa /v` (the Windows Authenticode policy, with the
-  signing toolchain still on the runner for rich diagnostics) and PowerShell's
+  both `signtool verify /pa /v /tw` (the Windows Authenticode policy, with the
+  signing toolchain still on the runner for rich diagnostics; `/tw` surfaces
+  a warning when no RFC3161 timestamp is present) and PowerShell's
   `Get-AuthenticodeSignature` (cross-check + fallback if `signtool.exe` is
-  missing). Failures surface within seconds of `electron-builder` instead of
-  forcing the maintainer to wait the full ~15-25 minutes for the upload +
-  `release` job spin-up. Honors the same `allow_unsigned` input and
-  `[unsigned-release]` commit-message / annotated-tag marker as the other
-  checks below, so the three opt-outs stay in sync.
+  missing). It then asserts that
+  `Get-AuthenticodeSignature.TimeStamperCertificate` is non-null and **fails
+  closed** if it isn't, so a flaky public timestamp server (DigiCert,
+  Sectigo, GlobalSign, etc.) can't silently produce a signed-but-not-
+  timestamped installer that would stop validating the day the signing cert
+  expires (often years later, well past the point anyone associates the
+  failure with that one build). Failures surface within seconds of
+  `electron-builder` instead of forcing the maintainer to wait the full
+  ~15-25 minutes for the upload + `release` job spin-up. Honors the same
+  `allow_unsigned` input and `[unsigned-release]` commit-message /
+  annotated-tag marker as the other checks below, so the three opt-outs
+  stay in sync.
 
 - **`verify-macos`** runs on `macos-latest`, downloads any `mac-installer*`
   artifacts, mounts each `.dmg`, and runs the full Apple verification stack
@@ -172,9 +180,15 @@ To close that gap, three checks gate the GitHub Release:
   `osslsigncode verify` against the runner's system CA bundle as a
   defense-in-depth backstop to the build-time check above (different tool,
   different OS, different CA store — catches anything the Windows-side
-  check might miss). Unsigned binaries, malformed Authenticode blobs, and
-  signatures whose chain doesn't validate all fail the step **before**
-  `softprops/action-gh-release` is invoked.
+  check might miss). It also captures the `osslsigncode` output and asserts
+  that it contains `Timestamp Verification: ok`, **failing closed** when
+  the RFC3161 counter-signature is missing or its TSA chain doesn't
+  validate against `-TSA-CAfile`. Unsigned binaries, malformed Authenticode
+  blobs, signatures whose chain doesn't validate, and signed-but-not-
+  timestamped installers all fail the step **before** `softprops/action-gh-release`
+  is invoked. (Timestamping ensures the installer keeps validating after
+  the signing cert's `notAfter` passes, since Windows trusts the embedded
+  timestamp rather than today's clock.)
 
 When any check fails, it logs a clear `::error::` message that points back
 at this README's
