@@ -61,7 +61,7 @@ type NdiStartOptions = NdiServiceStartOptions & {
   }
 }
 import { FrameCapture } from './frame-capture'
-import { setupAutoUpdater, runManualCheck, getUpdateState, openReleasesPage } from './updater'
+import { setupAutoUpdater, runManualCheck, getUpdateState } from './updater'
 import { isWhisperAvailable, transcribeWav, diagnose as diagnoseWhisper, killActiveWhisperChildren } from './whisper-service'
 
 const isDev = !app.isPackaged
@@ -335,11 +335,16 @@ async function handleManualUpdateCheck() {
       buttons: ['OK'],
     })
   } else if (state.status === 'available') {
+    // Auto-download is OFF (operator-driven download flow). The
+    // renderer's UpdateNotifier will show an "Update Available — Click
+    // To Download" popup at the same moment, so this dialog just
+    // confirms the check found something and points the operator at
+    // the popup. Keeps every download decision inside the app.
     await showDialog({
       type: 'info',
       title: 'Check for Updates',
       message: 'Update available',
-      detail: `Version ${state.version} is downloading in the background. You'll be prompted to restart when it's ready.`,
+      detail: `Version ${state.version} is ready to download. Click Download in the popup to get it.`,
       buttons: ['OK'],
     })
   } else if (state.status === 'downloading') {
@@ -365,16 +370,16 @@ async function handleManualUpdateCheck() {
       setImmediate(() => autoUpdater.quitAndInstall(false, true))
     }
   } else if (state.status === 'error') {
-    const choice = await showDialog({
+    // No browser-redirect button — operator wants the entire update
+    // flow to stay inside the app. Surface the friendly message and
+    // let the operator try Check for Updates again later.
+    await showDialog({
       type: 'warning',
       title: 'Check for Updates',
       message: "Couldn't check for updates",
-      detail: `${state.message}\n\nYou can download the latest installer from the releases page instead.`,
-      buttons: ['Open releases page', 'OK'],
-      defaultId: 1,
-      cancelId: 1,
+      detail: `${state.message}\n\nTry Check for Updates again when you have a stable internet connection.`,
+      buttons: ['OK'],
     })
-    if (choice.response === 0) openReleasesPage()
   }
 }
 
@@ -410,16 +415,17 @@ function buildAppMenu() {
     { role: 'editMenu' },
     { role: 'viewMenu' },
     { role: 'windowMenu' },
-    {
-      role: 'help',
-      submenu: [
-        ...(isMac ? [] : [checkForUpdatesItem, { type: 'separator' } as MenuItemConstructorOptions]),
-        {
-          label: 'View Releases on GitHub',
-          click: () => { openReleasesPage() },
-        },
-      ],
-    },
+    // Help menu only appears on non-Mac platforms. On macOS the
+    // Check for Updates… item already lives under the app menu, and
+    // since "View Releases on GitHub" was removed (browser redirect,
+    // conflicts with the in-app update flow), the Help submenu would
+    // be empty on Mac. Skipping it altogether avoids a blank menu.
+    ...(isMac
+      ? []
+      : [{
+          role: 'help' as const,
+          submenu: [checkForUpdatesItem],
+        }]),
   )
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))

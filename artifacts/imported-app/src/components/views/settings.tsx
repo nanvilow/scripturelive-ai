@@ -2088,13 +2088,11 @@ type ScriptureLiveUpdaterBridge = {
   updater?: {
     getState?: () => Promise<UpdaterState>
     check?: () => Promise<UpdaterState>
+    download?: () => Promise<{ ok: boolean; error?: string; alreadyInProgress?: boolean }>
     install?: () => Promise<{ ok: boolean; error?: string }>
-    openReleasesPage?: () => Promise<{ ok: boolean }>
     onState?: (cb: (s: UpdaterState) => void) => () => void
   }
 }
-
-const RELEASES_URL = 'https://github.com/nanvilow/scripturelive-ai/releases/latest'
 
 function HelpAndUpdatesCard() {
   const [checking, setChecking] = useState(false)
@@ -2134,27 +2132,6 @@ function HelpAndUpdatesCard() {
     }
   }, [isElectron])
 
-  // Open the GitHub Releases page as a fallback when the auto-updater
-  // can't reach a published release (404, auth required, missing
-  // latest.yml, dev build, offline, etc.). The Electron bridge routes
-  // through shell.openExternal so it lands in the user's default
-  // browser; if the IPC call throws (or we're not in Electron) we
-  // fall through to window.open so the button NEVER dead-ends.
-  const openReleasesPage = async () => {
-    const bridge = (window as unknown as { scriptureLive?: ScriptureLiveUpdaterBridge })
-      .scriptureLive
-    const openFn = bridge?.updater?.openReleasesPage
-    if (isElectron && openFn) {
-      try {
-        await openFn()
-        return
-      } catch {
-        /* IPC failed — fall through to the browser fallback below */
-      }
-    }
-    window.open(RELEASES_URL, '_blank', 'noreferrer')
-  }
-
   const checkForUpdates = async () => {
     setChecking(true)
     // Optimistic: flip to 'checking' immediately so the operator sees
@@ -2168,44 +2145,61 @@ function HelpAndUpdatesCard() {
         const r = await checkFn()
         setState(r)
         if (r.status === 'available') {
-          toast.success(`Update available: v${r.version} — downloading in background.`)
+          // The "Update Available — Click To Download" popup is
+          // surfaced by UpdateNotifier in response to the same
+          // updater:state event, so we don't need a duplicate toast
+          // here. Just nudge the operator to look at the popup.
+          toast.message(`Update available: v${r.version}`, {
+            description: 'See the popup in the corner — click Download to get it.',
+            duration: 6000,
+          })
         } else if (r.status === 'downloading') {
           toast.info('Update is already downloading…')
         } else if (r.status === 'downloaded') {
-          toast.success(`Update v${r.version} ready — restart to install.`)
+          toast.success(`Update v${r.version} ready — see the popup to restart & install.`)
         } else if (r.status === 'not-available') {
           toast.success(`You're on the latest version (v${appVersion}).`)
         } else if (r.status === 'checking') {
           toast.info('Already checking for updates…')
         } else if (r.status === 'error') {
-          // Show the friendly message PLUS an action so the operator
-          // can recover with one click instead of staring at a dead
-          // "error" pill. The toast action opens the GitHub Releases
-          // page via the main-process shell.
-          toast.error(`Update check failed: ${r.message}`, {
-            action: { label: 'Open Releases', onClick: () => { void openReleasesPage() } },
-            duration: 8000,
-          })
+          // No browser fallback button — the user wants this stay
+          // entirely in-app. Show the friendly message and let the
+          // operator try Check Now again when they have connectivity.
+          toast.error(`Update check failed: ${r.message}`, { duration: 8000 })
         } else {
-          toast.info('Update checks are only available in the installed desktop build.', {
-            action: { label: 'Open Releases', onClick: () => { void openReleasesPage() } },
-          })
+          toast.info('Update checks are only available in the installed desktop build.')
         }
       } else {
-        // Browser fallback: open the releases page directly so the
-        // user can grab the installer manually.
-        window.open(RELEASES_URL, '_blank', 'noreferrer')
-        toast.info('Opened the GitHub Releases page.')
+        // Browser preview — there's no installer to download, so just
+        // tell the operator to install the desktop build.
+        toast.info('Install the desktop build to receive automatic updates.')
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Update check failed'
       setState({ status: 'error', message: msg })
-      toast.error(msg, {
-        action: { label: 'Open Releases', onClick: () => { void openReleasesPage() } },
-        duration: 8000,
-      })
+      toast.error(msg, { duration: 8000 })
     } finally {
       setChecking(false)
+    }
+  }
+
+  // One-click download from the Settings card itself, mirroring the
+  // notifier popup. Used by the "Download Update" button that appears
+  // when state.status === 'available'.
+  const downloadUpdateNow = async () => {
+    const bridge = (window as unknown as { scriptureLive?: ScriptureLiveUpdaterBridge })
+      .scriptureLive
+    const downloadFn = bridge?.updater?.download
+    if (!downloadFn) return
+    try {
+      const r = await downloadFn()
+      if (!r.ok) {
+        toast.error(`Could not start download: ${r.error || 'unknown error'}`)
+      }
+      // Progress + completion toasts are handled by UpdateNotifier
+      // via the updater:state channel — no need to duplicate here.
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Download failed')
     }
   }
 
@@ -2226,7 +2220,7 @@ function HelpAndUpdatesCard() {
     }
     switch (state.status) {
       case 'available':
-        return `Update available: v${state.version} (you have v${appVersion}). Downloading in background…`
+        return `Update available: v${state.version} (you have v${appVersion}). Click Download Update to get it.`
       case 'downloading':
         return `Downloading update… ${Math.max(0, Math.min(100, Math.round(state.percent || 0)))}%`
       case 'downloaded':
@@ -2244,8 +2238,13 @@ function HelpAndUpdatesCard() {
   })()
 
   // Pick the right primary action: when an update is downloaded we
-  // surface "Restart & Install" instead of another check.
+  // surface "Restart & Install"; when one is available we surface
+  // "Download Update"; when downloading we show progress; otherwise
+  // we show "Check Now". This keeps every Updates action in-app —
+  // there is no longer any button that opens a browser.
   const showInstall = state.status === 'downloaded'
+  const showDownload = state.status === 'available'
+  const isDownloading = state.status === 'downloading'
   const isAvailable = state.status === 'available' || state.status === 'downloading'
   const isCurrent = state.status === 'not-available'
 
@@ -2286,30 +2285,24 @@ function HelpAndUpdatesCard() {
               <RefreshCcw className="h-4 w-4" />
               Restart &amp; Install
             </Button>
+          ) : showDownload ? (
+            // One-click download — same behaviour as the notifier
+            // popup's Download button. Stays entirely inside the app
+            // (no browser hand-off).
+            <Button onClick={downloadUpdateNow} className="gap-2 shrink-0">
+              <RefreshCcw className="h-4 w-4" />
+              Download Update
+            </Button>
+          ) : isDownloading ? (
+            <Button disabled className="gap-2 shrink-0">
+              <RefreshCcw className="h-4 w-4 animate-spin" />
+              Downloading…
+            </Button>
           ) : (
-            <div className="flex items-center gap-2 shrink-0">
-              {/* Always-available fallback: when the auto-updater can't
-                  reach a published release (404 / private repo / no
-                  latest.yml / offline / dev build) the operator still
-                  has a one-click path to the GitHub Releases page so
-                  the button NEVER becomes a dead-end. */}
-              {state.status === 'error' && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => { void openReleasesPage() }}
-                  className="gap-2"
-                >
-                  <ExternalLink className="h-4 w-4" />
-                  Open Releases
-                </Button>
-              )}
-              <Button onClick={checkForUpdates} disabled={checking} className="gap-2">
-                <RefreshCcw className={cn('h-4 w-4', checking && 'animate-spin')} />
-                {checking ? 'Checking…' : 'Check Now'}
-              </Button>
-            </div>
+            <Button onClick={checkForUpdates} disabled={checking} className="gap-2 shrink-0">
+              <RefreshCcw className={cn('h-4 w-4', checking && 'animate-spin')} />
+              {checking ? 'Checking…' : 'Check Now'}
+            </Button>
           )}
         </div>
 

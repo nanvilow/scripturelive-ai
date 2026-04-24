@@ -55,13 +55,15 @@ const api = {
   updater: {
     getState: (): Promise<UpdateState> => ipcRenderer.invoke('updater:get-state'),
     check: (): Promise<UpdateState> => ipcRenderer.invoke('updater:check'),
+    // Triggers the actual download once the operator clicks the
+    // "Update Available — Click To Download" popup. Backed by
+    // autoUpdater.downloadUpdate() in the main process. Progress is
+    // pushed through the same updater:state channel as everything
+    // else, so the renderer just listens to onState() to update the
+    // toast description with percent.
+    download: (): Promise<{ ok: boolean; error?: string; alreadyInProgress?: boolean }> =>
+      ipcRenderer.invoke('updater:download'),
     install: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('updater:install'),
-    // Opens the GitHub Releases page in the user's default browser
-    // via the main-process shell so the Settings card always has a
-    // working fallback when the auto-updater can't talk to GitHub
-    // (404, auth, missing latest.yml, dev build, etc.).
-    openReleasesPage: (): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke('updater:open-releases'),
     onState: (cb: (s: UpdateState) => void): (() => void) => {
       const handler = (_e: unknown, state: UpdateState) => cb(state)
       ipcRenderer.on('updater:state', handler)

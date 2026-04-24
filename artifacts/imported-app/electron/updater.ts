@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { autoUpdater, UpdateInfo, ProgressInfo } from 'electron-updater'
 
 /**
@@ -28,6 +28,14 @@ const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 let currentState: UpdateState = { status: 'idle' }
 let intervalHandle: NodeJS.Timeout | null = null
 let getWindow: (() => BrowserWindow | null) | null = null
+// Architect feedback — guards against concurrent downloadUpdate()
+// calls (operator double-clicking the popup, popup + Settings card
+// firing simultaneously, periodic safeCheck() rebroadcasting
+// 'available' mid-click). Set as soon as the IPC handler accepts
+// the request; cleared on update-downloaded / error. Status alone
+// isn't enough because it stays 'available' until the first
+// download-progress event lands.
+let downloadInFlight = false
 
 function broadcast(state: UpdateState) {
   currentState = state
@@ -101,7 +109,14 @@ async function safeCheck() {
 export function setupAutoUpdater(opts: { getMainWindow: () => BrowserWindow | null }) {
   getWindow = opts.getMainWindow
 
-  autoUpdater.autoDownload = true
+  // Operator-driven download flow: when a new release is detected we
+  // surface an "Update Available — Click To Download" popup in the
+  // renderer (see update-notifier.tsx). The download only starts when
+  // the operator clicks Download; we never silently consume bandwidth
+  // mid-service. autoInstallOnAppQuit stays true so a downloaded
+  // update still applies on the next clean quit even if the operator
+  // skips the explicit Install Now action.
+  autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = true
   autoUpdater.allowDowngrade = false
   autoUpdater.logger = {
@@ -129,10 +144,12 @@ export function setupAutoUpdater(opts: { getMainWindow: () => BrowserWindow | nu
     })
   })
   autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
+    downloadInFlight = false
     const { notes, name } = normalizeNotes(info)
     broadcast({ status: 'downloaded', version: info.version, releaseNotes: notes, releaseName: name })
   })
   autoUpdater.on('error', (err: Error) => {
+    downloadInFlight = false
     const raw = err?.message || String(err)
     broadcast({ status: 'error', message: friendlyUpdateError(raw) })
   })
@@ -162,12 +179,42 @@ export function setupAutoUpdater(opts: { getMainWindow: () => BrowserWindow | nu
     setImmediate(() => autoUpdater.quitAndInstall(false, true))
     return { ok: true }
   })
-  // Lets the renderer's Settings card open the Releases page in the
-  // user's default browser. Used as the "always works" fallback when
-  // the auto-updater check returns a 404 / auth error / no metadata.
-  ipcMain.handle('updater:open-releases', () => {
-    openReleasesPage()
-    return { ok: true }
+  // Operator-clicked "Download" path. Only valid when an update has
+  // been announced (status === 'available'). We let electron-updater
+  // run the signed download against GitHub Releases; progress events
+  // flow through download-progress → broadcast() → the renderer's
+  // toast. Returns ok:false (without throwing) on no-op so the toast
+  // can show a friendly message.
+  ipcMain.handle('updater:download', async () => {
+    // In-flight guard — blocks the race where a double-click on the
+    // toast (or a popup-click + Settings-click in quick succession)
+    // both pass the status check before the first downloadUpdate()
+    // has flipped status to 'downloading'. Without this guard
+    // electron-updater would happily start two parallel downloads.
+    if (downloadInFlight ||
+        currentState.status === 'downloading' ||
+        currentState.status === 'downloaded') {
+      return { ok: true, alreadyInProgress: true }
+    }
+    if (currentState.status !== 'available') {
+      return { ok: false, error: 'no update available to download' }
+    }
+    downloadInFlight = true
+    try {
+      await autoUpdater.downloadUpdate()
+      // Don't clear downloadInFlight here on success — the
+      // update-downloaded event handler clears it. autoUpdater
+      // resolves the promise as soon as the download finishes, but
+      // we want the guard to bridge any micro-window between
+      // resolution and the event fire.
+      return { ok: true }
+    } catch (err) {
+      downloadInFlight = false
+      const raw = err instanceof Error ? err.message : String(err)
+      const friendly = friendlyUpdateError(raw)
+      broadcast({ status: 'error', message: friendly })
+      return { ok: false, error: friendly }
+    }
   })
 
   // Skip the periodic check in dev — electron-updater refuses to run
@@ -188,11 +235,6 @@ export function setupAutoUpdater(opts: { getMainWindow: () => BrowserWindow | nu
       intervalHandle = null
     }
   })
-}
-
-/** Open the GitHub releases page so the user can grab the latest installer manually. */
-export function openReleasesPage(): void {
-  shell.openExternal('https://github.com/nanvilow/scripturelive-ai/releases/latest')
 }
 
 /**
