@@ -160,7 +160,17 @@ async function startNextServer(): Promise<string> {
 
   const port = await getPinnedPort()
   const dbPath = getUserDbPath()
-  const standaloneDir = path.join(process.resourcesPath, 'app', '.next', 'standalone')
+  // Next.js emits the standalone bundle at
+  //   .next/standalone/<artifact-path-relative-to-workspace-root>/server.js
+  // because outputFileTracingRoot is pinned to the workspace root in
+  // next.config.ts (required so Turbopack can resolve hoisted deps in this
+  // pnpm monorepo). The full standalone tree is copied to resources/app/
+  // by electron-builder's extraResources, so server.js lives at:
+  //   resources/app/.next/standalone/artifacts/imported-app/server.js
+  const standaloneDir = path.join(
+    process.resourcesPath, 'app', '.next', 'standalone',
+    'artifacts', 'imported-app'
+  )
   const serverEntry = path.join(standaloneDir, 'server.js')
 
   if (!fs.existsSync(serverEntry)) {
@@ -209,7 +219,7 @@ async function createMainWindow(url: string) {
     minHeight: 640,
     backgroundColor: '#0a0a0a',
     icon: process.platform === 'win32'
-      ? path.join(process.resourcesPath, 'app', '.next', 'standalone', 'public', 'icon-512.png')
+      ? path.join(process.resourcesPath, 'app', '.next', 'standalone', 'artifacts', 'imported-app', 'public', 'icon-512.png')
       : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

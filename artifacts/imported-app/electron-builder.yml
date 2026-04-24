@@ -50,14 +50,23 @@ asarUnpack:
 npmRebuild: false
 buildDependenciesFromSource: false
 extraResources:
+  # Next.js (with output: "standalone" + outputFileTracingRoot pinned to the
+  # workspace root) emits the standalone bundle at
+  # `.next/standalone/artifacts/imported-app/server.js`. We copy the WHOLE
+  # standalone tree as-is so the relative node_modules layout inside it
+  # remains valid. The Electron launcher (electron/main.ts) is aware of the
+  # nested `artifacts/imported-app/` segment and spawns server.js there.
   - from: .next/standalone
     to: app/.next/standalone
     filter: ["**/*"]
+  # Static assets must sit next to server.js (cwd-relative), so they go into
+  # the same nested `artifacts/imported-app/` location, not the top of the
+  # standalone tree.
   - from: .next/static
-    to: app/.next/standalone/.next/static
+    to: app/.next/standalone/artifacts/imported-app/.next/static
     filter: ["**/*"]
   - from: public
-    to: app/.next/standalone/public
+    to: app/.next/standalone/artifacts/imported-app/public
     filter: ["**/*"]
   - from: db/custom.db
     to: app-db/custom.db
