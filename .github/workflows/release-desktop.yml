@@ -24,8 +24,17 @@ jobs:
     name: Build Windows installer
     runs-on: windows-latest
     steps:
+      # `fetch-depth: 0` so the opt-out step below can read annotated-tag
+      # messages (the same `[unsigned-release]` marker the release-time guard
+      # honors).
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch tag annotations
+        shell: bash
+        run: git fetch --tags --force
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -61,6 +70,139 @@ jobs:
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: pnpm --filter @workspace/imported-app run package:win
+
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Determine unsigned-release opt-out
+        id: optout
+        shell: bash
+        env:
+          DISPATCH_FLAG: ${{ inputs.allow_unsigned }}
+          TAG_NAME: ${{ steps.tag.outputs.name }}
+        run: |
+          opt_out=false
+          reason=""
+          if [ "$DISPATCH_FLAG" = "true" ]; then
+            opt_out=true
+            reason="workflow_dispatch input allow_unsigned=true"
+          elif [ -n "$TAG_NAME" ]; then
+            # Read the marker from git directly (not from the event payload —
+            # `github.event.head_commit.message` is not reliably populated for
+            # tag-push events, especially when the tag points at a commit that
+            # isn't HEAD of any branch). `<tag>^{commit}` dereferences both
+            # annotated and lightweight tags to their underlying commit.
+            commit_msg=$(git log -1 --format='%B' "$TAG_NAME^{commit}" 2>/dev/null || true)
+            tag_msg=$(git for-each-ref --format='%(contents)' "refs/tags/$TAG_NAME" 2>/dev/null || true)
+            if printf '%s' "$commit_msg" | grep -qE '\[unsigned-release\]'; then
+              opt_out=true
+              reason="commit pointed to by $TAG_NAME contains [unsigned-release] marker"
+            elif printf '%s' "$tag_msg" | grep -qE '\[unsigned-release\]'; then
+              # Also honor `[unsigned-release]` in the annotated tag message
+              # (`git tag -a -m "... [unsigned-release]"`).
+              opt_out=true
+              reason="annotated tag message for $TAG_NAME contains [unsigned-release] marker"
+            fi
+          fi
+          if [ "$opt_out" = "true" ]; then
+            echo "::warning title=Unsigned release allowed::Skipping build-time installer signature verification ($reason). End users will see SmartScreen warnings."
+          fi
+          echo "value=$opt_out" >> "$GITHUB_OUTPUT"
+
+      # Run signtool against the freshly-built installers BEFORE we upload
+      # them as artifacts. This catches missing/expired/invalid Authenticode
+      # certificates within seconds of `electron-builder` finishing, instead
+      # of forcing maintainers to wait for the full build to upload and the
+      # `release` job to spin up before the (identical) check fires.
+      # The `release` job re-verifies with osslsigncode against the system CA
+      # bundle as a defense-in-depth backstop.
+      - name: Verify Windows installer signatures (build-time)
+        if: steps.optout.outputs.value != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $rotationDoc = ".github/workflows/README.md -> 'Certificate expiry warnings & rotation'"
+
+          function Fail([string]$msg) {
+            Write-Host "::error title=Unsigned installer in build::$msg"
+            Write-Host "::error::Rotate the signing certificates following $rotationDoc."
+            Write-Host "::error::To intentionally publish an unsigned/dev build, re-run via workflow_dispatch with allow_unsigned=true, or include the marker [unsigned-release] in either the tagged commit's message or the annotated tag message."
+            exit 1
+          }
+
+          $exes = @(Get-ChildItem -Path 'artifacts/imported-app/release' -Filter '*.exe' -File -ErrorAction SilentlyContinue)
+          if ($exes.Count -eq 0) {
+            Fail "No .exe installers were found in artifacts/imported-app/release/ to verify - refusing to upload an empty Windows release."
+          }
+
+          # Locate signtool.exe — it ships with the Windows SDK on the
+          # windows-latest runner but isn't on PATH by default. Search the
+          # standard SDK install root and pick the newest version.
+          $signtool = $null
+          $candidateRoots = @(
+            "${env:ProgramFiles(x86)}\Windows Kits\10\bin",
+            "${env:ProgramFiles}\Windows Kits\10\bin"
+          )
+          foreach ($root in $candidateRoots) {
+            if (-not (Test-Path -LiteralPath $root)) { continue }
+            $found = Get-ChildItem -Path $root -Recurse -Filter 'signtool.exe' -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1
+            if ($found) { $signtool = $found.FullName; break }
+          }
+
+          foreach ($exe in $exes) {
+            Write-Host "::group::Verify Authenticode signature: $($exe.Name)"
+
+            # Primary check: signtool verify /pa /v — uses the OS Authenticode
+            # policy and prints chain + timestamp details for diagnostics.
+            $signtoolOk = $false
+            if ($signtool) {
+              & $signtool verify /pa /v $exe.FullName
+              if ($LASTEXITCODE -eq 0) { $signtoolOk = $true }
+            } else {
+              Write-Host "::warning::signtool.exe not located on this runner; falling back to Get-AuthenticodeSignature only."
+            }
+
+            # Backstop: Get-AuthenticodeSignature gives us a structured
+            # status we can switch on (covers signtool-missing AND adds a
+            # second opinion when signtool is present).
+            $sig = Get-AuthenticodeSignature -FilePath $exe.FullName
+            Write-Host "Get-AuthenticodeSignature status: $($sig.Status) ($($sig.StatusMessage))"
+            if ($sig.SignerCertificate) {
+              Write-Host "Signer: $($sig.SignerCertificate.Subject)"
+              Write-Host "Issuer: $($sig.SignerCertificate.Issuer)"
+              Write-Host "NotAfter: $($sig.SignerCertificate.NotAfter)"
+            }
+
+            $psOk = ($sig.Status -eq [System.Management.Automation.SignatureStatus]::Valid)
+
+            if ($signtool) {
+              if (-not $signtoolOk) {
+                Write-Host "::endgroup::"
+                Fail "$($exe.Name) failed signtool verify /pa (Authenticode signature missing, malformed, or chain invalid)."
+              }
+              if (-not $psOk) {
+                Write-Host "::endgroup::"
+                Fail "$($exe.Name) failed Get-AuthenticodeSignature ($($sig.Status): $($sig.StatusMessage))."
+              }
+            } else {
+              if (-not $psOk) {
+                Write-Host "::endgroup::"
+                Fail "$($exe.Name) failed Get-AuthenticodeSignature ($($sig.Status): $($sig.StatusMessage))."
+              }
+            }
+
+            Write-Host "::endgroup::"
+          }
 
       - name: Upload installer
         uses: actions/upload-artifact@v4

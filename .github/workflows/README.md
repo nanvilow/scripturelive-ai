@@ -138,7 +138,20 @@ missed anyway the build will quietly produce **unsigned** installers and
 historically would still have published them — end users would only find out
 when SmartScreen / Gatekeeper warnings started landing in support tickets.
 
-To close that gap, two jobs gate the GitHub Release:
+To close that gap, three checks gate the GitHub Release:
+
+- **Build-time Windows check** (inside the `build` job, on `windows-latest`):
+  immediately after `pnpm --filter @workspace/imported-app run package:win`
+  finishes — and **before** any `actions/upload-artifact` step runs — the job
+  walks every `artifacts/imported-app/release/*.exe` and verifies it with
+  both `signtool verify /pa /v` (the Windows Authenticode policy, with the
+  signing toolchain still on the runner for rich diagnostics) and PowerShell's
+  `Get-AuthenticodeSignature` (cross-check + fallback if `signtool.exe` is
+  missing). Failures surface within seconds of `electron-builder` instead of
+  forcing the maintainer to wait the full ~15-25 minutes for the upload +
+  `release` job spin-up. Honors the same `allow_unsigned` input and
+  `[unsigned-release]` commit-message / annotated-tag marker as the other
+  checks below, so the three opt-outs stay in sync.
 
 - **`verify-macos`** runs on `macos-latest`, downloads any `mac-installer*`
   artifacts, mounts each `.dmg`, and runs the full Apple verification stack
@@ -155,24 +168,29 @@ To close that gap, two jobs gate the GitHub Release:
   Windows-only releases.
 
 - **`release`** runs on `ubuntu-latest`, depends on both `build` and
-  `verify-macos`, and verifies every downloaded `.exe` with
-  `osslsigncode verify` against the runner's system CA bundle. Unsigned
-  binaries, malformed Authenticode blobs, and signatures whose chain
-  doesn't validate all fail the step **before** `softprops/action-gh-release`
-  is invoked.
+  `verify-macos`, and re-verifies every downloaded `.exe` with
+  `osslsigncode verify` against the runner's system CA bundle as a
+  defense-in-depth backstop to the build-time check above (different tool,
+  different OS, different CA store — catches anything the Windows-side
+  check might miss). Unsigned binaries, malformed Authenticode blobs, and
+  signatures whose chain doesn't validate all fail the step **before**
+  `softprops/action-gh-release` is invoked.
 
-When either job fails, it logs a clear `::error::` message that points back
+When any check fails, it logs a clear `::error::` message that points back
 at this README's
 [Certificate expiry warnings & rotation](#certificate-expiry-warnings--rotation)
-section. The Windows build artifacts (`windows-installer`,
-`windows-latest-yml`, `windows-blockmap`) keep their 14-day retention, so
-debugging the unsigned build doesn't require a rebuild.
+section. The Windows build-time check fails the `build` job before the
+upload steps run, so debugging the unsigned build will need a re-run; the
+release-time `osslsigncode` check runs after the artifacts have already been
+uploaded, and those artifacts (`windows-installer`, `windows-latest-yml`,
+`windows-blockmap`) keep their 14-day retention so debugging that path
+doesn't require a rebuild.
 
 #### Intentionally publishing an unsigned release
 
 For one-off dev/testing releases where unsigned installers are acceptable,
-there are three opt-outs (any one is sufficient — both jobs honor all
-three):
+there are three opt-outs (any one is sufficient — all three checks
+above honor every opt-out):
 
 1. **Workflow input** — trigger from **Actions → Release ScriptureLive AI
    Desktop → Run workflow** and tick the **Publish even if installers fail
@@ -185,18 +203,18 @@ three):
    git push origin v0.2.0-rc1
    ```
 
-   Both jobs check out the repo and read the tag annotation via
-   `git for-each-ref --format='%(contents)' refs/tags/<tag>`.
+   Each check checks out the repo with `fetch-depth: 0` and reads the tag
+   annotation via `git for-each-ref --format='%(contents)' refs/tags/<tag>`.
 3. **Tagged-commit message** — include `[unsigned-release]` in the commit
    the tag points at. Useful when releasing via lightweight tags or when
-   you prefer the marker to live in commit history. Both jobs read the
+   you prefer the marker to live in commit history. Each check reads the
    message deterministically via `git log -1 --format=%B '<tag>^{commit}'`,
    which dereferences both annotated and lightweight tags to their
    underlying commit (so this works regardless of whether the workflow was
    triggered by a tag push or by `workflow_dispatch`).
 
-In every case both jobs log a `::warning::` explaining which opt-out fired,
-so the unsigned status is still visible at a glance in the Actions UI.
+In every case each check logs a `::warning::` explaining which opt-out
+fired, so the unsigned status is still visible at a glance in the Actions UI.
 
 #### Artifact naming contract (fail-closed)
 
