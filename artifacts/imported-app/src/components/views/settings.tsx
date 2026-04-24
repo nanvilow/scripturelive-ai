@@ -753,6 +753,151 @@ export function SettingsView() {
             </Select>
           </div>
 
+          {/* ── Reference Text (Bug #5) ───────────────────────────
+              Independent typography controls for the verse reference
+              label (e.g. "John 3:16"). Each control reads the
+              effective value (reference override OR body fallback)
+              so existing operators see no visual change until they
+              explicitly customise the reference style. */}
+          <div className="pt-2 mt-2 border-t border-border space-y-3">
+            <div className="flex items-center justify-between">
+              <Label className="text-sm font-medium">Reference Text</Label>
+              {(settings.referenceFontFamily !== undefined ||
+                settings.referenceFontSize !== undefined ||
+                settings.referenceTextShadow !== undefined ||
+                settings.referenceTextScale !== undefined ||
+                settings.referenceTextAlign !== undefined) && (
+                <button
+                  onClick={() =>
+                    updateSettings({
+                      referenceFontFamily: undefined,
+                      referenceFontSize: undefined,
+                      referenceTextShadow: undefined,
+                      referenceTextScale: undefined,
+                      referenceTextAlign: undefined,
+                    })
+                  }
+                  className="text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
+                  title="Reset reference text to follow body settings"
+                >
+                  Reset to body
+                </button>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Reference Font Size</Label>
+              <div className="flex gap-2">
+                {([
+                  { value: 'sm' as const, label: 'Small' },
+                  { value: 'md' as const, label: 'Medium' },
+                  { value: 'lg' as const, label: 'Large' },
+                  { value: 'xl' as const, label: 'Extra Large' },
+                ]).map((s) => {
+                  const active =
+                    (settings.referenceFontSize ?? settings.fontSize) === s.value
+                  return (
+                    <button
+                      key={s.value}
+                      onClick={() => updateSettings({ referenceFontSize: s.value })}
+                      className={cn(
+                        'px-3 py-1.5 rounded-md text-xs font-medium transition-colors border',
+                        active
+                          ? 'bg-primary/15 border-primary/30 text-primary'
+                          : 'bg-muted border-border text-muted-foreground hover:bg-muted/80',
+                      )}
+                    >
+                      {s.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Reference Alignment</Label>
+              <div className="flex gap-1.5 p-1 rounded-md bg-muted w-fit border border-border">
+                {([
+                  { value: 'left' as const, Icon: AlignLeft, label: 'Align left' },
+                  { value: 'center' as const, Icon: AlignCenter, label: 'Align center' },
+                  { value: 'right' as const, Icon: AlignRight, label: 'Align right' },
+                  { value: 'justify' as const, Icon: AlignJustify, label: 'Justify' },
+                ]).map(({ value, Icon, label }) => {
+                  const active =
+                    (settings.referenceTextAlign ?? settings.textAlign ?? 'center') === value
+                  return (
+                    <button
+                      key={value}
+                      title={label}
+                      aria-label={`Reference ${label.toLowerCase()}`}
+                      onClick={() => updateSettings({ referenceTextAlign: value })}
+                      className={cn(
+                        'h-8 w-9 inline-flex items-center justify-center rounded transition-colors border',
+                        active
+                          ? 'bg-amber-500/20 border-amber-500/50 text-amber-200'
+                          : 'bg-transparent border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+                      )}
+                    >
+                      <Icon className="h-4 w-4" />
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <Label className="text-xs text-muted-foreground">Reference Text Shadow</Label>
+              <button
+                onClick={() =>
+                  updateSettings({
+                    referenceTextShadow: !(settings.referenceTextShadow ?? settings.textShadow),
+                  })
+                }
+                className={cn(
+                  'w-10 h-5 rounded-full transition-colors relative',
+                  (settings.referenceTextShadow ?? settings.textShadow) ? 'bg-primary' : 'bg-muted',
+                )}
+              >
+                <div
+                  className={cn(
+                    'absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform shadow-sm',
+                    (settings.referenceTextShadow ?? settings.textShadow) ? 'left-5.5' : 'left-0.5',
+                  )}
+                />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Reference Font Family</Label>
+              <Select
+                value={settings.referenceFontFamily ?? settings.fontFamily}
+                onValueChange={(v) => updateSettings({ referenceFontFamily: v })}
+              >
+                <SelectTrigger className="bg-card border-border">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(['Sans-serif', 'Serif', 'Display', 'Monospace'] as const).map((group) => {
+                    const items = FONT_REGISTRY.filter((f) => f.group === group)
+                    if (!items.length) return null
+                    return (
+                      <SelectGroup key={group}>
+                        <SelectLabel className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                          {group}
+                        </SelectLabel>
+                        {items.map((f) => (
+                          <SelectItem key={f.key} value={f.key}>
+                            <span style={{ fontFamily: f.stack }}>{f.label}</span>
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    )
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           </div>
 
           {/* Right column — live typography preview that mirrors the

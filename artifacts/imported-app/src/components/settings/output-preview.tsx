@@ -2,7 +2,12 @@
 
 import { useAppStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
-import { getFontStack, FONT_SIZE_MULT } from '@/lib/fonts'
+import {
+  getFontStack,
+  FONT_SIZE_MULT,
+  resolveReferenceTypography,
+  lowerThirdClamp,
+} from '@/lib/fonts'
 
 /**
  * Compact WYSIWYG preview used inside the Settings cards. It mirrors
@@ -73,9 +78,28 @@ export function OutputPreview({
   const sizeMult =
     (FONT_SIZE_MULT[settings.fontSize] || 1) *
     Math.min(2, Math.max(0.5, settings.textScale ?? 1))
-  const refFs = `clamp(${7 * sizeMult}px, min(${2 * sizeMult}cqw, ${4 * sizeMult}cqh), ${18 * sizeMult}px)`
+  // Reference typography (Bug #5) — independent controls that fall
+  // back to the body equivalents when unset. The full-screen and
+  // lower-third reference paragraphs both read these.
+  const refTypo = resolveReferenceTypography(settings)
+  const refSizeMult =
+    (FONT_SIZE_MULT[refTypo.fontSize] || 1) *
+    Math.min(2, Math.max(0.5, refTypo.textScale))
+  const refShadowCss = refTypo.textShadow
+    ? '0 2px 12px rgba(0,0,0,.4)'
+    : 'none'
+  const refFs = `clamp(${7 * refSizeMult}px, min(${2 * refSizeMult}cqw, ${4 * refSizeMult}cqh), ${18 * refSizeMult}px)`
   const bodyFs = `clamp(${10 * sizeMult}px, min(${4 * sizeMult}cqw, ${8 * sizeMult}cqh), ${28 * sizeMult}px)`
-  const ltBodyFs = `clamp(${9 * sizeMult}px, min(${4 * sizeMult}cqw, ${9 * sizeMult}cqh), ${24 * sizeMult}px)`
+  // Lower-third clamps (Bug #4): use the SAME shared formula as the
+  // congregation broadcast HTML so the Settings WYSIWYG preview
+  // matches what the projector + NDI feed actually render.
+  const ltClamp = lowerThirdClamp({
+    totalChars: body.length,
+    bodyScale: sizeMult,
+    refScale: refSizeMult,
+  })
+  const ltBodyFs = ltClamp.body
+  const ltRefFs = ltClamp.reference
 
   return (
     <div className="space-y-1.5">
@@ -122,6 +146,9 @@ export function OutputPreview({
                   fontSize: refFs,
                   lineHeight: 1.2,
                   marginBottom: '1cqh',
+                  fontFamily: refTypo.fontStack,
+                  textAlign: refTypo.textAlign,
+                  textShadow: refShadowCss,
                 }}
               >
                 {ref}
@@ -187,8 +214,11 @@ export function OutputPreview({
                 <p
                   className="m-0 p-0 opacity-70 font-medium"
                   style={{
-                    fontSize: refFs,
+                    fontSize: ltRefFs,
                     lineHeight: 1.2,
+                    fontFamily: refTypo.fontStack,
+                    textAlign: refTypo.textAlign,
+                    textShadow: refShadowCss,
                   }}
                 >
                   {ref}

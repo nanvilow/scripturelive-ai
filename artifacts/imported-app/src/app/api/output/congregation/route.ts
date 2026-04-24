@@ -211,6 +211,15 @@ function settingsRenderKey(st){
     nd: st.ndiDisplayMode,
     lh: st.lowerThirdHeight,
     lp: st.lowerThirdPosition,
+    // Reference typography (Bug #5): re-render when any of the 5
+    // reference-only fields change so the operator's edit lands on
+    // the secondary screen + NDI feed without waiting for an
+    // unrelated setting to also change.
+    rfFs: st.referenceFontSize,
+    rfFf: st.referenceFontFamily,
+    rfSh: st.referenceTextShadow,
+    rfTs: st.referenceTextScale,
+    rfTa: st.referenceTextAlign,
   });
 }
 
@@ -459,7 +468,28 @@ function render(s){
   var isLT=dm&&dm.indexOf('lower-third')===0;
   var sh=st.textShadow!==false?'text-shadow:0 2px 12px rgba(0,0,0,.4);':'';
   var bg=st.customBackground?'<img class="bg-image" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>':'';
-  var ref=st.showReferenceOnOutput!==false&&slide.title?'<div class="slide-reference">'+slide.title+(slide.subtitle?' \\u2014 '+slide.subtitle:'')+'</div>':'';
+  // Reference typography (Bug #5): the operator now has independent
+  // controls for the reference label. Each field falls back to the
+  // body equivalent when unset so persisted settings keep working.
+  var rfFam=resolveFont(st.referenceFontFamily||st.fontFamily);
+  var rfShOn=(typeof st.referenceTextShadow==='boolean')?st.referenceTextShadow:(st.textShadow!==false);
+  var rfShCss=rfShOn?'text-shadow:0 2px 12px rgba(0,0,0,.4);':'';
+  var rfTsRaw=(typeof st.referenceTextScale==='number')?st.referenceTextScale:(typeof st.textScale==='number'?st.textScale:1);
+  var rfTs=Math.min(2,Math.max(.5,rfTsRaw));
+  var rfBucket=st.referenceFontSize||st.fontSize||'lg';
+  var rfScale=rfTs*(FS_MULT[rfBucket]||1);
+  // Reference clamp — same shape as the LT body clamp below, but a
+  // narrower band so the reference label stays subordinate to the
+  // verse body. Mirrors lowerThirdClamp() in src/lib/fonts.ts so the
+  // Settings WYSIWYG preview, the secondary screen, and the NDI
+  // capture window all produce the same metrics.
+  var rfBand=Math.max(2.5,4*rfScale);
+  var rfCap=Math.max(1,1.4*rfScale);
+  var rfMin=Math.max(.35,.5*rfScale);
+  var rfFs='clamp('+rfMin+'rem,min('+(rfBand*0.5)+'cqw,'+rfBand+'cqh),'+rfCap+'rem)';
+  var rfTa=st.referenceTextAlign||st.textAlign||'center';
+  var refStyle='font-family:'+rfFam+';font-size:'+rfFs+';text-align:'+rfTa+';'+rfShCss;
+  var ref=st.showReferenceOnOutput!==false&&slide.title?'<div class="slide-reference" style="'+refStyle+'">'+slide.title+(slide.subtitle?' \\u2014 '+slide.subtitle:'')+'</div>':'';
   var totalChars=0;
   if(slide.content&&slide.content.length){for(var i=0;i<slide.content.length;i++)totalChars+=(slide.content[i]||'').length;}
   // Combine the operator's manual textScale with the font-size bucket

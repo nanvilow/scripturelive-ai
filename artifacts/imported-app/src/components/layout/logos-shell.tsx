@@ -1955,18 +1955,18 @@ function MediaItemsView({
                   In Preview
                 </div>
               )}
-              <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="absolute top-1 right-1 flex gap-1">
                 <Button
                   size="sm"
                   variant="destructive"
-                  className="h-5 w-5 p-0"
+                  className="h-6 w-6 p-0 shadow-md ring-1 ring-rose-700/60"
                   onClick={(e) => {
                     e.stopPropagation()
                     onRemove(m.id)
                   }}
                   title="Remove"
                 >
-                  <Trash2 className="h-2.5 w-2.5" />
+                  <Trash2 className="h-3 w-3" />
                 </Button>
               </div>
             </div>
@@ -2047,14 +2047,14 @@ function MediaItemsView({
               <Button
                 size="sm"
                 variant="destructive"
-                className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100"
+                className="h-7 w-7 p-0 shrink-0 shadow-md ring-1 ring-rose-700/60"
                 onClick={(e) => {
                   e.stopPropagation()
                   onRemove(m.id)
                 }}
                 title="Remove"
               >
-                <Trash2 className="h-2.5 w-2.5" />
+                <Trash2 className="h-3.5 w-3.5" />
               </Button>
             </div>
           )
@@ -2105,7 +2105,7 @@ function MediaItemsView({
                 </span>
               )}
               <Trash2
-                className="h-3 w-3 text-zinc-500 hover:text-rose-400 opacity-0 group-hover:opacity-100"
+                className="h-5 w-5 shrink-0 box-content p-0.5 rounded bg-rose-500/15 ring-1 ring-rose-700/50 text-rose-400 hover:bg-rose-500/30 hover:text-rose-200 transition-colors"
                 onClick={(e) => {
                   e.stopPropagation()
                   onRemove(m.id)
@@ -2122,7 +2122,7 @@ function MediaItemsView({
   // Table-style layout with Name / Type / Size columns.
   return (
     <div className="text-[10px]">
-      <div className="grid grid-cols-[1fr_5rem_4rem_1.25rem] gap-2 px-1.5 py-1 border-b border-zinc-800 text-zinc-500 uppercase tracking-wider text-[9px] font-semibold">
+      <div className="grid grid-cols-[1fr_5rem_4rem_2rem] gap-2 px-1.5 py-1 border-b border-zinc-800 text-zinc-500 uppercase tracking-wider text-[9px] font-semibold">
         <span>Name</span>
         <span>Type</span>
         <span>Size</span>
@@ -2138,7 +2138,7 @@ function MediaItemsView({
             key={m.id}
             onClick={() => onItemClick(m)}
             className={cn(
-              'group w-full grid grid-cols-[1fr_5rem_4rem_1.25rem] gap-2 px-1.5 py-1 items-center text-left transition-colors',
+              'group w-full grid grid-cols-[1fr_5rem_4rem_2rem] gap-2 px-1.5 py-1 items-center text-left transition-colors',
               broken
                 ? 'bg-rose-500/10 text-rose-300'
                 : active
@@ -2170,7 +2170,7 @@ function MediaItemsView({
             </span>
             <span className="text-zinc-500 truncate">{formatSize(m.size)}</span>
             <Trash2
-              className="h-3 w-3 text-zinc-500 hover:text-rose-400 opacity-0 group-hover:opacity-100"
+              className="h-5 w-5 shrink-0 box-content p-0.5 rounded bg-rose-500/15 ring-1 ring-rose-700/50 text-rose-400 hover:bg-rose-500/30 hover:text-rose-200 transition-colors"
               onClick={(e) => {
                 e.stopPropagation()
                 onRemove(m.id)

@@ -120,6 +120,18 @@ export interface AppSettings {
   // the Typography settings card; the change is broadcast to the
   // secondary screen and NDI feed in real time.
   textAlign: 'left' | 'center' | 'right' | 'justify'
+  // ── Reference text typography (Bug #5) ──────────────────────────
+  // Independent typography controls for the reference label (e.g.
+  // "John 3:16") shown above the verse body. All five fields are
+  // optional — when undefined the renderer falls back to the body
+  // equivalents above, so existing operators' persisted settings
+  // keep working untouched. Once an operator picks a reference-only
+  // value it is decoupled from body changes.
+  referenceFontFamily?: string
+  referenceFontSize?: 'sm' | 'md' | 'lg' | 'xl'
+  referenceTextShadow?: boolean
+  referenceTextScale?: number
+  referenceTextAlign?: 'left' | 'center' | 'right' | 'justify'
   // User-supplied OpenAI API key for the Whisper transcription
   // pipeline. In dev/Replit the route falls back to the integration
   // proxy creds (AI_INTEGRATIONS_OPENAI_*); on the user's installed
@@ -422,6 +434,15 @@ const defaultSettings: AppSettings = {
   displayRatio: 'fill',
   textScale: 1,
   textAlign: 'center',
+  // Reference typography defaults: leave undefined so the renderer
+  // falls back to the body equivalents above. Persisted operator
+  // settings from earlier builds simply won't have these keys, which
+  // is the same as the fresh-install state — no migration needed.
+  referenceFontFamily: undefined,
+  referenceFontSize: undefined,
+  referenceTextShadow: undefined,
+  referenceTextScale: undefined,
+  referenceTextAlign: undefined,
   userOpenaiKey: null,
   aiMode: 'base',
   congregationScreenTheme: 'minimal',

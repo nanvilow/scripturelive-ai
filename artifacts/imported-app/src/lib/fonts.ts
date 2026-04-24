@@ -88,3 +88,75 @@ export const googleFontsHref: string = (() => {
   const params = families.map((f) => `family=${f}`).join('&')
   return `https://fonts.googleapis.com/css2?${params}&display=swap`
 })()
+
+// ── Reference typography fallback (Bug #5) ──────────────────────────
+// The Settings card now exposes independent Typography controls for
+// the verse REFERENCE label (e.g. "John 3:16") on top of the existing
+// body controls. Each renderer must read the resolved values through
+// this helper so a missing reference field gracefully falls back to
+// the body equivalent — that lets persisted operator settings from
+// earlier builds keep rendering identically until the operator
+// explicitly customises the reference style.
+export interface ResolvedReferenceTypography {
+  fontStack: string
+  fontSize: 'sm' | 'md' | 'lg' | 'xl'
+  textShadow: boolean
+  textScale: number
+  textAlign: 'left' | 'center' | 'right' | 'justify'
+}
+export function resolveReferenceTypography(s: {
+  fontFamily?: string
+  fontSize?: 'sm' | 'md' | 'lg' | 'xl'
+  textShadow?: boolean
+  textScale?: number
+  textAlign?: 'left' | 'center' | 'right' | 'justify'
+  referenceFontFamily?: string
+  referenceFontSize?: 'sm' | 'md' | 'lg' | 'xl'
+  referenceTextShadow?: boolean
+  referenceTextScale?: number
+  referenceTextAlign?: 'left' | 'center' | 'right' | 'justify'
+}): ResolvedReferenceTypography {
+  return {
+    fontStack: getFontStack(s.referenceFontFamily ?? s.fontFamily),
+    fontSize: s.referenceFontSize ?? s.fontSize ?? 'lg',
+    textShadow: s.referenceTextShadow ?? s.textShadow ?? true,
+    textScale: s.referenceTextScale ?? s.textScale ?? 1,
+    textAlign: s.referenceTextAlign ?? s.textAlign ?? 'center',
+  }
+}
+
+// ── Lower-third clamp formula (Bug #4) ──────────────────────────────
+// Single source of truth for lower-third body + reference font-size
+// clamp() strings. Used by:
+//   • OutputPreview (Settings WYSIWYG preview)
+//   • The embedded JS in /api/output/congregation (broadcast HTML
+//     used for the secondary screen AND the NDI capture window)
+// so all three surfaces produce visually identical lower-third
+// metrics for the same content + settings.
+//
+// `scale` is the operator's textScale × FONT_SIZE_MULT[fontSize] —
+// already combined so this helper doesn't need to know which bucket
+// the operator picked.
+export function lowerThirdClamp(args: {
+  totalChars: number
+  bodyScale: number
+  refScale: number
+}): { body: string; reference: string } {
+  const { totalChars, bodyScale, refScale } = args
+  // Body band shrinks as the verse gets longer so long passages
+  // still fit inside the rounded card.
+  let band = totalChars > 320 ? 5 : totalChars > 180 ? 7 : totalChars > 90 ? 9 : 11
+  band *= bodyScale
+  const cap = Math.max(1.4, 2 * bodyScale)
+  const min = Math.max(0.4, 0.6 * bodyScale)
+  const body = `clamp(${min}rem,min(${band * 0.55}cqw,${band}cqh),${cap}rem)`
+  // Reference band: smaller than body, but still scales with the
+  // reference textScale + fontSize bucket so the operator's
+  // independent reference Typography settings actually move the
+  // needle on the projector + NDI feed.
+  const refBand = Math.max(2.5, 4 * refScale)
+  const refCap = Math.max(1, 1.4 * refScale)
+  const refMin = Math.max(0.35, 0.5 * refScale)
+  const reference = `clamp(${refMin}rem,min(${refBand * 0.5}cqw,${refBand}cqh),${refCap}rem)`
+  return { body, reference }
+}

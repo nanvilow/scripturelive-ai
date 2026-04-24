@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import type { Slide, AppSettings } from '@/lib/store'
 import { useAppStore } from '@/lib/store'
-import { getFontStack } from '@/lib/fonts'
+import { getFontStack, resolveReferenceTypography } from '@/lib/fonts'
 import { attachAnalyser, readLevel } from '@/lib/audio-level'
 
 // ──────────────────────────────────────────────────────────────────
@@ -284,7 +284,22 @@ function SlideContent({
   slide: Slide
   theme: { accent: string }
   large: boolean
-  settings: Pick<AppSettings, 'fontSize' | 'fontFamily' | 'textShadow' | 'showReferenceOnOutput' | 'textScale' | 'textAlign'>
+  settings: Pick<
+    AppSettings,
+    | 'fontSize'
+    | 'fontFamily'
+    | 'textShadow'
+    | 'showReferenceOnOutput'
+    | 'textScale'
+    | 'textAlign'
+    // Reference typography overrides (Bug #5) — optional, fall back
+    // to the body equivalents above when undefined.
+    | 'referenceFontFamily'
+    | 'referenceFontSize'
+    | 'referenceTextShadow'
+    | 'referenceTextScale'
+    | 'referenceTextAlign'
+  >
   isLive?: boolean
 }) {
   // Resolve the actual CSS font-family stack from the central registry
@@ -348,14 +363,31 @@ function SlideContent({
             : 'text-center'
     return (
       <div className={cn('w-full h-full flex flex-col justify-center overflow-hidden', itemsClass, textClass)} style={fontStyle}>
-        {settings.showReferenceOnOutput && (
-          <p
-            className={cn('opacity-60 mb-2 shrink-0 m-0 p-0', theme.accent, textClass)}
-            style={{ fontSize: large ? `${baseCqi * 0.55}cqi` : '1.0cqi', ...shadow, lineHeight: 1.2 }}
-          >
-            {slide.title}
-          </p>
-        )}
+        {settings.showReferenceOnOutput && (() => {
+          // Reference typography (Bug #5): resolve the operator's
+          // reference-specific font/size/align/shadow/scale. Each
+          // field falls back to the body equivalent when unset.
+          const refTypo = resolveReferenceTypography(settings)
+          const refCqi = (fontSizeBaseCqi[refTypo.fontSize] || fontSizeBaseCqi.lg) *
+            Math.min(2, Math.max(0.5, refTypo.textScale))
+          const refShadow = refTypo.textShadow
+            ? { textShadow: '0 2px 12px rgba(0,0,0,0.4)' }
+            : {}
+          return (
+            <p
+              className={cn('opacity-60 mb-2 shrink-0 m-0 p-0', theme.accent)}
+              style={{
+                fontSize: large ? `${refCqi * 0.55}cqi` : '1.0cqi',
+                ...refShadow,
+                lineHeight: 1.2,
+                fontFamily: refTypo.fontStack,
+                textAlign: refTypo.textAlign,
+              }}
+            >
+              {slide.title}
+            </p>
+          )
+        })()}
         <div className={cn('w-full max-w-[90%] mx-auto', textClass)}>
           <p
             className={cn('font-medium m-0 p-0', theme.accent, textClass)}
