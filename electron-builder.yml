@@ -47,9 +47,6 @@ extraResources:
     filter: ["**/*"]
   - from: artifacts/imported-app/db/custom.db
     to: app-db/custom.db
-  - from: artifacts/imported-app/electron/whisper-bundle
-    to: whisper-bundle
-    filter: ["**/*"]
 afterSign: artifacts/imported-app/build-resources/notarize.js
 win:
   target:
