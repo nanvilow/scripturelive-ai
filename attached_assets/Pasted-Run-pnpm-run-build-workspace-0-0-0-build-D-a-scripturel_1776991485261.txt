@@ -1,0 +1,270 @@
+Run pnpm run build
+> workspace@0.0.0 build D:\a\scripturelive-ai\scripturelive-ai
+> pnpm run typecheck && pnpm -r --if-present --filter "!@workspace/mockup-sandbox" run build
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+> workspace@0.0.0 typecheck D:\a\scripturelive-ai\scripturelive-ai
+> pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-present run typecheck
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+> workspace@0.0.0 typecheck:libs D:\a\scripturelive-ai\scripturelive-ai
+> tsc --build
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+Scope: 4 of 9 workspace projects
+artifacts/api-server typecheck$ tsc -p tsconfig.json --noEmit
+artifacts/mockup-sandbox typecheck$ tsc -p tsconfig.json --noEmit
+artifacts/api-server typecheck: Done
+scripts typecheck$ tsc -p tsconfig.json --noEmit
+scripts typecheck: Done
+artifacts/mockup-sandbox typecheck: Done
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+Scope: 8 of 9 workspace projects
+artifacts/imported-app build$ cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build
+artifacts/imported-app build: Prisma schema loaded from prisma\schema.prisma
+artifacts/imported-app build: ✔ Generated Prisma Client (v6.19.3) to .\src\generated\prisma-client in 143ms
+artifacts/imported-app build: Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+artifacts/imported-app build: Tip: Want to turn off tips and other hints? https://pris.ly/tip-4-nohints
+artifacts/imported-app build: ⚠ No build cache found. Please configure build caching for faster rebuilds. Read more: https://nextjs.org/docs/messages/no-cache
+artifacts/imported-app build: Attention: Next.js now collects completely anonymous telemetry regarding usage.
+artifacts/imported-app build: This information is used to shape Next.js' roadmap and prioritize features.
+artifacts/imported-app build: You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+artifacts/imported-app build: https://nextjs.org/telemetry
+artifacts/imported-app build: ▲ Next.js 16.2.4 (Turbopack)
+artifacts/imported-app build:   Creating an optimized production build ...
+artifacts/imported-app build: Turbopack build encountered 1 warnings:
+artifacts/imported-app build: ./artifacts/imported-app/next.config.ts
+artifacts/imported-app build: Encountered unexpected file in NFT list
+artifacts/imported-app build: A file was traced that indicates that the whole project was traced unintentionally. Somewhere in the import trace below, there are:
+artifacts/imported-app build: - filesystem operations (like path.join, path.resolve or fs.readFile), or
+artifacts/imported-app build: - very dynamic requires (like require('./' + foo)).
+artifacts/imported-app build: To resolve this, you can
+artifacts/imported-app build: - remove them if possible, or
+artifacts/imported-app build: - only use them in development, or
+artifacts/imported-app build: - make sure they are statically scoped to some subfolder: path.join(process.cwd(), 'data', bar), or
+artifacts/imported-app build: - add ignore comments: path.join(/*turbopackIgnore: true*/ process.cwd(), bar)
+artifacts/imported-app build: Import trace:
+artifacts/imported-app build:   App Route:
+artifacts/imported-app build:     ./artifacts/imported-app/next.config.ts
+artifacts/imported-app build:     ./artifacts/imported-app/src/generated/prisma-client/index.js
+artifacts/imported-app build:     ./artifacts/imported-app/src/lib/db.ts
+artifacts/imported-app build:     ./artifacts/imported-app/src/app/api/songs/import/route.ts
+artifacts/imported-app build: ✓ Compiled successfully in 11.5s
+artifacts/imported-app build:   Skipping validation of types
+artifacts/imported-app build:   Finished TypeScript config validation in 26ms ...
+artifacts/imported-app build:   Collecting page data using 1 worker ...
+artifacts/imported-app build:   Generating static pages using 1 worker (0/19) ...
+artifacts/imported-app build:   Generating static pages using 1 worker (4/19) 
+artifacts/imported-app build:   Generating static pages using 1 worker (9/19) 
+artifacts/imported-app build:   Generating static pages using 1 worker (14/19) 
+artifacts/imported-app build: ✓ Generating static pages using 1 worker (19/19) in 358ms
+artifacts/imported-app build:   Finalizing page optimization ...
+artifacts/imported-app build: Route (app)
+artifacts/imported-app build: ┌ ○ /
+artifacts/imported-app build: ├ ○ /_not-found
+artifacts/imported-app build: ├ ƒ /api/ai/generate-slides
+artifacts/imported-app build: ├ ƒ /api/ai/structure-lyrics
+artifacts/imported-app build: ├ ƒ /api/bible
+artifacts/imported-app build: ├ ƒ /api/bible/translations
+artifacts/imported-app build: ├ ƒ /api/download/[platform]
+artifacts/imported-app build: ├ ƒ /api/download/checksums
+artifacts/imported-app build: ├ ƒ /api/download/manifest
+artifacts/imported-app build: ├ ƒ /api/output
+artifacts/imported-app build: ├ ƒ /api/output/congregation
+artifacts/imported-app build: ├ ƒ /api/output/ndi
+artifacts/imported-app build: ├ ƒ /api/output/stage
+artifacts/imported-app build: ├ ƒ /api/presentations
+artifacts/imported-app build: ├ ƒ /api/sermons
+artifacts/imported-app build: ├ ƒ /api/songs
+artifacts/imported-app build: ├ ƒ /api/songs/import
+artifacts/imported-app build: ├ ƒ /api/transcribe
+artifacts/imported-app build: ├ ƒ /api/upload
+artifacts/imported-app build: └ ○ /download
+artifacts/imported-app build: Route (pages)
+artifacts/imported-app build: ─ ○ /not-found
+artifacts/imported-app build: ○  (Static)   prerendered as static content
+artifacts/imported-app build: ƒ  (Dynamic)  server-rendered on demand
+artifacts/imported-app build: Done
+artifacts/api-server build$ node ./build.mjs
+artifacts/api-server build:   dist\index.mjs                   1.4mb
+artifacts/api-server build:   dist\pino-worker.mjs           150.9kb
+artifacts/api-server build:   dist\pino-file.mjs             139.9kb
+artifacts/api-server build:   dist\pino-pretty.mjs           111.5kb
+artifacts/api-server build:   dist\thread-stream-worker.mjs    7.1kb
+artifacts/api-server build:   ...and 5 more output files...
+artifacts/api-server build: Done in 312ms
+artifacts/api-server build: Done
+8m 55s
+Run pnpm run electron:build
+  
+> workspace@0.0.0 electron:build D:\a\scripturelive-ai\scripturelive-ai
+> pnpm --filter @workspace/imported-app run package:win
+artifacts/imported-app                   |  WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+> @workspace/imported-app@0.5.18 package:win D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app
+> pnpm run build && pnpm run electron:build && electron-builder --config electron-builder.yml --win --publish never && pnpm run downloads:manifest
+ WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+> @workspace/imported-app@0.5.18 build D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app
+> cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build
+Prisma schema loaded from prisma\schema.prisma
+┌─────────────────────────────────────────────────────────┐
+│  Update available 6.19.3 -> 7.8.0                       │
+✔ Generated Prisma Client (v6.19.3) to .\src\generated\prisma-client in 417ms
+│                                                         │
+│  This is a major update - please follow the guide at    │
+│  https://pris.ly/d/major-version-upgrade                │
+Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+│                                                         │
+│  Run the following to update                            │
+Tip: Need your database queries to be 1000x faster? Accelerate offers you that and more: https://pris.ly/tip-2-accelerate
+│    npm i --save-dev prisma@latest                       │
+│    npm i @prisma/client@latest                          │
+└─────────────────────────────────────────────────────────┘
+▲ Next.js 16.2.4 (Turbopack)
+  Creating an optimized production build ...
+Turbopack build encountered 1 warnings:
+./artifacts/imported-app/next.config.ts
+Encountered unexpected file in NFT list
+A file was traced that indicates that the whole project was traced unintentionally. Somewhere in the import trace below, there are:
+- filesystem operations (like path.join, path.resolve or fs.readFile), or
+- very dynamic requires (like require('./' + foo)).
+To resolve this, you can
+- remove them if possible, or
+- only use them in development, or
+- make sure they are statically scoped to some subfolder: path.join(process.cwd(), 'data', bar), or
+- add ignore comments: path.join(/*turbopackIgnore: true*/ process.cwd(), bar)
+Import trace:
+  App Route:
+    ./artifacts/imported-app/next.config.ts
+    ./artifacts/imported-app/src/generated/prisma-client/index.js
+    ./artifacts/imported-app/src/lib/db.ts
+    ./artifacts/imported-app/src/app/api/songs/import/route.ts
+✓ Compiled successfully in 11.5s
+  Skipping validation of types
+  Finished TypeScript config validation in 12ms ...
+  Collecting page data using 1 worker ...
+  Generating static pages using 1 worker (0/19) ...
+  Generating static pages using 1 worker (4/19) 
+  Generating static pages using 1 worker (9/19) 
+  Generating static pages using 1 worker (14/19) 
+✓ Generating static pages using 1 worker (19/19) in 371ms
+  Finalizing page optimization ...
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/ai/generate-slides
+├ ƒ /api/ai/structure-lyrics
+├ ƒ /api/bible
+├ ƒ /api/bible/translations
+├ ƒ /api/download/[platform]
+├ ƒ /api/download/checksums
+├ ƒ /api/download/manifest
+├ ƒ /api/output
+├ ƒ /api/output/congregation
+├ ƒ /api/output/ndi
+├ ƒ /api/output/stage
+├ ƒ /api/presentations
+├ ƒ /api/sermons
+├ ƒ /api/songs
+├ ƒ /api/songs/import
+├ ƒ /api/transcribe
+├ ƒ /api/upload
+└ ○ /download
+Route (pages)
+─ ○ /not-found
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+ WARN  The field "pnpm.onlyBuiltDependencies" was found in D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app/package.json. This will not take effect. You should configure "pnpm.onlyBuiltDependencies" at the root of the workspace instead.
+> @workspace/imported-app@0.5.18 electron:build D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app
+> tsc -p electron/tsconfig.json && node scripts/download-whisper-assets.mjs
+[whisper-assets] Downloading whisper.cpp v1.8.4 → D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app\electron\whisper-bundle\whisper-bin-x64.zip
+[whisper-assets] Unzipping D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app\electron\whisper-bundle\whisper-bin-x64.zip
+[whisper-assets] Installed whisper-cli → D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app\electron\whisper-bundle\whisper-cli.exe
+[whisper-assets] Installed DLL → D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app\electron\whisper-bundle\ggml-base.dll
+[whisper-assets] Installed DLL → D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app\electron\whisper-bundle\ggml-cpu.dll
+[whisper-assets] Installed DLL → D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app\electron\whisper-bundle\ggml.dll
+[whisper-assets] Installed DLL → D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app\electron\whisper-bundle\SDL2.dll
+[whisper-assets] Installed DLL → D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app\electron\whisper-bundle\whisper.dll
+[whisper-assets] Downloading ggml-base.en-q5_1.bin (~58 MB) → D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app\electron\whisper-bundle\ggml-base.en-q5_1.bin
+[whisper-assets] Model installed (57.0 MB, sha256=4baf70dd0d7c4247…)
+[whisper-assets] ✓ whisper-bundle ready for packaging.
+  • electron-builder  version=25.1.8 os=10.0.26100
+  • loaded configuration  file=D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app\electron-builder.yml
+  • description is missed in the package.json  appPackageFile=D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app\package.json
+  • author is missed in the package.json  appPackageFile=D:\a\scripturelive-ai\scripturelive-ai\artifacts\imported-app\package.json
+  • skipped dependencies rebuild  reason=npmRebuild is set to false
+  • packaging       platform=win32 arch=x64 electron=33.4.11 appOutDir=release\win-unpacked
+  • downloading     url=https://github.com/electron/electron/releases/download/v33.4.11/electron-v33.4.11-win32-x64.zip size=115 MB parts=4
+  • downloaded      url=https://github.com/electron/electron/releases/download/v33.4.11/electron-v33.4.11-win32-x64.zip duration=471ms
+  • updating asar integrity executable resource  executablePath=release\win-unpacked\ScriptureLive AI.exe
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\whisper-cli.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\Release\command.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\Release\bench.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\Release\stream.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\Release\main.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\Release\whisper-vad-speech-segments.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\Release\whisper-quantize.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\Release\whisper-stream.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\Release\whisper-server.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\Release\whisper-talk-llama.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\Release\whisper-lsp.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\Release\whisper-command.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\Release\whisper-cli.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\Release\whisper-bench.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\Release\wchess.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\Release\test-vad-full.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\whisper-bundle\Release\test-vad.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • downloading     url=https://github.com/electron-userland/electron-builder-binaries/releases/download/winCodeSign-2.6.0/winCodeSign-2.6.0.7z size=5.6 MB parts=1
+  • downloaded      url=https://github.com/electron-userland/electron-builder-binaries/releases/download/winCodeSign-2.6.0/winCodeSign-2.6.0.7z duration=238ms
+  • signing with signtool.exe  path=release\win-unpacked\ScriptureLive AI.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • signing with signtool.exe  path=release\win-unpacked\resources\app.asar.unpacked\node_modules\@prisma\engines\schema-engine-windows.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • building        target=nsis file=release\ScriptureLive AI-0.5.18-Setup-x64.exe archs=x64 oneClick=false perMachine=false
+  • downloading     url=https://github.com/electron-userland/electron-builder-binaries/releases/download/nsis-3.0.4.1/nsis-3.0.4.1.7z size=1.3 MB parts=1
+  • downloaded      url=https://github.com/electron-userland/electron-builder-binaries/releases/download/nsis-3.0.4.1/nsis-3.0.4.1.7z duration=150ms
+  • signing with signtool.exe  path=release\win-unpacked\resources\elevate.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+8m 23s
+25s
+1m 31s
+Sent 0 of 756978541 (0.0%), 0.0 MBs/sec
+Sent 67108864 of 756978541 (8.9%), 21.3 MBs/sec
+Sent 622760813 of 756978541 (82.3%), 148.1 MBs/sec
+Sent 689869677 of 756978541 (91.1%), 131.3 MBs/sec
+Sent 756978541 of 756978541 (100.0%), 129.4 MBs/sec
+Cache saved with the key: node-cache-Windows-x64-pnpm-42c434a9c90ffc839d93957eaa2371cc39ca09e389bc9ecc69299454bddcfbc8
+0s
+Post job cleanup.
+Pruning is unnecessary.
+2s
+Post job cleanup.
+"C:\Program Files\Git\bin\git.exe" version
+git version 2.53.0.windows.2
+Temporarily overriding HOME='D:\a\_temp\a998244d-c551-4178-94f9-0b64ac9c1fea' before making global git config changes
+Adding repository directory to the temporary git global config as a safe directory
+"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\scripturelive-ai\scripturelive-ai
+"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+http.https://github.com/.extraheader
+"C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+0s
+Cleaning up orphan processes
+Warning: Node.js 20 actions are deprecated. The following actions are running on Node.js 20 and may not work as expected: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4, pnpm/action-setup@v4. Actions will be forced to run with Node.js 24 by default starting June 2nd, 2026. Node.js 20 will be removed from the runner on September 16th, 2026. Please check if updated versions of these actions are available that support Node.js 24. To opt into Node.js 24 now, set the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true environment variable on the runner or in your workflow file. Once Node.js 24 becomes the default, you can temporarily opt out by setting ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
