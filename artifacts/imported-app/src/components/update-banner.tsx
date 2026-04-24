@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkBreaks from 'remark-breaks'
 import { useDesktop, type UpdateState } from '@/lib/use-electron'
 
 function formatPercent(p: number): string {
@@ -110,9 +112,18 @@ export function UpdateBanner() {
           {showNotes && (
             <div
               id="update-banner-release-notes"
-              className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted/50 p-2 text-xs leading-relaxed text-foreground"
+              className="prose prose-sm dark:prose-invert mt-2 max-h-48 max-w-none overflow-y-auto rounded-md bg-muted/50 p-2 text-xs leading-relaxed text-foreground prose-headings:mt-2 prose-headings:mb-1 prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-1 prose-headings:text-foreground prose-strong:text-foreground prose-a:text-primary"
             >
-              {notes}
+              <ReactMarkdown
+                remarkPlugins={[remarkBreaks]}
+                components={{
+                  a: ({ node: _node, ...props }) => (
+                    <a {...props} target="_blank" rel="noopener noreferrer" />
+                  ),
+                }}
+              >
+                {notes}
+              </ReactMarkdown>
             </div>
           )}
         </div>
