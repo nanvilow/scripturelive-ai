@@ -49,6 +49,10 @@ type ScriptureLiveBridge = {
     getState?: () => Promise<UpdaterState>
     download?: () => Promise<{ ok: boolean; error?: string; alreadyInProgress?: boolean }>
     install?: () => Promise<{ ok: boolean; error?: string }>
+    // v0.5.31 — operator-cancellable download. Optional because older
+    // desktop builds shipped before the Cancel button won't expose it,
+    // and the renderer falls back to omitting the toast/banner action.
+    cancel?: () => Promise<{ ok: boolean; error?: string }>
     onState?: (cb: (s: UpdaterState) => void) => () => void
   }
   // Read NDI sender status to know whether we're mid-broadcast and
@@ -257,6 +261,28 @@ export function UpdateNotifier() {
         const sizeLine =
           mbTransferred && mbTotal ? `${mbTransferred} / ${mbTotal} MB` : null
         const description = sizeLine ? `${pct}% · ${sizeLine}` : `${pct}%`
+        // v0.5.31 — Cancel action attached to every progress toast
+        // so the operator can abort the download from the same UI
+        // surface that's tracking it. Calls the new `updater.cancel`
+        // bridge; older desktop builds without `cancel` simply won't
+        // see the action.
+        const cancelAction = bridge.updater?.cancel
+          ? {
+              label: 'Cancel',
+              onClick: () => {
+                bridge.updater
+                  ?.cancel?.()
+                  .then((r) => {
+                    if (!r?.ok && r?.error) {
+                      toast.error(`Could not cancel: ${r.error}`)
+                    }
+                  })
+                  .catch((err: unknown) => {
+                    toast.error(err instanceof Error ? err.message : 'Cancel failed')
+                  })
+              },
+            }
+          : undefined
         if (downloadingToastIdRef.current == null) {
           // Auto-update kicked off without us going through the
           // available-toast click handler (e.g. Settings → Check Now
@@ -264,13 +290,14 @@ export function UpdateNotifier() {
           // toast on the fly so the operator still sees activity.
           downloadingToastIdRef.current = toast.loading(
             'Downloading update…',
-            { description, duration: Infinity },
+            { description, duration: Infinity, action: cancelAction },
           )
         } else {
           toast.loading('Downloading update…', {
             id: downloadingToastIdRef.current,
             description,
             duration: Infinity,
+            action: cancelAction,
           })
         }
       } else if (s.status === 'downloaded') {

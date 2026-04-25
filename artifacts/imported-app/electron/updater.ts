@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
-import { autoUpdater, UpdateInfo, ProgressInfo } from 'electron-updater'
+import { autoUpdater, CancellationToken, UpdateInfo, ProgressInfo } from 'electron-updater'
 import { copyFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -40,6 +40,18 @@ const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 let currentState: UpdateState = { status: 'idle' }
 let intervalHandle: NodeJS.Timeout | null = null
 let getWindow: (() => BrowserWindow | null) | null = null
+// v0.5.31 — main-process callback supplied by main.ts so the updater
+// can flip the global `isQuitting` flag right before
+// `quitAndInstall()`. Without it the hide-to-tray close handler
+// vetoes the close, the app stays alive, and the installer pops
+// "ScriptureLive AI cannot be closed; please close it manually".
+let setMainIsQuitting: ((v: boolean) => void) | null = null
+// v0.5.31 — cancellation token for the in-flight signed download.
+// `autoUpdater.downloadUpdate(token)` honours the token and the
+// underlying request is aborted as soon as `token.cancel()` fires.
+// We hold the live token here so the new `updater:cancel` IPC and
+// the renderer "Cancel download" button can reach it.
+let activeCancellationToken: CancellationToken | null = null
 // In-process listeners for state changes (e.g. tray icon updater).
 // Distinct from the renderer broadcast — we want to update OS chrome
 // like the tray tooltip even when no main window is alive (background
@@ -103,6 +115,13 @@ function normalizeNotes(info: UpdateInfo): { notes?: string; name?: string } {
  */
 function friendlyUpdateError(raw: string): string {
   const m = (raw || '').toString()
+  // v0.5.31 — operator-cancelled download. electron-updater raises
+  // either "Cancelled" or "request cancelled" when the
+  // CancellationToken fires; surface that as a calm informational
+  // message instead of an alarming red error toast.
+  if (/cancell?ed/i.test(m) && !/timeout|reset|refused/i.test(m)) {
+    return 'Update download cancelled.'
+  }
   if (/releases\.atom/.test(m) && /\b404\b/.test(m)) {
     return 'No published releases found yet. Open the Releases page to download the latest installer manually.'
   }
@@ -140,8 +159,15 @@ async function safeCheck() {
   }
 }
 
-export function setupAutoUpdater(opts: { getMainWindow: () => BrowserWindow | null }) {
+export function setupAutoUpdater(opts: {
+  getMainWindow: () => BrowserWindow | null
+  // v0.5.31 — passed by main.ts so we can flip `isQuitting=true`
+  // right before `quitAndInstall()`. Optional so older callers /
+  // tests can still pass just `getMainWindow`.
+  setIsQuitting?: (v: boolean) => void
+}) {
   getWindow = opts.getMainWindow
+  setMainIsQuitting = opts.setIsQuitting ?? null
 
   // Operator-driven download flow: when a new release is detected we
   // surface an "Update Available — Click To Download" popup in the
@@ -240,6 +266,25 @@ export function setupAutoUpdater(opts: { getMainWindow: () => BrowserWindow | nu
   autoUpdater.on('error', (err: Error) => {
     downloadInFlight = false
     const raw = err?.message || String(err)
+    // v0.5.31 — When the operator clicks Cancel, electron-updater
+    // emits an 'error' event with a /cancell?ed/ message. Without
+    // this guard that event would race with the explicit `idle`
+    // broadcast in `updater:cancel` + `triggerUpdateDownload`'s catch
+    // arm, leaving the renderer stuck on a red error banner depending
+    // on which broadcast happened to fire last. Treat operator
+    // cancellation as a *silent* clean-up: clear the active token,
+    // emit a single calm `idle` state, and skip the friendly-error
+    // toast entirely. Real network/IO cancellations (timeout / reset
+    // / refused) still fall through to the error path.
+    if (
+      /cancell?ed/i.test(raw) &&
+      !/timeout|reset|refused/i.test(raw)
+    ) {
+      activeCancellationToken = null
+      broadcast({ status: 'idle' })
+      return
+    }
+    activeCancellationToken = null
     broadcast({ status: 'error', message: friendlyUpdateError(raw) })
   })
 
@@ -265,8 +310,71 @@ export function setupAutoUpdater(opts: { getMainWindow: () => BrowserWindow | nu
     if (currentState.status !== 'downloaded') {
       return { ok: false, error: 'no update downloaded' }
     }
-    setImmediate(() => autoUpdater.quitAndInstall(false, true))
+    // v0.5.31 — clean install path so the operator never has to
+    // dismiss a "ScriptureLive AI cannot be closed" prompt:
+    //
+    //   1. Flip the global `isQuitting` flag so the hide-to-tray
+    //      close handler in `preferences.ts` lets the close go
+    //      through instead of vetoing it with `preventDefault()`.
+    //   2. Force-destroy every BrowserWindow we opened (operator,
+    //      congregation, NDI helper, dev-tools detached). `destroy()`
+    //      bypasses the `close` event entirely so nothing can hold
+    //      the process hostage.
+    //   3. Schedule `quitAndInstall(isSilent=false, isForceRunAfter=true)`
+    //      on the next tick so Electron has a clean stack.
+    //
+    // The combination guarantees the auto-installer can spawn the
+    // signed installer and replace the running .exe without operator
+    // intervention.
+    if (setMainIsQuitting) {
+      try { setMainIsQuitting(true) } catch (e) { console.warn('[updater] setIsQuitting threw:', e) }
+    }
+    for (const w of BrowserWindow.getAllWindows()) {
+      try {
+        if (!w.isDestroyed()) w.destroy()
+      } catch (e) {
+        console.warn('[updater] window destroy threw (non-fatal):', e)
+      }
+    }
+    setImmediate(() => {
+      try {
+        autoUpdater.quitAndInstall(false, true)
+      } catch (err) {
+        console.error('[updater] quitAndInstall threw:', err)
+        // Belt-and-braces: if quitAndInstall failed for some reason,
+        // make sure the process at least exits so the operator can
+        // re-launch from the Desktop installer copy.
+        app.quit()
+      }
+    })
     return { ok: true }
+  })
+  // v0.5.31 — Operator-cancellable download.
+  // Stops the in-flight signed download by firing the
+  // CancellationToken we passed into `downloadUpdate(token)`.
+  // electron-updater aborts the underlying HTTP request immediately
+  // and emits an 'error' event with `cancelled` in the message,
+  // which our error handler normalizes into a friendly toast.
+  ipcMain.handle('updater:cancel', () => {
+    if (currentState.status !== 'downloading') {
+      return { ok: false, error: 'no download in progress' }
+    }
+    if (!activeCancellationToken) {
+      return { ok: false, error: 'no active cancellation token' }
+    }
+    try {
+      activeCancellationToken.cancel()
+      // The error event will flip downloadInFlight + broadcast a
+      // friendly cancellation message, but reset state proactively
+      // so the renderer doesn't see a phantom 'downloading' tail.
+      downloadInFlight = false
+      activeCancellationToken = null
+      broadcast({ status: 'idle' })
+      return { ok: true }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { ok: false, error: msg }
+    }
   })
   // Operator-clicked "Download" path. Only valid when an update has
   // been announced (status === 'available'). We let electron-updater
@@ -333,18 +441,35 @@ export async function triggerUpdateDownload(): Promise<
     return { ok: false, error: 'no update available to download' }
   }
   downloadInFlight = true
+  // v0.5.31 — Pass a fresh CancellationToken so the operator's
+  // "Cancel download" button can abort the request at any time.
+  // Stashed in module scope so the `updater:cancel` IPC handler can
+  // reach it, and cleared on success/failure to avoid stale tokens
+  // leaking into the next download.
+  const token = new CancellationToken()
+  activeCancellationToken = token
   try {
-    await autoUpdater.downloadUpdate()
+    await autoUpdater.downloadUpdate(token)
     // Don't clear downloadInFlight here on success — the
     // update-downloaded event handler clears it. autoUpdater
     // resolves the promise as soon as the download finishes, but
     // we want the guard to bridge any micro-window between
     // resolution and the event fire.
+    if (activeCancellationToken === token) activeCancellationToken = null
     return { ok: true }
   } catch (err) {
     downloadInFlight = false
+    if (activeCancellationToken === token) activeCancellationToken = null
     const raw = err instanceof Error ? err.message : String(err)
     const friendly = friendlyUpdateError(raw)
+    // For an operator-initiated cancel we drop back to 'idle' so
+    // the renderer's "Available — Click To Download" popup can
+    // re-appear naturally on the next safeCheck() rather than
+    // staying stuck on a red error banner.
+    if (/cancell?ed/i.test(raw) && !/timeout|reset|refused/i.test(raw)) {
+      broadcast({ status: 'idle' })
+      return { ok: true, alreadyInProgress: false }
+    }
     broadcast({ status: 'error', message: friendly })
     return { ok: false, error: friendly }
   }

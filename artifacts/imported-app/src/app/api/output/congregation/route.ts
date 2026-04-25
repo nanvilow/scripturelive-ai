@@ -687,8 +687,75 @@ function pollOnce(){
 // autoscale deployments where SSE can land on a different replica.
 setInterval(pollOnce,1500);
 
+// v0.5.30 — Watchdog #1: recover from a stuck fade-out.
+// applyRender() schedules a setTimeout for "dur" ms (max 4 s) and
+// removes the .fading class once it fires. Backgrounded tabs, system
+// stalls, or any rare lost-timer case would leave .fading on the
+// surface — opacity:0 — until the next REAL slide change. We probe
+// the surface every second; if .fading has been stuck for > 1.6 s
+// (longer than the maximum sane fade) we strip it and force a fresh
+// re-render of the most recent payload via pollOnce().
+let fadingSince=0;
+setInterval(function(){
+  var el=$('output');
+  if(!el)return;
+  if(el.classList.contains('fading')){
+    if(!fadingSince) fadingSince=Date.now();
+    if(Date.now()-fadingSince>1600){
+      // Stuck — recover.
+      el.classList.remove('fading');
+      if(pendingFade){clearTimeout(pendingFade);pendingFade=null;}
+      lastRenderKey='';
+      lastSlideFingerprint='';
+      fadingSince=0;
+      pollOnce();
+    }
+  }else{
+    fadingSince=0;
+  }
+},1000);
+
+// v0.5.30 — Watchdog #2: empty-DOM recovery.
+// Once we've seen at least one payload (lastPolled > 0), the surface
+// should never be visually empty. If a renderer bug, a CSS race, or a
+// transient connection blip ever leaves #output's innerHTML empty for
+// > 1.5 s, drop the cache keys and re-poll so the next payload always
+// repaints. This is the operator's safety net for the "I see black"
+// report — the surface self-heals to the latest broadcast state.
+let emptySince=0;
+setInterval(function(){
+  if(!lastPolled)return; // never received state — splash is acceptable
+  var el=$('output');
+  if(!el)return;
+  var isEmpty=!el.innerHTML||el.innerHTML.trim().length===0;
+  if(isEmpty){
+    if(!emptySince) emptySince=Date.now();
+    if(Date.now()-emptySince>1500){
+      lastRenderKey='';
+      lastSlideFingerprint='';
+      emptySince=0;
+      pollOnce();
+    }
+  }else{
+    emptySince=0;
+  }
+},1000);
+
 function connect(){
   $('reconnecting').classList.remove('active');
+  // v0.5.30 — Bug-fix for "blank black screen" reports.
+  // On every (re)connect, drop the render-cache keys so the very next
+  // payload is GUARANTEED to repaint the surface even if its content
+  // is byte-identical to the cached one. Previously a transient
+  // connection drop could leave the surface holding a stale cache
+  // key while the DOM had been replaced by an empty themed div, and
+  // because the next payload matched the cached key the render()
+  // early-bail kicked in and the screen stayed black until something
+  // genuinely new arrived. We also force-clear any in-flight fade.
+  lastRenderKey='';
+  lastSlideFingerprint='';
+  if(pendingFade){clearTimeout(pendingFade);pendingFade=null;}
+  var elc=$('output');if(elc)elc.classList.remove('fading');
   // Kick off a poll right away so the screen lights up even before SSE
   // negotiates (some proxies hold the first message for a beat).
   pollOnce();
@@ -698,6 +765,11 @@ function connect(){
     $('status').classList.add('connected','visible');
     $('status-text').textContent='Connected';
     setTimeout(function(){$('status').classList.remove('visible')},3000);
+    // After the SSE channel negotiates, immediately re-poll so any
+    // payload that arrived between the cache-reset above and the
+    // first 'state' event lands on screen. Belt + braces against
+    // the "I see black" report.
+    setTimeout(pollOnce,50);
   };
   es.onmessage=function(e){
     try{

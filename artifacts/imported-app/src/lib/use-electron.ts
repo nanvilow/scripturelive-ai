@@ -36,6 +36,8 @@ export type ScriptureLiveDesktop = {
     getState: () => Promise<UpdateState>
     check: () => Promise<UpdateState>
     install: () => Promise<{ ok: boolean; error?: string }>
+    download?: () => Promise<{ ok: boolean; error?: string; alreadyInProgress?: boolean }>
+    cancel?: () => Promise<{ ok: boolean; error?: string }>
     onState: (cb: (s: UpdateState) => void) => () => void
   }
   ndi: {

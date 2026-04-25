@@ -51,6 +51,25 @@ export function ScriptureDetectionView() {
     settings,
     updateSettings,
   } = useAppStore()
+  // v0.5.30 — share the same Bible-only filter used by the operator
+  // shell. When ON, the Live Transcript card on this view shows only
+  // the sentences that contain a Bible reference, so an hour-long
+  // sermon doesn't bury the verse callouts in unrelated chatter.
+  const bibleOnlyTranscription = useAppStore((s) => s.bibleOnlyTranscription)
+  const setBibleOnlyTranscription = useAppStore((s) => s.setBibleOnlyTranscription)
+  // Pre-compute the Bible-filtered transcript by splitting on
+  // sentence boundaries and keeping only sentences that detect a
+  // verse. Cheap enough to run inline (transcripts max out around
+  // 10 KB before the speech provider rolls them).
+  const filteredTranscript = (() => {
+    if (!bibleOnlyTranscription) return liveTranscript
+    if (!liveTranscript) return ''
+    const sentences = liveTranscript
+      .split(/(?<=[.!?])\s+|\n+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    return sentences.filter((s) => detectVersesInText(s).length > 0).join(' ')
+  })()
 
   const processedRefsRef = useRef<Set<string>>(new Set())
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -307,16 +326,47 @@ export function ScriptureDetectionView() {
           </CardHeader>
           <CardContent className="pt-0">
             <div className="max-h-48 overflow-y-auto rounded-lg bg-muted/30 p-4 min-h-[60px]">
-              {(liveTranscript || liveInterimTranscript) ? (
+              {/* v0.5.30 — Bible-only filter pill. Lives on the right
+                  of the transcript so the operator can flip between a
+                  curated view and the raw stream without leaving the
+                  Scripture Detection page. */}
+              <div className="flex justify-end mb-1">
+                <button
+                  type="button"
+                  onClick={() => setBibleOnlyTranscription(!bibleOnlyTranscription)}
+                  title={
+                    bibleOnlyTranscription
+                      ? 'Showing only sentences with a Bible reference. Click to show full transcript.'
+                      : 'Showing full transcript. Click to filter to Bible references only.'
+                  }
+                  className={cn(
+                    'h-5 px-1.5 rounded text-[9px] uppercase tracking-wider font-semibold border inline-flex items-center gap-1 transition-colors',
+                    bibleOnlyTranscription
+                      ? 'bg-amber-500/15 text-amber-300 border-amber-500/40 hover:bg-amber-500/25'
+                      : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-zinc-200',
+                  )}
+                >
+                  <BookOpen className="h-2.5 w-2.5" />
+                  {bibleOnlyTranscription ? 'Bible-only' : 'All'}
+                </button>
+              </div>
+              {(filteredTranscript || liveInterimTranscript) ? (
                 <p className="text-sm text-foreground/80 whitespace-pre-wrap">
-                  {liveTranscript}
+                  {filteredTranscript}
+                  {/* The interim line is always shown live so the
+                      operator can confirm the mic is hearing them; the
+                      Bible-only filter operates on committed text only. */}
                   {liveInterimTranscript && (
                     <span className="text-muted-foreground italic"> {liveInterimTranscript}</span>
                   )}
                 </p>
               ) : (
                 <p className="text-xs text-muted-foreground italic">
-                  {isListening ? 'Listening... speak into your microphone' : 'Transcript will appear here when you start listening'}
+                  {isListening
+                    ? bibleOnlyTranscription && liveTranscript
+                      ? 'Listening… no Bible references heard yet (click "Bible-only" to see all spoken text)'
+                      : 'Listening… speak into your microphone'
+                    : 'Transcript will appear here when you start listening'}
                 </p>
               )}
             </div>

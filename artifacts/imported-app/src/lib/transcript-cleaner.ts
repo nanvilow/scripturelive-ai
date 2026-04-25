@@ -21,6 +21,48 @@ const NOISE_TAGS_RE = /\[(?:blank_audio|music|sound|noise|silence|inaudible|appl
 // Parenthetical stage-direction tokens like "(silence)" / "(applause)".
 const PAREN_NOISE_RE = /\((?:silence|applause|inaudible|laughter|music)\)/gi
 
+// v0.5.30 — Whisper has well-documented hallucinations on silent /
+// near-silent / music-only audio: it emits canned phrases left over
+// from its YouTube training corpus. None of these are ever spoken in
+// a sermon, but they flooded the operator's Live Transcription
+// panel, gave operators the impression that the mic was "writing
+// things the speaker never said", and tripped false-positive Bible
+// detections by adding noise to the running text. Strip them outright
+// so neither the panel nor the verse detector ever sees them.
+const HALLUCINATION_PHRASES = [
+  'thanks for watching',
+  'thank you for watching',
+  'thanks for watching!',
+  'thank you for watching!',
+  'subscribe to my channel',
+  'subscribe to the channel',
+  'please subscribe',
+  'like and subscribe',
+  'see you next time',
+  'see you in the next video',
+  'see you in the next one',
+  'thanks for joining',
+  'thanks for joining us',
+  "don't forget to subscribe",
+  'i will see you in the next video',
+  "i'll see you in the next video",
+  'this video is sponsored by',
+]
+const HALLUCINATION_RE = new RegExp(
+  '\\b(?:' +
+    HALLUCINATION_PHRASES
+      .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\s/g, '\\s+'))
+      .join('|') +
+    ')\\b[\\s.,!?;:"\']*',
+  'gi',
+)
+// After all cleaning, if the surviving chunk is just one of these
+// filler words on its own (Whisper's other go-to silence outputs:
+// "you", "you.", "Thanks.", lone interjections) the chunk is dropped
+// entirely — don't pollute the transcript with phantom one-word
+// utterances the speaker never produced.
+const FILLER_ONLY_RE = /^[\s.,!?;:'"\-]*(?:you|thanks?|thank you|hi|hello|um|uh|hmm|mm|mhm|okay|ok|so|bye|bye bye|good\s*bye|the|and)[\s.,!?;:'"\-]*$/i
+
 export function cleanTranscriptText(raw: string): string {
   if (!raw) return ''
   let t = raw
@@ -28,6 +70,10 @@ export function cleanTranscriptText(raw: string): string {
   // Strip non-speech tags first so they don't confuse the dedupe pass.
   t = t.replace(NOISE_TAGS_RE, ' ')
   t = t.replace(PAREN_NOISE_RE, ' ')
+  // v0.5.30 — drop Whisper's canned silence-hallucination phrases
+  // BEFORE the dedupe pass so they never reach the operator's panel
+  // or the verse detector.
+  t = t.replace(HALLUCINATION_RE, ' ')
 
   // Collapse repeated punctuation runs ("....." → "...", ",,," → ",").
   t = t.replace(/([.,!?;:])\1{2,}/g, '$1$1$1')
@@ -49,7 +95,14 @@ export function cleanTranscriptText(raw: string): string {
   // whisper's optional timestamp markers being stripped by -nt.
   t = t.replace(/^[\s\-–—,;:.!?]+/, '')
 
-  return t.trim()
+  // v0.5.30 — kill the chunk entirely if all that survives is a
+  // single filler word (Whisper's "you" / "Thanks." / "Hmm." for
+  // silent chunks). The chunk had nothing to say; emitting it would
+  // pollute the transcript and the verse detector for no gain.
+  const trimmed = t.trim()
+  if (FILLER_ONLY_RE.test(trimmed)) return ''
+
+  return trimmed
 }
 
 function collapseImmediateRepeats(input: string, windowWords: number): string {
