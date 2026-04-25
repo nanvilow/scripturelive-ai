@@ -917,6 +917,25 @@ function quitAndInstallUpdate() {
 // redundant rebroadcast, and never on download-progress events
 // (which arrive dozens per second).
 let lastNotifiedDownloadedVersion: string | null = null
+/**
+ * True when the operator is actively looking at the main window —
+ * window exists, is visible (not hidden to tray), is not minimized,
+ * and is the focused window. Used to suppress redundant OS surfaces
+ * (like the update-ready toast) when the in-app UI is already in
+ * front of the operator. Anything that means "they can't see the
+ * app right now" — destroyed, hidden, minimized, backgrounded —
+ * returns false so OS prompts still fire.
+ */
+function isMainWindowVisiblyFocused(): boolean {
+  if (!mainWindow || mainWindow.isDestroyed()) return false
+  try {
+    if (!mainWindow.isVisible()) return false
+    if (mainWindow.isMinimized()) return false
+    return mainWindow.isFocused()
+  } catch {
+    return false
+  }
+}
 function notifyUpdateDownloaded(state: UpdateState) {
   if (state.status !== 'downloaded') return
   // Hold the OS toast while NDI is on the air. The whole point of
@@ -926,6 +945,19 @@ function notifyUpdateDownloaded(state: UpdateState) {
   if (ndiOnAir) {
     pendingDownloadedNotification = state
     console.log(`[updater-notify] NDI on-air — holding update-ready toast for v${state.version}`)
+    return
+  }
+  // Skip the OS toast when the operator is already looking at the
+  // app — the in-app "Restart to install" banner is the sole prompt
+  // they need, and on macOS a Notification Center toast can briefly
+  // cover other UI. We only fire when the main window is hidden,
+  // minimized, or in the background (i.e. not visibly focused).
+  // Deliberately don't set `lastNotifiedDownloadedVersion` here so
+  // that a later state rebroadcast (after the operator hides or
+  // backgrounds the window) still surfaces the toast — preserving
+  // the hide-to-tray behavior the original notification targeted.
+  if (isMainWindowVisiblyFocused()) {
+    console.log(`[updater-notify] main window focused — skipping update-ready toast for v${state.version} (in-app banner is enough)`)
     return
   }
   if (lastNotifiedDownloadedVersion === state.version) return

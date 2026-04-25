@@ -133,6 +133,26 @@ let isQuitting = false;
 // First-ever hide is also gated by a marker file in userData (see
 // `maybeShowTrayHint`).
 let trayHintShownThisSession = false;
+// Live broadcast guard. True while the NDI sender is actively pushing
+// frames to vMix / Wirecast / OBS / Studio Monitor. While true, every
+// operator-actionable update prompt (tray menu CTA, in-app banner,
+// renderer toast, OS notification) is held — an accidental click on
+// "Restart to install" mid-service tears the source off the air. The
+// flag is flipped by `applyNdiAirChange()` whenever NDI starts/stops;
+// renderers see the same signal via the existing `ndi:status` push
+// and gate their own UI off it.
+let ndiOnAir = false;
+// Last "downloaded" state we received while on-air. Held instead of
+// surfacing the OS toast immediately so we can replay it the moment
+// NDI stops. Cleared on replay.
+let pendingDownloadedNotification = null;
+// Operator preference: when true, the X button on the main window
+// runs the normal shutdown path instead of hiding to tray. Default
+// false (keeps the new tray-friendly behavior). Persisted to
+// `userData/preferences.json` so the main process can honor it on
+// the very first close after launch — before any IPC traffic from
+// the renderer. See `loadAppPreferences` / `setQuitOnCloseAndPersist`.
+let quitOnClose = false;
 function serializeNdi(fn) {
     const next = ndiTransition.then(() => fn(), () => fn());
     ndiTransition = next.catch(() => undefined);
@@ -183,6 +203,59 @@ async function getPinnedPort(preferred = 47330) {
             srv.close(() => resolve(p));
         });
     });
+}
+function getPreferencesPath() {
+    return node_path_1.default.join(electron_1.app.getPath('userData'), 'preferences.json');
+}
+function loadAppPreferences() {
+    try {
+        const p = getPreferencesPath();
+        if (!node_fs_1.default.existsSync(p))
+            return {};
+        const raw = node_fs_1.default.readFileSync(p, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object')
+            return parsed;
+    }
+    catch (err) {
+        console.warn('[prefs] failed to read preferences.json (using defaults):', err);
+    }
+    return {};
+}
+function writeAppPreferences(prefs) {
+    try {
+        const p = getPreferencesPath();
+        const dir = node_path_1.default.dirname(p);
+        if (!node_fs_1.default.existsSync(dir))
+            node_fs_1.default.mkdirSync(dir, { recursive: true });
+        node_fs_1.default.writeFileSync(p, JSON.stringify(prefs, null, 2));
+    }
+    catch (err) {
+        console.warn('[prefs] failed to write preferences.json:', err);
+        throw err;
+    }
+}
+/**
+ * Hydrate the in-memory `quitOnClose` flag from the preferences
+ * file. Called once on boot, before the main window is created, so
+ * the very first close already honors the operator's choice.
+ */
+function hydrateQuitOnCloseFromDisk() {
+    const prefs = loadAppPreferences();
+    quitOnClose = prefs.quitOnClose === true;
+    console.log('[prefs] quitOnClose =', quitOnClose);
+}
+/**
+ * Persist a new `quitOnClose` value AND update the in-memory flag
+ * atomically. Toggling does not require an app restart — the next
+ * close uses the new value immediately because the close handler
+ * reads `quitOnClose` at fire time.
+ */
+function setQuitOnCloseAndPersist(next) {
+    const prefs = loadAppPreferences();
+    prefs.quitOnClose = next;
+    writeAppPreferences(prefs);
+    quitOnClose = next;
 }
 function getUserDbPath() {
     const dir = node_path_1.default.join(electron_1.app.getPath('userData'), 'db');
@@ -341,17 +414,24 @@ async function createMainWindow(url, opts = {}) {
     // congregation/stage outputs, and the auto-updater keeps running.
     // The operator brings it back from the tray.
     //
-    // Three carve-outs let the app actually exit:
+    // Four carve-outs let the app actually exit:
     //   1. `isQuitting` is true — set by `before-quit`, fires for
     //      every explicit Quit path (tray menu, app menu / Cmd+Q,
     //      updater restart, fatal errors that call app.quit()).
-    //   2. No tray exists (e.g. tray init failed on a Linux desktop
+    //   2. The operator opted out via Settings → Startup → "When I
+    //      close the window, also quit the app". `quitOnClose` is
+    //      hydrated from `userData/preferences.json` at boot and kept
+    //      live by the IPC setter, so the very first close after
+    //      launch already honors the saved choice.
+    //   3. No tray exists (e.g. tray init failed on a Linux desktop
     //      without a system tray). Without a way back into the app,
     //      hide-to-tray would be a one-way trap, so let close happen
     //      and `window-all-closed` will quit cleanly.
-    //   3. The window is being destroyed during shutdown.
+    //   4. The window is being destroyed during shutdown.
     mainWindow.on('close', (event) => {
         if (isQuitting)
+            return;
+        if (quitOnClose)
             return;
         if (!tray || tray.isDestroyed())
             return;
@@ -604,7 +684,17 @@ function trayStatusLine(state) {
 }
 function trayTooltip(state) {
     const line = trayStatusLine(state);
-    return line ? `ScriptureLive AI — ${line}` : 'ScriptureLive AI';
+    if (!line)
+        return 'ScriptureLive AI';
+    // While the NDI sender is actively on the air, append a clarifying
+    // suffix so a hover read makes it obvious why the tray menu won't
+    // surface a clickable Download / Restart action — the prompt is held
+    // until the broadcast ends so an accidental restart can't tear the
+    // source off the air mid-service.
+    if (ndiOnAir && (state.status === 'available' || state.status === 'downloaded')) {
+        return `ScriptureLive AI — ${line} (held until broadcast ends)`;
+    }
+    return `ScriptureLive AI — ${line}`;
 }
 // ── Tray icon badging ─────────────────────────────────────────────────
 // Pre-rendered badge variants of the base tray icon (one per color),
@@ -674,7 +764,39 @@ function buildTrayMenu(state) {
     // Contextual primary action driven by the current update state. The
     // generic "Check for Updates…" item is replaced with the most useful
     // next step the operator can take right now.
-    if (state.status === 'available') {
+    //
+    // BROADCAST-SAFE GATE: while the NDI sender is on-air, the
+    // download / restart actions are replaced with disabled
+    // informational rows. An accidental click on "Restart to install"
+    // mid-service tears the source off the air in vMix / OBS — so we
+    // hold every operator-actionable update prompt until the broadcast
+    // ends. The colored tray badge + tooltip + this disabled row keep
+    // the operator aware that an update is pending without offering a
+    // foot-gun. As soon as `ndi:stop` flips `ndiOnAir` back to false,
+    // `applyTrayState` is re-run and the normal CTAs come back.
+    if (ndiOnAir && (state.status === 'available' || state.status === 'downloaded' || state.status === 'downloading')) {
+        if (state.status === 'available') {
+            items.push({
+                label: `Update available (v${state.version}) — install after broadcast`,
+                enabled: false,
+            });
+        }
+        else if (state.status === 'downloading') {
+            // Downloads are still allowed in the background; just keep the
+            // disabled progress display so an operator glance shows activity.
+            items.push({
+                label: `Downloading update… ${Math.round(state.percent)}% (will install after broadcast)`,
+                enabled: false,
+            });
+        }
+        else {
+            items.push({
+                label: `Update ready (v${state.version}) — install after broadcast`,
+                enabled: false,
+            });
+        }
+    }
+    else if (state.status === 'available') {
         items.push({
             label: `Download Update (v${state.version})`,
             click: () => {
@@ -696,12 +818,7 @@ function buildTrayMenu(state) {
     else if (state.status === 'downloaded') {
         items.push({
             label: `Restart Now to Install v${state.version}`,
-            click: () => {
-                void (async () => {
-                    const { autoUpdater } = await Promise.resolve().then(() => __importStar(require('electron-updater')));
-                    setImmediate(() => autoUpdater.quitAndInstall(false, true));
-                })();
-            },
+            click: () => { quitAndInstallUpdate(); },
         });
     }
     else {
@@ -775,6 +892,120 @@ async function prepareTrayBadges(baseIconPath, size) {
         // log prefix `[tray-badge-disabled]` is intentional so support can
         // grep launch.log for it without wading through other tray logs.
         console.warn('[tray-badge-disabled] badge pre-render failed (non-fatal, falling back to plain icon):', err);
+    }
+}
+/**
+ * Quit-and-install handler shared by every "Restart Now" surface
+ * (tray menu, dialog, desktop notification). Pulled into one place so
+ * a future change — e.g. holding restarts during a live broadcast —
+ * only has to update one call site. `setImmediate` defers the call
+ * past the current tick so the click handler can return cleanly
+ * before Electron starts tearing the process down.
+ */
+function quitAndInstallUpdate() {
+    void (async () => {
+        try {
+            const { autoUpdater } = await Promise.resolve().then(() => __importStar(require('electron-updater')));
+            setImmediate(() => autoUpdater.quitAndInstall(false, true));
+        }
+        catch (err) {
+            console.error('[updater] quitAndInstall failed:', err);
+        }
+    })();
+}
+// One-shot OS toast when an update finishes downloading. Operators
+// who minimize or hide the main window during a live service won't
+// see the in-app "Restart to install" banner; the tray icon and
+// tooltip already reflect the state, but a proactive notification
+// surfaces the news without forcing them to glance at the
+// notification area.
+//
+// `lastNotifiedDownloadedVersion` gates re-fires: electron-updater
+// can re-emit `update-downloaded` if the operator triggers another
+// check after a download completed, and our own `broadcast()`
+// re-sends state to listeners. We only want to pop the toast on the
+// transition INTO `downloaded` for a given version — never on every
+// redundant rebroadcast, and never on download-progress events
+// (which arrive dozens per second).
+let lastNotifiedDownloadedVersion = null;
+/**
+ * True when the operator is actively looking at the main window —
+ * window exists, is visible (not hidden to tray), is not minimized,
+ * and is the focused window. Used to suppress redundant OS surfaces
+ * (like the update-ready toast) when the in-app UI is already in
+ * front of the operator. Anything that means "they can't see the
+ * app right now" — destroyed, hidden, minimized, backgrounded —
+ * returns false so OS prompts still fire.
+ */
+function isMainWindowVisiblyFocused() {
+    if (!mainWindow || mainWindow.isDestroyed())
+        return false;
+    try {
+        if (!mainWindow.isVisible())
+            return false;
+        if (mainWindow.isMinimized())
+            return false;
+        return mainWindow.isFocused();
+    }
+    catch {
+        return false;
+    }
+}
+function notifyUpdateDownloaded(state) {
+    if (state.status !== 'downloaded')
+        return;
+    // Hold the OS toast while NDI is on the air. The whole point of
+    // this guard is to NOT pop a "Restart Now" surface in the operator's
+    // face mid-service. The state is stashed and replayed by
+    // `applyNdiAirChange()` the moment NDI stops sending.
+    if (ndiOnAir) {
+        pendingDownloadedNotification = state;
+        console.log(`[updater-notify] NDI on-air — holding update-ready toast for v${state.version}`);
+        return;
+    }
+    // Skip the OS toast when the operator is already looking at the
+    // app — the in-app "Restart to install" banner is the sole prompt
+    // they need, and on macOS a Notification Center toast can briefly
+    // cover other UI. We only fire when the main window is hidden,
+    // minimized, or in the background (i.e. not visibly focused).
+    // Deliberately don't set `lastNotifiedDownloadedVersion` here so
+    // that a later state rebroadcast (after the operator hides or
+    // backgrounds the window) still surfaces the toast — preserving
+    // the hide-to-tray behavior the original notification targeted.
+    if (isMainWindowVisiblyFocused()) {
+        console.log(`[updater-notify] main window focused — skipping update-ready toast for v${state.version} (in-app banner is enough)`);
+        return;
+    }
+    if (lastNotifiedDownloadedVersion === state.version)
+        return;
+    lastNotifiedDownloadedVersion = state.version;
+    const title = 'Update ready to install';
+    const body = `ScriptureLive AI ${state.version} has been downloaded. Click Restart Now to install it, or use the tray icon when you're ready.`;
+    try {
+        if (!electron_1.Notification.isSupported()) {
+            console.log('[updater-notify] desktop notifications unsupported — relying on tray badge / in-app banner');
+            return;
+        }
+        const n = new electron_1.Notification({
+            title,
+            body,
+            icon: resolveTrayIconPath(),
+            // macOS-only: action buttons. Windows/Linux ignore this field
+            // and the operator gets the same effect by clicking the body
+            // of the toast (handled below). Using a single button keeps
+            // the surface uncluttered and matches the "Restart now"
+            // wording from the in-app banner / dialog.
+            actions: [{ type: 'button', text: 'Restart Now' }],
+            // Not silent — the operator explicitly opted into this update
+            // by clicking Download, and the whole point is to alert them
+            // that it's ready. The OS still respects Do Not Disturb.
+        });
+        n.on('click', () => { quitAndInstallUpdate(); });
+        n.on('action', () => { quitAndInstallUpdate(); });
+        n.show();
+    }
+    catch (err) {
+        console.warn('[updater-notify] failed to show update-ready notification (non-fatal):', err);
     }
 }
 // Throttle handle for the high-frequency `downloading` updates.
@@ -912,6 +1143,45 @@ function broadcastNdiStatus(status) {
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('ndi:status', status);
     }
+    applyNdiAirChange(status.running === true);
+}
+/**
+ * Track NDI on-air transitions and gate update prompts accordingly.
+ *
+ * `broadcastNdiStatus` is called frequently (every frame batch fires
+ * a status push), so this function is idempotent on the running flag —
+ * we only act on actual transitions:
+ *
+ *   • on-air → off-air: the operator just stopped sending. Replay
+ *     any deferred OS update-ready toast and re-render the tray with
+ *     the normal CTA buttons restored. The renderer's banner / toast
+ *     subscribe to `ndi:status` directly and resume on their own.
+ *   • off-air → on-air: a service is starting. Re-render the tray
+ *     so the disabled "install after broadcast" rows replace the
+ *     dangerous Download / Restart actions. No need to dismiss
+ *     anything that already shipped — the renderer will hide its
+ *     banner / toast on the same status push.
+ *
+ * Call sites: `broadcastNdiStatus`, which is the single funnel for
+ * every NDI lifecycle change in this process.
+ */
+function applyNdiAirChange(running) {
+    if (running === ndiOnAir)
+        return;
+    ndiOnAir = running;
+    // Re-render tray (tooltip, menu, mac title) so the broadcast-safe
+    // gate either engages or releases.
+    applyTrayState((0, updater_1.getUpdateState)());
+    if (!running && pendingDownloadedNotification) {
+        // NDI just went off-air with a queued update toast. Reset the
+        // dedupe so the OS notification actually fires (notifyUpdate-
+        // Downloaded would otherwise short-circuit on second call), then
+        // hand the stashed state back through the same fire path.
+        const replay = pendingDownloadedNotification;
+        pendingDownloadedNotification = null;
+        lastNotifiedDownloadedVersion = null;
+        notifyUpdateDownloaded(replay);
+    }
 }
 /**
  * Read the OS-level auto-launch entry for this app and shape it into
@@ -946,6 +1216,26 @@ function setupIpc() {
         ndiAvailable: ndi.isAvailable(),
         ndiUnavailableReason: ndi.unavailableReason(),
     }));
+    // ── Quit on close (Settings → Startup card) ───────────────────────
+    // Lets the operator opt OUT of the new hide-to-tray behavior.
+    // Default is false (keep tray-friendly behavior). Persisted to
+    // `userData/preferences.json` and applied immediately — no restart
+    // required, the next close consults the in-memory flag.
+    electron_1.ipcMain.handle('app:get-quit-on-close', () => ({ value: quitOnClose }));
+    electron_1.ipcMain.handle('app:set-quit-on-close', (_e, value) => {
+        const next = value === true;
+        try {
+            setQuitOnCloseAndPersist(next);
+            return { ok: true, value: quitOnClose };
+        }
+        catch (err) {
+            return {
+                ok: false,
+                error: err instanceof Error ? err.message : String(err),
+                value: quitOnClose,
+            };
+        }
+    });
     // ── Launch-at-login (Settings → Startup card) ─────────────────────
     electron_1.ipcMain.handle('app:get-launch-at-login', () => readLaunchAtLogin());
     electron_1.ipcMain.handle('app:set-launch-at-login', (_e, openAtLogin) => {
@@ -1272,6 +1562,11 @@ electron_1.app.whenReady().then(async () => {
     if (!gotSingleInstanceLock)
         return;
     setupFileLogging();
+    // Hydrate the on-disk preferences (currently just `quitOnClose`)
+    // before any window can be created or closed. This way the very
+    // first close after launch already honors what the operator chose
+    // last session — no IPC round-trip required.
+    hydrateQuitOnCloseFromDisk();
     // ── Permissions ────────────────────────────────────────────────
     // Auto-grant the renderer the permissions it needs to behave like
     // a real desktop production tool — microphone (live transcription),
@@ -1358,6 +1653,12 @@ electron_1.app.whenReady().then(async () => {
     catch (err) {
         console.error('[updater] init failed (non-fatal):', err);
     }
+    // Pop a one-shot OS toast when an update finishes downloading. Wired
+    // here (not inside setupTray) so the notification still fires on the
+    // rare desktops where tray init failed — the operator's only signal
+    // would otherwise be the in-app banner, which they can't see when
+    // the window is hidden during a live service.
+    (0, updater_1.onUpdateState)(notifyUpdateDownloaded);
     try {
         setupTray();
     }

@@ -17,6 +17,16 @@ const api = {
         get: () => electron_1.ipcRenderer.invoke('app:get-launch-at-login'),
         set: (openAtLogin) => electron_1.ipcRenderer.invoke('app:set-launch-at-login', openAtLogin),
     },
+    /**
+     * Operator preference: when ON, the X button on the main window
+     * runs the normal shutdown path instead of hiding to the tray.
+     * Persisted in `userData/preferences.json` by the main process and
+     * applied to the very next close — no app restart required.
+     */
+    quitOnClose: {
+        get: () => electron_1.ipcRenderer.invoke('app:get-quit-on-close'),
+        set: (value) => electron_1.ipcRenderer.invoke('app:set-quit-on-close', value),
+    },
     updater: {
         getState: () => electron_1.ipcRenderer.invoke('updater:get-state'),
         check: () => electron_1.ipcRenderer.invoke('updater:check'),
