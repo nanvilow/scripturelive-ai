@@ -28,6 +28,17 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import {
   Upload,
   X,
   Image as ImageIcon,
@@ -1757,7 +1768,7 @@ function HelpAndUpdatesCard() {
             className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2"
           >
             <Radio className="h-4 w-4 mt-0.5 text-amber-500 shrink-0" />
-            <div className="text-xs leading-snug">
+            <div className="flex-1 text-xs leading-snug">
               <span className="font-medium text-amber-600 dark:text-amber-400">
                 On-air — install after broadcast.
               </span>{' '}
@@ -1766,6 +1777,59 @@ function HelpAndUpdatesCard() {
                 doesn&apos;t tear the source off the air. Stop the sender and the
                 button will re-enable on its own.
               </span>
+              {/*
+                Manual override for the rare cases where the operator
+                genuinely needs to install RIGHT NOW (security advisory,
+                blocking bug forcing a restart anyway) and is willing to
+                take the broadcast hit. Only offered when an installer is
+                actually staged on disk (`showInstall` ⇔ status ===
+                'downloaded') — for available / downloading the operator
+                has to wait for the download to finish first. The
+                AlertDialog confirmation is the guard that stops an
+                accidental click from tearing the source off the air; on
+                explicit confirm we hand off to the same install IPC that
+                the off-air "Restart & Install" button uses.
+              */}
+              {showInstall && state.status === 'downloaded' && (
+                <div className="mt-1.5">
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-amber-700 underline underline-offset-2 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200"
+                      >
+                        Install anyway…
+                      </button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>
+                          Install v{state.version} now and drop the NDI feed?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Restarting will drop the NDI feed for about 10
+                          seconds while ScriptureLive AI installs the update
+                          and relaunches. vMix / OBS / Wirecast will lose the
+                          source for the duration of the restart.
+                          <br />
+                          <br />
+                          Use this only when you genuinely need to install
+                          RIGHT NOW (security advisory, blocking bug). For
+                          normal updates, wait until the service ends — the
+                          update will install on the next clean quit either
+                          way.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={installUpdateNow}>
+                          Install now and drop NDI
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+              )}
             </div>
           </div>
         )}

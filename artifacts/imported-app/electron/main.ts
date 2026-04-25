@@ -821,6 +821,18 @@ function buildTrayMenu(state: UpdateState): Menu {
         label: `Update ready (v${state.version}) — install after broadcast`,
         enabled: false,
       })
+      // Operator override: install RIGHT NOW even while on-air. Guarded
+      // by a native confirmation dialog (see `confirmInstallDuring-
+      // Broadcast`) so an accidental click in the tray menu can't tear
+      // the source off the air mid-service. Only offered when an
+      // installer is actually staged on disk (status === 'downloaded')
+      // — for 'available' / 'downloading' the operator has to wait for
+      // the download to finish first, which gives them an explicit
+      // off-ramp before the override even appears.
+      items.push({
+        label: 'Install anyway… (drops NDI feed for ~10s)',
+        click: () => { void confirmInstallDuringBroadcast(state.version) },
+      })
     }
   } else if (state.status === 'available') {
     items.push({
@@ -941,6 +953,50 @@ function quitAndInstallUpdate() {
       console.error('[updater] quitAndInstall failed:', err)
     }
   })()
+}
+
+/**
+ * Operator-initiated mid-broadcast install confirmation.
+ *
+ * The on-air gate (held tray menu rows, disabled Settings button)
+ * deliberately removes the "Restart now" affordance while NDI is
+ * sending — an accidental click mid-service tears the source off
+ * the air. The override exists for the rare cases where the
+ * operator genuinely needs to install RIGHT NOW (security advisory,
+ * blocking bug forcing a restart anyway) and is willing to take
+ * the broadcast hit.
+ *
+ * Pops a native warning dialog spelling out the consequence ("drops
+ * the NDI feed for ~10s") and only on explicit confirm hands off to
+ * the same `quitAndInstallUpdate()` that the off-air "Restart now"
+ * paths use. Cancelling leaves the gate in place — the held tray
+ * rows / Settings hint stay disabled, NDI keeps sending, and the
+ * normal flow resumes when the broadcast ends.
+ *
+ * The default button is Cancel (defaultId: 1) so an operator who
+ * mashes Enter through a stray dialog mid-service doesn't restart
+ * by accident.
+ */
+async function confirmInstallDuringBroadcast(version: string) {
+  const choice = await showDialog({
+    type: 'warning',
+    title: 'Install update during broadcast?',
+    message: `Install v${version} now and drop the NDI feed?`,
+    detail:
+      'Restarting will drop the NDI feed for about 10 seconds while ' +
+      'ScriptureLive AI installs the update and relaunches. vMix / OBS ' +
+      '/ Wirecast will lose the source for the duration of the restart. ' +
+      "\n\nUse this only when you genuinely need to install RIGHT NOW " +
+      '(security advisory, blocking bug). For normal updates, wait ' +
+      'until the service ends — the update will install on the next ' +
+      'clean quit either way.',
+    buttons: ['Install now and drop NDI', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+  })
+  if (choice.response === 0) {
+    quitAndInstallUpdate()
+  }
 }
 
 // One-shot OS toast when an update finishes downloading. Operators
