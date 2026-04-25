@@ -54,14 +54,21 @@ import {
   ExternalLink,
   RefreshCcw,
   Power,
+  Radio,
 } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { NdiOutputPanel } from './ndi-output-panel'
 import { OutputPreview } from '@/components/settings/output-preview'
 import { FONT_REGISTRY } from '@/lib/fonts'
 import { quickStartUrl, troubleshootingUrl, newIssueUrl } from '@/lib/github-repo'
+import { useNdi } from '@/lib/use-electron'
 
 export function SettingsView() {
   const { settings, updateSettings, setSelectedTranslation } = useAppStore()
@@ -1453,6 +1460,14 @@ function HelpAndUpdatesCard() {
   const [toastBusy, setToastBusy] = useState(false)
   const isElectron =
     typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)
+  // While NDI is on the air we hold update prompts (download / install)
+  // because either button tears the running source off the air mid-
+  // service. The check itself + background download still run, so the
+  // operator just sees the prompt re-appear the moment they stop the
+  // sender. Mirrors the same gating used by the floating UpdateBanner
+  // — keeping both surfaces consistent.
+  const { status: ndiStatus } = useNdi()
+  const onAir = ndiStatus?.running === true
 
   // Pull the real installed version from the Electron main process and
   // seed the updater state so the card shows accurate info on first
@@ -1662,18 +1677,56 @@ function HelpAndUpdatesCard() {
             </p>
           </div>
           {showInstall ? (
-            <Button onClick={installUpdateNow} className="gap-2 shrink-0">
-              <RefreshCcw className="h-4 w-4" />
-              Restart &amp; Install
-            </Button>
+            // Install tears down the running NDI sender, so we hold
+            // the button while on-air and surface the reason via a
+            // tooltip pointing at the badge below. The shared
+            // `Tooltip` primitive already wraps in a TooltipProvider
+            // internally — no need for a local one.
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className={cn(onAir && 'cursor-not-allowed')}>
+                  <Button
+                    onClick={installUpdateNow}
+                    disabled={onAir}
+                    className="gap-2 shrink-0"
+                    aria-describedby={onAir ? 'updates-onair-badge' : undefined}
+                  >
+                    <RefreshCcw className="h-4 w-4" />
+                    Restart &amp; Install
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              {onAir && (
+                <TooltipContent>
+                  On-air — stop the NDI sender, then click Restart &amp; Install.
+                </TooltipContent>
+              )}
+            </Tooltip>
           ) : showDownload ? (
             // One-click download — same behaviour as the notifier
             // popup's Download button. Stays entirely inside the app
-            // (no browser hand-off).
-            <Button onClick={downloadUpdateNow} className="gap-2 shrink-0">
-              <RefreshCcw className="h-4 w-4" />
-              Download Update
-            </Button>
+            // (no browser hand-off). Held while on-air so that a
+            // surprise installer prompt doesn't pop mid-service.
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className={cn(onAir && 'cursor-not-allowed')}>
+                  <Button
+                    onClick={downloadUpdateNow}
+                    disabled={onAir}
+                    className="gap-2 shrink-0"
+                    aria-describedby={onAir ? 'updates-onair-badge' : undefined}
+                  >
+                    <RefreshCcw className="h-4 w-4" />
+                    Download Update
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              {onAir && (
+                <TooltipContent>
+                  On-air — stop the NDI sender, then click Download Update.
+                </TooltipContent>
+              )}
+            </Tooltip>
           ) : isDownloading ? (
             <Button disabled className="gap-2 shrink-0">
               <RefreshCcw className="h-4 w-4 animate-spin" />
@@ -1686,6 +1739,36 @@ function HelpAndUpdatesCard() {
             </Button>
           )}
         </div>
+
+        {/*
+          On-air status badge — explains why the Download / Install
+          buttons above are grayed out when an update is pending and
+          NDI is currently broadcasting. Disappears the moment NDI
+          stops (the `useNdi` subscription pushes a fresh status and
+          this card re-renders). Only shown when there is something
+          to install — no point cluttering the card during idle /
+          checking / not-available states.
+        */}
+        {onAir && (showDownload || showInstall || isDownloading) && (
+          <div
+            id="updates-onair-badge"
+            role="status"
+            aria-live="polite"
+            className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2"
+          >
+            <Radio className="h-4 w-4 mt-0.5 text-amber-500 shrink-0" />
+            <div className="text-xs leading-snug">
+              <span className="font-medium text-amber-600 dark:text-amber-400">
+                On-air — install after broadcast.
+              </span>{' '}
+              <span className="text-muted-foreground">
+                Update prompts are held while NDI is broadcasting so a restart
+                doesn&apos;t tear the source off the air. Stop the sender and the
+                button will re-enable on its own.
+              </span>
+            </div>
+          </div>
+        )}
 
         <Separator />
 
