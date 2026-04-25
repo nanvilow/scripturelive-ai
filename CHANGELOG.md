@@ -17,6 +17,37 @@ Format rules (so the workflow's extractor keeps working):
 - Write for the operator, not the engineer. "Verses now appear within
   ~250ms" beats "reduced CHUNK_MS from 4500 to 2500".
 
+## v0.5.32 — 2026-04-25
+
+### Fixed
+
+- **Output and NDI surfaces no longer go black between slides.** The previous
+  fade transition briefly faded the screen to fully black before the new
+  slide painted, which on a stalled timer (background tab, slow machine)
+  could leave the projector or NDI receiver blank for a noticeable beat.
+  The renderer now paints the new slide instantly and softly cross-fades
+  it in — opacity never reaches zero, so the surface is never blank.
+- **NDI receivers always cut hard.** The soft-fade animation is skipped on
+  the NDI surface so vMix / OBS see a clean frame-by-frame switch instead
+  of a 350 ms opacity ramp on every slide. The receiver's own program
+  transitions are unaffected and remain in the operator's control.
+- **Live Transcription / Detected Verses no longer fire on conversational
+  speech.** The verse detector now requires either an explicit
+  "chapter:verse" colon ("John 3:16"), an explicit "chapter X verse Y"
+  phrasing, or a strong scripture context lead-in ("turn to", "the Bible
+  says", "according to") before accepting a reference. The old behaviour
+  matched bare "John 3" anywhere in the transcript, which produced false
+  positives like "John had 3 apples" → "John 3" in the Detected Verses
+  panel. The minimum confidence floor for committing a detection was
+  also raised so word-soup matches drop silently.
+- **Manual Bible Lookup still accepts whole-chapter inputs.** Typing
+  "Psalms 23", "1 Corinthians 13", or "Gen 1" into the lookup search
+  box continues to pull the entire chapter, even though the speech
+  detector now requires a colon or context word. The lookup parser
+  uses a tolerant whole-string match that can never trigger on a
+  sentence excerpt — your typed reference, and only your typed
+  reference, is what gets looked up.
+
 ## v0.5.29 — 2026-04-25
 
 ### Added

@@ -33,9 +33,15 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    stage element fills the whole viewport with the theme background and
    centers the canvas. */
 #stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000}
-#output{position:relative;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;transition:opacity var(--slide-fade-ms,350ms) ease;overflow:hidden;--slide-fade-ms:350ms}
-#output.hidden{opacity:0}
-#output.fading{opacity:0}
+#output{position:relative;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;overflow:hidden;--slide-fade-ms:350ms;opacity:1}
+#output.hidden{opacity:0;transition:opacity 200ms ease}
+/* v0.5.32 — soft cross-fade. The new content is painted FIRST, then
+   this animation eases its opacity from 0.25 to 1 over the operator's
+   chosen duration. Critically, opacity NEVER reaches 0, so the surface
+   never goes black between slides — the most common cause of the
+   "blank black screen" report on the projector and the NDI receiver. */
+#output.soft-in{animation:softIn var(--slide-fade-ms,350ms) ease-out}
+@keyframes softIn{from{opacity:.25}to{opacity:1}}
 #output.ratio-16x9{aspect-ratio:16/9;width:min(100vw,calc(100vh*16/9));height:min(100vh,calc(100vw*9/16))}
 #output.ratio-4x3{aspect-ratio:4/3;width:min(100vw,calc(100vh*4/3));height:min(100vh,calc(100vw*3/4))}
 #output.ratio-21x9{aspect-ratio:21/9;width:min(100vw,calc(100vh*21/9));height:min(100vh,calc(100vw*9/21))}
@@ -288,61 +294,64 @@ function applyAudio(s){
   try{v.muted=shouldMute;}catch(e){}
 }
 
-// applyRender — wraps render() so slide changes can crossfade.
+// applyRender — paint-first soft cross-fade (v0.5.32 rewrite).
 //
-// Reads slideTransitionStyle ('cut' | 'fade') and slideTransitionDuration
-// from the broadcast settings, sets the --slide-fade-ms CSS variable
-// (so the existing #output opacity transition uses the operator's
-// chosen speed), and on a real content change does:
-//   fade out → swap DOM → fade in
-// For Cut style (or duration<=0, or first paint) we just call render()
-// directly so the swap is instant.
+// HISTORY: v0.5.30 used fade-out → swap → fade-in via setTimeout + 2
+// rAFs. That approach has a fundamental flaw: between the fade-out
+// finishing and the new content painting, the surface is at opacity:0
+// — i.e. literally BLACK on the projector and a transparent (black-
+// on-receiver) frame on the NDI surface. If the timeout was throttled
+// (background tab) or a rAF was skipped (system stall), the surface
+// stayed black until a watchdog fired 1.6 s later. Operators reported
+// the screen "going black" and "staying blank" — those reports were
+// the fade-out blackout window.
 //
-// We deliberately pass through to render() for the very first paint
-// (lastRenderKey === '') so the initial WassMedia splash / first slide
-// appears immediately instead of after a fade-in delay.
-let pendingFade=null;
+// NEW APPROACH: paint the new content IMMEDIATELY (cut), then layer
+// a CSS animation on top that eases opacity from 0.25 → 1 over the
+// operator's chosen duration. The opacity NEVER reaches 0, so there
+// is no blackout window — even if the animation is throttled or
+// dropped entirely, the worst case is "snap cut" instead of "black
+// screen". This is the bullet-proof path.
+//
+// Reads slideTransitionStyle ('cut' | 'fade') and
+// slideTransitionDuration from the broadcast settings. NDI surface
+// always cuts hard (no animation) regardless of operator choice —
+// vMix/OBS receivers handle their own program transitions and
+// animations on the source just add bandwidth.
 function applyRender(s){
   // Cache the operator's "show reconnect overlay" preference so the
   // SSE error handler below can honour it without needing a fresh
   // payload at the moment of disconnect.
   try{ window._showReconnect=!!(s&&s.settings&&s.settings.showReconnectingOverlay); }catch(e){}
   var style=(s&&s.settings&&s.settings.slideTransitionStyle)||'fade';
-  var dur=(s&&s.settings&&typeof s.settings.slideTransitionDuration==='number')?s.settings.slideTransitionDuration:500;
-  if(dur<0)dur=0;if(dur>4000)dur=4000;
+  var dur=(s&&s.settings&&typeof s.settings.slideTransitionDuration==='number')?s.settings.slideTransitionDuration:350;
+  if(dur<0)dur=0;if(dur>1000)dur=1000; // cap at 1 s — anything longer felt sluggish to operators
   var el=$('output');
-  if(el)el.style.setProperty('--slide-fade-ms',(style==='cut'?0:dur)+'ms');
-  // Decide whether this update is a true SLIDE change (worth fading)
-  // or a settings-only adjustment (must NOT fade, otherwise every
-  // operator slider drag flashes the NDI receiver). The fingerprint
+  if(el)el.style.setProperty('--slide-fade-ms',dur+'ms');
+  // Decide whether this update is a true SLIDE change (worth animating)
+  // or a settings-only adjustment (must NOT animate). The fingerprint
   // intentionally excludes settings, audio, and transport flags.
   var nextFp=slideFingerprint(s);
   var isSlideChange=(nextFp!==lastSlideFingerprint);
   lastSlideFingerprint=nextFp;
-  // Cut, no duration, initial paint, or settings-only change →
-  // swap straight away with no fade-out / fade-in.
-  if(style==='cut'||dur<=0||!lastRenderKey||!isSlideChange){
-    if(pendingFade){clearTimeout(pendingFade);pendingFade=null;el&&el.classList.remove('fading');}
-    render(s);
-    applyAudio(s);
-    return;
+  // ALWAYS paint synchronously. No more setTimeout-gated swap.
+  render(s);
+  applyAudio(s);
+  // Soft fade-in animation only when:
+  //   - operator selected fade
+  //   - duration > 0
+  //   - this is a real slide change (not a settings tweak)
+  //   - this is NOT the NDI surface (NDI always cuts)
+  //   - this is NOT the very first paint (lastRenderKey was set inside render())
+  if(style==='fade' && dur>0 && isSlideChange && !IS_NDI){
+    var el2=$('output');
+    if(el2){
+      el2.classList.remove('soft-in');
+      // Force a reflow so the next add restarts the animation cleanly.
+      void el2.offsetWidth;
+      el2.classList.add('soft-in');
+    }
   }
-  // Already mid-fade — replace the queued swap with the freshest payload.
-  if(pendingFade){clearTimeout(pendingFade);}
-  if(el)el.classList.add('fading');
-  pendingFade=setTimeout(function(){
-    pendingFade=null;
-    render(s);
-    applyAudio(s);
-    // Two rAFs so the new DOM has painted before we drop .fading,
-    // otherwise the browser skips the fade-in transition.
-    requestAnimationFrame(function(){
-      requestAnimationFrame(function(){
-        var el2=$('output');
-        if(el2)el2.classList.remove('fading');
-      });
-    });
-  },dur);
 }
 
 function render(s){
@@ -427,7 +436,15 @@ function render(s){
   // displayMode and slide are otherwise unchanged.
   try{
     var key=JSON.stringify({sl:s.slide,dm:s.displayMode,st:settingsRenderKey(s.settings),ndi:IS_NDI});
-    if(key===lastRenderKey)return;
+    // v0.5.32 — bypass the cache-key bailout when the DOM is visually
+    // empty. If the previous render left #output with no innerHTML
+    // (rare race condition or watchdog-cleared state), the cache
+    // would otherwise keep returning early and the surface would
+    // stay blank until something genuinely changed. Forcing a rebuild
+    // on empty DOM means the very next payload always re-paints.
+    var elCk=$('output');
+    var domEmpty=elCk && (!elCk.innerHTML || elCk.innerHTML.trim().length===0);
+    if(key===lastRenderKey && !domEmpty)return;
     lastRenderKey=key;
   }catch(e){}
   var slide=s.slide;
@@ -687,33 +704,21 @@ function pollOnce(){
 // autoscale deployments where SSE can land on a different replica.
 setInterval(pollOnce,1500);
 
-// v0.5.30 — Watchdog #1: recover from a stuck fade-out.
-// applyRender() schedules a setTimeout for `dur` ms (max 4 s) and
-// removes the .fading class once it fires. Backgrounded tabs, system
-// stalls, or any rare lost-timer case would leave .fading on the
-// surface — opacity:0 — until the next REAL slide change. We probe
-// the surface every second; if .fading has been stuck for > 1.6 s
-// (longer than the maximum sane fade) we strip it and force a fresh
-// re-render of the most recent payload via pollOnce().
-let fadingSince=0;
+// v0.5.32 — Watchdog #1: recover from a stuck soft-in animation.
+// The new soft-fade-in approach (paint-first, animate opacity 0.25→1)
+// can't go to opacity:0 like the old fade-out did, so a stuck animation
+// is no longer a "blank screen" emergency — it just means the next
+// slide change won't re-trigger the keyframe. We still scrub the class
+// every 2 s so a fresh slide change always gets a clean re-animation,
+// and the operator never sees a stale .soft-in on a settled slide.
 setInterval(function(){
   var el=$('output');
   if(!el)return;
-  if(el.classList.contains('fading')){
-    if(!fadingSince) fadingSince=Date.now();
-    if(Date.now()-fadingSince>1600){
-      // Stuck — recover.
-      el.classList.remove('fading');
-      if(pendingFade){clearTimeout(pendingFade);pendingFade=null;}
-      lastRenderKey='';
-      lastSlideFingerprint='';
-      fadingSince=0;
-      pollOnce();
-    }
-  }else{
-    fadingSince=0;
+  if(el.classList.contains('soft-in')){
+    // Strip after 2 s — the animation duration caps at 1 s.
+    el.classList.remove('soft-in');
   }
-},1000);
+},2000);
 
 // v0.5.30 — Watchdog #2: empty-DOM recovery.
 // Once we've seen at least one payload (lastPolled > 0), the surface
@@ -754,8 +759,7 @@ function connect(){
   // genuinely new arrived. We also force-clear any in-flight fade.
   lastRenderKey='';
   lastSlideFingerprint='';
-  if(pendingFade){clearTimeout(pendingFade);pendingFade=null;}
-  var elc=$('output');if(elc)elc.classList.remove('fading');
+  var elc=$('output');if(elc)elc.classList.remove('soft-in');
   // Kick off a poll right away so the screen lights up even before SSE
   // negotiates (some proxies hold the first message for a beat).
   pollOnce();
