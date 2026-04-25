@@ -489,7 +489,12 @@ function render(s){
   var rfFs='clamp('+rfMin+'rem,min('+(rfBand*0.5)+'cqw,'+rfBand+'cqh),'+rfCap+'rem)';
   var rfTa=st.referenceTextAlign||st.textAlign||'center';
   var refStyle='font-family:'+rfFam+';font-size:'+rfFs+';text-align:'+rfTa+';'+rfShCss;
-  var ref=st.showReferenceOnOutput!==false&&slide.title?'<div class="slide-reference" style="'+refStyle+'">'+slide.title+(slide.subtitle?' \\u2014 '+slide.subtitle:'')+'</div>':'';
+  // Same Strong's-strip + HTML-escape used for the body — keeps the
+  // reference line ("Galatians 2:5 — KJV") safe even if a translation
+  // ever leaks markup into a book name.
+  function _stripRefStrong(t){return String(t==null?'':t).replace(/<S>[^<]*<\/S>/gi,'').replace(/<[^>]+>/g,'')}
+  function _escRef(t){return _stripRefStrong(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+  var ref=st.showReferenceOnOutput!==false&&slide.title?'<div class="slide-reference" style="'+refStyle+'">'+_escRef(slide.title)+(slide.subtitle?' \\u2014 '+_escRef(slide.subtitle):'')+'</div>':'';
   var totalChars=0;
   if(slide.content&&slide.content.length){for(var i=0;i<slide.content.length;i++)totalChars+=(slide.content[i]||'').length;}
   // Combine the operator's manual textScale with the font-size bucket
@@ -584,18 +589,28 @@ function render(s){
     }
     return;
   }
+  // ── HTML-escape user content before it lands in innerHTML. ──────────
+  // Bug — the operator's React renderer inserted text as a child node
+  // (auto-escaped), but this output path concatenated raw strings into
+  // innerHTML. Bible source data sometimes still carries Strong's
+  // markup like <S>5293</S> and the browser then dropped the letter
+  // adjacent to the tag — e.g. "subjection" rendered as "ubjection",
+  // "gospel" as "go pel". Strip Strong's first, then escape the rest
+  // so any stray <, >, & in verse text never re-enters the DOM as HTML.
+  function stripStrong(t){return String(t==null?'':t).replace(/<S>[^<]*<\/S>/gi,'').replace(/<[^>]+>/g,'')}
+  function esc(t){return stripStrong(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
   if(slide.type==='title'){
-    txt='<div class="slide-title" style="font-size:'+fs.title+';'+sh+'">'+(slide.title||'')+'</div>'+(slide.subtitle?'<div class="slide-subtitle" style="font-size:'+fs.sub+';'+sh+'">'+slide.subtitle+'</div>':'');
+    txt='<div class="slide-title" style="font-size:'+fs.title+';'+sh+'">'+esc(slide.title)+'</div>'+(slide.subtitle?'<div class="slide-subtitle" style="font-size:'+fs.sub+';'+sh+'">'+esc(slide.subtitle)+'</div>':'');
   }else if(slide.content&&slide.content.length){
     // Flow verse / lyric lines into a single paragraph so all words
     // sit on the same baseline. The verse splitter chunked the text
     // for slide-grouping; the renderer should treat each slide's lines
     // as one paragraph that wraps naturally — otherwise short opening
     // words like "Who" hang on their own line, misaligned vs the rest.
-    var joined=slide.content.join(' ').replace(/\s+/g,' ').trim();
+    var joined=slide.content.map(esc).join(' ').replace(/\s+/g,' ').trim();
     txt='<p class="slide-paragraph" style="font-size:'+fs.text+';'+sh+'">'+joined+'</p>';
   }else{
-    txt='<div class="slide-text" style="opacity:.3;font-size:'+fs.text+'">'+(slide.title||'')+'</div>';
+    txt='<div class="slide-text" style="opacity:.3;font-size:'+fs.text+'">'+esc(slide.title)+'</div>';
   }
   if(isLT){
     // FORCE_POS (?position=top|bottom) wins over the operator's

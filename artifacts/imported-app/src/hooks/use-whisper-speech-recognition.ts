@@ -19,10 +19,21 @@ import { cleanTranscriptText } from '@/lib/transcript-cleaner'
  * Bible vocabulary by the proxy's prompt.
  */
 
-const CHUNK_MS = 4500
-// Compressed Opus chunks for ~5 s of speech average ~6 KB; treat anything
-// smaller as silence so we don't bill OpenAI for empty audio.
-const MIN_CHUNK_BYTES = 6 * 1024
+// Operator-perceived latency = CHUNK_MS + RTT to the proxy. We used to
+// roll a fresh chunk every 4.5 s which felt sluggish — preachers were
+// already two sentences ahead by the time the verse appeared. 2.5 s
+// keeps OpenAI happy (it does its own VAD across the chunk) while
+// nearly halving the wait between speech and detection.
+const CHUNK_MS = 2500
+// Roll the FIRST chunk early so a click on "Detect Verses Now"
+// produces a transcription request inside ~1.5 s instead of the full
+// chunk window. After the first roll we settle into CHUNK_MS cadence.
+const FIRST_CHUNK_MS = 1500
+// Compressed Opus chunks for ~2-3 s of speech average ~3 KB; treat
+// anything smaller as silence so we don't bill OpenAI for empty audio.
+// Reduced from 6 KB to match the new shorter chunk size — 6 KB at
+// 2.5 s would suppress real but quiet speech.
+const MIN_CHUNK_BYTES = 3 * 1024
 
 interface UseWhisperSpeechRecognitionReturn {
   isListening: boolean
@@ -210,7 +221,11 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
         recorder.start()
         setIsListening(true)
 
-        chunkTimerRef.current = setInterval(() => {
+        // Shared chunk-rotate routine. Pulled out of the setInterval
+        // closure so the very first roll (FIRST_CHUNK_MS) and the
+        // cadence rolls (CHUNK_MS) all share one path and one error
+        // handler.
+        const rotateChunk = () => {
           const r = recorderRef.current
           if (!r || stopRequestedRef.current) return
           if (r.state === 'recording') {
@@ -232,7 +247,21 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
             recorderRef.current = fresh
             try { fresh.start() } catch { /* ignore */ }
           }
-        }, CHUNK_MS)
+        }
+
+        // First chunk fires fast (FIRST_CHUNK_MS) so the operator
+        // sees a transcription within ~1.5 s of clicking Detect
+        // Verses Now. After that we settle into CHUNK_MS cadence.
+        // Guard the interval setup: rotateChunk() may call
+        // stopListening() on MediaRecorder restart failure — if it
+        // did, do NOT spin up a useless repeating timer.
+        const firstRoll = setTimeout(() => {
+          rotateChunk()
+          if (stopRequestedRef.current || !recorderRef.current) return
+          chunkTimerRef.current = setInterval(rotateChunk, CHUNK_MS)
+        }, FIRST_CHUNK_MS)
+        // Track the first-roll timer so stopListening can clear it.
+        chunkTimerRef.current = firstRoll as unknown as ReturnType<typeof setInterval>
       })
       .catch((e) => {
         const msg = e instanceof Error ? e.message : String(e)

@@ -12,3 +12,9 @@ id = "Sm3PFShEDt27OU7pwOWP8"
 uri = "file://exports/ScriptureLive-AI-v0.5.27-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.27 — final (cloud Whisper + tray + shortcut)"
+
+[[outputs]]
+id = "f989NcA8BwlmFPqQEGsNo"
+uri = "file://exports/ScriptureLive-AI-v0.5.28-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.28 — source bundle"
