@@ -17,6 +17,46 @@ Format rules (so the workflow's extractor keeps working):
 - Write for the operator, not the engineer. "Verses now appear within
   ~250ms" beats "reduced CHUNK_MS from 4500 to 2500".
 
+## v0.5.29 — 2026-04-25
+
+### Added
+- **Update-available popup.** When a new release is detected, a clear
+  modal pops up in the middle of the app announcing the new version
+  with a preview of the release notes and *Download now* / *Later*
+  buttons. Complements the corner toast (which is suppressed
+  mid-broadcast and at app launch by the on-air gate) so you actually
+  see the update notice when you open the app.
+- **Installer copied to your Desktop automatically.** After an update
+  finishes downloading, a copy of `ScriptureLive AI Setup <version>.exe`
+  lands on your Desktop so you have a backup you can keep, carry to
+  another PC, or re-run later.
+- **On-air badge on Settings → Updates.** While NDI is broadcasting,
+  the Updates card shows an *On Air* badge so it's obvious why install
+  actions are held.
+- **Operator override: install mid-broadcast.** A one-click *Install
+  Anyway* path for the rare case you genuinely need to patch during a
+  live service.
+- **Mute the update toast.** A new Settings toggle lets you silence
+  the corner update toast — useful if you'd rather see only the new
+  modal popup or check Settings yourself.
+
+### Fixed
+- **Cleaner release-notes preview in the update toast.** Long GitHub
+  URLs are no longer dumped into the toast preview — link text is
+  shown, the bare URL is dropped, so the preview is actually readable.
+- **Auto-update filename mismatch.** The installer name embedded in
+  `latest.yml` now exactly matches the asset on the Releases page, so
+  the in-app updater finds and downloads the new build instead of
+  silently 404-ing.
+
+### Notes
+- The installer is still unsigned. Windows SmartScreen will show
+  *Windows protected your PC* — click *More info* → *Run anyway*.
+- Internal: the release pipeline now skips signature verification
+  automatically when no code-signing certificate is configured (so
+  unsigned CI runs no longer fail), and end-to-end coverage was added
+  for the hide-to-tray vs quit-on-close toggle.
+
 ## v0.5.28 — 2026-04-25
 
 ### Fixed
