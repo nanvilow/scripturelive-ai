@@ -199,7 +199,7 @@ function IndeterminateBar() {
   )
 }
 
-function VerifyBadge({ state }: { state: VerifyState }) {
+function VerifyBadge({ state, onCancel }: { state: VerifyState; onCancel?: () => void }) {
   if (state.kind === 'idle') return null
   if (state.kind === 'downloading') {
     const hasTotal = state.total !== null && state.total > 0
@@ -209,8 +209,18 @@ function VerifyBadge({ state }: { state: VerifyState }) {
     return (
       <div className="flex flex-col gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
         <div className="flex items-center gap-2">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          <span>Downloading… {formatProgress(state.received, state.total)}</span>
+          <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+          <span className="flex-1 min-w-0 truncate">Downloading… {formatProgress(state.received, state.total)}</span>
+          {onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              aria-label="Cancel download"
+              className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-colors"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
         </div>
         {pct === null ? (
           <IndeterminateBar />
@@ -228,8 +238,18 @@ function VerifyBadge({ state }: { state: VerifyState }) {
     return (
       <div className="flex flex-col gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
         <div className="flex items-center gap-2">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          <span>Verifying SHA-256…</span>
+          <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+          <span className="flex-1 min-w-0 truncate">Verifying SHA-256…</span>
+          {onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              aria-label="Cancel verification"
+              className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-colors"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
         </div>
         <IndeterminateBar />
       </div>
@@ -385,6 +405,14 @@ export default function DownloadPage() {
   // Bumped each time a new file is chosen so any in-flight stream-read loop
   // can detect that it should abandon work and not stomp on the new state.
   const verifyTokenRef = useRef(0)
+  // One AbortController per in-flight platform download so the user can
+  // cancel a specific card without affecting others.
+  const downloadControllersRef = useRef<Map<PlatformKey, AbortController>>(new Map())
+  // Per-key token bumped when a download is cancelled so any work that's
+  // already past the abortable fetch (e.g. crypto.subtle.digest on the
+  // buffered chunks) knows to discard its result instead of overwriting
+  // the freshly-reset idle state.
+  const downloadTokensRef = useRef<Map<PlatformKey, number>>(new Map())
 
   useEffect(() => {
     setDetected(detectPlatform())
@@ -520,13 +548,41 @@ export default function DownloadPage() {
     [onLocalFilePicked],
   )
 
+  const cancelVerifiedDownload = useCallback(
+    (key: PlatformKey) => {
+      const controller = downloadControllersRef.current.get(key)
+      if (controller) {
+        controller.abort()
+        downloadControllersRef.current.delete(key)
+      }
+      // Bump this card's token so any work past the abortable fetch
+      // (notably crypto.subtle.digest, which has no signal of its own)
+      // knows to discard its result rather than land 'verified' / 'mismatch'
+      // on top of our just-cleared state.
+      const cur = downloadTokensRef.current.get(key) ?? 0
+      downloadTokensRef.current.set(key, cur + 1)
+      setVerify(key, { kind: 'idle' })
+    },
+    [setVerify],
+  )
+
   const startVerifiedDownload = useCallback(
     async (key: PlatformKey, file: ManifestFile) => {
       if (!file.sha256) return
       const url = `/api/download/${key}`
+      // Cancel any prior in-flight download on this card before starting a new one.
+      const prior = downloadControllersRef.current.get(key)
+      if (prior) {
+        try { prior.abort() } catch {}
+      }
+      const controller = new AbortController()
+      downloadControllersRef.current.set(key, controller)
+      const token = (downloadTokensRef.current.get(key) ?? 0) + 1
+      downloadTokensRef.current.set(key, token)
+      const isCurrent = () => downloadTokensRef.current.get(key) === token
       setVerify(key, { kind: 'downloading', received: 0, total: file.size ?? null })
       try {
-        const res = await fetch(url, { cache: 'no-store' })
+        const res = await fetch(url, { cache: 'no-store', signal: controller.signal })
         if (!res.ok || !res.body) {
           throw new Error(`HTTP ${res.status}`)
         }
@@ -578,6 +634,9 @@ export default function DownloadPage() {
         setVerify(key, { kind: 'hashing' })
         const buf = await blob.arrayBuffer()
         const digest = await crypto.subtle.digest('SHA-256', buf)
+        // crypto.subtle.digest can't be aborted mid-flight, so we only let
+        // its result land if the user hasn't cancelled in the meantime.
+        if (!isCurrent()) return
         const actual = bufferToHex(digest)
         if (actual.toLowerCase() === file.sha256.toLowerCase()) {
           setVerify(key, { kind: 'verified' })
@@ -585,8 +644,24 @@ export default function DownloadPage() {
           setVerify(key, { kind: 'mismatch', actual })
         }
       } catch (err) {
+        // User-initiated cancel (AbortController.abort) shows up as either
+        // a DOMException with name 'AbortError' or controller.signal.aborted.
+        // Either way, swallow it — the cancel handler already cleared state.
+        if (
+          controller.signal.aborted ||
+          (err instanceof DOMException && err.name === 'AbortError') ||
+          (err instanceof Error && err.name === 'AbortError')
+        ) {
+          return
+        }
         const message = err instanceof Error ? err.message : 'Unknown error'
         setVerify(key, { kind: 'error', message })
+      } finally {
+        // Only clear the controller if it's still ours — a fresh start
+        // would have replaced the entry already.
+        if (downloadControllersRef.current.get(key) === controller) {
+          downloadControllersRef.current.delete(key)
+        }
       }
     },
     [setVerify],
@@ -738,7 +813,10 @@ export default function DownloadPage() {
                       </>
                     )
                   })()}
-                  <VerifyBadge state={verifyStates[key] ?? { kind: 'idle' }} />
+                  <VerifyBadge
+                    state={verifyStates[key] ?? { kind: 'idle' }}
+                    onCancel={() => cancelVerifiedDownload(key)}
+                  />
                   {!available && !loading && (
                     <p className="text-[10px] text-muted-foreground leading-snug">
                       First cloud build pending. The GitHub Actions pipeline at
