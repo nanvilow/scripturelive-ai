@@ -33,7 +33,17 @@ function triggerAnchorDownload(href: string) {
 
 type VerifyState =
   | { kind: 'idle' }
-  | { kind: 'downloading'; received: number; total: number | null }
+  | {
+      kind: 'downloading'
+      received: number
+      total: number | null
+      // Bytes-per-second over a short rolling window (~1–2s). null while we
+      // don't have enough samples yet (i.e. the very first chunk).
+      speedBps: number | null
+      // Seconds remaining at the current speed; null when total is unknown
+      // or speed isn't measurable yet.
+      etaSeconds: number | null
+    }
   | { kind: 'hashing' }
   | { kind: 'verified' }
   | { kind: 'mismatch'; actual: string }
@@ -184,6 +194,36 @@ function formatProgress(received: number, total: number | null): string {
   return `${mb} / ${totalMb} MB · ${pct}%`
 }
 
+// Human-readable transfer rate. Returns null when the rate isn't usable yet
+// (no samples, or the rolling window measured ~0 bytes), so the caller can
+// just hide the speed line instead of showing "0 B/s".
+function formatSpeed(bps: number | null): string | null {
+  if (bps === null || !Number.isFinite(bps) || bps <= 0) return null
+  if (bps >= 1024 * 1024) return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`
+  if (bps >= 1024) return `${Math.round(bps / 1024)} KB/s`
+  return `${Math.round(bps)} B/s`
+}
+
+// Compact "time left" string. We keep the leading "~" so users read it as
+// an estimate, and we cap the smallest bucket at 1s so values don't flicker
+// to "0s left" in the final stretch. Total seconds is rounded *first* so we
+// never produce rollover strings like "1m 60s left" (which would happen if
+// we floored minutes and rounded the seconds remainder independently).
+function formatEta(seconds: number | null): string | null {
+  if (seconds === null || !Number.isFinite(seconds) || seconds < 0) return null
+  if (seconds < 1) return '~1s left'
+  const total = Math.round(seconds)
+  if (total < 60) return `~${total}s left`
+  const totalMinutes = Math.floor(total / 60)
+  const remSec = total % 60
+  if (totalMinutes < 60) {
+    return remSec > 0 ? `~${totalMinutes}m ${remSec}s left` : `~${totalMinutes}m left`
+  }
+  const hours = Math.floor(totalMinutes / 60)
+  const mins = totalMinutes % 60
+  return mins > 0 ? `~${hours}h ${mins}m left` : `~${hours}h left`
+}
+
 function IndeterminateBar() {
   // A short segment that slides across the track. Visually distinct from
   // the determinate bar so users can tell hashing from downloading.
@@ -206,6 +246,11 @@ function VerifyBadge({ state, onCancel }: { state: VerifyState; onCancel?: () =>
     const pct = hasTotal
       ? Math.min(100, Math.round((state.received / (state.total as number)) * 100))
       : null
+    const speedLabel = formatSpeed(state.speedBps)
+    // ETA only makes sense when we know the total size — otherwise we'd be
+    // dividing by an unknown remaining distance. Per the task spec, when the
+    // total is unknown we show speed only.
+    const etaLabel = hasTotal ? formatEta(state.etaSeconds) : null
     return (
       <div className="flex flex-col gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
         <div className="flex items-center gap-2">
@@ -230,6 +275,15 @@ function VerifyBadge({ state, onCancel }: { state: VerifyState; onCancel?: () =>
             aria-label={`Downloading installer, ${pct}% complete`}
             className="h-1.5"
           />
+        )}
+        {(speedLabel || etaLabel) && (
+          <div
+            className="flex items-center justify-between gap-2 text-[10px] tabular-nums text-muted-foreground/90"
+            aria-live="off"
+          >
+            <span>{speedLabel ?? ''}</span>
+            <span>{etaLabel ?? ''}</span>
+          </div>
         )}
       </div>
     )
@@ -580,7 +634,13 @@ export default function DownloadPage() {
       const token = (downloadTokensRef.current.get(key) ?? 0) + 1
       downloadTokensRef.current.set(key, token)
       const isCurrent = () => downloadTokensRef.current.get(key) === token
-      setVerify(key, { kind: 'downloading', received: 0, total: file.size ?? null })
+      setVerify(key, {
+        kind: 'downloading',
+        received: 0,
+        total: file.size ?? null,
+        speedBps: null,
+        etaSeconds: null,
+      })
       try {
         const res = await fetch(url, { cache: 'no-store', signal: controller.signal })
         if (!res.ok || !res.body) {
@@ -598,6 +658,18 @@ export default function DownloadPage() {
         const reader = res.body.getReader()
         const chunks: Uint8Array[] = []
         let received = 0
+        // Rolling-window samples for speed estimation. We keep ~1.5s of
+        // history so a transient stall (Wi-Fi roam, server pause) doesn't
+        // tank the displayed rate, but the number still moves quickly when
+        // conditions actually change.
+        const SPEED_WINDOW_MS = 1500
+        // Throttle React updates to ~4–5 Hz so the speed/ETA numbers don't
+        // jitter on every chunk (chunks can arrive at hundreds of Hz over
+        // a fast LAN). Progress still appears smooth at this cadence.
+        const UI_THROTTLE_MS = 220
+        const startedAt = performance.now()
+        const samples: { time: number; bytes: number }[] = [{ time: startedAt, bytes: 0 }]
+        let lastUiUpdate = startedAt
         for (;;) {
           const { done, value } = await reader.read()
           if (done) break
@@ -610,7 +682,25 @@ export default function DownloadPage() {
             return
           }
           chunks.push(value)
-          setVerify(key, { kind: 'downloading', received, total })
+          const now = performance.now()
+          samples.push({ time: now, bytes: received })
+          // Drop samples older than the window (always keep at least one
+          // anchor so we can still measure speed when chunks arrive slowly).
+          while (samples.length > 1 && samples[0].time < now - SPEED_WINDOW_MS) {
+            samples.shift()
+          }
+          const isLastChunk = total !== null && received >= total
+          if (now - lastUiUpdate >= UI_THROTTLE_MS || isLastChunk) {
+            lastUiUpdate = now
+            const oldest = samples[0]
+            const dtSec = (now - oldest.time) / 1000
+            const speedBps = dtSec > 0 ? (received - oldest.bytes) / dtSec : null
+            const etaSeconds =
+              total !== null && speedBps !== null && speedBps > 0
+                ? Math.max(0, (total - received) / speedBps)
+                : null
+            setVerify(key, { kind: 'downloading', received, total, speedBps, etaSeconds })
+          }
         }
 
         const blob = new Blob(chunks as BlobPart[])
