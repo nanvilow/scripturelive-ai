@@ -266,6 +266,25 @@ export function setupAutoUpdater(opts: {
   autoUpdater.on('error', (err: Error) => {
     downloadInFlight = false
     const raw = err?.message || String(err)
+    // v0.5.31 — When the operator clicks Cancel, electron-updater
+    // emits an 'error' event with a /cancell?ed/ message. Without
+    // this guard that event would race with the explicit `idle`
+    // broadcast in `updater:cancel` + `triggerUpdateDownload`'s catch
+    // arm, leaving the renderer stuck on a red error banner depending
+    // on which broadcast happened to fire last. Treat operator
+    // cancellation as a *silent* clean-up: clear the active token,
+    // emit a single calm `idle` state, and skip the friendly-error
+    // toast entirely. Real network/IO cancellations (timeout / reset
+    // / refused) still fall through to the error path.
+    if (
+      /cancell?ed/i.test(raw) &&
+      !/timeout|reset|refused/i.test(raw)
+    ) {
+      activeCancellationToken = null
+      broadcast({ status: 'idle' })
+      return
+    }
+    activeCancellationToken = null
     broadcast({ status: 'error', message: friendlyUpdateError(raw) })
   })
 

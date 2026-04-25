@@ -49,6 +49,10 @@ type ScriptureLiveBridge = {
     getState?: () => Promise<UpdaterState>
     download?: () => Promise<{ ok: boolean; error?: string; alreadyInProgress?: boolean }>
     install?: () => Promise<{ ok: boolean; error?: string }>
+    // v0.5.31 — operator-cancellable download. Optional because older
+    // desktop builds shipped before the Cancel button won't expose it,
+    // and the renderer falls back to omitting the toast/banner action.
+    cancel?: () => Promise<{ ok: boolean; error?: string }>
     onState?: (cb: (s: UpdaterState) => void) => () => void
   }
   // Read NDI sender status to know whether we're mid-broadcast and
