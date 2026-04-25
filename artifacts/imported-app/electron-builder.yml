@@ -7,13 +7,15 @@ copyright: ScriptureLive AI
 # triggers: "Cannot compute electron version from installed node modules".
 electronVersion: 33.4.11
 # electron-updater pulls signed installers from this GitHub repo.
-# Update `owner` and `repo` to match where your CI publishes
-# releases. The Build Windows Installer GH workflow uses GITHUB_TOKEN
-# so no extra config is required.
+# `owner` and `repo` are intentionally NOT inlined here — electron-builder
+# auto-detects them from the `repository` field in package.json, which is
+# the single source of truth shared with the renderer (see
+# src/lib/github-repo.ts). To move the project to a different repo, update
+# package.json's `repository.url` and both this build config and the
+# in-app links will follow. The Build Windows Installer GH workflow uses
+# GITHUB_TOKEN so no extra config is required.
 publish:
   - provider: github
-    owner: nanvilow
-    repo: scripturelive-ai
     releaseType: release
 directories:
   output: release
@@ -42,6 +44,20 @@ asarUnpack:
   - "node_modules/koffi/**/*"
   - "node_modules/.pnpm/koffi@*/**/*"
   - "node_modules/.pnpm/koffi@*/node_modules/koffi/**/*"
+  # sharp (used by electron/tray-badges.ts to composite the colored
+  # update-state dot onto the tray icon) ships per-platform native
+  # bindings as @img/sharp-{platform}-{arch} optionalDependencies.
+  # These dlopen .node files at require time and would fail with
+  # "Could not load the sharp module" if left inside the asar.
+  # The Windows runner only needs the win32 variants but we unpack
+  # all of them so the same config works for any platform we package
+  # from in the future.
+  - "node_modules/sharp/**/*"
+  - "node_modules/@img/sharp-*/**/*"
+  - "node_modules/@img/sharp-libvips-*/**/*"
+  - "node_modules/.pnpm/sharp@*/**/*"
+  - "node_modules/.pnpm/@img+sharp-*/**/*"
+  - "node_modules/.pnpm/@img+sharp-libvips-*/**/*"
 # Skip electron-builder's automatic `npm rebuild` step. We have ZERO
 # native modules that need compiling — koffi (the only native dep we
 # ship) bundles precompiled win32-x64 binaries inside its npm tarball.

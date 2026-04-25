@@ -1,7 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.onUpdateState = onUpdateState;
 exports.setupAutoUpdater = setupAutoUpdater;
 exports.runManualCheck = runManualCheck;
+exports.triggerUpdateDownload = triggerUpdateDownload;
 exports.getUpdateState = getUpdateState;
 const electron_1 = require("electron");
 const electron_updater_1 = require("electron-updater");
@@ -9,6 +11,11 @@ const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 let currentState = { status: 'idle' };
 let intervalHandle = null;
 let getWindow = null;
+// In-process listeners for state changes (e.g. tray icon updater).
+// Distinct from the renderer broadcast — we want to update OS chrome
+// like the tray tooltip even when no main window is alive (background
+// tray operation, window closed but app still running).
+const stateListeners = new Set();
 // Architect feedback — guards against concurrent downloadUpdate()
 // calls (operator double-clicking the popup, popup + Settings card
 // firing simultaneously, periodic safeCheck() rebroadcasting
@@ -23,6 +30,23 @@ function broadcast(state) {
     if (win && !win.isDestroyed()) {
         win.webContents.send('updater:state', state);
     }
+    for (const listener of stateListeners) {
+        try {
+            listener(state);
+        }
+        catch (err) {
+            console.error('[updater] state listener threw (non-fatal):', err);
+        }
+    }
+}
+/**
+ * Subscribe to update state changes inside the main process.
+ * Returns an unsubscribe function. The listener is invoked synchronously
+ * on every broadcast — keep it cheap (e.g. tray tooltip / menu rebuild).
+ */
+function onUpdateState(listener) {
+    stateListeners.add(listener);
+    return () => { stateListeners.delete(listener); };
 }
 function normalizeNotes(info) {
     let notes;
@@ -157,38 +181,7 @@ function setupAutoUpdater(opts) {
     // flow through download-progress → broadcast() → the renderer's
     // toast. Returns ok:false (without throwing) on no-op so the toast
     // can show a friendly message.
-    electron_1.ipcMain.handle('updater:download', async () => {
-        // In-flight guard — blocks the race where a double-click on the
-        // toast (or a popup-click + Settings-click in quick succession)
-        // both pass the status check before the first downloadUpdate()
-        // has flipped status to 'downloading'. Without this guard
-        // electron-updater would happily start two parallel downloads.
-        if (downloadInFlight ||
-            currentState.status === 'downloading' ||
-            currentState.status === 'downloaded') {
-            return { ok: true, alreadyInProgress: true };
-        }
-        if (currentState.status !== 'available') {
-            return { ok: false, error: 'no update available to download' };
-        }
-        downloadInFlight = true;
-        try {
-            await electron_updater_1.autoUpdater.downloadUpdate();
-            // Don't clear downloadInFlight here on success — the
-            // update-downloaded event handler clears it. autoUpdater
-            // resolves the promise as soon as the download finishes, but
-            // we want the guard to bridge any micro-window between
-            // resolution and the event fire.
-            return { ok: true };
-        }
-        catch (err) {
-            downloadInFlight = false;
-            const raw = err instanceof Error ? err.message : String(err);
-            const friendly = friendlyUpdateError(raw);
-            broadcast({ status: 'error', message: friendly });
-            return { ok: false, error: friendly };
-        }
-    });
+    electron_1.ipcMain.handle('updater:download', () => triggerUpdateDownload());
     // Skip the periodic check in dev — electron-updater refuses to run
     // unpackaged anyway. Manual checks via the IPC handler still fire
     // (and now return a friendly dev-mode error instead of a no-op).
@@ -213,6 +206,47 @@ function setupAutoUpdater(opts) {
 async function runManualCheck() {
     await safeCheck();
     return currentState;
+}
+/**
+ * Kick off the signed download for an already-detected update. Shared
+ * between the IPC handler (renderer toast / Settings card) and the
+ * tray menu so every operator-driven download path goes through the
+ * same in-flight guard, status check, and error normalization. Safe
+ * to call when no update is available — returns a structured result
+ * instead of throwing so callers can decide what to surface.
+ */
+async function triggerUpdateDownload() {
+    // In-flight guard — blocks the race where a double-click on the
+    // toast (or popup-click + Settings-click + tray-click in quick
+    // succession) all pass the status check before the first
+    // downloadUpdate() has flipped status to 'downloading'. Without
+    // this guard electron-updater would happily start parallel
+    // downloads.
+    if (downloadInFlight ||
+        currentState.status === 'downloading' ||
+        currentState.status === 'downloaded') {
+        return { ok: true, alreadyInProgress: true };
+    }
+    if (currentState.status !== 'available') {
+        return { ok: false, error: 'no update available to download' };
+    }
+    downloadInFlight = true;
+    try {
+        await electron_updater_1.autoUpdater.downloadUpdate();
+        // Don't clear downloadInFlight here on success — the
+        // update-downloaded event handler clears it. autoUpdater
+        // resolves the promise as soon as the download finishes, but
+        // we want the guard to bridge any micro-window between
+        // resolution and the event fire.
+        return { ok: true };
+    }
+    catch (err) {
+        downloadInFlight = false;
+        const raw = err instanceof Error ? err.message : String(err);
+        const friendly = friendlyUpdateError(raw);
+        broadcast({ status: 'error', message: friendly });
+        return { ok: false, error: friendly };
+    }
 }
 /** Read the latest cached state without triggering a network check. */
 function getUpdateState() {

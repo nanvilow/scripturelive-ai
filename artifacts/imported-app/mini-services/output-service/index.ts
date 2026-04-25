@@ -103,18 +103,27 @@ function render(s){
   const tc=themes[tk]||'theme-minimal';
   const isLT=dm&&dm.startsWith('lower-third');
   const bg=st.customBackground?'<img class="bg-image" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>':'';
-  const ref=st.showReferenceOnOutput!==false&&slide.title?'<div class="slide-reference">'+slide.title+(slide.subtitle?' — '+slide.subtitle:'')+'</div>':'';
+  // Strip Strong's <S>NNNN</S> markers and HTML-escape every user
+  // string before it lands in innerHTML. Bug parity with the main
+  // congregation route — Strong's adjacent to body text was making
+  // letters disappear ("subjection" → "ubjection") on the legacy mini
+  // service. Also flow multi-line content into one paragraph instead
+  // of one div per line, matching the operator preview.
+  const stripStrong=(t)=>String(t==null?'':t).replace(/<S>[^<]*<\/S>/gi,'').replace(/<[^>]+>/g,'');
+  const esc=(t)=>stripStrong(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const ref=st.showReferenceOnOutput!==false&&slide.title?'<div class="slide-reference">'+esc(slide.title)+(slide.subtitle?' — '+esc(slide.subtitle):'')+'</div>':'';
   let txt='';
   if(slide.type==='title'){
     const sz={sm:'2rem',md:'2.5rem',lg:'3rem',xl:'3.5rem'}[st.fontSize]||'2.5rem';
     const sh=st.textShadow!==false?'text-shadow:0 2px 12px rgba(0,0,0,.3);':'';
-    txt='<div class="slide-title" style="font-size:'+sz+';'+sh+'">'+slide.title+'</div>'+(slide.subtitle?'<div class="slide-subtitle" style="'+sh+'">'+slide.subtitle+'</div>':'');
+    txt='<div class="slide-title" style="font-size:'+sz+';'+sh+'">'+esc(slide.title)+'</div>'+(slide.subtitle?'<div class="slide-subtitle" style="'+sh+'">'+esc(slide.subtitle)+'</div>':'');
   }else if(slide.content&&slide.content.length){
     const sz={sm:'1.5rem',md:'2rem',lg:'2.5rem',xl:'3rem'}[st.fontSize]||'2rem';
     const sh=st.textShadow!==false?'text-shadow:0 2px 12px rgba(0,0,0,.3);':'';
-    txt=slide.content.map(l=>'<div class="slide-text" style="font-size:'+sz+';'+sh+'">'+l+'</div>').join('');
+    const joined=(slide.content as string[]).map(esc).join(' ').replace(/\s+/g,' ').trim();
+    txt='<p class="slide-paragraph" style="font-size:'+sz+';'+sh+';font-weight:500;line-height:1.4;margin:0;padding:0;word-wrap:break-word;overflow-wrap:break-word">'+joined+'</p>';
   }else{
-    txt='<div class="slide-text" style="opacity:.3">'+(slide.title||'Blank Slide')+'</div>';
+    txt='<div class="slide-text" style="opacity:.3">'+esc(slide.title||'Blank Slide')+'</div>';
   }
   if(isLT){
     const pos=st.lowerThirdPosition==='top'?'top':'bottom';

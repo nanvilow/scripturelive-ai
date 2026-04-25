@@ -209,7 +209,13 @@ function MediaSlideContent({
         src={slide.mediaUrl}
         autoPlay={!shouldBePaused}
         loop
-        muted
+        // Audibility is now driven entirely by the useEffect above
+        // (v.muted = globalMuted || !audible). With the operator-
+        // facing audio toggles defaulting to ON, dropped media plays
+        // with sound on both Preview and Live without an extra click.
+        // Electron passes --autoplay-policy=no-user-gesture-required
+        // (electron/main.ts) so the browser autoplay-with-sound gate
+        // is already lifted in the desktop build.
         playsInline
         preload="auto"
         className="w-full h-full bg-black"

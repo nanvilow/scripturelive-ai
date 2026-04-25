@@ -53,12 +53,15 @@ import {
   HelpCircle,
   ExternalLink,
   RefreshCcw,
+  Power,
 } from 'lucide-react'
+import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { NdiOutputPanel } from './ndi-output-panel'
 import { OutputPreview } from '@/components/settings/output-preview'
 import { FONT_REGISTRY } from '@/lib/fonts'
+import { quickStartUrl, troubleshootingUrl, newIssueUrl } from '@/lib/github-repo'
 
 export function SettingsView() {
   const { settings, updateSettings, setSelectedTranslation } = useAppStore()
@@ -1064,6 +1067,12 @@ export function SettingsView() {
       {/* Help & Updates */}
       <HelpAndUpdatesCard />
 
+      {/* Startup (launch-at-login) — only meaningful in the desktop
+          build; the card renders a disabled-with-explanation state in
+          the browser preview rather than disappearing entirely so the
+          settings page layout doesn't shift between contexts. */}
+      <StartupCard />
+
       {/* Slide Settings */}
       <Card className="bg-card border-border">
         <CardHeader className="pb-3">
@@ -1226,6 +1235,195 @@ type ScriptureLiveUpdaterBridge = {
     install?: () => Promise<{ ok: boolean; error?: string }>
     onState?: (cb: (s: UpdaterState) => void) => () => void
   }
+}
+
+// Bridge type shape mirrored from electron/preload.ts. Kept local to
+// avoid a cross-package import (Next builds the renderer; the preload
+// API lives in the Electron package). If preload's contract changes,
+// update this type too.
+type LaunchAtLoginInfo = {
+  supported: boolean
+  openAtLogin: boolean
+  openAsHidden: boolean
+  reason?: string
+}
+type ScriptureLiveLaunchBridge = {
+  launchAtLogin?: {
+    get?: () => Promise<LaunchAtLoginInfo>
+    set?: (v: boolean) => Promise<{ ok: boolean; error?: string; info: LaunchAtLoginInfo }>
+  }
+  quitOnClose?: {
+    get?: () => Promise<{ value: boolean }>
+    set?: (v: boolean) => Promise<{ ok: boolean; error?: string; value: boolean }>
+  }
+}
+
+/**
+ * Settings card for "Launch at startup". When enabled, the OS auto-
+ * launch entry is registered with `--hidden` + `openAsHidden:true` so
+ * the app comes up tray-only with NDI already running — no manual
+ * double-click before each service. Disabled-with-explanation in the
+ * browser preview, on Linux, and in dev builds (see `readLaunchAtLogin`
+ * in electron/main.ts for the platform-support matrix).
+ */
+function StartupCard() {
+  const [info, setInfo] = useState<LaunchAtLoginInfo | null>(null)
+  const [busy, setBusy] = useState(false)
+  // Quit-on-close (close-button behavior) preference. `null` while
+  // we're still reading it from the main process; in the browser
+  // preview this stays `null` and the row renders disabled with an
+  // explanation, mirroring how launch-at-login behaves.
+  const [quitOnClose, setQuitOnCloseState] = useState<boolean | null>(null)
+  const [closeBusy, setCloseBusy] = useState(false)
+  const isElectron =
+    typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)
+
+  useEffect(() => {
+    if (!isElectron) {
+      setInfo({
+        supported: false,
+        openAtLogin: false,
+        openAsHidden: false,
+        reason: 'Launch-at-login is only available in the desktop app.',
+      })
+      return
+    }
+    const bridge = (window as unknown as { scriptureLive?: ScriptureLiveLaunchBridge })
+      .scriptureLive
+    let cancelled = false
+    bridge?.launchAtLogin?.get?.()
+      .then((res) => { if (!cancelled) setInfo(res) })
+      .catch((err) => {
+        if (cancelled) return
+        setInfo({
+          supported: false,
+          openAtLogin: false,
+          openAsHidden: false,
+          reason: err instanceof Error ? err.message : 'Could not read launch-at-login state.',
+        })
+      })
+    bridge?.quitOnClose?.get?.()
+      .then((res) => { if (!cancelled) setQuitOnCloseState(res.value === true) })
+      .catch(() => { /* leave as null → row renders disabled */ })
+    return () => { cancelled = true }
+  }, [isElectron])
+
+  const handleToggle = async (next: boolean) => {
+    const bridge = (window as unknown as { scriptureLive?: ScriptureLiveLaunchBridge })
+      .scriptureLive
+    const setter = bridge?.launchAtLogin?.set
+    if (!setter) return
+    setBusy(true)
+    try {
+      const result = await setter(next)
+      setInfo(result.info)
+      if (!result.ok) {
+        toast.error(result.error ?? 'Failed to update launch-at-login.')
+        return
+      }
+      toast.success(
+        next
+          ? 'ScriptureLive AI will start automatically when you log in.'
+          : 'Launch at startup turned off.',
+      )
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update launch-at-login.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleQuitOnCloseToggle = async (next: boolean) => {
+    const bridge = (window as unknown as { scriptureLive?: ScriptureLiveLaunchBridge })
+      .scriptureLive
+    const setter = bridge?.quitOnClose?.set
+    if (!setter) return
+    setCloseBusy(true)
+    try {
+      const result = await setter(next)
+      setQuitOnCloseState(result.value === true)
+      if (!result.ok) {
+        toast.error(result.error ?? 'Failed to update close-button behavior.')
+        return
+      }
+      toast.success(
+        next
+          ? 'Closing the window will quit ScriptureLive AI.'
+          : 'Closing the window will keep ScriptureLive AI running in the tray.',
+      )
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : 'Failed to update close-button behavior.',
+      )
+    } finally {
+      setCloseBusy(false)
+    }
+  }
+
+  const supported = info?.supported === true
+  const checked = info?.openAtLogin === true
+  // The quit-on-close toggle is meaningful in both packaged and
+  // dev Electron builds (it just changes how the close handler
+  // behaves), so unlike launch-at-login we only gate it on the
+  // electron context — not on app.isPackaged.
+  const quitOnCloseSupported = isElectron && quitOnClose !== null
+
+  return (
+    <Card className="bg-card border-border">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <Power className="h-5 w-5 text-primary" />
+          <div>
+            <CardTitle className="text-base">Startup &amp; Shutdown</CardTitle>
+            <CardDescription>
+              When ScriptureLive AI starts, and what happens when you close the window
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <Label className="text-sm font-medium">Launch at startup</Label>
+            <p className="text-xs mt-0.5 text-muted-foreground">
+              {info === null
+                ? 'Checking…'
+                : supported
+                  ? 'When on, ScriptureLive AI starts in the system tray when you log in — NDI is already running before you double-click anything. Click the tray icon to bring up the main window.'
+                  : (info.reason ?? 'Not available on this system.')}
+            </p>
+          </div>
+          <Switch
+            checked={checked}
+            disabled={busy || !supported}
+            onCheckedChange={handleToggle}
+            aria-label="Launch ScriptureLive AI when the computer boots"
+          />
+        </div>
+
+        <Separator />
+
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <Label className="text-sm font-medium">When I close the window, also quit the app</Label>
+            <p className="text-xs mt-0.5 text-muted-foreground">
+              {!isElectron
+                ? 'This setting is only available in the desktop app.'
+                : quitOnClose === null
+                  ? 'Checking…'
+                  : 'Off (recommended) keeps ScriptureLive AI running in the system tray when you click the X button — NDI and the secondary screen stay live. Turn ON if you want the X button to fully quit the app and free its memory (single-monitor setups, kiosks).'}
+            </p>
+          </div>
+          <Switch
+            checked={quitOnClose === true}
+            disabled={closeBusy || !quitOnCloseSupported}
+            onCheckedChange={handleQuitOnCloseToggle}
+            aria-label="Quit ScriptureLive AI when the main window is closed"
+          />
+        </div>
+      </CardContent>
+    </Card>
+  )
 }
 
 function HelpAndUpdatesCard() {
@@ -1444,7 +1642,7 @@ function HelpAndUpdatesCard() {
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <a
-            href="https://github.com/nanvilow/scripturelive-ai#quick-start"
+            href={quickStartUrl()}
             target="_blank"
             rel="noreferrer"
             className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border hover:bg-muted/40 text-xs"
@@ -1453,7 +1651,7 @@ function HelpAndUpdatesCard() {
             <ExternalLink className="h-3 w-3 opacity-60" />
           </a>
           <a
-            href="https://github.com/nanvilow/scripturelive-ai/blob/main/docs/TROUBLESHOOTING.md"
+            href={troubleshootingUrl()}
             target="_blank"
             rel="noreferrer"
             className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border hover:bg-muted/40 text-xs"
@@ -1462,7 +1660,7 @@ function HelpAndUpdatesCard() {
             <ExternalLink className="h-3 w-3 opacity-60" />
           </a>
           <a
-            href="https://github.com/nanvilow/scripturelive-ai/issues/new"
+            href={newIssueUrl()}
             target="_blank"
             rel="noreferrer"
             className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border hover:bg-muted/40 text-xs"

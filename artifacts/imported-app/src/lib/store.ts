@@ -658,11 +658,18 @@ export const useAppStore = create<AppState>()(
         ),
 
       // Audio routing — see interface comments above for semantics.
-      previewAudio: false,
+      // Operator request: dropped media must autoplay with sound on
+      // BOTH the Preview and Live panes by default. Previously these
+      // defaulted to false, forcing a manual click on the speaker /
+      // headphone icon every time. The Preview pane freezes the
+      // moment a slide goes Live (slide-renderer.tsx isLive branch),
+      // so even with both surfaces audible there's no double-audio
+      // playback during normal use.
+      previewAudio: true,
       setPreviewAudio: (b) => set({ previewAudio: b }),
       liveBroadcastAudio: true,
       setLiveBroadcastAudio: (b) => set({ liveBroadcastAudio: b }),
-      liveMonitorAudio: false,
+      liveMonitorAudio: true,
       setLiveMonitorAudio: (b) => set({ liveMonitorAudio: b }),
 
       globalVolume: 1,

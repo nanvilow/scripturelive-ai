@@ -3,6 +3,8 @@
 import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 
+import { cleanReleaseNotes } from '@/lib/release-notes'
+
 /**
  * UpdateNotifier — surfaces auto-updater events as one-click in-app
  * popups so the operator never has to leave the app to update.
@@ -40,6 +42,8 @@ type UpdaterState =
   | { status: 'downloaded'; version: string; releaseNotes?: string; releaseName?: string }
   | { status: 'error'; message: string }
 
+type NdiStatusSlim = { running: boolean }
+
 type ScriptureLiveBridge = {
   updater?: {
     getState?: () => Promise<UpdaterState>
@@ -47,15 +51,31 @@ type ScriptureLiveBridge = {
     install?: () => Promise<{ ok: boolean; error?: string }>
     onState?: (cb: (s: UpdaterState) => void) => () => void
   }
+  // Read NDI sender status to know whether we're mid-broadcast and
+  // should hold every operator-actionable update toast. Defined as
+  // optional to keep the no-op browser path safe and to not couple
+  // this provider to the full bridge type in `lib/use-electron.ts`.
+  ndi?: {
+    getStatus?: () => Promise<NdiStatusSlim>
+    onStatus?: (cb: (s: NdiStatusSlim) => void) => () => void
+  }
 }
 
 // Strip markdown / HTML noise from GitHub release notes so the toast
 // description stays readable. We don't try to render markdown — just
 // show enough of the first meaningful paragraph for the operator to
 // know what's in the release.
+//
+// Run the raw notes through `cleanReleaseNotes` first so GitHub
+// boilerplate (the auto "## What's Changed" heading, the "## New
+// Contributors" section, and the "Full Changelog: <url>" footer)
+// doesn't end up dominating the 180-char preview when those blocks
+// happen to land near the top of the notes.
 function previewReleaseNotes(raw: string | undefined): string | undefined {
   if (!raw) return undefined
-  const cleaned = raw
+  const deboilerplated = cleanReleaseNotes(raw)
+  if (!deboilerplated) return undefined
+  const cleaned = deboilerplated
     .replace(/<[^>]+>/g, ' ')             // strip HTML tags
     .replace(/[#*_`>~\[\]()]/g, '')       // strip markdown punctuation
     .replace(/\s+/g, ' ')                 // collapse whitespace
@@ -78,6 +98,12 @@ export function UpdateNotifier() {
   // the stale Download button after the download already finished
   // would create a phantom "Downloading…" toast that never resolves.
   const availableToastIdRef = useRef<string | number | null>(null)
+  // Track the "Update ready — Click To Install" success toast id too,
+  // so the broadcast-safe gate can dismiss it the instant the operator
+  // starts an NDI service. Without this, an already-visible Restart &
+  // Install action button would still be clickable mid-broadcast — the
+  // exact foot-gun this whole feature is preventing.
+  const downloadedToastIdRef = useRef<string | number | null>(null)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -85,6 +111,40 @@ export function UpdateNotifier() {
     const bridge = (window as unknown as { scriptureLive?: ScriptureLiveBridge })
       .scriptureLive
     if (!bridge?.updater?.onState) return
+
+    // Broadcast-safe gate (matches the main-process tray gate). While
+    // NDI is on the air, every prompt is held — `handle()` short-
+    // circuits and stashes the latest update state. As soon as the
+    // operator stops the sender we replay the stashed state through
+    // `handle()` again so the appropriate toast surfaces. Update
+    // checks + downloads continue in the background regardless.
+    //
+    // Default to ON-AIR until the first NDI status read resolves. The
+    // Electron desktop ALWAYS auto-starts the NDI sender at boot
+    // (see `electron/main.ts` whenReady → `ndi.start(...)`), so
+    // assuming the operator is mid-service is the safe bootstrap
+    // posture: any updater push that lands before NDI status resolves
+    // gets stashed and replayed once we know for sure. A permissive
+    // default would briefly leak a Restart button during the most
+    // common launch case, which is exactly what this feature exists
+    // to prevent.
+    let onAir = true
+    let pendingState: UpdaterState | null = null
+
+    const dismissActiveActionToasts = () => {
+      if (availableToastIdRef.current != null) {
+        toast.dismiss(availableToastIdRef.current)
+        availableToastIdRef.current = null
+      }
+      if (downloadingToastIdRef.current != null) {
+        toast.dismiss(downloadingToastIdRef.current)
+        downloadingToastIdRef.current = null
+      }
+      if (downloadedToastIdRef.current != null) {
+        toast.dismiss(downloadedToastIdRef.current)
+        downloadedToastIdRef.current = null
+      }
+    }
 
     const startDownload = (version: string) => {
       // Architect feedback — make startDownload idempotent. If we
@@ -170,6 +230,16 @@ export function UpdateNotifier() {
     }
 
     const handle = (s: UpdaterState) => {
+      // Broadcast-safe gate. Stash the latest update state and bail
+      // before any toast surface fires. The NDI off-air subscription
+      // below replays via `handle(pendingState)` once the operator
+      // stops sending. Note we do NOT add to `announcedAvailableRef`
+      // / `announcedDownloadedRef` here — those would prevent the
+      // post-broadcast replay from firing.
+      if (onAir) {
+        pendingState = s
+        return
+      }
       if (s.status === 'available') {
         if (announcedAvailableRef.current.has(s.version)) return
         announcedAvailableRef.current.add(s.version)
@@ -240,22 +310,25 @@ export function UpdateNotifier() {
         }
         if (announcedDownloadedRef.current.has(s.version)) return
         announcedDownloadedRef.current.add(s.version)
-        toast.success(`Update v${s.version} ready — Click To Install`, {
-          description: 'ScriptureLive will restart and apply the update.',
-          duration: Infinity,
-          action: {
-            label: 'Restart & Install',
-            onClick: () => {
-              bridge.updater?.install?.().then((r) => {
-                if (!r?.ok) {
-                  toast.error(`Could not install: ${r?.error || 'unknown error'}`)
-                }
-              }).catch((err: unknown) => {
-                toast.error(err instanceof Error ? err.message : 'Install failed')
-              })
+        downloadedToastIdRef.current = toast.success(
+          `Update v${s.version} ready — Click To Install`,
+          {
+            description: 'ScriptureLive will restart and apply the update.',
+            duration: Infinity,
+            action: {
+              label: 'Restart & Install',
+              onClick: () => {
+                bridge.updater?.install?.().then((r) => {
+                  if (!r?.ok) {
+                    toast.error(`Could not install: ${r?.error || 'unknown error'}`)
+                  }
+                }).catch((err: unknown) => {
+                  toast.error(err instanceof Error ? err.message : 'Install failed')
+                })
+              },
             },
           },
-        })
+        )
       } else if (s.status === 'error') {
         // Clear any in-flight download toast so the operator isn't
         // staring at a stuck "Downloading…" spinner after a network
@@ -270,14 +343,92 @@ export function UpdateNotifier() {
       // operators who are actively looking.
     }
 
-    // Seed with current state in case an update was already detected
-    // during the boot-time check (10s after launch) before this
-    // component mounted. Without this, fast-mounting renderers might
-    // miss the very first push.
-    bridge.updater.getState?.().then((s) => { if (s) handle(s) }).catch(() => {})
+    /**
+     * Apply an NDI on-air transition. Three cases worth distinguishing:
+     *
+     *   • off-air → on-air: a service is starting. Dismiss any sticky
+     *     actionable toasts (Update Available with Download button,
+     *     Update Ready with Restart & Install button, Downloading
+     *     spinner) so an operator click during the broadcast can't
+     *     fire them. ALSO clear the announce dedupe sets so the
+     *     post-broadcast replay path is allowed to re-fire the same
+     *     toast for the same version. Stash the latest known updater
+     *     state for the replay.
+     *   • on-air → off-air: replay the stashed state through handle()
+     *     so the held available / downloaded toast surfaces now that
+     *     the operator has stopped sending.
+     *   • on-air → on-air or off-air → off-air: no-op (broadcastNdi-
+     *     Status fires on every frame batch, so this handler is hit
+     *     constantly during a broadcast — keep it idempotent).
+     */
+    const applyAirChange = (newRunning: boolean) => {
+      const wasOnAir = onAir
+      onAir = newRunning
+      if (!wasOnAir && onAir) {
+        // Stash whatever state we last knew so the off-air replay has
+        // something to fire. Without this, a state push that arrived
+        // *before* on-air engaged would be lost — its toast would be
+        // dismissed below and never re-fire (we only resurface things
+        // that pendingState tracks).
+        if (pendingState == null) pendingState = lastKnownState
+        dismissActiveActionToasts()
+        // Clear dedupe so the SAME version's toast is allowed to
+        // re-fire after the broadcast ends. Otherwise the announced
+        // sets would block the off-air replay path.
+        announcedAvailableRef.current.clear()
+        announcedDownloadedRef.current.clear()
+      } else if (wasOnAir && !onAir && pendingState) {
+        const replay = pendingState
+        pendingState = null
+        handle(replay)
+      }
+    }
 
-    const off = bridge.updater.onState(handle)
-    return off
+    // Track the most recent updater state INDEPENDENT of the on-air
+    // gate. handle() also writes to it via the closure-scoped
+    // `lastKnownState` so the on-air transition can resurface it.
+    let lastKnownState: UpdaterState | null = null
+    const trackingHandle = (s: UpdaterState) => {
+      lastKnownState = s
+      // Also stash it as pending while on-air, so the off-air
+      // transition replays the most recent value (handle() already
+      // does this internally, but mirroring here keeps the two paths
+      // explicit and easy to reason about).
+      if (onAir) pendingState = s
+      handle(s)
+    }
+
+    // ── Bootstrap sequencing ────────────────────────────────────────
+    // Resolve NDI status FIRST, then seed updater state. This removes
+    // the race where a fast initial updater push handles before NDI
+    // status resolves and we use the conservative on-air default —
+    // that path is correct (gates the toast), but resolving NDI first
+    // lets us surface the toast immediately when NDI is actually idle
+    // instead of waiting for the off-air replay.
+    const seedPromise = bridge.ndi?.getStatus
+      ? bridge.ndi.getStatus().then(
+          (s) => applyAirChange(!!s?.running),
+          // Permissive fallback if the NDI bridge is missing entirely
+          // (browser-mode-in-Electron edge case): drop into off-air so
+          // the user actually sees update prompts. The desktop-only
+          // path always has a working NDI bridge, so this only fires
+          // in development / mocked builds.
+          () => applyAirChange(false),
+        )
+      : Promise.resolve(applyAirChange(false))
+
+    seedPromise.then(() => {
+      // Seed with current state in case an update was already
+      // detected during the boot-time check (10s after launch) before
+      // this component mounted. Without this, fast-mounting renderers
+      // might miss the very first push.
+      bridge.updater?.getState?.().then((s) => { if (s) trackingHandle(s) }).catch(() => {})
+    })
+
+    const offUpdate = bridge.updater.onState(trackingHandle)
+    const offNdi = bridge.ndi?.onStatus?.((s) => applyAirChange(!!s?.running)) ?? (() => {})
+
+    return () => { offUpdate(); offNdi() }
   }, [])
 
   return null

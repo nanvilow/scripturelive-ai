@@ -131,6 +131,205 @@ The Apple app-specific password can't be inspected programmatically, so the
 workflow always emits a notice reminding the team to re-issue it whenever the
 owning Apple ID password is rotated.
 
+### Defensive signature check at publish time
+
+The cert-expiry workflow gives the team early warning, but if a rotation is
+missed anyway the build will quietly produce **unsigned** installers and
+historically would still have published them — end users would only find out
+when SmartScreen / Gatekeeper warnings started landing in support tickets.
+
+To close that gap, three checks gate the GitHub Release:
+
+- **Build-time Windows check** (inside the `build` job, on `windows-latest`):
+  immediately after `pnpm --filter @workspace/imported-app run package:win`
+  finishes — and **before** any `actions/upload-artifact` step runs — the job
+  walks every `artifacts/imported-app/release/*.exe` and verifies it with
+  both `signtool verify /pa /v /tw` (the Windows Authenticode policy, with the
+  signing toolchain still on the runner for rich diagnostics; `/tw` surfaces
+  a warning when no RFC3161 timestamp is present) and PowerShell's
+  `Get-AuthenticodeSignature` (cross-check + fallback if `signtool.exe` is
+  missing). It then asserts that
+  `Get-AuthenticodeSignature.TimeStamperCertificate` is non-null and **fails
+  closed** if it isn't, so a flaky public timestamp server (DigiCert,
+  Sectigo, GlobalSign, etc.) can't silently produce a signed-but-not-
+  timestamped installer that would stop validating the day the signing cert
+  expires (often years later, well past the point anyone associates the
+  failure with that one build). Failures surface within seconds of
+  `electron-builder` instead of forcing the maintainer to wait the full
+  ~15-25 minutes for the upload + `release` job spin-up. Honors the same
+  `allow_unsigned` input and `[unsigned-release]` commit-message /
+  annotated-tag marker as the other checks below, so the three opt-outs
+  stay in sync.
+
+- **`verify-macos`** runs on `macos-latest`, downloads any `mac-installer*`
+  artifacts, mounts each `.dmg`, and runs the full Apple verification stack
+  on the bundled `.app`:
+  - `codesign --verify --deep --strict` (the seal is intact and the bundle
+    is signed),
+  - `spctl -a -vvv --type execute` (Gatekeeper would accept it on first
+    launch — this is the check that proves notarization succeeded), and
+  - `xcrun stapler validate` (a notarization ticket is stapled, so first
+    launch works even when the user is offline).
+
+  When the build doesn't produce any macOS artifacts (the current state),
+  the job logs a `::notice::` and exits cleanly so it doesn't block
+  Windows-only releases.
+
+- **`release`** runs on `ubuntu-latest`, depends on both `build` and
+  `verify-macos`, and re-verifies every downloaded `.exe` with
+  `osslsigncode verify` against the runner's system CA bundle as a
+  defense-in-depth backstop to the build-time check above (different tool,
+  different OS, different CA store — catches anything the Windows-side
+  check might miss). It also captures the `osslsigncode` output and asserts
+  that it contains `Timestamp Verification: ok`, **failing closed** when
+  the RFC3161 counter-signature is missing or its TSA chain doesn't
+  validate against `-TSA-CAfile`. Unsigned binaries, malformed Authenticode
+  blobs, signatures whose chain doesn't validate, and signed-but-not-
+  timestamped installers all fail the step **before** `softprops/action-gh-release`
+  is invoked. (Timestamping ensures the installer keeps validating after
+  the signing cert's `notAfter` passes, since Windows trusts the embedded
+  timestamp rather than today's clock.)
+
+When any check fails, it logs a clear `::error::` message that points back
+at this README's
+[Certificate expiry warnings & rotation](#certificate-expiry-warnings--rotation)
+section. The Windows build-time check fails the `build` job before the
+upload steps run, so debugging the unsigned build will need a re-run; the
+release-time `osslsigncode` check runs after the artifacts have already been
+uploaded, and those artifacts (`windows-installer`, `windows-latest-yml`,
+`windows-blockmap`) keep their 14-day retention so debugging that path
+doesn't require a rebuild.
+
+#### Pinning the expected publisher
+
+The three checks above prove the installer is signed by *some* publicly-
+trusted CA. They do **not** prove *which* publisher signed it — so a
+dev/test certificate, a leaked certificate, or the wrong company's
+certificate accidentally loaded into `WIN_CSC_LINK` / `MAC_CSC_LINK`
+would still pass every check, and end users would download an installer
+that runs without warnings but is signed by the wrong identity.
+
+To close that gap, set two repository **variables** (Settings → Secrets
+and variables → Actions → **Variables** tab — *not* Secrets, since these
+are non-sensitive and should be visible in the workflow UI):
+
+| Variable name                   | Value                                                                                                |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `EXPECTED_WIN_PUBLISHER_CN`     | Subject Common Name on the Windows Authenticode certificate, exactly as the CA issued it (e.g. `ScriptureLive AI Inc`). |
+| `EXPECTED_MAC_SIGNING_IDENTITY` | The leaf `Authority=` line from `codesign --display --verbose=4`, e.g. `Developer ID Application: ScriptureLive AI Inc (ABCDE12345)`. |
+
+When set, the three signature checks pin the publisher in three places
+(matching the same defense-in-depth split the rest of this section uses —
+build-side on Windows, build-side on macOS, release-side on Linux):
+
+- **Build-time Windows check** extracts the leaf cert's CN via
+  `Get-AuthenticodeSignature`'s
+  `SignerCertificate.GetNameInfo(SimpleName, false)` and fails if it
+  doesn't equal `EXPECTED_WIN_PUBLISHER_CN`.
+- **`verify-macos`** runs `codesign --display --verbose=4` against the
+  bundled `.app`, takes the first `Authority=` line (the leaf), and
+  fails if it doesn't equal `EXPECTED_MAC_SIGNING_IDENTITY`. (`spctl`
+  passes for any valid notarized Developer ID build, including the
+  wrong company's, so this is the check that actually pins identity on
+  the Mac side.)
+- **Release-time Windows check** parses the `Subject:` DN from
+  `osslsigncode verify` output, extracts `/CN=…`, and fails if it
+  doesn't equal `EXPECTED_WIN_PUBLISHER_CN`. Different OS, different
+  tool, different CA store than the build-time check above.
+
+When either variable is **unset**, the corresponding check logs a
+`::notice::` and accepts any signed installer. This keeps fresh forks
+(which haven't ordered a code-signing cert yet) from breaking, but means
+the pin only protects you once you've configured it. Set them as soon as
+the cert is in place.
+
+##### Updating the pin during a publisher-name change
+
+If you ever rename the signing organization (rebrand, M&A, or you switch
+from one Developer Team to another), the new certificate the CA issues
+will have a different Subject CN / `Authority=` leaf, and the existing
+pin will start failing the build. To roll over cleanly:
+
+1. Order the new certificate as usual and load it into the
+   `WIN_CSC_LINK` (or `MAC_CSC_LINK`) **secret** following
+   [Rotating `WIN_CSC_LINK`](#rotating-win_csc_link-windows-authenticode)
+   / [Rotating `MAC_CSC_LINK`](#rotating-mac_csc_link-apple-developer-id-application).
+2. Run a workflow_dispatch build (no tag) and read the
+   `Signer CN (extracted):` / `Leaf Authority (extracted):` line that
+   the verify step prints in the job log. That is the new value
+   verbatim — copy it (whitespace included).
+3. In **Settings → Secrets and variables → Actions → Variables**, edit
+   `EXPECTED_WIN_PUBLISHER_CN` (or `EXPECTED_MAC_SIGNING_IDENTITY`) and
+   paste the new value.
+4. Trigger another workflow_dispatch build to confirm the pinned check
+   now passes.
+
+If you want to keep both old and new certs valid in parallel during a
+transition, do the swap in step 3 right before you cut the first release
+that uses the new cert, *not* before — pin failures are loud (red
+workflow runs) and you don't want them firing on releases that are still
+signing with the previous cert.
+
+#### Intentionally publishing an unsigned release
+
+For one-off dev/testing releases where unsigned installers are acceptable,
+there are three opt-outs (any one is sufficient — all three checks
+above honor every opt-out):
+
+1. **Workflow input** — trigger from **Actions → Release ScriptureLive AI
+   Desktop → Run workflow** and tick the **Publish even if installers fail
+   signature verification** box (the `allow_unsigned` input).
+2. **Annotated tag message** — include the literal string `[unsigned-release]`
+   in the annotated tag's message, e.g.
+
+   ```bash
+   git tag -a v0.2.0-rc1 -m "Pre-release smoke build [unsigned-release]"
+   git push origin v0.2.0-rc1
+   ```
+
+   Each check checks out the repo with `fetch-depth: 0` and reads the tag
+   annotation via `git for-each-ref --format='%(contents)' refs/tags/<tag>`.
+3. **Tagged-commit message** — include `[unsigned-release]` in the commit
+   the tag points at. Useful when releasing via lightweight tags or when
+   you prefer the marker to live in commit history. Each check reads the
+   message deterministically via `git log -1 --format=%B '<tag>^{commit}'`,
+   which dereferences both annotated and lightweight tags to their
+   underlying commit (so this works regardless of whether the workflow was
+   triggered by a tag push or by `workflow_dispatch`).
+
+In every case each check logs a `::warning::` explaining which opt-out
+fired, so the unsigned status is still visible at a glance in the Actions UI.
+
+#### Artifact naming contract (fail-closed)
+
+The `verify-macos` job is fail-closed in two ways:
+
+1. **Inventory before download.** Before touching `actions/download-artifact`,
+   the job calls the GitHub Actions REST API
+   (`GET /repos/{repo}/actions/runs/{run_id}/artifacts`, requires
+   `permissions.actions: read`) and filters the result for names matching
+   `^mac-installer($|-)`. The job's behavior is deterministic from there:
+   - Inventory finds **zero** matching artifacts → log `::notice::`,
+     `has_mac=false`, skip download and verification cleanly. This is the
+     legitimate path for Windows-only releases.
+   - Inventory finds **≥1** matching artifact → `has_mac=true`, the
+     download step runs **without** `continue-on-error`, and the verify
+     step asserts that at least one `.dmg` ended up in `dist/` before
+     looping. Any transient download failure or empty payload fails the
+     job (and therefore the release).
+2. **Single source of truth for Mac artifacts.** The `release` job
+   intentionally does **not** download or publish `mac-installer*`
+   artifacts — only `verify-macos` is allowed to handle them. If you later
+   add `dist/*.dmg` to the publish file list, do the download inside
+   `verify-macos` (where they're already verified) or wire up a separate
+   fail-closed download in `release` first.
+
+Whenever you add a macOS build step, name its `actions/upload-artifact`
+either exactly `mac-installer` or with a `mac-installer-` prefix (e.g.
+`mac-installer-arm64`, `mac-installer-x64`) so the inventory regex picks
+it up automatically. Any other name will be invisible to the inventory
+step and the macOS guard will not engage.
+
 ### Rotating `WIN_CSC_LINK` (Windows Authenticode)
 
 1. Order or renew the certificate from your CA (DigiCert, Sectigo, SSL.com,

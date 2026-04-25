@@ -4,6 +4,29 @@ const electron_1 = require("electron");
 const api = {
     isDesktop: true,
     getInfo: () => electron_1.ipcRenderer.invoke('app:info'),
+    /**
+     * Launch-at-login (a.k.a. "start with Windows"). The renderer-side
+     * Settings toggle in src/components/views/settings.tsx calls these.
+     * Both reads and writes go through Electron's
+     * `app.getLoginItemSettings()` / `app.setLoginItemSettings()`. The
+     * setter passes `args: ['--hidden']` and `openAsHidden: true` so
+     * the boot path knows to skip showing the main window — the app
+     * comes up directly into the system tray with NDI auto-started.
+     */
+    launchAtLogin: {
+        get: () => electron_1.ipcRenderer.invoke('app:get-launch-at-login'),
+        set: (openAtLogin) => electron_1.ipcRenderer.invoke('app:set-launch-at-login', openAtLogin),
+    },
+    /**
+     * Operator preference: when ON, the X button on the main window
+     * runs the normal shutdown path instead of hiding to the tray.
+     * Persisted in `userData/preferences.json` by the main process and
+     * applied to the very next close — no app restart required.
+     */
+    quitOnClose: {
+        get: () => electron_1.ipcRenderer.invoke('app:get-quit-on-close'),
+        set: (value) => electron_1.ipcRenderer.invoke('app:set-quit-on-close', value),
+    },
     updater: {
         getState: () => electron_1.ipcRenderer.invoke('updater:get-state'),
         check: () => electron_1.ipcRenderer.invoke('updater:check'),
