@@ -185,21 +185,31 @@ const BOOK_NAMES_PATTERN = 'Genesis|Exodus|Leviticus|Numbers|Deuteronomy|Joshua|
 
 const BOOK_ABBR_PATTERN = 'Gen|Exo?|Lev|Num|Deut|Josh?|Judg|Ruth|1?\\s*Sam|2?\\s*Sam|1?\\s*Ki|2?\\s*Ki|1?\\s*Chron|2?\\s*Chron|Ezra?|Neh|Esth|Job|Ps|Prov|Eccl|Song|Isa|Jer|Lam|Eze|Dan|Hos|Joel|Amos|Obad|Jonah|Mic|Nah|Hab|Zeph|Hag|Zech|Mal|Matt?|Mark?|LK?|Jn|John|Acts?|Rom|1?\\s*Cor|2?\\s*Cor|Gal|Eph|Phil|Col|1?\\s*Thess|2?\\s*Thess|1?\\s*Tim|2?\\s*Tim|Tit|Phlm|Heb|Jas|1?\\s*Pet|2?\\s*Pet|1?\\s*Jn|2?\\s*Jn|3?\\s*Jn|Jude|Rev'
 
-const VERSE_NUM = '(\\d{1,3})(?::(\\d{1,3})(?:\\s*[-\\u2013]\\s*(\\d{1,3}))?)?'
+// v0.5.32 — STRICT verse number: requires the colon-form
+// "chapter:verse" so plain "John 3" (without context) NEVER matches.
+// This is the cure for the "John had 3 apples" false-positive class
+// of bug. Patterns that have a strong context lead-in (e.g. "turn to",
+// "the Bible says") still accept the colon-less form because the
+// context word disambiguates the speaker's intent.
+const VERSE_NUM_STRICT = '(\\d{1,3})\\s*:\\s*(\\d{1,3})(?:\\s*[-\\u2013]\\s*(\\d{1,3}))?'
+const VERSE_NUM_WITH_CTX = '(\\d{1,3})(?::(\\d{1,3})(?:\\s*[-\\u2013]\\s*(\\d{1,3}))?)?'
 
 export const VERSE_PATTERNS = [
-  // "Book Chapter:Verse" or "Book Chapter Verse" (full names)
-  new RegExp(`([1-3]?\\s*(?:${BOOK_NAMES_PATTERN}))\\s+${VERSE_NUM}`, 'gi'),
-  // Abbreviated form "Gen 3:16"
-  new RegExp(`\\b(${BOOK_ABBR_PATTERN})\\s+${VERSE_NUM}`, 'gi'),
-  // Conversational: "Book chapter X verse Y" (full names)
-  new RegExp(`([1-3]?\\s*(?:${BOOK_NAMES_PATTERN}))\\s+chapter\\s+(\\d{1,3})\\s*(?:,?\\s*(?:verse|verses?|vs?\\.?|v)\\.?\\s*(\\d{1,3})(?:\\s*[-\\u2013toand]+\\s*(\\d{1,3}))?)?`, 'gi'),
-  // Conversational abbreviated: "Gen chapter 3 verse 16" / "Gen ch3 v16"
+  // 1) Strict colon-form (full book name): "John 3:16" / "1 Corinthians 13:4-7"
+  //    REQUIRES the colon — does NOT match bare "John 3".
+  new RegExp(`\\b([1-3]?\\s*(?:${BOOK_NAMES_PATTERN}))\\s+${VERSE_NUM_STRICT}`, 'gi'),
+  // 2) Strict colon-form (abbreviated): "Gen 3:16" / "Rom 8:28"
+  new RegExp(`\\b(${BOOK_ABBR_PATTERN})\\s+${VERSE_NUM_STRICT}`, 'gi'),
+  // 3) Conversational with explicit "chapter X verse Y" (full names) —
+  //    the words "chapter" and "verse" make this unambiguous even
+  //    without a colon.
+  new RegExp(`\\b([1-3]?\\s*(?:${BOOK_NAMES_PATTERN}))\\s+chapter\\s+(\\d{1,3})\\s*(?:,?\\s*(?:verse|verses?|vs?\\.?|v)\\.?\\s*(\\d{1,3})(?:\\s*[-\\u2013toand]+\\s*(\\d{1,3}))?)?`, 'gi'),
+  // 4) Conversational abbreviated: "Gen chapter 3 verse 16" / "Gen ch3 v16"
   new RegExp(`\\b(${BOOK_ABBR_PATTERN})\\s+ch(?:apter)?\\.?\\s*(\\d{1,3})\\s*(?:,?\\s*(?:v(?:erse|s|s\\.?)?|vs?\\.?)\\.?\\s*(\\d{1,3})(?:\\s*[-\\u2013toand]+\\s*(\\d{1,3}))?)?`, 'gi'),
-  // Patterns with context: "turn to [Book] X:Y" / "read in [Book] X:Y" / "as we see in [Book] X:Y"
-  new RegExp(`(?:turn\\s+to|read\\s+(?:in|from)|look\\s+at|go\\s+to|see|find|open\\s+(?:your\\s+bibles?\\s+to|to)|as\\s+(?:we\\s+)?(?:read|see|find)\\s+in|according\\s+to)\\s+([1-3]?\\s*(?:${BOOK_NAMES_PATTERN}))\\s+${VERSE_NUM}`, 'gi'),
-  // "the Bible says in [Book] X:Y" / "Scripture says [Book] X:Y" / "in [Book] X:Y"
-  new RegExp(`(?:the\\s+(?:Bible|bible|Word|word|scripture|Scripture)\\s+(?:says?|tells?\\s+us|declares?|teaches?)\\s+(?:in\\s+)?)?([1-3]?\\s*(?:${BOOK_NAMES_PATTERN}))\\s+${VERSE_NUM}`, 'gi'),
+  // 5) Strong scripture-context lead-in + book + chapter (verse optional).
+  //    The lead-in phrase is the disambiguator — "turn to John 3" is a
+  //    Bible reference; "John 3 apples" is not.
+  new RegExp(`(?:turn\\s+to|read\\s+(?:in|from)|look\\s+at|go\\s+to|find|open\\s+(?:your\\s+bibles?\\s+to|to)|as\\s+(?:we\\s+)?(?:read|see|find)\\s+in|according\\s+to|the\\s+(?:bible|word|scripture)s?\\s+(?:says?|tells?\\s+us|declares?|teaches?)\\s+(?:in\\s+)?)\\s*([1-3]?\\s*(?:${BOOK_NAMES_PATTERN}))\\s+${VERSE_NUM_WITH_CTX}`, 'gi'),
 ]
 
 function normalizeBookName(raw: string | undefined): string | null {
@@ -420,8 +430,8 @@ export function detectVersesInTextWithScore(rawText: string): DetectedReference[
       const verseEnd = match[4] ? parseInt(match[4]) : undefined
       const reference = formatReference(book, chapter, verseStart, verseEnd)
       const hasExplicitVerse = !!match[3]
-      // Heuristic: full-name patterns are pi 0, 2, 4, 5; abbreviated are 1, 3.
-      const bookFull = pi === 0 || pi === 2 || pi === 4 || pi === 5
+      // v0.5.32 — pattern indices: full-name = 0, 2, 4; abbreviated = 1, 3.
+      const bookFull = pi === 0 || pi === 2 || pi === 4
       const confidence = scoreReference({
         bookFull,
         hasExplicitVerse,
@@ -431,7 +441,12 @@ export function detectVersesInTextWithScore(rawText: string): DetectedReference[
         verseStart,
         book,
       })
-      if (confidence === 0) continue
+      // v0.5.32 — raise the commit floor from 0 to 0.55 so word-soup
+      // matches that scrape past the regex but fail every signal
+      // (no explicit verse, no context phrase, no full book name)
+      // never reach the operator. The previous floor of 0 let
+      // anything with a recognisable book name through.
+      if (confidence < 0.55) continue
       const prev = seen.get(reference)
       if (!prev || confidence > prev.confidence) {
         seen.set(reference, {
