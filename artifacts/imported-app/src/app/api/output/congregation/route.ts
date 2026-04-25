@@ -688,7 +688,7 @@ function pollOnce(){
 setInterval(pollOnce,1500);
 
 // v0.5.30 — Watchdog #1: recover from a stuck fade-out.
-// applyRender() schedules a setTimeout for "dur" ms (max 4 s) and
+// applyRender() schedules a setTimeout for `dur` ms (max 4 s) and
 // removes the .fading class once it fires. Backgrounded tabs, system
 // stalls, or any rare lost-timer case would leave .fading on the
 // surface — opacity:0 — until the next REAL slide change. We probe
