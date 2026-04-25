@@ -110,6 +110,19 @@ let isQuitting = false
 // First-ever hide is also gated by a marker file in userData (see
 // `maybeShowTrayHint`).
 let trayHintShownThisSession = false
+// Live broadcast guard. True while the NDI sender is actively pushing
+// frames to vMix / Wirecast / OBS / Studio Monitor. While true, every
+// operator-actionable update prompt (tray menu CTA, in-app banner,
+// renderer toast, OS notification) is held — an accidental click on
+// "Restart to install" mid-service tears the source off the air. The
+// flag is flipped by `applyNdiAirChange()` whenever NDI starts/stops;
+// renderers see the same signal via the existing `ndi:status` push
+// and gate their own UI off it.
+let ndiOnAir = false
+// Last "downloaded" state we received while on-air. Held instead of
+// surfacing the OS toast immediately so we can replay it the moment
+// NDI stops. Cleared on replay.
+let pendingDownloadedNotification: UpdateState | null = null
 
 function serializeNdi<T>(fn: () => Promise<T>): Promise<T> {
   const next = ndiTransition.then(() => fn(), () => fn())
@@ -577,7 +590,16 @@ function trayStatusLine(state: UpdateState): string | null {
 
 function trayTooltip(state: UpdateState): string {
   const line = trayStatusLine(state)
-  return line ? `ScriptureLive AI — ${line}` : 'ScriptureLive AI'
+  if (!line) return 'ScriptureLive AI'
+  // While the NDI sender is actively on the air, append a clarifying
+  // suffix so a hover read makes it obvious why the tray menu won't
+  // surface a clickable Download / Restart action — the prompt is held
+  // until the broadcast ends so an accidental restart can't tear the
+  // source off the air mid-service.
+  if (ndiOnAir && (state.status === 'available' || state.status === 'downloaded')) {
+    return `ScriptureLive AI — ${line} (held until broadcast ends)`
+  }
+  return `ScriptureLive AI — ${line}`
 }
 
 // ── Tray icon badging ─────────────────────────────────────────────────
@@ -653,7 +675,36 @@ function buildTrayMenu(state: UpdateState): Menu {
   // Contextual primary action driven by the current update state. The
   // generic "Check for Updates…" item is replaced with the most useful
   // next step the operator can take right now.
-  if (state.status === 'available') {
+  //
+  // BROADCAST-SAFE GATE: while the NDI sender is on-air, the
+  // download / restart actions are replaced with disabled
+  // informational rows. An accidental click on "Restart to install"
+  // mid-service tears the source off the air in vMix / OBS — so we
+  // hold every operator-actionable update prompt until the broadcast
+  // ends. The colored tray badge + tooltip + this disabled row keep
+  // the operator aware that an update is pending without offering a
+  // foot-gun. As soon as `ndi:stop` flips `ndiOnAir` back to false,
+  // `applyTrayState` is re-run and the normal CTAs come back.
+  if (ndiOnAir && (state.status === 'available' || state.status === 'downloaded' || state.status === 'downloading')) {
+    if (state.status === 'available') {
+      items.push({
+        label: `Update available (v${state.version}) — install after broadcast`,
+        enabled: false,
+      })
+    } else if (state.status === 'downloading') {
+      // Downloads are still allowed in the background; just keep the
+      // disabled progress display so an operator glance shows activity.
+      items.push({
+        label: `Downloading update… ${Math.round(state.percent)}% (will install after broadcast)`,
+        enabled: false,
+      })
+    } else {
+      items.push({
+        label: `Update ready (v${state.version}) — install after broadcast`,
+        enabled: false,
+      })
+    }
+  } else if (state.status === 'available') {
     items.push({
       label: `Download Update (v${state.version})`,
       click: () => {
@@ -791,6 +842,15 @@ function quitAndInstallUpdate() {
 let lastNotifiedDownloadedVersion: string | null = null
 function notifyUpdateDownloaded(state: UpdateState) {
   if (state.status !== 'downloaded') return
+  // Hold the OS toast while NDI is on the air. The whole point of
+  // this guard is to NOT pop a "Restart Now" surface in the operator's
+  // face mid-service. The state is stashed and replayed by
+  // `applyNdiAirChange()` the moment NDI stops sending.
+  if (ndiOnAir) {
+    pendingDownloadedNotification = state
+    console.log(`[updater-notify] NDI on-air — holding update-ready toast for v${state.version}`)
+    return
+  }
   if (lastNotifiedDownloadedVersion === state.version) return
   lastNotifiedDownloadedVersion = state.version
 
@@ -967,6 +1027,45 @@ function buildAppMenu() {
 function broadcastNdiStatus(status: NdiStatus) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('ndi:status', status)
+  }
+  applyNdiAirChange(status.running === true)
+}
+
+/**
+ * Track NDI on-air transitions and gate update prompts accordingly.
+ *
+ * `broadcastNdiStatus` is called frequently (every frame batch fires
+ * a status push), so this function is idempotent on the running flag —
+ * we only act on actual transitions:
+ *
+ *   • on-air → off-air: the operator just stopped sending. Replay
+ *     any deferred OS update-ready toast and re-render the tray with
+ *     the normal CTA buttons restored. The renderer's banner / toast
+ *     subscribe to `ndi:status` directly and resume on their own.
+ *   • off-air → on-air: a service is starting. Re-render the tray
+ *     so the disabled "install after broadcast" rows replace the
+ *     dangerous Download / Restart actions. No need to dismiss
+ *     anything that already shipped — the renderer will hide its
+ *     banner / toast on the same status push.
+ *
+ * Call sites: `broadcastNdiStatus`, which is the single funnel for
+ * every NDI lifecycle change in this process.
+ */
+function applyNdiAirChange(running: boolean) {
+  if (running === ndiOnAir) return
+  ndiOnAir = running
+  // Re-render tray (tooltip, menu, mac title) so the broadcast-safe
+  // gate either engages or releases.
+  applyTrayState(getUpdateState())
+  if (!running && pendingDownloadedNotification) {
+    // NDI just went off-air with a queued update toast. Reset the
+    // dedupe so the OS notification actually fires (notifyUpdate-
+    // Downloaded would otherwise short-circuit on second call), then
+    // hand the stashed state back through the same fire path.
+    const replay = pendingDownloadedNotification
+    pendingDownloadedNotification = null
+    lastNotifiedDownloadedVersion = null
+    notifyUpdateDownloaded(replay)
   }
 }
 

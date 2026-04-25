@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
-import { useDesktop, type UpdateState } from '@/lib/use-electron'
+import { useDesktop, useNdi, type UpdateState } from '@/lib/use-electron'
 import { cleanReleaseNotes } from '@/lib/release-notes'
 
 // Mirrors the publish.owner/publish.repo block in electron-builder.yml.
@@ -37,6 +37,16 @@ function getReleaseUrl(state: UpdateState): string | null {
 
 export function UpdateBanner() {
   const desktop = useDesktop()
+  // While NDI is on the air, hold the banner — an accidental click on
+  // "Restart now" mid-service tears the source off the air in vMix /
+  // OBS. The tray icon's colored badge keeps the operator aware that
+  // an update is pending; the banner re-appears on its own as soon as
+  // they stop the sender (the `useNdi` subscription pushes a new
+  // status, this component re-renders, and `onAir` flips back to
+  // false). Update checks + downloads continue in the background
+  // either way, so the only thing being suppressed is the prompt.
+  const { status: ndiStatus } = useNdi()
+  const onAir = ndiStatus?.running === true
   const [state, setState] = useState<UpdateState>({ status: 'idle' })
   const [dismissed, setDismissed] = useState(false)
   const [installing, setInstalling] = useState(false)
@@ -56,6 +66,7 @@ export function UpdateBanner() {
 
   if (!desktop) return null
   if (dismissed) return null
+  if (onAir) return null
 
   let body: React.ReactNode = null
   if (state.status === 'available') {
