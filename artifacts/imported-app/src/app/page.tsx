@@ -4,6 +4,7 @@ import { SpeechProvider } from '@/components/providers/speech-provider'
 import { OutputBroadcaster } from '@/components/providers/output-broadcaster'
 import { LiveTranslationSync } from '@/components/providers/live-translation-sync'
 import { UpdateNotifier } from '@/components/providers/update-notifier'
+import { UpdateAvailableDialog } from '@/components/providers/update-dialog'
 import { LogosShell } from '@/components/layout/logos-shell'
 import { SettingsView } from '@/components/views/settings'
 import { useAppStore } from '@/lib/store'
@@ -79,6 +80,13 @@ export default function Home() {
           (or by the 4-hour interval check), so the operator never has
           to dig into Settings to find out an update exists. */}
       <UpdateNotifier />
+      {/* Prominent modal popup for new releases — complements the toast
+          above. The toast is suppressed mid-broadcast by the on-air
+          gate (and at app launch NDI auto-starts so the toast effectively
+          never fires), while the dialog is purely informational and
+          shows once per version per session so the operator actually
+          sees the update notice when they open the app. */}
+      <UpdateAvailableDialog />
       <AppContent />
     </SpeechProvider>
   )

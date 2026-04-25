@@ -28,6 +28,17 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import {
   Upload,
   X,
   Image as ImageIcon,
@@ -54,14 +65,22 @@ import {
   ExternalLink,
   RefreshCcw,
   Power,
+  Radio,
 } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { NdiOutputPanel } from './ndi-output-panel'
+import { StartupCard } from './startup-card'
 import { OutputPreview } from '@/components/settings/output-preview'
 import { FONT_REGISTRY } from '@/lib/fonts'
 import { quickStartUrl, troubleshootingUrl, newIssueUrl } from '@/lib/github-repo'
+import { useNdi } from '@/lib/use-electron'
 
 export function SettingsView() {
   const { settings, updateSettings, setSelectedTranslation } = useAppStore()
@@ -1235,196 +1254,21 @@ type ScriptureLiveUpdaterBridge = {
     install?: () => Promise<{ ok: boolean; error?: string }>
     onState?: (cb: (s: UpdaterState) => void) => () => void
   }
-}
-
-// Bridge type shape mirrored from electron/preload.ts. Kept local to
-// avoid a cross-package import (Next builds the renderer; the preload
-// API lives in the Electron package). If preload's contract changes,
-// update this type too.
-type LaunchAtLoginInfo = {
-  supported: boolean
-  openAtLogin: boolean
-  openAsHidden: boolean
-  reason?: string
-}
-type ScriptureLiveLaunchBridge = {
-  launchAtLogin?: {
-    get?: () => Promise<LaunchAtLoginInfo>
-    set?: (v: boolean) => Promise<{ ok: boolean; error?: string; info: LaunchAtLoginInfo }>
-  }
-  quitOnClose?: {
+  // Operator preference for the OS-level "Update ready to install"
+  // toast. Lives on the same `scriptureLive` bridge as the updater
+  // so the Help & Updates card can read/write it without pulling in
+  // a second bridge type. Kept local to mirror preload.ts.
+  desktopUpdateToast?: {
     get?: () => Promise<{ value: boolean }>
-    set?: (v: boolean) => Promise<{ ok: boolean; error?: string; value: boolean }>
+    set?: (value: boolean) => Promise<{ ok: boolean; error?: string; value: boolean }>
   }
 }
 
-/**
- * Settings card for "Launch at startup". When enabled, the OS auto-
- * launch entry is registered with `--hidden` + `openAsHidden:true` so
- * the app comes up tray-only with NDI already running — no manual
- * double-click before each service. Disabled-with-explanation in the
- * browser preview, on Linux, and in dev builds (see `readLaunchAtLogin`
- * in electron/main.ts for the platform-support matrix).
- */
-function StartupCard() {
-  const [info, setInfo] = useState<LaunchAtLoginInfo | null>(null)
-  const [busy, setBusy] = useState(false)
-  // Quit-on-close (close-button behavior) preference. `null` while
-  // we're still reading it from the main process; in the browser
-  // preview this stays `null` and the row renders disabled with an
-  // explanation, mirroring how launch-at-login behaves.
-  const [quitOnClose, setQuitOnCloseState] = useState<boolean | null>(null)
-  const [closeBusy, setCloseBusy] = useState(false)
-  const isElectron =
-    typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)
-
-  useEffect(() => {
-    if (!isElectron) {
-      setInfo({
-        supported: false,
-        openAtLogin: false,
-        openAsHidden: false,
-        reason: 'Launch-at-login is only available in the desktop app.',
-      })
-      return
-    }
-    const bridge = (window as unknown as { scriptureLive?: ScriptureLiveLaunchBridge })
-      .scriptureLive
-    let cancelled = false
-    bridge?.launchAtLogin?.get?.()
-      .then((res) => { if (!cancelled) setInfo(res) })
-      .catch((err) => {
-        if (cancelled) return
-        setInfo({
-          supported: false,
-          openAtLogin: false,
-          openAsHidden: false,
-          reason: err instanceof Error ? err.message : 'Could not read launch-at-login state.',
-        })
-      })
-    bridge?.quitOnClose?.get?.()
-      .then((res) => { if (!cancelled) setQuitOnCloseState(res.value === true) })
-      .catch(() => { /* leave as null → row renders disabled */ })
-    return () => { cancelled = true }
-  }, [isElectron])
-
-  const handleToggle = async (next: boolean) => {
-    const bridge = (window as unknown as { scriptureLive?: ScriptureLiveLaunchBridge })
-      .scriptureLive
-    const setter = bridge?.launchAtLogin?.set
-    if (!setter) return
-    setBusy(true)
-    try {
-      const result = await setter(next)
-      setInfo(result.info)
-      if (!result.ok) {
-        toast.error(result.error ?? 'Failed to update launch-at-login.')
-        return
-      }
-      toast.success(
-        next
-          ? 'ScriptureLive AI will start automatically when you log in.'
-          : 'Launch at startup turned off.',
-      )
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to update launch-at-login.')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const handleQuitOnCloseToggle = async (next: boolean) => {
-    const bridge = (window as unknown as { scriptureLive?: ScriptureLiveLaunchBridge })
-      .scriptureLive
-    const setter = bridge?.quitOnClose?.set
-    if (!setter) return
-    setCloseBusy(true)
-    try {
-      const result = await setter(next)
-      setQuitOnCloseState(result.value === true)
-      if (!result.ok) {
-        toast.error(result.error ?? 'Failed to update close-button behavior.')
-        return
-      }
-      toast.success(
-        next
-          ? 'Closing the window will quit ScriptureLive AI.'
-          : 'Closing the window will keep ScriptureLive AI running in the tray.',
-      )
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : 'Failed to update close-button behavior.',
-      )
-    } finally {
-      setCloseBusy(false)
-    }
-  }
-
-  const supported = info?.supported === true
-  const checked = info?.openAtLogin === true
-  // The quit-on-close toggle is meaningful in both packaged and
-  // dev Electron builds (it just changes how the close handler
-  // behaves), so unlike launch-at-login we only gate it on the
-  // electron context — not on app.isPackaged.
-  const quitOnCloseSupported = isElectron && quitOnClose !== null
-
-  return (
-    <Card className="bg-card border-border">
-      <CardHeader className="pb-3">
-        <div className="flex items-center gap-2">
-          <Power className="h-5 w-5 text-primary" />
-          <div>
-            <CardTitle className="text-base">Startup &amp; Shutdown</CardTitle>
-            <CardDescription>
-              When ScriptureLive AI starts, and what happens when you close the window
-            </CardDescription>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            <Label className="text-sm font-medium">Launch at startup</Label>
-            <p className="text-xs mt-0.5 text-muted-foreground">
-              {info === null
-                ? 'Checking…'
-                : supported
-                  ? 'When on, ScriptureLive AI starts in the system tray when you log in — NDI is already running before you double-click anything. Click the tray icon to bring up the main window.'
-                  : (info.reason ?? 'Not available on this system.')}
-            </p>
-          </div>
-          <Switch
-            checked={checked}
-            disabled={busy || !supported}
-            onCheckedChange={handleToggle}
-            aria-label="Launch ScriptureLive AI when the computer boots"
-          />
-        </div>
-
-        <Separator />
-
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            <Label className="text-sm font-medium">When I close the window, also quit the app</Label>
-            <p className="text-xs mt-0.5 text-muted-foreground">
-              {!isElectron
-                ? 'This setting is only available in the desktop app.'
-                : quitOnClose === null
-                  ? 'Checking…'
-                  : 'Off (recommended) keeps ScriptureLive AI running in the system tray when you click the X button — NDI and the secondary screen stay live. Turn ON if you want the X button to fully quit the app and free its memory (single-monitor setups, kiosks).'}
-            </p>
-          </div>
-          <Switch
-            checked={quitOnClose === true}
-            disabled={closeBusy || !quitOnCloseSupported}
-            onCheckedChange={handleQuitOnCloseToggle}
-            aria-label="Quit ScriptureLive AI when the main window is closed"
-          />
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
+// `StartupCard` is implemented in `./startup-card` so it can be
+// mounted by the close-button E2E harness in isolation, without
+// pulling in the rest of this file's tree (zustand store, bible
+// downloads, NDI panel, fonts, etc.). Imported at the top of this
+// module.
 
 function HelpAndUpdatesCard() {
   const [checking, setChecking] = useState(false)
@@ -1436,8 +1280,23 @@ function HelpAndUpdatesCard() {
     process.env.NEXT_PUBLIC_APP_VERSION || '0.5.6',
   )
   const [state, setState] = useState<UpdaterState>({ status: 'idle' })
+  // Operator preference: pop a desktop notification when an update is
+  // ready. `null` while we're still reading it from the main process
+  // (or when running in a browser preview, where the bridge is
+  // absent); the row renders disabled with an explanation in that
+  // state, mirroring how launch-at-login behaves.
+  const [desktopToastOn, setDesktopToastOn] = useState<boolean | null>(null)
+  const [toastBusy, setToastBusy] = useState(false)
   const isElectron =
     typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)
+  // While NDI is on the air we hold update prompts (download / install)
+  // because either button tears the running source off the air mid-
+  // service. The check itself + background download still run, so the
+  // operator just sees the prompt re-appear the moment they stop the
+  // sender. Mirrors the same gating used by the floating UpdateBanner
+  // — keeping both surfaces consistent.
+  const { status: ndiStatus } = useNdi()
+  const onAir = ndiStatus?.running === true
 
   // Pull the real installed version from the Electron main process and
   // seed the updater state so the card shows accurate info on first
@@ -1454,6 +1313,13 @@ function HelpAndUpdatesCard() {
     bridge.updater?.getState?.().then((s) => {
       if (!cancelled && s) setState(s)
     }).catch(() => { /* ignore */ })
+    // Hydrate the desktop-toast opt-out so the row renders with the
+    // current persisted value instead of flashing the default. If the
+    // bridge is missing or the call rejects we leave it as `null` so
+    // the toggle stays disabled with the "checking…" copy.
+    bridge.desktopUpdateToast?.get?.().then((res) => {
+      if (!cancelled) setDesktopToastOn(res.value === true)
+    }).catch(() => { /* ignore — row renders disabled */ })
     // Subscribe to background update-state pushes (the updater also
     // checks on a 4h interval and on launch). This keeps the card in
     // sync without polling.
@@ -1535,6 +1401,33 @@ function HelpAndUpdatesCard() {
     }
   }
 
+  const handleDesktopToastToggle = async (next: boolean) => {
+    const bridge = (window as unknown as { scriptureLive?: ScriptureLiveUpdaterBridge })
+      .scriptureLive
+    const setter = bridge?.desktopUpdateToast?.set
+    if (!setter) return
+    setToastBusy(true)
+    try {
+      const result = await setter(next)
+      setDesktopToastOn(result.value === true)
+      if (!result.ok) {
+        toast.error(result.error ?? 'Failed to update notification preference.')
+        return
+      }
+      toast.success(
+        next
+          ? 'A desktop notification will pop when an update is ready.'
+          : 'Desktop update notifications turned off — the tray badge and in-app banner still appear.',
+      )
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : 'Failed to update notification preference.',
+      )
+    } finally {
+      setToastBusy(false)
+    }
+  }
+
   const installUpdateNow = async () => {
     const bridge = (window as unknown as { scriptureLive?: ScriptureLiveUpdaterBridge })
       .scriptureLive
@@ -1613,18 +1506,56 @@ function HelpAndUpdatesCard() {
             </p>
           </div>
           {showInstall ? (
-            <Button onClick={installUpdateNow} className="gap-2 shrink-0">
-              <RefreshCcw className="h-4 w-4" />
-              Restart &amp; Install
-            </Button>
+            // Install tears down the running NDI sender, so we hold
+            // the button while on-air and surface the reason via a
+            // tooltip pointing at the badge below. The shared
+            // `Tooltip` primitive already wraps in a TooltipProvider
+            // internally — no need for a local one.
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className={cn(onAir && 'cursor-not-allowed')}>
+                  <Button
+                    onClick={installUpdateNow}
+                    disabled={onAir}
+                    className="gap-2 shrink-0"
+                    aria-describedby={onAir ? 'updates-onair-badge' : undefined}
+                  >
+                    <RefreshCcw className="h-4 w-4" />
+                    Restart &amp; Install
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              {onAir && (
+                <TooltipContent>
+                  On-air — stop the NDI sender, then click Restart &amp; Install.
+                </TooltipContent>
+              )}
+            </Tooltip>
           ) : showDownload ? (
             // One-click download — same behaviour as the notifier
             // popup's Download button. Stays entirely inside the app
-            // (no browser hand-off).
-            <Button onClick={downloadUpdateNow} className="gap-2 shrink-0">
-              <RefreshCcw className="h-4 w-4" />
-              Download Update
-            </Button>
+            // (no browser hand-off). Held while on-air so that a
+            // surprise installer prompt doesn't pop mid-service.
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className={cn(onAir && 'cursor-not-allowed')}>
+                  <Button
+                    onClick={downloadUpdateNow}
+                    disabled={onAir}
+                    className="gap-2 shrink-0"
+                    aria-describedby={onAir ? 'updates-onair-badge' : undefined}
+                  >
+                    <RefreshCcw className="h-4 w-4" />
+                    Download Update
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              {onAir && (
+                <TooltipContent>
+                  On-air — stop the NDI sender, then click Download Update.
+                </TooltipContent>
+              )}
+            </Tooltip>
           ) : isDownloading ? (
             <Button disabled className="gap-2 shrink-0">
               <RefreshCcw className="h-4 w-4 animate-spin" />
@@ -1636,6 +1567,121 @@ function HelpAndUpdatesCard() {
               {checking ? 'Checking…' : 'Check Now'}
             </Button>
           )}
+        </div>
+
+        {/*
+          On-air status badge — explains why the Download / Install
+          buttons above are grayed out when an update is pending and
+          NDI is currently broadcasting. Disappears the moment NDI
+          stops (the `useNdi` subscription pushes a fresh status and
+          this card re-renders). Only shown when there is something
+          to install — no point cluttering the card during idle /
+          checking / not-available states.
+        */}
+        {onAir && (showDownload || showInstall || isDownloading) && (
+          <div
+            id="updates-onair-badge"
+            role="status"
+            aria-live="polite"
+            className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2"
+          >
+            <Radio className="h-4 w-4 mt-0.5 text-amber-500 shrink-0" />
+            <div className="flex-1 text-xs leading-snug">
+              <span className="font-medium text-amber-600 dark:text-amber-400">
+                On-air — install after broadcast.
+              </span>{' '}
+              <span className="text-muted-foreground">
+                Update prompts are held while NDI is broadcasting so a restart
+                doesn&apos;t tear the source off the air. Stop the sender and the
+                button will re-enable on its own.
+              </span>
+              {/*
+                Manual override for the rare cases where the operator
+                genuinely needs to install RIGHT NOW (security advisory,
+                blocking bug forcing a restart anyway) and is willing to
+                take the broadcast hit. Only offered when an installer is
+                actually staged on disk (`showInstall` ⇔ status ===
+                'downloaded') — for available / downloading the operator
+                has to wait for the download to finish first. The
+                AlertDialog confirmation is the guard that stops an
+                accidental click from tearing the source off the air; on
+                explicit confirm we hand off to the same install IPC that
+                the off-air "Restart & Install" button uses.
+              */}
+              {showInstall && state.status === 'downloaded' && (
+                <div className="mt-1.5">
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-amber-700 underline underline-offset-2 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200"
+                      >
+                        Install anyway…
+                      </button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>
+                          Install v{state.version} now and drop the NDI feed?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Restarting will drop the NDI feed for about 10
+                          seconds while ScriptureLive AI installs the update
+                          and relaunches. vMix / OBS / Wirecast will lose the
+                          source for the duration of the restart.
+                          <br />
+                          <br />
+                          Use this only when you genuinely need to install
+                          RIGHT NOW (security advisory, blocking bug). For
+                          normal updates, wait until the service ends — the
+                          update will install on the next clean quit either
+                          way.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={installUpdateNow}>
+                          Install now and drop NDI
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <Separator />
+
+        {/*
+          Operator toggle for the OS-level "Update ready to install"
+          toast. Off → suppress just the desktop notification while
+          leaving the tray badge / tooltip and the in-app banner
+          intact (those are wired through separate update-state
+          subscribers in the main process). Disabled-with-explanation
+          in the browser preview, mirroring how launch-at-login and
+          quit-on-close behave.
+        */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <Label className="text-sm font-medium">
+              Pop a desktop notification when an update is ready
+            </Label>
+            <p className="text-xs mt-0.5 text-muted-foreground">
+              {!isElectron
+                ? 'This setting is only available in the desktop app.'
+                : desktopToastOn === null
+                  ? 'Checking…'
+                  : 'On (recommended) shows a system toast the moment an update finishes downloading. Turn OFF on a kiosk PC where the desktop is mirrored — the tray badge and the in-app banner still update so you never miss it.'}
+            </p>
+          </div>
+          <Switch
+            checked={desktopToastOn === true}
+            disabled={toastBusy || !isElectron || desktopToastOn === null}
+            onCheckedChange={handleDesktopToastToggle}
+            aria-label="Pop a desktop notification when an update is ready"
+          />
         </div>
 
         <Separator />

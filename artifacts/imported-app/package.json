@@ -1,6 +1,6 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.5.28",
+  "version": "0.5.29",
   "private": true,
   "main": "dist-electron/main.js",
   "repository": {
@@ -31,6 +31,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "bash scripts/run-e2e.sh",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -129,6 +130,7 @@
     "electron-builder": "^25.1.8",
     "eslint": "^9",
     "eslint-config-next": "^16.1.1",
+    "playwright": "~1.49.1",
     "tailwindcss": "^4",
     "tw-animate-css": "^1.3.5",
     "typescript": "^5",

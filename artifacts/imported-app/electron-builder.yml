@@ -96,7 +96,16 @@ win:
     - target: nsis
       arch: [x64]
   icon: build-resources/icon.ico
-  artifactName: "${productName}-${version}-Setup-${arch}.${ext}"
+  # IMPORTANT: do NOT use ${productName} in artifactName here.
+  # `productName` is "ScriptureLive AI" (with a space). electron-builder
+  # normalizes that space inconsistently across the two places it gets
+  # written: the actual asset filename uploaded to GitHub Releases ends
+  # up using a dot ("ScriptureLive.AI-..."), while the URL written into
+  # latest.yml uses a hyphen ("ScriptureLive-AI-..."). The result is
+  # that electron-updater fetches latest.yml, follows the URL inside,
+  # and gets a 404 — so auto-update silently fails. Hardcoding a
+  # slug-safe name keeps both names identical.
+  artifactName: "ScriptureLive-AI-${version}-Setup-${arch}.${ext}"
   # Authenticode code signing.
   # electron-builder reads the certificate from these standard env vars:
   #   CSC_LINK            path to .pfx, base64-encoded .pfx contents, or https URL
@@ -118,6 +127,10 @@ mac:
       arch: [x64, arm64]
   icon: build-resources/icon.png
   category: public.app-category.productivity
+  # Same reason as `win.artifactName` above: avoid ${productName} so the
+  # asset filename and the URL inside latest-mac.yml stay byte-identical
+  # and electron-updater can actually find the .dmg it advertises.
+  artifactName: "ScriptureLive-AI-${version}-${arch}.${ext}"
   # Required for Apple Developer ID signing + notarization to succeed.
   hardenedRuntime: true
   gatekeeperAssess: false

@@ -91,6 +91,7 @@ function fatalError(stage, err) {
 const frame_capture_1 = require("./frame-capture");
 const updater_1 = require("./updater");
 const tray_badges_1 = require("./tray-badges");
+const preferences_1 = require("./preferences");
 // ── Replit-hosted speech-to-text proxy ────────────────────────────────
 // The bundled Next.js standalone server in this Electron app forwards
 // every /api/transcribe request to this URL. The OpenAI key never lives
@@ -153,6 +154,13 @@ let pendingDownloadedNotification = null;
 // the very first close after launch — before any IPC traffic from
 // the renderer. See `loadAppPreferences` / `setQuitOnCloseAndPersist`.
 let quitOnClose = false;
+// Operator preference: when false, the update-ready OS toast (the
+// one fired by `notifyUpdateDownloaded`) is suppressed. Hidden in
+// `userData/preferences.json` alongside `quitOnClose`. Default true
+// — same surface operators have been getting since the toast shipped.
+// Hydrated at boot by `loadAppPreferences` so the very first
+// `onUpdateState` callback honors the saved choice.
+let desktopUpdateToastEnabled = true;
 function serializeNdi(fn) {
     const next = ndiTransition.then(() => fn(), () => fn());
     ndiTransition = next.catch(() => undefined);
@@ -204,37 +212,45 @@ async function getPinnedPort(preferred = 47330) {
         });
     });
 }
+/**
+ * Lightweight on-disk preferences store. Lives at
+ * `userData/preferences.json`. Used by the main process for prefs
+ * that must be known at boot time / at window-close time, BEFORE the
+ * renderer has a chance to push them in over IPC. Keeps the file
+ * tiny and human-editable; missing / malformed file → defaults.
+ *
+ * The actual JSON parse / write lives in `./preferences.ts` so it
+ * can be unit-tested without an Electron `app` instance. The
+ * wrappers below just resolve the userData path and add main-process
+ * logging.
+ */
 function getPreferencesPath() {
     return node_path_1.default.join(electron_1.app.getPath('userData'), 'preferences.json');
 }
 function loadAppPreferences() {
     try {
-        const p = getPreferencesPath();
-        if (!node_fs_1.default.existsSync(p))
-            return {};
-        const raw = node_fs_1.default.readFileSync(p, 'utf8');
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object')
-            return parsed;
+        return (0, preferences_1.readPreferences)(getPreferencesPath());
     }
     catch (err) {
         console.warn('[prefs] failed to read preferences.json (using defaults):', err);
+        return {};
     }
-    return {};
 }
 function writeAppPreferences(prefs) {
     try {
-        const p = getPreferencesPath();
-        const dir = node_path_1.default.dirname(p);
-        if (!node_fs_1.default.existsSync(dir))
-            node_fs_1.default.mkdirSync(dir, { recursive: true });
-        node_fs_1.default.writeFileSync(p, JSON.stringify(prefs, null, 2));
+        (0, preferences_1.writePreferences)(getPreferencesPath(), prefs);
     }
     catch (err) {
         console.warn('[prefs] failed to write preferences.json:', err);
         throw err;
     }
 }
+// The "should this window hide instead of really closing?" decision
+// lives in `shouldHideOnCloseFromInputs` (./preferences.ts), wired
+// onto each operator-facing window by `installHideToTrayCloseHandler`
+// from the same module. Sharing the installer with the E2E harness
+// means the bundled app and the test run identical close-handler
+// code — no risk of the test version drifting.
 /**
  * Hydrate the in-memory `quitOnClose` flag from the preferences
  * file. Called once on boot, before the main window is created, so
@@ -256,6 +272,31 @@ function setQuitOnCloseAndPersist(next) {
     prefs.quitOnClose = next;
     writeAppPreferences(prefs);
     quitOnClose = next;
+}
+/**
+ * Hydrate the in-memory `desktopUpdateToastEnabled` flag from disk.
+ * Default is true — the legacy behavior — so a missing pref or a
+ * brand-new install still pops the toast that operators expect.
+ * Read once at boot before the updater fires its first state push.
+ */
+function hydrateDesktopUpdateToastFromDisk() {
+    const prefs = loadAppPreferences();
+    // Only treat an explicit `false` as "off"; anything else (missing,
+    // null, true) means the operator hasn't opted out, so keep the
+    // toast on.
+    desktopUpdateToastEnabled = prefs.desktopUpdateToastEnabled !== false;
+    console.log('[prefs] desktopUpdateToastEnabled =', desktopUpdateToastEnabled);
+}
+/**
+ * Persist the desktop-toast preference and update the in-memory flag.
+ * No restart needed: the next time `notifyUpdateDownloaded` fires it
+ * reads the live flag and either fires the toast or short-circuits.
+ */
+function setDesktopUpdateToastEnabledAndPersist(next) {
+    const prefs = loadAppPreferences();
+    prefs.desktopUpdateToastEnabled = next;
+    writeAppPreferences(prefs);
+    desktopUpdateToastEnabled = next;
 }
 function getUserDbPath() {
     const dir = node_path_1.default.join(electron_1.app.getPath('userData'), 'db');
@@ -414,36 +455,15 @@ async function createMainWindow(url, opts = {}) {
     // congregation/stage outputs, and the auto-updater keeps running.
     // The operator brings it back from the tray.
     //
-    // Four carve-outs let the app actually exit:
-    //   1. `isQuitting` is true — set by `before-quit`, fires for
-    //      every explicit Quit path (tray menu, app menu / Cmd+Q,
-    //      updater restart, fatal errors that call app.quit()).
-    //   2. The operator opted out via Settings → Startup → "When I
-    //      close the window, also quit the app". `quitOnClose` is
-    //      hydrated from `userData/preferences.json` at boot and kept
-    //      live by the IPC setter, so the very first close after
-    //      launch already honors the saved choice.
-    //   3. No tray exists (e.g. tray init failed on a Linux desktop
-    //      without a system tray). Without a way back into the app,
-    //      hide-to-tray would be a one-way trap, so let close happen
-    //      and `window-all-closed` will quit cleanly.
-    //   4. The window is being destroyed during shutdown.
-    mainWindow.on('close', (event) => {
-        if (isQuitting)
-            return;
-        if (quitOnClose)
-            return;
-        if (!tray || tray.isDestroyed())
-            return;
-        if (!mainWindow || mainWindow.isDestroyed())
-            return;
-        event.preventDefault();
-        try {
-            mainWindow.hide();
-        }
-        catch { /* ignore */ }
-        void maybeShowTrayHint();
-    });
+    // The decision (hide vs. really close) is delegated to
+    // `shouldHideOnClose()` so the same rule — `isQuitting`,
+    // `quitOnClose`, tray availability, window aliveness — is shared
+    // by every operator-facing window we ever wire up the same way.
+    (0, preferences_1.installHideToTrayCloseHandler)(mainWindow, () => ({
+        isQuitting,
+        quitOnClose,
+        hasLiveTray: !!tray && !tray.isDestroyed(),
+    }), () => { void maybeShowTrayHint(); });
     mainWindow.on('closed', () => { mainWindow = null; });
     await mainWindow.loadURL(url);
 }
@@ -794,6 +814,18 @@ function buildTrayMenu(state) {
                 label: `Update ready (v${state.version}) — install after broadcast`,
                 enabled: false,
             });
+            // Operator override: install RIGHT NOW even while on-air. Guarded
+            // by a native confirmation dialog (see `confirmInstallDuring-
+            // Broadcast`) so an accidental click in the tray menu can't tear
+            // the source off the air mid-service. Only offered when an
+            // installer is actually staged on disk (status === 'downloaded')
+            // — for 'available' / 'downloading' the operator has to wait for
+            // the download to finish first, which gives them an explicit
+            // off-ramp before the override even appears.
+            items.push({
+                label: 'Install anyway… (drops NDI feed for ~10s)',
+                click: () => { void confirmInstallDuringBroadcast(state.version); },
+            });
         }
     }
     else if (state.status === 'available') {
@@ -913,6 +945,48 @@ function quitAndInstallUpdate() {
         }
     })();
 }
+/**
+ * Operator-initiated mid-broadcast install confirmation.
+ *
+ * The on-air gate (held tray menu rows, disabled Settings button)
+ * deliberately removes the "Restart now" affordance while NDI is
+ * sending — an accidental click mid-service tears the source off
+ * the air. The override exists for the rare cases where the
+ * operator genuinely needs to install RIGHT NOW (security advisory,
+ * blocking bug forcing a restart anyway) and is willing to take
+ * the broadcast hit.
+ *
+ * Pops a native warning dialog spelling out the consequence ("drops
+ * the NDI feed for ~10s") and only on explicit confirm hands off to
+ * the same `quitAndInstallUpdate()` that the off-air "Restart now"
+ * paths use. Cancelling leaves the gate in place — the held tray
+ * rows / Settings hint stay disabled, NDI keeps sending, and the
+ * normal flow resumes when the broadcast ends.
+ *
+ * The default button is Cancel (defaultId: 1) so an operator who
+ * mashes Enter through a stray dialog mid-service doesn't restart
+ * by accident.
+ */
+async function confirmInstallDuringBroadcast(version) {
+    const choice = await showDialog({
+        type: 'warning',
+        title: 'Install update during broadcast?',
+        message: `Install v${version} now and drop the NDI feed?`,
+        detail: 'Restarting will drop the NDI feed for about 10 seconds while ' +
+            'ScriptureLive AI installs the update and relaunches. vMix / OBS ' +
+            '/ Wirecast will lose the source for the duration of the restart. ' +
+            "\n\nUse this only when you genuinely need to install RIGHT NOW " +
+            '(security advisory, blocking bug). For normal updates, wait ' +
+            'until the service ends — the update will install on the next ' +
+            'clean quit either way.',
+        buttons: ['Install now and drop NDI', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+    });
+    if (choice.response === 0) {
+        quitAndInstallUpdate();
+    }
+}
 // One-shot OS toast when an update finishes downloading. Operators
 // who minimize or hide the main window during a live service won't
 // see the in-app "Restart to install" banner; the tray icon and
@@ -954,6 +1028,18 @@ function isMainWindowVisiblyFocused() {
 function notifyUpdateDownloaded(state) {
     if (state.status !== 'downloaded')
         return;
+    // Operator opt-out: the kiosk-PC use case where any OS toast is
+    // unwelcome (it can pop over a projected congregation feed when
+    // the desktop is mirrored). Tray badge / tooltip / mac title and
+    // the in-app banner stay live — those are wired through separate
+    // `onUpdateState` subscribers and do NOT consult this flag. We
+    // also don't bother stashing the state for replay: if the operator
+    // has opted out, replaying after an NDI off-air transition would
+    // just hit this same early-return.
+    if (!desktopUpdateToastEnabled) {
+        console.log(`[updater-notify] desktop toast disabled by operator — skipping update-ready toast for v${state.version}`);
+        return;
+    }
     // Hold the OS toast while NDI is on the air. The whole point of
     // this guard is to NOT pop a "Restart Now" surface in the operator's
     // face mid-service. The state is stashed and replayed by
@@ -1233,6 +1319,30 @@ function setupIpc() {
                 ok: false,
                 error: err instanceof Error ? err.message : String(err),
                 value: quitOnClose,
+            };
+        }
+    });
+    // ── Desktop update-ready toast (Settings → Help & Updates card) ──
+    // Operator opt-out for the OS notification fired by
+    // `notifyUpdateDownloaded`. Tray badge / tooltip / in-app banner
+    // are unaffected — they read from `onUpdateState` directly. Stored
+    // alongside `quitOnClose` in `userData/preferences.json` so a
+    // single file holds every operator preference. Default is true to
+    // preserve the toast behavior shipped with the helper.
+    electron_1.ipcMain.handle('app:get-desktop-update-toast', () => ({
+        value: desktopUpdateToastEnabled,
+    }));
+    electron_1.ipcMain.handle('app:set-desktop-update-toast', (_e, value) => {
+        const next = value === true;
+        try {
+            setDesktopUpdateToastEnabledAndPersist(next);
+            return { ok: true, value: desktopUpdateToastEnabled };
+        }
+        catch (err) {
+            return {
+                ok: false,
+                error: err instanceof Error ? err.message : String(err),
+                value: desktopUpdateToastEnabled,
             };
         }
     });
@@ -1567,6 +1677,10 @@ electron_1.app.whenReady().then(async () => {
     // first close after launch already honors what the operator chose
     // last session — no IPC round-trip required.
     hydrateQuitOnCloseFromDisk();
+    // Same store, different toggle: read the desktop-toast opt-out
+    // before the updater fires its first state push so the very first
+    // "downloaded" event already honors the operator's choice.
+    hydrateDesktopUpdateToastFromDisk();
     // ── Permissions ────────────────────────────────────────────────
     // Auto-grant the renderer the permissions it needs to behave like
     // a real desktop production tool — microphone (live transcription),

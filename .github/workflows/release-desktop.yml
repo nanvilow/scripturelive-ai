@@ -116,6 +116,27 @@ jobs:
           fi
           echo "value=$opt_out" >> "$GITHUB_OUTPUT"
 
+      # Detect whether code signing is even configured at the repo level.
+      # If WIN_CSC_LINK is unset, electron-builder produces an unsigned
+      # installer (logs say "no signing info identified, signing is
+      # skipped"), and there's no point running the verifier — it will
+      # always fail and block every release until someone adds the
+      # `[unsigned-release]` marker by hand. Treat "no cert configured"
+      # as the same intent as "unsigned-release" instead of a build error.
+      - name: Detect Windows signing configuration
+        id: signconf
+        shell: bash
+        env:
+          HAS_CSC: ${{ secrets.WIN_CSC_LINK != '' }}
+        run: |
+          if [ "$HAS_CSC" = "true" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "Windows code signing IS configured (WIN_CSC_LINK is set)."
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Windows code signing not configured::WIN_CSC_LINK secret is unset; the installer will be produced unsigned and the build-time signature verification step will be skipped. End users will see a SmartScreen warning when running the installer. To enable signing, add WIN_CSC_LINK + WIN_CSC_KEY_PASSWORD repo secrets and (optionally) the EXPECTED_WIN_PUBLISHER_CN repo variable."
+          fi
+
       # Run signtool against the freshly-built installers BEFORE we upload
       # them as artifacts. This catches missing/expired/invalid Authenticode
       # certificates within seconds of `electron-builder` finishing, instead
@@ -124,7 +145,7 @@ jobs:
       # The `release` job re-verifies with osslsigncode against the system CA
       # bundle as a defense-in-depth backstop.
       - name: Verify Windows installer signatures (build-time)
-        if: steps.optout.outputs.value != 'true'
+        if: steps.optout.outputs.value != 'true' && steps.signconf.outputs.configured == 'true'
         shell: pwsh
         env:
           EXPECTED_WIN_PUBLISHER_CN: ${{ vars.EXPECTED_WIN_PUBLISHER_CN }}
@@ -396,8 +417,26 @@ jobs:
           fi
           echo "value=$opt_out" >> "$GITHUB_OUTPUT"
 
+      # Same auto-skip rule as the Windows verify step: if MAC_CSC_LINK
+      # isn't configured, electron-builder produces an un-notarized .dmg
+      # and there's no point trying to verify it with spctl/stapler. Treat
+      # "no Apple Developer ID configured" the same way as "unsigned-release".
+      - name: Detect macOS signing configuration
+        id: signconf
+        shell: bash
+        env:
+          HAS_MAC_CSC: ${{ secrets.MAC_CSC_LINK != '' }}
+        run: |
+          if [ "$HAS_MAC_CSC" = "true" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "macOS code signing IS configured (MAC_CSC_LINK is set)."
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=macOS code signing not configured::MAC_CSC_LINK secret is unset; any .dmg in this build will be unsigned/un-notarized and Gatekeeper will warn end users. To enable signing, add MAC_CSC_LINK + MAC_CSC_KEY_PASSWORD repo secrets and (optionally) the EXPECTED_MAC_SIGNING_IDENTITY repo variable."
+          fi
+
       - name: Verify macOS code-signing + notarization
-        if: steps.inventory.outputs.has_mac == 'true' && steps.optout.outputs.value != 'true'
+        if: steps.inventory.outputs.has_mac == 'true' && steps.optout.outputs.value != 'true' && steps.signconf.outputs.configured == 'true'
         env:
           INVENTORY_HAS_MAC: ${{ steps.inventory.outputs.has_mac }}
           EXPECTED_MAC_SIGNING_IDENTITY: ${{ vars.EXPECTED_MAC_SIGNING_IDENTITY }}
@@ -745,12 +784,70 @@ jobs:
           done
           cat SHA256SUMS.txt
 
+      # Extract the section of CHANGELOG.md matching the tag we're releasing.
+      # The convention (documented in CHANGELOG.md itself) is one section per
+      # version headed by `## v<X.Y.Z>`. We grab everything from that heading
+      # up to the next `## v` heading and feed it to softprops/action-gh-release
+      # as `body`. If no match is found (forgot to update CHANGELOG before
+      # tagging), we fall back to GitHub's auto-generated "Full Changelog"
+      # link instead of failing the release.
+      - name: Extract changelog section for this tag
+        id: changelog
+        shell: bash
+        env:
+          TAG_NAME: ${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+          if [ ! -f CHANGELOG.md ]; then
+            echo "::warning title=Missing CHANGELOG.md::No CHANGELOG.md at repo root; release body will use GitHub's auto-generated notes."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Pull lines from `## ${TAG_NAME}` (with optional trailing chars
+          # like ` — date`) up to but not including the next `## v` heading.
+          section="$(awk -v tag="$TAG_NAME" '
+            BEGIN { found=0 }
+            /^## v/ {
+              if (found) { exit }
+              # Match "## v0.5.28" or "## v0.5.28 — ..." but not "## v0.5.280".
+              if ($0 ~ "^## " tag "([^0-9].*)?$") { found=1; next }
+            }
+            found { print }
+          ' CHANGELOG.md)"
+          # Trim leading/trailing blank lines.
+          section="$(printf '%s' "$section" | sed -e '/./,$!d' | tac | sed -e '/./,$!d' | tac)"
+          if [ -z "$section" ]; then
+            echo "::warning title=No changelog entry for $TAG_NAME::CHANGELOG.md has no '## $TAG_NAME' section; release body will use GitHub's auto-generated notes."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          # Use a randomised heredoc delimiter so user-supplied content can't
+          # close the GITHUB_OUTPUT block prematurely.
+          delim="EOF_$(openssl rand -hex 8)"
+          {
+            echo "body<<$delim"
+            printf '%s\n' "$section"
+            # Append the auto-generated diff link as a footer so operators
+            # can still drill into the commit list if they want to.
+            echo ""
+            echo "---"
+            echo ""
+            echo "**Full commit history:** https://github.com/${GITHUB_REPOSITORY}/compare/$(git describe --tags --abbrev=0 "$TAG_NAME^" 2>/dev/null || echo 'HEAD')...$TAG_NAME"
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+          echo "Extracted $(printf '%s' "$section" | wc -l) lines of release notes for $TAG_NAME."
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.name }}
           name: ScriptureLive AI ${{ steps.tag.outputs.name }}
-          generate_release_notes: true
+          # Prefer hand-written notes from CHANGELOG.md when available, fall
+          # back to GitHub's auto-generated "compare" link otherwise so a
+          # forgotten changelog entry never blocks a release.
+          body: ${{ steps.changelog.outputs.body }}
+          generate_release_notes: ${{ steps.changelog.outputs.found != 'true' }}
           files: |
             dist/*.exe
             dist/*.yml

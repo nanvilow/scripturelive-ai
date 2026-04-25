@@ -1,5 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { autoUpdater, UpdateInfo, ProgressInfo } from 'electron-updater'
+import { copyFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 /**
  * Auto-updater wired to electron-updater.
@@ -21,7 +23,17 @@ export type UpdateState =
   | { status: 'available'; version: string; releaseNotes?: string; releaseName?: string }
   | { status: 'not-available'; version: string }
   | { status: 'downloading'; percent: number; transferred: number; total: number; bytesPerSecond: number }
-  | { status: 'downloaded'; version: string; releaseNotes?: string; releaseName?: string }
+  | {
+      status: 'downloaded'
+      version: string
+      releaseNotes?: string
+      releaseName?: string
+      // Set after we successfully copy the freshly-downloaded installer
+      // onto the operator's Desktop. Undefined while the copy is still
+      // in-flight or if it failed (non-fatal — the in-app install path
+      // still works from electron-updater's private cache regardless).
+      desktopCopyPath?: string
+    }
   | { status: 'error'; message: string }
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
@@ -165,10 +177,65 @@ export function setupAutoUpdater(opts: { getMainWindow: () => BrowserWindow | nu
       bytesPerSecond: p.bytesPerSecond,
     })
   })
-  autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
+  autoUpdater.on('update-downloaded', (info: UpdateInfo & { downloadedFile?: string }) => {
     downloadInFlight = false
     const { notes, name } = normalizeNotes(info)
-    broadcast({ status: 'downloaded', version: info.version, releaseNotes: notes, releaseName: name })
+
+    // Surface the 'downloaded' state immediately so the in-app
+    // install button enables right away. The Desktop copy is a
+    // best-effort follow-up — we do NOT block the install flow on it.
+    broadcast({
+      status: 'downloaded',
+      version: info.version,
+      releaseNotes: notes,
+      releaseName: name,
+    })
+
+    // Operator-friendly bonus: drop a copy of the freshly-downloaded
+    // setup .exe onto the user's Desktop with a recognisable filename.
+    // This gives them a portable installer they can:
+    //   - keep as a backup,
+    //   - copy to a second church PC over USB,
+    //   - re-run after an uninstall without going back to GitHub.
+    // electron-updater stores the canonical copy under
+    // %LocalAppData%\scripturelive-ai-updater\pending\... which is
+    // both buried and gets cleaned up after install, so without this
+    // step the operator has no easy way to grab the .exe again.
+    //
+    // Failures here are intentionally non-fatal: a full Desktop, a
+    // locked file from antivirus, or a redirected Desktop folder will
+    // log a warning but won't block the install. The install path
+    // continues to use the original cache location regardless.
+    if (info.downloadedFile) {
+      const desktopDir = app.getPath('desktop')
+      const destPath = join(desktopDir, `ScriptureLive AI Setup ${info.version}.exe`)
+      copyFile(info.downloadedFile, destPath)
+        .then(() => {
+          console.log('[updater] copied installer to desktop:', destPath)
+          // Re-broadcast with the Desktop path now that the copy
+          // succeeded so the UI can confirm to the operator. The
+          // listener set is idempotent — re-broadcasting an identical
+          // 'downloaded' state with one extra field is cheap and
+          // safe.
+          broadcast({
+            status: 'downloaded',
+            version: info.version,
+            releaseNotes: notes,
+            releaseName: name,
+            desktopCopyPath: destPath,
+          })
+        })
+        .catch((err: unknown) => {
+          console.warn(
+            '[updater] could not copy installer to desktop (non-fatal):',
+            err instanceof Error ? err.message : err,
+          )
+        })
+    } else {
+      console.warn(
+        '[updater] update-downloaded event did not include downloadedFile path; skipping desktop copy.',
+      )
+    }
   })
   autoUpdater.on('error', (err: Error) => {
     downloadInFlight = false
