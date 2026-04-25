@@ -17,6 +17,35 @@ Format rules (so the workflow's extractor keeps working):
 - Write for the operator, not the engineer. "Verses now appear within
   ~250ms" beats "reduced CHUNK_MS from 4500 to 2500".
 
+## v0.5.33 — 2026-04-25
+
+### Fixed
+
+- **Live Detection no longer goes silent on spoken Bible references.** The
+  spoken-number normaliser was summing every consecutive number word into a
+  single total, so "John three sixteen" became "John 19" instead of
+  "John 3 16" and the verse detector silently rejected it. Each number word
+  now emits its own digit, with classic compounds preserved
+  ("twenty one" → 21, "three hundred" → 300). Sermon references like
+  "Romans eight twenty eight" now reliably commit as Romans 8:28.
+- **Loose verse references without a colon are now accepted from speech.**
+  Speech-to-text rarely produces the colon, so a normalised "John 3 16"
+  needed extra signal to commit. The detector now accepts the loose form
+  when the source text was normalised from spoken numbers OR has a strong
+  scripture-context word nearby. Bare "John 3 16" typed into the operator
+  console with no other signal is still rejected, so the conversational
+  false-positive class ("John had 3 apples and 16 oranges") stays blocked.
+- **Output / NDI surface no longer goes pure black between slides.** Once
+  the operator had broadcast their first slide, `showStartupLogo` flipped
+  to `false` permanently, and any subsequent clear state painted solid
+  black. The clear state now ALWAYS paints the Scripture AI splash
+  watermark unless the operator explicitly disabled it. True black still
+  requires the explicit Black button (`s.blanked`).
+- **Output surface is no longer blank during the SSE handshake.** The
+  initial HTML body is now seeded with the Scripture AI splash watermark
+  so the projector / NDI feed has visible content from the moment the
+  page loads, not from the moment the first state arrives.
+
 ## v0.5.32 — 2026-04-25
 
 ### Fixed
