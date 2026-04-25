@@ -87,11 +87,27 @@ type ExpectedSource = 'sha256sums' | 'manifest'
 
 type BatchItemStatus =
   | { kind: 'queued' }
-  | { kind: 'hashing'; received: number; total: number }
+  | {
+      kind: 'hashing'
+      received: number
+      total: number
+      // Rolling-average bytes-per-second over the last ~2s. null while we
+      // don't have enough samples yet, or for small files where we suppress
+      // the throughput readout to avoid jitter.
+      speedBps: number | null
+      // Seconds remaining at the current speed; null for the same reasons
+      // as above, or while the rate isn't measurable.
+      etaSeconds: number | null
+    }
   | { kind: 'verified'; actual: string; expected: string; expectedSource: ExpectedSource }
   | { kind: 'mismatch'; actual: string; expected: string; expectedSource: ExpectedSource }
   | { kind: 'no-expected'; actual: string }
   | { kind: 'error'; message: string }
+
+// Files smaller than this hash so quickly that any MB/s + ETA readout would
+// just flash and disappear, so we suppress the throughput row and show a
+// plain "Hashing…" instead. Matches the spec's <10 MB cutoff.
+const HASH_THROUGHPUT_MIN_BYTES = 10 * 1024 * 1024
 
 type BatchItem = {
   id: string
@@ -247,6 +263,28 @@ function formatEta(seconds: number | null): string | null {
   const hours = Math.floor(totalMinutes / 60)
   const mins = totalMinutes % 60
   return mins > 0 ? `~${hours}h ${mins}m left` : `~${hours}h left`
+}
+
+// Compact mm:ss ETA used by the local-verify badge. The download flow uses
+// `~Xs left` because that's the convention there; for hashing a multi-GB
+// file the spec asks for a clock-style readout so users can mentally compare
+// it against download timers from their OS. We round to whole seconds and
+// floor the smallest bucket at 0:01 so the value doesn't briefly read 0:00
+// in the final stretch. Rounding total seconds *first* avoids rollover
+// strings like "1:60" that you'd get from flooring minutes and rounding
+// seconds independently.
+function formatHashEta(seconds: number | null): string | null {
+  if (seconds === null || !Number.isFinite(seconds) || seconds < 0) return null
+  const total = Math.max(1, Math.round(seconds))
+  if (total >= 3600) {
+    const h = Math.floor(total / 3600)
+    const m = Math.floor((total % 3600) / 60)
+    const s = total % 60
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')} left`
+  }
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${m}:${String(s).padStart(2, '0')} left`
 }
 
 function IndeterminateBar() {
@@ -560,7 +598,25 @@ function BatchItemRow({
   }
   if (status.kind === 'hashing') {
     const hasTotal = status.total > 0
+    // For files small enough to hash in well under a second on any modern
+    // machine, the throughput readout would just flash and disappear, so we
+    // collapse to a plain "Hashing…" row with no progress bar.
+    const isSmallFile = hasTotal && status.total < HASH_THROUGHPUT_MIN_BYTES
+    if (isSmallFile) {
+      return (
+        <div className={cn(baseRow, 'border-border/70 bg-muted/30 text-muted-foreground')}>
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+            <span className="flex-1 truncate font-mono text-foreground/90">{item.filename}</span>
+            <span className="shrink-0 tabular-nums text-muted-foreground/80">{sizeLabel}</span>
+          </div>
+          <span className="text-muted-foreground/80">Hashing…</span>
+        </div>
+      )
+    }
     const pct = hasTotal ? Math.min(100, Math.round((status.received / status.total) * 100)) : null
+    const speedLabel = formatSpeed(status.speedBps)
+    const etaLabel = hasTotal ? formatHashEta(status.etaSeconds) : null
     return (
       <div className={cn(baseRow, 'border-border/70 bg-muted/30 text-muted-foreground')}>
         <div className="flex items-center gap-2">
@@ -572,6 +628,15 @@ function BatchItemRow({
           <IndeterminateBar />
         ) : (
           <Progress value={pct} aria-label={`Hashing ${item.filename}, ${pct}% complete`} className="h-1.5" />
+        )}
+        {(speedLabel || etaLabel) && (
+          <div
+            className="flex items-center justify-between gap-2 text-[10px] tabular-nums text-muted-foreground/90"
+            aria-live="off"
+          >
+            <span>{speedLabel ?? ''}</span>
+            <span>{etaLabel ?? ''}</span>
+          </div>
         )}
       </div>
     )
@@ -861,7 +926,27 @@ export default function DownloadPage() {
           const reader = item.file.stream().getReader()
           let received = 0
           let lastUiUpdate = 0
-          updateItem(item.id, { kind: 'hashing', received: 0, total: item.file.size })
+          // Rolling-window samples for hash throughput. ~2s of history smooths
+          // out the natural jitter of WASM hash chunks (each update() can
+          // take a few ms and the V8 GC occasionally pauses) while still
+          // reacting quickly when the disk genuinely speeds up or stalls.
+          // We deliberately do NOT compute speed/ETA for small files — the
+          // BatchItemRow collapses those to a "Hashing…" row anyway, so
+          // measuring would just be wasted work that could land a stale
+          // value in the brief window before the final update.
+          const SPEED_WINDOW_MS = 2000
+          const trackThroughput = item.file.size >= HASH_THROUGHPUT_MIN_BYTES
+          const startedAt = performance.now()
+          const samples: { time: number; bytes: number }[] = trackThroughput
+            ? [{ time: startedAt, bytes: 0 }]
+            : []
+          updateItem(item.id, {
+            kind: 'hashing',
+            received: 0,
+            total: item.file.size,
+            speedBps: null,
+            etaSeconds: null,
+          })
           for (;;) {
             if (token !== verifyTokenRef.current) {
               try { await reader.cancel() } catch {}
@@ -873,9 +958,35 @@ export default function DownloadPage() {
             hasher.update(value)
             received += value.byteLength
             const now = performance.now()
+            if (trackThroughput) {
+              samples.push({ time: now, bytes: received })
+              // Keep at least one anchor so we can still measure speed when
+              // chunks arrive slowly (e.g. spinning disk reading a big DMG).
+              while (samples.length > 1 && samples[0].time < now - SPEED_WINDOW_MS) {
+                samples.shift()
+              }
+            }
             if (now - lastUiUpdate > 120 || received === item.file.size) {
               lastUiUpdate = now
-              updateItem(item.id, { kind: 'hashing', received, total: item.file.size })
+              let speedBps: number | null = null
+              let etaSeconds: number | null = null
+              if (trackThroughput && samples.length > 1) {
+                const oldest = samples[0]
+                const dtSec = (now - oldest.time) / 1000
+                if (dtSec > 0) {
+                  speedBps = (received - oldest.bytes) / dtSec
+                  if (item.file.size > 0 && speedBps > 0) {
+                    etaSeconds = Math.max(0, (item.file.size - received) / speedBps)
+                  }
+                }
+              }
+              updateItem(item.id, {
+                kind: 'hashing',
+                received,
+                total: item.file.size,
+                speedBps,
+                etaSeconds,
+              })
             }
           }
           if (token !== verifyTokenRef.current) return
