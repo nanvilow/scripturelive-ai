@@ -116,6 +116,27 @@ jobs:
           fi
           echo "value=$opt_out" >> "$GITHUB_OUTPUT"
 
+      # Detect whether code signing is even configured at the repo level.
+      # If WIN_CSC_LINK is unset, electron-builder produces an unsigned
+      # installer (logs say "no signing info identified, signing is
+      # skipped"), and there's no point running the verifier — it will
+      # always fail and block every release until someone adds the
+      # `[unsigned-release]` marker by hand. Treat "no cert configured"
+      # as the same intent as "unsigned-release" instead of a build error.
+      - name: Detect Windows signing configuration
+        id: signconf
+        shell: bash
+        env:
+          HAS_CSC: ${{ secrets.WIN_CSC_LINK != '' }}
+        run: |
+          if [ "$HAS_CSC" = "true" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "Windows code signing IS configured (WIN_CSC_LINK is set)."
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Windows code signing not configured::WIN_CSC_LINK secret is unset; the installer will be produced unsigned and the build-time signature verification step will be skipped. End users will see a SmartScreen warning when running the installer. To enable signing, add WIN_CSC_LINK + WIN_CSC_KEY_PASSWORD repo secrets and (optionally) the EXPECTED_WIN_PUBLISHER_CN repo variable."
+          fi
+
       # Run signtool against the freshly-built installers BEFORE we upload
       # them as artifacts. This catches missing/expired/invalid Authenticode
       # certificates within seconds of `electron-builder` finishing, instead
@@ -124,7 +145,7 @@ jobs:
       # The `release` job re-verifies with osslsigncode against the system CA
       # bundle as a defense-in-depth backstop.
       - name: Verify Windows installer signatures (build-time)
-        if: steps.optout.outputs.value != 'true'
+        if: steps.optout.outputs.value != 'true' && steps.signconf.outputs.configured == 'true'
         shell: pwsh
         env:
           EXPECTED_WIN_PUBLISHER_CN: ${{ vars.EXPECTED_WIN_PUBLISHER_CN }}
@@ -396,8 +417,26 @@ jobs:
           fi
           echo "value=$opt_out" >> "$GITHUB_OUTPUT"
 
+      # Same auto-skip rule as the Windows verify step: if MAC_CSC_LINK
+      # isn't configured, electron-builder produces an un-notarized .dmg
+      # and there's no point trying to verify it with spctl/stapler. Treat
+      # "no Apple Developer ID configured" the same way as "unsigned-release".
+      - name: Detect macOS signing configuration
+        id: signconf
+        shell: bash
+        env:
+          HAS_MAC_CSC: ${{ secrets.MAC_CSC_LINK != '' }}
+        run: |
+          if [ "$HAS_MAC_CSC" = "true" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "macOS code signing IS configured (MAC_CSC_LINK is set)."
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=macOS code signing not configured::MAC_CSC_LINK secret is unset; any .dmg in this build will be unsigned/un-notarized and Gatekeeper will warn end users. To enable signing, add MAC_CSC_LINK + MAC_CSC_KEY_PASSWORD repo secrets and (optionally) the EXPECTED_MAC_SIGNING_IDENTITY repo variable."
+          fi
+
       - name: Verify macOS code-signing + notarization
-        if: steps.inventory.outputs.has_mac == 'true' && steps.optout.outputs.value != 'true'
+        if: steps.inventory.outputs.has_mac == 'true' && steps.optout.outputs.value != 'true' && steps.signconf.outputs.configured == 'true'
         env:
           INVENTORY_HAS_MAC: ${{ steps.inventory.outputs.has_mac }}
           EXPECTED_MAC_SIGNING_IDENTITY: ${{ vars.EXPECTED_MAC_SIGNING_IDENTITY }}
