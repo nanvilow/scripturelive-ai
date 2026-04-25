@@ -234,6 +234,41 @@ function writeAppPreferences(prefs: AppPreferences): void {
 }
 
 /**
+ * Single source of truth for "should this window hide to tray
+ * instead of really closing?". Reads the same three pieces of state
+ * the original main-window close handler did:
+ *
+ *   - `isQuitting` — set by `before-quit` for every explicit-quit
+ *     code path (tray menu, app menu / Cmd+Q, updater restart, fatal
+ *     errors that call app.quit()). When true, every window must be
+ *     allowed to close so the app can actually exit.
+ *   - `quitOnClose` — operator preference from Settings → Startup.
+ *     When true, the X button runs the normal shutdown path.
+ *   - `tray` exists and isn't destroyed — without a tray icon there's
+ *     no way back into a hidden window, so hide-to-tray would be a
+ *     one-way trap. Better to let close happen and let
+ *     `window-all-closed` quit cleanly.
+ *
+ * The `win` argument is also checked: a window that's already gone
+ * obviously can't be hidden. Returns true ⇒ the caller should
+ * `event.preventDefault()` and `win.hide()`. Returns false ⇒ let the
+ * close go through.
+ *
+ * Pulled out so any operator-facing window (current main console
+ * plus any future stage / secondary screen window we want to make
+ * tray-friendly) can share one consistent rule instead of each
+ * window's close handler re-implementing the carve-outs and slowly
+ * drifting apart.
+ */
+function shouldHideOnClose(win: BrowserWindow | null): boolean {
+  if (isQuitting) return false
+  if (quitOnClose) return false
+  if (!tray || tray.isDestroyed()) return false
+  if (!win || win.isDestroyed()) return false
+  return true
+}
+
+/**
  * Hydrate the in-memory `quitOnClose` flag from the preferences
  * file. Called once on boot, before the main window is created, so
  * the very first close already honors the operator's choice.
@@ -442,27 +477,14 @@ async function createMainWindow(url: string, opts: { show?: boolean } = {}) {
   // congregation/stage outputs, and the auto-updater keeps running.
   // The operator brings it back from the tray.
   //
-  // Four carve-outs let the app actually exit:
-  //   1. `isQuitting` is true — set by `before-quit`, fires for
-  //      every explicit Quit path (tray menu, app menu / Cmd+Q,
-  //      updater restart, fatal errors that call app.quit()).
-  //   2. The operator opted out via Settings → Startup → "When I
-  //      close the window, also quit the app". `quitOnClose` is
-  //      hydrated from `userData/preferences.json` at boot and kept
-  //      live by the IPC setter, so the very first close after
-  //      launch already honors the saved choice.
-  //   3. No tray exists (e.g. tray init failed on a Linux desktop
-  //      without a system tray). Without a way back into the app,
-  //      hide-to-tray would be a one-way trap, so let close happen
-  //      and `window-all-closed` will quit cleanly.
-  //   4. The window is being destroyed during shutdown.
+  // The decision (hide vs. really close) is delegated to
+  // `shouldHideOnClose()` so the same rule — `isQuitting`,
+  // `quitOnClose`, tray availability, window aliveness — is shared
+  // by every operator-facing window we ever wire up the same way.
   mainWindow.on('close', (event) => {
-    if (isQuitting) return
-    if (quitOnClose) return
-    if (!tray || tray.isDestroyed()) return
-    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (!shouldHideOnClose(mainWindow)) return
     event.preventDefault()
-    try { mainWindow.hide() } catch { /* ignore */ }
+    try { mainWindow!.hide() } catch { /* ignore */ }
     void maybeShowTrayHint()
   })
   mainWindow.on('closed', () => { mainWindow = null })
