@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { cleanTranscriptText } from '@/lib/transcript-cleaner'
+import { useAppStore } from '@/lib/store'
 
 /**
  * Cloud-only Whisper speech recognition for the desktop (Electron) build.
@@ -79,6 +80,37 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
   const pendingByIdRef = useRef<Map<number, string>>(new Map())
   const stopRequestedRef = useRef(false)
   const sessionRef = useRef(0)
+  // v0.5.30 — Web Audio graph for mic-gain control. The captured
+  // MediaStream is routed Source → GainNode → MediaStreamDestination
+  // and the destination's stream is what we hand to MediaRecorder, so
+  // a slider drag adjusts loudness in real time without rebuilding
+  // the recorder. micPausedRef is consulted in ondataavailable so a
+  // paused mic silently drops chunks instead of stopping the recorder
+  // (which would jolt the system mic indicator on every pause).
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const gainNodeRef = useRef<GainNode | null>(null)
+  const micPausedRef = useRef(false)
+  const micGainRef = useRef(1)
+
+  // Mirror the live store values into refs so the long-lived
+  // ondataavailable closure and audio graph see the latest operator
+  // settings without restarting the recorder.
+  const micGainStore = useAppStore((s) => s.micGain)
+  const micPausedStore = useAppStore((s) => s.micPaused)
+  useEffect(() => {
+    micGainRef.current = micGainStore
+    const g = gainNodeRef.current
+    if (g) {
+      try {
+        g.gain.value = micGainStore
+      } catch {
+        /* ignore — graph may be torn down */
+      }
+    }
+  }, [micGainStore])
+  useEffect(() => {
+    micPausedRef.current = micPausedStore
+  }, [micPausedStore])
 
   const isSupported =
     typeof window !== 'undefined' &&
@@ -111,6 +143,15 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
 
   const upload = useCallback(async (blob: Blob, id: number, sessionAtCapture: number) => {
     const stillCurrent = () => sessionRef.current === sessionAtCapture
+    // v0.5.30 — when the operator has pressed Pause on the mic
+    // popover, drop the chunk silently. We still slot a placeholder
+    // so the in-order drainer doesn't stall waiting for this id.
+    if (micPausedRef.current) {
+      if (!stillCurrent()) return
+      pendingByIdRef.current.set(id, '')
+      drainOrdered()
+      return
+    }
     if (blob.size < MIN_CHUNK_BYTES) {
       if (!stillCurrent()) return
       pendingByIdRef.current.set(id, '')
@@ -165,6 +206,16 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
       streamRef.current.getTracks().forEach((t) => { try { t.stop() } catch { /* ignore */ } })
       streamRef.current = null
     }
+    // v0.5.30 — tear down the Web Audio graph too. Without this each
+    // start/stop cycle would leak an AudioContext + GainNode and over
+    // the lifetime of a long service eventually exhaust the browser's
+    // small per-page AudioContext limit.
+    gainNodeRef.current = null
+    if (audioCtxRef.current) {
+      const ctx = audioCtxRef.current
+      audioCtxRef.current = null
+      try { ctx.close() } catch { /* already closed */ }
+    }
   }, [])
 
   const startListening = useCallback((onResult?: (text: string) => void) => {
@@ -196,15 +247,48 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
         }
         streamRef.current = stream
 
+        // v0.5.30 — Build a Web Audio graph so the operator's mic-gain
+        // slider can boost / attenuate the captured signal in real
+        // time. Source → GainNode → MediaStreamDestination, then feed
+        // THAT stream to MediaRecorder. We keep `gainNodeRef` so the
+        // useEffect that mirrors `micGain` from the store can write
+        // straight into `gain.value` without rebuilding the recorder.
+        // Falls back gracefully to the raw stream if AudioContext
+        // is unavailable (some embedded browsers).
+        let recordingStream: MediaStream = stream
+        try {
+          const Ctor = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext })
+            .AudioContext ||
+            (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+          if (Ctor) {
+            const ctx = new Ctor()
+            const source = ctx.createMediaStreamSource(stream)
+            const gain = ctx.createGain()
+            gain.gain.value = micGainRef.current
+            const dest = ctx.createMediaStreamDestination()
+            source.connect(gain)
+            gain.connect(dest)
+            audioCtxRef.current = ctx
+            gainNodeRef.current = gain
+            recordingStream = dest.stream
+          }
+        } catch (e) {
+          // Fall through with the raw stream — gain becomes a no-op
+          // but the mic still records. Better than failing to start.
+          console.warn('[whisper] Web Audio graph unavailable; mic-gain disabled:', e)
+        }
+
         const mimeType = pickMimeType()
         let recorder: MediaRecorder
         try {
-          recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
+          recorder = mimeType ? new MediaRecorder(recordingStream, { mimeType }) : new MediaRecorder(recordingStream)
         } catch (e) {
           const msg = e instanceof Error ? e.message : 'MediaRecorder unavailable'
           setError(`Microphone capture failed: ${msg}`)
           stream.getTracks().forEach((t) => { try { t.stop() } catch { /* ignore */ } })
           streamRef.current = null
+          if (audioCtxRef.current) { try { audioCtxRef.current.close() } catch {} ; audioCtxRef.current = null }
+          gainNodeRef.current = null
           setIsListening(false)
           return
         }
@@ -232,9 +316,11 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
             try { r.stop() } catch { /* ignore */ }
             let fresh: MediaRecorder
             try {
+              // v0.5.30 — keep the gain-routed stream in the chain so
+              // mic-gain still affects every chunk after a rotation.
               fresh = mimeType
-                ? new MediaRecorder(stream, { mimeType })
-                : new MediaRecorder(stream)
+                ? new MediaRecorder(recordingStream, { mimeType })
+                : new MediaRecorder(recordingStream)
             } catch (e) {
               const msg = e instanceof Error ? e.message : 'MediaRecorder unavailable'
               console.warn('[whisper] chunk-rotate failed, stopping session:', msg)

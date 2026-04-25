@@ -46,6 +46,10 @@ export function UpdateBanner() {
   const [dismissed, setDismissed] = useState(false)
   const [installing, setInstalling] = useState(false)
   const [showNotes, setShowNotes] = useState(false)
+  // v0.5.31 — local "cancelling…" flag so the operator gets immediate
+  // visual feedback when they click Cancel; cleared by the next
+  // `updater:state` push (idle/error/available).
+  const [cancelling, setCancelling] = useState(false)
 
   useEffect(() => {
     if (!desktop) return
@@ -55,6 +59,10 @@ export function UpdateBanner() {
       setState(s)
       setDismissed(false)
       setShowNotes(false)
+      // v0.5.31 — any state push past 'downloading' (idle/error/
+      // available/downloaded) means the cancel either succeeded or
+      // is irrelevant; clear the local spinner.
+      if (s.status !== 'downloading') setCancelling(false)
     })
     return () => { cancelled = true; unsub() }
   }, [desktop])
@@ -99,6 +107,29 @@ export function UpdateBanner() {
     >
       <div className="flex items-center gap-3">
         <div className="flex-1">{body}</div>
+        {/* v0.5.31 — Cancel download. Visible only while a download
+            is in flight, and only if the preload bridge actually
+            exposes the cancel handler (older desktop builds may
+            not). Operator-friendly: a single click aborts the
+            download, the state drops back to 'idle', and the
+            available-update popup will re-appear on the next
+            background check so they can retry later. */}
+        {state.status === 'downloading' && desktop.updater.cancel && (
+          <button
+            type="button"
+            disabled={cancelling}
+            onClick={async () => {
+              if (!desktop.updater.cancel) return
+              setCancelling(true)
+              const res = await desktop.updater.cancel()
+              if (!res.ok) setCancelling(false)
+            }}
+            className="rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-60"
+            title="Stop downloading the update"
+          >
+            {cancelling ? 'Cancelling…' : 'Cancel'}
+          </button>
+        )}
         {showInstall && (
           <button
             type="button"

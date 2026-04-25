@@ -1755,7 +1755,14 @@ app.whenReady().then(async () => {
     fatalError('createMainWindow', err); app.quit(); return
   }
   try {
-    setupAutoUpdater({ getMainWindow: () => mainWindow })
+    setupAutoUpdater({
+      getMainWindow: () => mainWindow,
+      // v0.5.31 — let the updater flip our `isQuitting` flag right
+      // before `quitAndInstall()` so the hide-to-tray close handler
+      // doesn't veto the install (causing "ScriptureLive AI cannot
+      // be closed; please close it manually").
+      setIsQuitting: (v: boolean) => { isQuitting = v },
+    })
   } catch (err) {
     console.error('[updater] init failed (non-fatal):', err)
   }

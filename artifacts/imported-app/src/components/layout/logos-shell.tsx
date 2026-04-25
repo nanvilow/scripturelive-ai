@@ -78,6 +78,7 @@ import {
   getPrevChapter,
   fetchBibleChapter,
   normalizeTranscriptForDisplay,
+  detectVersesInText,
 } from '@/lib/bible-api'
 import type { Slide } from '@/lib/store'
 
@@ -278,6 +279,11 @@ function LiveTranscriptionCard() {
   } = useAppStore()
   const autoLive = useAppStore((s) => s.autoLive)
   const setAutoLive = useAppStore((s) => s.setAutoLive)
+  // v0.5.30 — Bible-only filter. When ON (default), the panel only
+  // shows paragraphs that contain a Bible reference, so an hour of
+  // sermon doesn't leave 2 000 lines of unrelated chatter on screen.
+  const bibleOnlyTranscription = useAppStore((s) => s.bibleOnlyTranscription)
+  const setBibleOnlyTranscription = useAppStore((s) => s.setBibleOnlyTranscription)
 
   const toggleMic = () => {
     if (!speechSupported) {
@@ -329,17 +335,29 @@ function LiveTranscriptionCard() {
     const breaks = (transcriptBreaks || [])
       .filter((i) => i > 0 && i < t.length)
       .sort((a, b) => a - b)
-    if (!breaks.length) return [t.trim()].filter(Boolean)
-    const out: string[] = []
-    let prev = 0
-    for (const b of breaks) {
-      const seg = t.slice(prev, b).trim()
-      if (seg) out.push(seg)
-      prev = b
+    let segs: string[]
+    if (!breaks.length) {
+      segs = [t.trim()].filter(Boolean)
+    } else {
+      segs = []
+      let prev = 0
+      for (const b of breaks) {
+        const seg = t.slice(prev, b).trim()
+        if (seg) segs.push(seg)
+        prev = b
+      }
+      const tail = t.slice(prev).trim()
+      if (tail) segs.push(tail)
     }
-    const tail = t.slice(prev).trim()
-    if (tail) out.push(tail)
-    return out.slice(-12)
+    // v0.5.30 — Bible-only mode keeps just the paragraphs that
+    // detectVersesInText() returns at least one match for. We use the
+    // canonical detector (same logic that fires the slide auto-stage)
+    // so a paragraph appearing here is guaranteed to have triggered a
+    // verse panel update — no false positives from word-soup names.
+    if (bibleOnlyTranscription) {
+      segs = segs.filter((p) => detectVersesInText(p).length > 0)
+    }
+    return segs.slice(-12)
   })()
 
   return (
@@ -364,6 +382,30 @@ function LiveTranscriptionCard() {
               Routes through the speech provider's `reset` command so
               recognition stays connected and the next utterance starts
               a fresh paragraph. */}
+          {/* v0.5.30 — Bible-only filter toggle. ON by default. When
+              ON we show only paragraphs containing a Bible reference;
+              when OFF the operator sees the full raw transcript (the
+              old behaviour). The amber "Bible" pill is meant to mirror
+              the AUTO-display pill below it: amber = "active filter,
+              you're looking at a curated view". */}
+          <Button
+            size="sm"
+            onClick={() => setBibleOnlyTranscription(!bibleOnlyTranscription)}
+            title={
+              bibleOnlyTranscription
+                ? 'Bible-only filter ON — only verses appear. Click to show full transcript.'
+                : 'Showing full transcript. Click to filter to Bible references only.'
+            }
+            className={cn(
+              'h-7 px-2 text-[10px] uppercase tracking-wider gap-1 font-semibold border',
+              bibleOnlyTranscription
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-700',
+            )}
+          >
+            <BookOpen className="h-3 w-3" />
+            {bibleOnlyTranscription ? 'Bible' : 'All'}
+          </Button>
           <Button
             size="sm"
             onClick={() => setSpeechCommand('reset')}
@@ -900,11 +942,11 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
 // ──────────────────────────────────────────────────────────────────────
 // LIVE DISPLAY — bottom-right audio controls
 // ──────────────────────────────────────────────────────────────────────
-// Compact mic toggle + master-volume popover that lives in the Live
-// Display footer. Operators specifically asked for both controls to
-// be reachable from the live pane (item #10) so they don't have to
-// jump to the Live Transcription card to start/stop the mic or to
-// the toolbar to change media volume mid-service.
+// Compact mic popover (Start/Stop + Pause + Mic-Gain) and master-
+// volume popover that live in the Live Display footer. Operators
+// specifically asked for full mic transport reachable from the live
+// pane (v0.5.30 update to item #10) so they don't have to jump to
+// the Live Transcription card mid-service.
 function LiveBottomAudioControls() {
   const isListening = useAppStore((s) => s.isListening)
   const speechSupported = useAppStore((s) => s.speechSupported)
@@ -913,33 +955,177 @@ function LiveBottomAudioControls() {
   const setGlobalVolume = useAppStore((s) => s.setGlobalVolume)
   const globalMuted = useAppStore((s) => s.globalMuted)
   const setGlobalMuted = useAppStore((s) => s.setGlobalMuted)
+  // v0.5.30 — mic gain / pause controls.
+  const micGain = useAppStore((s) => s.micGain)
+  const setMicGain = useAppStore((s) => s.setMicGain)
+  const micPaused = useAppStore((s) => s.micPaused)
+  const setMicPaused = useAppStore((s) => s.setMicPaused)
   const pct = Math.round(globalVolume * 100)
+  const micPct = Math.round(micGain * 100)
   const effectivelyMuted = globalMuted || globalVolume === 0
 
-  const toggleMic = () => {
+  const startMic = () => {
     if (!speechSupported) {
       toast.error('Speech recognition is not supported in this browser')
       return
     }
-    setSpeechCommand(isListening ? 'stop' : 'start')
+    setMicPaused(false)
+    setSpeechCommand('start')
   }
+  const stopMic = () => {
+    setMicPaused(false)
+    setSpeechCommand('stop')
+  }
+  const togglePause = () => setMicPaused(!micPaused)
+
+  // Status copy + colour for the trigger button so an operator can
+  // tell at a glance: green/dot = listening, amber = paused, grey =
+  // off.  We keep the same compact button footprint as before; the
+  // popover holds the Start / Stop / Pause / Gain controls.
+  const micState: 'off' | 'paused' | 'listening' = !isListening
+    ? 'off'
+    : micPaused
+      ? 'paused'
+      : 'listening'
+  const micLabel = micState === 'off' ? 'Mic' : micState === 'paused' ? 'Paused' : 'Live'
+  const MicIcon = micState === 'listening' ? Mic : MicOff
 
   return (
     <div className="flex items-center gap-1 mr-1">
-      <button
-        type="button"
-        onClick={toggleMic}
-        title={isListening ? 'Stop listening for verses' : 'Start listening for verses'}
-        className={cn(
-          'h-7 px-2 rounded-md border text-[10px] uppercase tracking-wider font-semibold flex items-center gap-1.5 transition-colors',
-          isListening
-            ? 'bg-rose-500/20 text-rose-300 border-rose-500/50'
-            : 'bg-black/40 text-zinc-400 border-zinc-800 hover:text-white hover:border-zinc-600',
-        )}
-      >
-        {isListening ? <MicOff className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
-        {isListening ? 'Stop' : 'Mic'}
-      </button>
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            title={
+              micState === 'off'
+                ? 'Open mic controls — start, pause and adjust loudness'
+                : micState === 'paused'
+                  ? 'Mic is paused — open controls to resume'
+                  : `Mic is live (gain ${micPct}%) — open controls to pause/stop`
+            }
+            className={cn(
+              'h-7 px-2 rounded-md border text-[10px] uppercase tracking-wider font-semibold flex items-center gap-1.5 transition-colors',
+              micState === 'listening'
+                ? 'bg-rose-500/20 text-rose-300 border-rose-500/50'
+                : micState === 'paused'
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                  : 'bg-black/40 text-zinc-400 border-zinc-800 hover:text-white hover:border-zinc-600',
+            )}
+          >
+            <MicIcon className="h-3 w-3" />
+            {micLabel}
+            {micState === 'listening' && (
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-rose-400 animate-pulse" />
+            )}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="end"
+          side="top"
+          className="w-[260px] p-3 bg-zinc-950 border-zinc-800"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+              Mic Control
+            </span>
+            <Badge
+              className={cn(
+                'h-4 px-1.5 text-[9px] uppercase tracking-wider font-semibold border',
+                micState === 'listening'
+                  ? 'bg-rose-500/15 text-rose-300 border-rose-500/40 animate-pulse'
+                  : micState === 'paused'
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                    : 'bg-zinc-800 text-zinc-400 border-zinc-700',
+              )}
+            >
+              {micState === 'listening' ? '● Live' : micState === 'paused' ? 'Paused' : 'Off'}
+            </Badge>
+          </div>
+          {/* Transport: Start / Pause-Resume / Stop */}
+          <div className="grid grid-cols-3 gap-1.5 mb-3">
+            <button
+              onClick={startMic}
+              disabled={isListening && !micPaused}
+              className={cn(
+                'h-7 rounded text-[10px] uppercase tracking-wider font-semibold border inline-flex items-center justify-center gap-1',
+                isListening && !micPaused
+                  ? 'bg-zinc-900 text-zinc-600 border-zinc-800 cursor-not-allowed'
+                  : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30',
+              )}
+              title="Start microphone"
+            >
+              <Mic className="h-3 w-3" />
+              Start
+            </button>
+            <button
+              onClick={togglePause}
+              disabled={!isListening}
+              className={cn(
+                'h-7 rounded text-[10px] uppercase tracking-wider font-semibold border inline-flex items-center justify-center gap-1',
+                !isListening
+                  ? 'bg-zinc-900 text-zinc-600 border-zinc-800 cursor-not-allowed'
+                  : micPaused
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                    : 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30',
+              )}
+              title={micPaused ? 'Resume microphone' : 'Pause microphone (recorder stays open)'}
+            >
+              {micPaused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
+              {micPaused ? 'Resume' : 'Pause'}
+            </button>
+            <button
+              onClick={stopMic}
+              disabled={!isListening}
+              className={cn(
+                'h-7 rounded text-[10px] uppercase tracking-wider font-semibold border inline-flex items-center justify-center gap-1',
+                !isListening
+                  ? 'bg-zinc-900 text-zinc-600 border-zinc-800 cursor-not-allowed'
+                  : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30',
+              )}
+              title="Stop microphone (release the input device)"
+            >
+              <Square className="h-3 w-3" />
+              Stop
+            </button>
+          </div>
+          {/* Mic gain slider — boosts a quiet lapel mic or attenuates
+              a hot pulpit mic without leaving the app. 0..200%, 100%
+              is unity. Mirrored into a Web Audio GainNode so the
+              recording stream changes loudness in real time without
+              restarting the recorder. */}
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+              Mic Gain
+            </span>
+            <span className="text-[10px] tabular-nums text-zinc-300 font-semibold">{micPct}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={200}
+            value={micPct}
+            onChange={(e) => setMicGain(Number(e.target.value) / 100)}
+            className="w-full accent-rose-500 mt-1"
+            aria-label="Microphone gain"
+          />
+          <div className="flex justify-between mt-1 text-[9px] text-zinc-500 tabular-nums">
+            <span>0</span>
+            <button
+              type="button"
+              onClick={() => setMicGain(1)}
+              className="hover:text-zinc-300 underline-offset-2 hover:underline"
+              title="Reset mic gain to 100%"
+            >
+              100%
+            </button>
+            <span>200</span>
+          </div>
+          <p className="mt-2 text-[9px] text-zinc-500 leading-snug">
+            Pause keeps the mic open but stops sending audio for transcription.
+            Stop releases the input entirely.
+          </p>
+        </PopoverContent>
+      </Popover>
       <Popover>
         <PopoverTrigger asChild>
           <button

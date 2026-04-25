@@ -205,6 +205,31 @@ interface AppState {
   selectedMicrophoneId: string | null
   setSelectedMicrophoneId: (id: string | null) => void
 
+  // v0.5.30 — Mic loudness control. The Whisper engine routes the
+  // captured MediaStream through a Web Audio GainNode whose value is
+  // mirrored from this field, so the operator can boost a quiet
+  // lapel mic or attenuate a hot pulpit mic without leaving the app.
+  // Range 0..2 (1.0 = unity gain).
+  micGain: number
+  setMicGain: (g: number) => void
+
+  // v0.5.30 — Mic pause. When true the chunk-rotate timer keeps
+  // running but the upload pipeline drops every captured chunk —
+  // recording resumes the moment the operator un-pauses, without
+  // tearing down and rebuilding the MediaRecorder (which would jolt
+  // the mic indicator and reset the audio graph).
+  micPaused: boolean
+  setMicPaused: (b: boolean) => void
+
+  // v0.5.30 — Live Transcription column filter. When true (default),
+  // only paragraphs that contain a detected Bible reference / fuzzy
+  // text-match to a verse appear in the Live Transcription panes —
+  // keeps the panel focused on scripture and hides Whisper
+  // hallucinations of stage chatter, applause, etc. Operators can
+  // flip this off when they want to see every transcribed word.
+  bibleOnlyTranscription: boolean
+  setBibleOnlyTranscription: (b: boolean) => void
+
   // Slides
   slides: Slide[]
   setSlides: (s: Slide[]) => void
@@ -497,6 +522,14 @@ export const useAppStore = create<AppState>()(
       selectedMicrophoneId: null,
       setSelectedMicrophoneId: (id) => set({ selectedMicrophoneId: id }),
 
+      // v0.5.30 — mic gain / pause / Bible-only transcription
+      micGain: 1,
+      setMicGain: (g) => set({ micGain: Math.max(0, Math.min(2, g)) }),
+      micPaused: false,
+      setMicPaused: (b) => set({ micPaused: b }),
+      bibleOnlyTranscription: true,
+      setBibleOnlyTranscription: (b) => set({ bibleOnlyTranscription: b }),
+
       // Slides
       slides: [],
       setSlides: (s) => set({ slides: s, previewSlideIndex: 0, liveSlideIndex: -1 }),
@@ -706,6 +739,13 @@ export const useAppStore = create<AppState>()(
         // Item #16 — uploaded media + per-item fit survive restart.
         mediaLibrary: state.mediaLibrary,
         mediaFitById: state.mediaFitById,
+        // v0.5.30 — operator's mic loudness and Bible-only filter
+        // pref persist across restarts so each operator's tuning
+        // sticks. micPaused is intentionally NOT persisted — every
+        // session starts unpaused so a closed-and-reopened app
+        // never freezes its own input pipeline silently.
+        micGain: state.micGain,
+        bibleOnlyTranscription: state.bibleOnlyTranscription,
       }),
     }
   )

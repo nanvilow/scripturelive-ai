@@ -117,6 +117,11 @@ const api = {
     download: (): Promise<{ ok: boolean; error?: string; alreadyInProgress?: boolean }> =>
       ipcRenderer.invoke('updater:download'),
     install: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('updater:install'),
+    // v0.5.31 — operator-cancellable download. Aborts the in-flight
+    // signed download via the CancellationToken passed into
+    // `downloadUpdate()` and broadcasts an 'idle' state so the
+    // available-update popup can re-appear naturally.
+    cancel: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('updater:cancel'),
     onState: (cb: (s: UpdateState) => void): (() => void) => {
       const handler = (_e: unknown, state: UpdateState) => cb(state)
       ipcRenderer.on('updater:state', handler)
