@@ -227,6 +227,24 @@ function formatReference(book: string, chapter: number, verseStart: number, vers
   return verseEnd ? `${book} ${chapter}:${verseStart}-${verseEnd}` : `${book} ${chapter}:${verseStart}`
 }
 
+// v0.5.32 — Tolerant anchored chapter-only patterns for the MANUAL
+// lookup UIs (BibleLookup, BibleLookupCompact, the "/api/bible"
+// reference query, and operator UIs that pass the slide title back
+// through). These are anchored to the FULL trimmed input string
+// (^…$), so they cannot false-positive on a sentence excerpt the way
+// the global VERSE_PATTERNS used to. They accept "Psalms 23",
+// "1 Corinthians 13", "Gen 1", and the optional ":verse" / range form.
+//
+// Speech transcript detection still uses the strict VERSE_PATTERNS
+// above — those are intentionally stricter so conversational chatter
+// like "John had 3 apples" never commits as a Bible reference.
+const LOOKUP_PATTERNS = [
+  // Full book name + chapter (+ optional :verse(-range))
+  new RegExp(`^([1-3]?\\s*(?:${BOOK_NAMES_PATTERN}))\\s+(\\d{1,3})(?::(\\d{1,3})(?:\\s*[-\\u2013]\\s*(\\d{1,3}))?)?\\s*$`, 'i'),
+  // Abbreviated book name + chapter (+ optional :verse(-range))
+  new RegExp(`^(${BOOK_ABBR_PATTERN})\\s+(\\d{1,3})(?::(\\d{1,3})(?:\\s*[-\\u2013]\\s*(\\d{1,3}))?)?\\s*$`, 'i'),
+]
+
 export function parseVerseReference(input: string): {
   reference: string
   book: string
@@ -235,11 +253,42 @@ export function parseVerseReference(input: string): {
   verseEnd?: number
 } | null {
   const cleaned = input.trim()
+  // Try the strict speech-detection patterns first — they handle the
+  // full conversational forms ("turn to John 3:16", "Romans chapter
+  // 8 verse 28") that operators occasionally paste in.
   for (const pattern of VERSE_PATTERNS) {
     // Remove 'g' flag for match() so capture groups work correctly
     const flags = pattern.flags.replace('g', '')
     const nonGlobalPattern = new RegExp(pattern.source, flags)
     const match = cleaned.match(nonGlobalPattern)
+    if (match) {
+      const bookRaw = match[1]
+      const chapter = parseInt(match[2])
+      const verseStart = match[3] ? parseInt(match[3]) : 1
+      const verseEnd = match[4] ? parseInt(match[4]) : undefined
+      const book = normalizeBookName(bookRaw)
+      if (book) {
+        return {
+          reference: formatReference(book, chapter, verseStart, verseEnd),
+          book,
+          chapter,
+          verseStart,
+          verseEnd,
+        }
+      }
+    }
+  }
+  // v0.5.32 — Tolerant anchored fallback for chapter-only manual
+  // lookups ("Psalms 23", "1 Corinthians 13", "Gen 1"). Safe because
+  // the LOOKUP_PATTERNS are anchored to ^…$ on the trimmed input —
+  // they only match when the WHOLE input is a clean book+chapter
+  // expression, never a sentence fragment. Without this, the
+  // tightened VERSE_PATTERNS (which now require an explicit colon
+  // or context lead-in) would have broken every manual chapter
+  // lookup in the Bible Lookup UI — a v0.5.32 regression flagged
+  // by code review and fixed before release.
+  for (const pattern of LOOKUP_PATTERNS) {
+    const match = cleaned.match(pattern)
     if (match) {
       const bookRaw = match[1]
       const chapter = parseInt(match[2])
