@@ -459,7 +459,11 @@ const defaultSettings: AppSettings = {
   // footgun because Whisper's Base model is English-only and the
   // UI let operators pick locales that silently broke detection.
   speechLanguage: 'en-US',
-  autoGoLiveOnDetection: false,
+  // v0.5.34 — default ON. Users were confused that detected verses
+  // never appeared on Output until they manually flipped this. Most
+  // operators want hands-free flow during a sermon; the explicit
+  // toggle in Scripture Detection still lets them turn it off.
+  autoGoLiveOnDetection: true,
   autoGoLiveOnLookup: false,
   ndiDisplayMode: 'full',
   showReconnectingOverlay: false,
@@ -710,7 +714,11 @@ export const useAppStore = create<AppState>()(
       globalMuted: false,
       setGlobalMuted: (b) => set({ globalMuted: b }),
 
-      autoLive: false,
+      // v0.5.34 — default ON so detected verses flow to Output
+      // immediately. Not persisted (intentional — every fresh launch
+      // starts in known-good auto-live state). Operator can disable
+      // via the lightning-bolt button in the toolbar.
+      autoLive: true,
       setAutoLive: (b) => set({ autoLive: b }),
 
       // 0.9 = 90%. Verses below this never auto-go-live; they only
@@ -729,6 +737,25 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'scripturelive-settings',
+      // v0.5.34 — bump to v1 to migrate existing users whose
+      // persisted settings.autoGoLiveOnDetection is the old false
+      // default. We flip them to true so the new default reaches
+      // people who already shipped a previous version.
+      version: 1,
+      migrate: (persistedState: unknown, version: number) => {
+        const ps = (persistedState as { settings?: Partial<AppSettings> } | undefined) ?? {}
+        if (version < 1) {
+          return {
+            ...ps,
+            settings: {
+              ...defaultSettings,
+              ...(ps.settings ?? {}),
+              autoGoLiveOnDetection: true,
+            },
+          }
+        }
+        return ps
+      },
       partialize: (state) => ({
         settings: state.settings,
         selectedTranslation: state.selectedTranslation,
