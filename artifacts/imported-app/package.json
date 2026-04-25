@@ -25,6 +25,8 @@
     "start": "cross-env DATABASE_URL=file:../db/custom.db NODE_ENV=production next start -H 0.0.0.0 -p ${PORT:-3000}",
     "postinstall": "node -e \"process.exit(0)\"",
     "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -125,6 +127,7 @@
     "eslint-config-next": "^16.1.1",
     "tailwindcss": "^4",
     "tw-animate-css": "^1.3.5",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.5"
   }
 }
