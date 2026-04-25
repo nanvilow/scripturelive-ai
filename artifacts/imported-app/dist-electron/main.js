@@ -91,6 +91,7 @@ function fatalError(stage, err) {
 const frame_capture_1 = require("./frame-capture");
 const updater_1 = require("./updater");
 const tray_badges_1 = require("./tray-badges");
+const preferences_1 = require("./preferences");
 // ── Replit-hosted speech-to-text proxy ────────────────────────────────
 // The bundled Next.js standalone server in this Electron app forwards
 // every /api/transcribe request to this URL. The OpenAI key never lives
@@ -211,37 +212,45 @@ async function getPinnedPort(preferred = 47330) {
         });
     });
 }
+/**
+ * Lightweight on-disk preferences store. Lives at
+ * `userData/preferences.json`. Used by the main process for prefs
+ * that must be known at boot time / at window-close time, BEFORE the
+ * renderer has a chance to push them in over IPC. Keeps the file
+ * tiny and human-editable; missing / malformed file → defaults.
+ *
+ * The actual JSON parse / write lives in `./preferences.ts` so it
+ * can be unit-tested without an Electron `app` instance. The
+ * wrappers below just resolve the userData path and add main-process
+ * logging.
+ */
 function getPreferencesPath() {
     return node_path_1.default.join(electron_1.app.getPath('userData'), 'preferences.json');
 }
 function loadAppPreferences() {
     try {
-        const p = getPreferencesPath();
-        if (!node_fs_1.default.existsSync(p))
-            return {};
-        const raw = node_fs_1.default.readFileSync(p, 'utf8');
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object')
-            return parsed;
+        return (0, preferences_1.readPreferences)(getPreferencesPath());
     }
     catch (err) {
         console.warn('[prefs] failed to read preferences.json (using defaults):', err);
+        return {};
     }
-    return {};
 }
 function writeAppPreferences(prefs) {
     try {
-        const p = getPreferencesPath();
-        const dir = node_path_1.default.dirname(p);
-        if (!node_fs_1.default.existsSync(dir))
-            node_fs_1.default.mkdirSync(dir, { recursive: true });
-        node_fs_1.default.writeFileSync(p, JSON.stringify(prefs, null, 2));
+        (0, preferences_1.writePreferences)(getPreferencesPath(), prefs);
     }
     catch (err) {
         console.warn('[prefs] failed to write preferences.json:', err);
         throw err;
     }
 }
+// The "should this window hide instead of really closing?" decision
+// lives in `shouldHideOnCloseFromInputs` (./preferences.ts), wired
+// onto each operator-facing window by `installHideToTrayCloseHandler`
+// from the same module. Sharing the installer with the E2E harness
+// means the bundled app and the test run identical close-handler
+// code — no risk of the test version drifting.
 /**
  * Hydrate the in-memory `quitOnClose` flag from the preferences
  * file. Called once on boot, before the main window is created, so
@@ -446,36 +455,15 @@ async function createMainWindow(url, opts = {}) {
     // congregation/stage outputs, and the auto-updater keeps running.
     // The operator brings it back from the tray.
     //
-    // Four carve-outs let the app actually exit:
-    //   1. `isQuitting` is true — set by `before-quit`, fires for
-    //      every explicit Quit path (tray menu, app menu / Cmd+Q,
-    //      updater restart, fatal errors that call app.quit()).
-    //   2. The operator opted out via Settings → Startup → "When I
-    //      close the window, also quit the app". `quitOnClose` is
-    //      hydrated from `userData/preferences.json` at boot and kept
-    //      live by the IPC setter, so the very first close after
-    //      launch already honors the saved choice.
-    //   3. No tray exists (e.g. tray init failed on a Linux desktop
-    //      without a system tray). Without a way back into the app,
-    //      hide-to-tray would be a one-way trap, so let close happen
-    //      and `window-all-closed` will quit cleanly.
-    //   4. The window is being destroyed during shutdown.
-    mainWindow.on('close', (event) => {
-        if (isQuitting)
-            return;
-        if (quitOnClose)
-            return;
-        if (!tray || tray.isDestroyed())
-            return;
-        if (!mainWindow || mainWindow.isDestroyed())
-            return;
-        event.preventDefault();
-        try {
-            mainWindow.hide();
-        }
-        catch { /* ignore */ }
-        void maybeShowTrayHint();
-    });
+    // The decision (hide vs. really close) is delegated to
+    // `shouldHideOnClose()` so the same rule — `isQuitting`,
+    // `quitOnClose`, tray availability, window aliveness — is shared
+    // by every operator-facing window we ever wire up the same way.
+    (0, preferences_1.installHideToTrayCloseHandler)(mainWindow, () => ({
+        isQuitting,
+        quitOnClose,
+        hasLiveTray: !!tray && !tray.isDestroyed(),
+    }), () => { void maybeShowTrayHint(); });
     mainWindow.on('closed', () => { mainWindow = null; });
     await mainWindow.loadURL(url);
 }

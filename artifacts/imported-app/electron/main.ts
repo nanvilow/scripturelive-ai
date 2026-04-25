@@ -63,6 +63,12 @@ type NdiStartOptions = NdiServiceStartOptions & {
 import { FrameCapture } from './frame-capture'
 import { setupAutoUpdater, runManualCheck, getUpdateState, onUpdateState, triggerUpdateDownload, type UpdateState } from './updater'
 import { renderBadgedIcon, type BadgeColor } from './tray-badges'
+import {
+  type AppPreferences,
+  readPreferences,
+  writePreferences,
+  installHideToTrayCloseHandler,
+} from './preferences'
 
 // ── Replit-hosted speech-to-text proxy ────────────────────────────────
 // The bundled Next.js standalone server in this Electron app forwards
@@ -192,81 +198,40 @@ async function getPinnedPort(preferred = 47330): Promise<number> {
  * that must be known at boot time / at window-close time, BEFORE the
  * renderer has a chance to push them in over IPC. Keeps the file
  * tiny and human-editable; missing / malformed file → defaults.
+ *
+ * The actual JSON parse / write lives in `./preferences.ts` so it
+ * can be unit-tested without an Electron `app` instance. The
+ * wrappers below just resolve the userData path and add main-process
+ * logging.
  */
-type AppPreferences = {
-  quitOnClose?: boolean
-  // When false, `notifyUpdateDownloaded` skips firing the OS toast.
-  // Tray badge / tooltip / mac title and the renderer's in-app banner
-  // are NOT affected — they're driven by separate `onUpdateState`
-  // subscribers. Default is true (toast on) to preserve the behavior
-  // that operators originally opted into when we shipped the
-  // update-ready notification.
-  desktopUpdateToastEnabled?: boolean
-}
-
 function getPreferencesPath(): string {
   return path.join(app.getPath('userData'), 'preferences.json')
 }
 
 function loadAppPreferences(): AppPreferences {
   try {
-    const p = getPreferencesPath()
-    if (!fs.existsSync(p)) return {}
-    const raw = fs.readFileSync(p, 'utf8')
-    const parsed = JSON.parse(raw) as unknown
-    if (parsed && typeof parsed === 'object') return parsed as AppPreferences
+    return readPreferences(getPreferencesPath())
   } catch (err) {
     console.warn('[prefs] failed to read preferences.json (using defaults):', err)
+    return {}
   }
-  return {}
 }
 
 function writeAppPreferences(prefs: AppPreferences): void {
   try {
-    const p = getPreferencesPath()
-    const dir = path.dirname(p)
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(p, JSON.stringify(prefs, null, 2))
+    writePreferences(getPreferencesPath(), prefs)
   } catch (err) {
     console.warn('[prefs] failed to write preferences.json:', err)
     throw err
   }
 }
 
-/**
- * Single source of truth for "should this window hide to tray
- * instead of really closing?". Reads the same three pieces of state
- * the original main-window close handler did:
- *
- *   - `isQuitting` — set by `before-quit` for every explicit-quit
- *     code path (tray menu, app menu / Cmd+Q, updater restart, fatal
- *     errors that call app.quit()). When true, every window must be
- *     allowed to close so the app can actually exit.
- *   - `quitOnClose` — operator preference from Settings → Startup.
- *     When true, the X button runs the normal shutdown path.
- *   - `tray` exists and isn't destroyed — without a tray icon there's
- *     no way back into a hidden window, so hide-to-tray would be a
- *     one-way trap. Better to let close happen and let
- *     `window-all-closed` quit cleanly.
- *
- * The `win` argument is also checked: a window that's already gone
- * obviously can't be hidden. Returns true ⇒ the caller should
- * `event.preventDefault()` and `win.hide()`. Returns false ⇒ let the
- * close go through.
- *
- * Pulled out so any operator-facing window (current main console
- * plus any future stage / secondary screen window we want to make
- * tray-friendly) can share one consistent rule instead of each
- * window's close handler re-implementing the carve-outs and slowly
- * drifting apart.
- */
-function shouldHideOnClose(win: BrowserWindow | null): boolean {
-  if (isQuitting) return false
-  if (quitOnClose) return false
-  if (!tray || tray.isDestroyed()) return false
-  if (!win || win.isDestroyed()) return false
-  return true
-}
+// The "should this window hide instead of really closing?" decision
+// lives in `shouldHideOnCloseFromInputs` (./preferences.ts), wired
+// onto each operator-facing window by `installHideToTrayCloseHandler`
+// from the same module. Sharing the installer with the E2E harness
+// means the bundled app and the test run identical close-handler
+// code — no risk of the test version drifting.
 
 /**
  * Hydrate the in-memory `quitOnClose` flag from the preferences
@@ -481,12 +446,15 @@ async function createMainWindow(url: string, opts: { show?: boolean } = {}) {
   // `shouldHideOnClose()` so the same rule — `isQuitting`,
   // `quitOnClose`, tray availability, window aliveness — is shared
   // by every operator-facing window we ever wire up the same way.
-  mainWindow.on('close', (event) => {
-    if (!shouldHideOnClose(mainWindow)) return
-    event.preventDefault()
-    try { mainWindow!.hide() } catch { /* ignore */ }
-    void maybeShowTrayHint()
-  })
+  installHideToTrayCloseHandler(
+    mainWindow,
+    () => ({
+      isQuitting,
+      quitOnClose,
+      hasLiveTray: !!tray && !tray.isDestroyed(),
+    }),
+    () => { void maybeShowTrayHint() },
+  )
   mainWindow.on('closed', () => { mainWindow = null })
   await mainWindow.loadURL(url)
 }
