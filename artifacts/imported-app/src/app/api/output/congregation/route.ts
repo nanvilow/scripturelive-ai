@@ -105,7 +105,10 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 <body>
 <div id="status"><div id="status-dot"></div><span id="status-text">Connecting...</span></div>
 <div id="reconnecting"><div class="spinner"></div><div style="color:#999;font-size:.9rem">Reconnecting to ScriptureLive...</div></div>
-<div id="stage"><div id="output"></div></div>
+<!-- v0.5.33 — bake the splash watermark into the initial body so the
+     surface is NEVER visually blank, even before SSE connects or the
+     first poll lands. The renderer replaces this on first state. -->
+<div id="stage"><div id="output"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;color:#fff;text-align:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif"><div style="font-size:clamp(2rem,7vmin,7rem);font-weight:600;letter-spacing:-.01em;line-height:1.05;opacity:.4">Scripture AI</div><div style="margin-top:1.4vmin;font-size:clamp(.85rem,1.8vmin,1.6rem);opacity:.3;font-weight:500">Powered By WassMedia (+233246798526)</div></div></div></div>
 <script>
 const themes={worship:'theme-worship',sermon:'theme-sermon',easter:'theme-easter',christmas:'theme-christmas',praise:'theme-praise',minimal:'theme-minimal'};
 // Font registry mirrored from src/lib/fonts.ts so we can resolve
@@ -175,7 +178,13 @@ let lastSlideFingerprint='';
 function slideFingerprint(s){
   if(!s)return '__none__';
   if(s.blanked)return '__blanked__';
-  if(s.type==='clear')return s.showStartupLogo?'__logo__':'__clear__';
+  // v0.5.33 — clear state ALWAYS shows the splash watermark unless
+  // the operator explicitly disabled it (showStartupLogo===false). The
+  // old behaviour painted pure black after the first slide had been
+  // broadcast (because hasShownContent flipped showStartupLogo off
+  // permanently), which operators reported as "the projector went
+  // blank". True black requires the explicit Black button (s.blanked).
+  if(s.type==='clear')return (s.showStartupLogo!==false)?'__logo__':'__clear__';
   var sl=s.slide;
   if(!sl)return '__empty__';
   // Only the fields that visibly change the slide. Transport flags
@@ -382,7 +391,10 @@ function render(s){
     // The flag flips false the first time a slide is broadcast and
     // never comes back.
     dropLiveVideoCache();
-    if(s.showStartupLogo){
+    // v0.5.33 — same change as the fingerprint above. We now show the
+    // splash watermark on every clear state UNLESS the operator
+    // explicitly disabled it via showStartupLogo===false.
+    if(s.showStartupLogo!==false){
       var lkey='__logo__';
       if(lkey===lastRenderKey)return;
       lastRenderKey=lkey;

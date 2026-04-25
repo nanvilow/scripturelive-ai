@@ -210,7 +210,23 @@ export const VERSE_PATTERNS = [
   //    The lead-in phrase is the disambiguator — "turn to John 3" is a
   //    Bible reference; "John 3 apples" is not.
   new RegExp(`(?:turn\\s+to|read\\s+(?:in|from)|look\\s+at|go\\s+to|find|open\\s+(?:your\\s+bibles?\\s+to|to)|as\\s+(?:we\\s+)?(?:read|see|find)\\s+in|according\\s+to|the\\s+(?:bible|word|scripture)s?\\s+(?:says?|tells?\\s+us|declares?|teaches?)\\s+(?:in\\s+)?)\\s*([1-3]?\\s*(?:${BOOK_NAMES_PATTERN}))\\s+${VERSE_NUM_WITH_CTX}`, 'gi'),
+  // v0.5.33 — patterns 6 & 7: LOOSE "Book + chapter + verse" with
+  // whitespace separator (NO colon). Speech-to-text rarely emits the
+  // colon, so a preacher who says "John three sixteen" produces the
+  // normalised text "John 3 16" — which patterns 1 & 2 cannot match.
+  // The detector only commits these matches when the source text was
+  // normalised from spoken numbers OR a scripture-context word is
+  // nearby (see detectVersesInTextWithScore below). Bare "John 3 16"
+  // typed into the operator console with no normalisation signal will
+  // still NOT commit, so the conversational false-positive class
+  // ("John had 3 apples and 16 oranges") stays blocked.
+  new RegExp(`\\b([1-3]?\\s*(?:${BOOK_NAMES_PATTERN}))\\s+(\\d{1,3})\\s+(\\d{1,3})(?:\\s*[-\\u2013]\\s*(\\d{1,3}))?\\b`, 'gi'),
+  new RegExp(`\\b(${BOOK_ABBR_PATTERN})\\s+(\\d{1,3})\\s+(\\d{1,3})(?:\\s*[-\\u2013]\\s*(\\d{1,3}))?\\b`, 'gi'),
 ]
+// Pattern indices 6 and 7 are LOOSE (no colon) and only commit when
+// the input was normalised from spoken numbers or has a context word.
+// detectVersesInTextWithScore enforces this gate.
+const LOOSE_PATTERN_INDICES = new Set([6, 7])
 
 function normalizeBookName(raw: string | undefined): string | null {
   if (!raw) return null
@@ -324,26 +340,70 @@ const NUM_WORDS: Record<string, number> = {
   hundred: 100,
 }
 
-function wordsToNumber(parts: string[]): number | null {
-  let total = 0
-  let current = 0
-  let used = false
-  for (const raw of parts) {
-    const w = raw.toLowerCase()
-    if (w === 'and') continue
-    if (!(w in NUM_WORDS)) return null
-    used = true
-    const v = NUM_WORDS[w]
-    if (v === 100) {
-      current = (current || 1) * 100
-    } else if (v >= 20) {
-      current += v
-    } else {
-      current += v
+// v0.5.33 — emit MULTIPLE separate numbers from a buffer.
+// The previous wordsToNumber summed everything into one total, so
+// "John three sixteen" normalized to "John 19" instead of "John 3 16",
+// which made every spoken Bible reference fail the colon-form regex
+// AND mislead the loose pattern into matching the wrong chapter.
+//
+// New behaviour: emit each number word as its own digit, BUT combine
+// classic compounds:
+//   - "twenty one" / "thirty five" → 21 / 35   (tens + ones)
+//   - "three hundred" / "three hundred fifty" → 300 / 350  (multiplier)
+// All other consecutive number words become separate digits, so the
+// chapter:verse pair survives normalisation:
+//   - "three sixteen"          → [3, 16]
+//   - "eight twenty eight"     → [8, 28]
+//   - "thirteen four to seven" → [13, 4, 7]   ("to" is a connector)
+//   - "twenty one verse five"  → "verse" breaks the buffer; [21], [5]
+function wordsToNumbers(parts: string[]): number[] {
+  const result: number[] = []
+  let i = 0
+  while (i < parts.length) {
+    const w = parts[i].toLowerCase()
+    if (w === 'and') { i++; continue }
+    if (!(w in NUM_WORDS)) { i++; continue }
+    let v = NUM_WORDS[w]
+    // Compound: tens (20..90) + ones (1..9) → 21..99
+    if (v >= 20 && v < 100 && i + 1 < parts.length) {
+      const next = parts[i + 1].toLowerCase()
+      if (next in NUM_WORDS && NUM_WORDS[next] > 0 && NUM_WORDS[next] < 10) {
+        v += NUM_WORDS[next]
+        result.push(v)
+        i += 2
+        continue
+      }
     }
+    // Compound: ones (1..9) + hundred (+ optional tens/ones)
+    if (v > 0 && v < 10 && i + 1 < parts.length) {
+      const next = parts[i + 1].toLowerCase()
+      if (next === 'hundred') {
+        v *= 100
+        i += 2
+        if (i < parts.length) {
+          const after = parts[i].toLowerCase()
+          if (after in NUM_WORDS) {
+            const av = NUM_WORDS[after]
+            if (av >= 20 && av < 100 && i + 1 < parts.length) {
+              const after2 = parts[i + 1].toLowerCase()
+              if (after2 in NUM_WORDS && NUM_WORDS[after2] > 0 && NUM_WORDS[after2] < 10) {
+                v += av + NUM_WORDS[after2]
+                i += 2
+                result.push(v)
+                continue
+              }
+            }
+            if (av < 100) { v += av; i++ }
+          }
+        }
+        result.push(v)
+        continue
+      }
+    }
+    result.push(v)
+    i++
   }
-  total += current
-  return used ? total : null
+  return result
 }
 
 /**
@@ -373,9 +433,14 @@ function normalizeSpokenNumbers(text: string): string {
   let buf: string[] = []
   const flush = () => {
     if (!buf.length) return
-    const n = wordsToNumber(buf)
-    if (n != null && n > 0 && n < 200) {
-      out.push(String(n))
+    // v0.5.33 — emit each compound number as its own digit so a buffer
+    // like ["three", "sixteen"] becomes "3 16" (two numbers) rather
+    // than "19" (the broken sum). This is what lets the loose
+    // normalised regex below pick up "John three sixteen" → "John 3 16"
+    // and commit it as a real Bible reference.
+    const nums = wordsToNumbers(buf)
+    if (nums.length) {
+      out.push(nums.map(String).join(' '))
     } else {
       out.push(buf.join(' '))
     }
@@ -479,8 +544,14 @@ export function detectVersesInTextWithScore(rawText: string): DetectedReference[
       const verseEnd = match[4] ? parseInt(match[4]) : undefined
       const reference = formatReference(book, chapter, verseStart, verseEnd)
       const hasExplicitVerse = !!match[3]
-      // v0.5.32 — pattern indices: full-name = 0, 2, 4; abbreviated = 1, 3.
-      const bookFull = pi === 0 || pi === 2 || pi === 4
+      // v0.5.33 — pattern indices: full-name = 0, 2, 4, 6; abbreviated = 1, 3, 7.
+      const bookFull = pi === 0 || pi === 2 || pi === 4 || pi === 6
+      // v0.5.33 — LOOSE patterns (no colon, e.g. "John 3 16") only
+      // commit when the input was normalised from spoken numbers
+      // ("John three sixteen") or has a strong context word nearby.
+      // This lets sermon transcripts work while still blocking the
+      // raw "John 3 16" / "John had 3 apples and 16" false positives.
+      if (LOOSE_PATTERN_INDICES.has(pi) && !wasNormalized && !hasContext) continue
       const confidence = scoreReference({
         bookFull,
         hasExplicitVerse,
