@@ -123,6 +123,13 @@ let ndiOnAir = false
 // surfacing the OS toast immediately so we can replay it the moment
 // NDI stops. Cleared on replay.
 let pendingDownloadedNotification: UpdateState | null = null
+// Operator preference: when true, the X button on the main window
+// runs the normal shutdown path instead of hiding to tray. Default
+// false (keeps the new tray-friendly behavior). Persisted to
+// `userData/preferences.json` so the main process can honor it on
+// the very first close after launch — before any IPC traffic from
+// the renderer. See `loadAppPreferences` / `setQuitOnCloseAndPersist`.
+let quitOnClose = false
 
 function serializeNdi<T>(fn: () => Promise<T>): Promise<T> {
   const next = ndiTransition.then(() => fn(), () => fn())
@@ -170,6 +177,70 @@ async function getPinnedPort(preferred = 47330): Promise<number> {
       srv.close(() => resolve(p))
     })
   })
+}
+
+/**
+ * Lightweight on-disk preferences store. Lives at
+ * `userData/preferences.json`. Used by the main process for prefs
+ * that must be known at boot time / at window-close time, BEFORE the
+ * renderer has a chance to push them in over IPC. Keeps the file
+ * tiny and human-editable; missing / malformed file → defaults.
+ */
+type AppPreferences = {
+  quitOnClose?: boolean
+}
+
+function getPreferencesPath(): string {
+  return path.join(app.getPath('userData'), 'preferences.json')
+}
+
+function loadAppPreferences(): AppPreferences {
+  try {
+    const p = getPreferencesPath()
+    if (!fs.existsSync(p)) return {}
+    const raw = fs.readFileSync(p, 'utf8')
+    const parsed = JSON.parse(raw) as unknown
+    if (parsed && typeof parsed === 'object') return parsed as AppPreferences
+  } catch (err) {
+    console.warn('[prefs] failed to read preferences.json (using defaults):', err)
+  }
+  return {}
+}
+
+function writeAppPreferences(prefs: AppPreferences): void {
+  try {
+    const p = getPreferencesPath()
+    const dir = path.dirname(p)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(p, JSON.stringify(prefs, null, 2))
+  } catch (err) {
+    console.warn('[prefs] failed to write preferences.json:', err)
+    throw err
+  }
+}
+
+/**
+ * Hydrate the in-memory `quitOnClose` flag from the preferences
+ * file. Called once on boot, before the main window is created, so
+ * the very first close already honors the operator's choice.
+ */
+function hydrateQuitOnCloseFromDisk(): void {
+  const prefs = loadAppPreferences()
+  quitOnClose = prefs.quitOnClose === true
+  console.log('[prefs] quitOnClose =', quitOnClose)
+}
+
+/**
+ * Persist a new `quitOnClose` value AND update the in-memory flag
+ * atomically. Toggling does not require an app restart — the next
+ * close uses the new value immediately because the close handler
+ * reads `quitOnClose` at fire time.
+ */
+function setQuitOnCloseAndPersist(next: boolean): void {
+  const prefs = loadAppPreferences()
+  prefs.quitOnClose = next
+  writeAppPreferences(prefs)
+  quitOnClose = next
 }
 
 function getUserDbPath(): string {
@@ -330,17 +401,23 @@ async function createMainWindow(url: string, opts: { show?: boolean } = {}) {
   // congregation/stage outputs, and the auto-updater keeps running.
   // The operator brings it back from the tray.
   //
-  // Three carve-outs let the app actually exit:
+  // Four carve-outs let the app actually exit:
   //   1. `isQuitting` is true — set by `before-quit`, fires for
   //      every explicit Quit path (tray menu, app menu / Cmd+Q,
   //      updater restart, fatal errors that call app.quit()).
-  //   2. No tray exists (e.g. tray init failed on a Linux desktop
+  //   2. The operator opted out via Settings → Startup → "When I
+  //      close the window, also quit the app". `quitOnClose` is
+  //      hydrated from `userData/preferences.json` at boot and kept
+  //      live by the IPC setter, so the very first close after
+  //      launch already honors the saved choice.
+  //   3. No tray exists (e.g. tray init failed on a Linux desktop
   //      without a system tray). Without a way back into the app,
   //      hide-to-tray would be a one-way trap, so let close happen
   //      and `window-all-closed` will quit cleanly.
-  //   3. The window is being destroyed during shutdown.
+  //   4. The window is being destroyed during shutdown.
   mainWindow.on('close', (event) => {
     if (isQuitting) return
+    if (quitOnClose) return
     if (!tray || tray.isDestroyed()) return
     if (!mainWindow || mainWindow.isDestroyed()) return
     event.preventDefault()
@@ -1103,6 +1180,26 @@ function setupIpc() {
     ndiUnavailableReason: ndi.unavailableReason(),
   }))
 
+  // ── Quit on close (Settings → Startup card) ───────────────────────
+  // Lets the operator opt OUT of the new hide-to-tray behavior.
+  // Default is false (keep tray-friendly behavior). Persisted to
+  // `userData/preferences.json` and applied immediately — no restart
+  // required, the next close consults the in-memory flag.
+  ipcMain.handle('app:get-quit-on-close', () => ({ value: quitOnClose }))
+  ipcMain.handle('app:set-quit-on-close', (_e, value: unknown) => {
+    const next = value === true
+    try {
+      setQuitOnCloseAndPersist(next)
+      return { ok: true, value: quitOnClose }
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        value: quitOnClose,
+      }
+    }
+  })
+
   // ── Launch-at-login (Settings → Startup card) ─────────────────────
   ipcMain.handle('app:get-launch-at-login', () => readLaunchAtLogin())
   ipcMain.handle('app:set-launch-at-login', (_e, openAtLogin: unknown) => {
@@ -1423,6 +1520,12 @@ app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
 
   setupFileLogging()
+
+  // Hydrate the on-disk preferences (currently just `quitOnClose`)
+  // before any window can be created or closed. This way the very
+  // first close after launch already honors what the operator chose
+  // last session — no IPC round-trip required.
+  hydrateQuitOnCloseFromDisk()
 
   // ── Permissions ────────────────────────────────────────────────
   // Auto-grant the renderer the permissions it needs to behave like

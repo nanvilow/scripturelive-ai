@@ -79,6 +79,18 @@ const api = {
     set: (openAtLogin: boolean): Promise<{ ok: boolean; error?: string; info: LaunchAtLoginInfo }> =>
       ipcRenderer.invoke('app:set-launch-at-login', openAtLogin),
   },
+  /**
+   * Operator preference: when ON, the X button on the main window
+   * runs the normal shutdown path instead of hiding to the tray.
+   * Persisted in `userData/preferences.json` by the main process and
+   * applied to the very next close — no app restart required.
+   */
+  quitOnClose: {
+    get: (): Promise<{ value: boolean }> =>
+      ipcRenderer.invoke('app:get-quit-on-close'),
+    set: (value: boolean): Promise<{ ok: boolean; error?: string; value: boolean }> =>
+      ipcRenderer.invoke('app:set-quit-on-close', value),
+  },
   updater: {
     getState: (): Promise<UpdateState> => ipcRenderer.invoke('updater:get-state'),
     check: (): Promise<UpdateState> => ipcRenderer.invoke('updater:check'),

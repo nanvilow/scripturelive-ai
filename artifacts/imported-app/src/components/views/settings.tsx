@@ -1251,6 +1251,10 @@ type ScriptureLiveLaunchBridge = {
     get?: () => Promise<LaunchAtLoginInfo>
     set?: (v: boolean) => Promise<{ ok: boolean; error?: string; info: LaunchAtLoginInfo }>
   }
+  quitOnClose?: {
+    get?: () => Promise<{ value: boolean }>
+    set?: (v: boolean) => Promise<{ ok: boolean; error?: string; value: boolean }>
+  }
 }
 
 /**
@@ -1264,6 +1268,12 @@ type ScriptureLiveLaunchBridge = {
 function StartupCard() {
   const [info, setInfo] = useState<LaunchAtLoginInfo | null>(null)
   const [busy, setBusy] = useState(false)
+  // Quit-on-close (close-button behavior) preference. `null` while
+  // we're still reading it from the main process; in the browser
+  // preview this stays `null` and the row renders disabled with an
+  // explanation, mirroring how launch-at-login behaves.
+  const [quitOnClose, setQuitOnCloseState] = useState<boolean | null>(null)
+  const [closeBusy, setCloseBusy] = useState(false)
   const isElectron =
     typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)
 
@@ -1291,6 +1301,9 @@ function StartupCard() {
           reason: err instanceof Error ? err.message : 'Could not read launch-at-login state.',
         })
       })
+    bridge?.quitOnClose?.get?.()
+      .then((res) => { if (!cancelled) setQuitOnCloseState(res.value === true) })
+      .catch(() => { /* leave as null → row renders disabled */ })
     return () => { cancelled = true }
   }, [isElectron])
 
@@ -1319,8 +1332,40 @@ function StartupCard() {
     }
   }
 
+  const handleQuitOnCloseToggle = async (next: boolean) => {
+    const bridge = (window as unknown as { scriptureLive?: ScriptureLiveLaunchBridge })
+      .scriptureLive
+    const setter = bridge?.quitOnClose?.set
+    if (!setter) return
+    setCloseBusy(true)
+    try {
+      const result = await setter(next)
+      setQuitOnCloseState(result.value === true)
+      if (!result.ok) {
+        toast.error(result.error ?? 'Failed to update close-button behavior.')
+        return
+      }
+      toast.success(
+        next
+          ? 'Closing the window will quit ScriptureLive AI.'
+          : 'Closing the window will keep ScriptureLive AI running in the tray.',
+      )
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : 'Failed to update close-button behavior.',
+      )
+    } finally {
+      setCloseBusy(false)
+    }
+  }
+
   const supported = info?.supported === true
   const checked = info?.openAtLogin === true
+  // The quit-on-close toggle is meaningful in both packaged and
+  // dev Electron builds (it just changes how the close handler
+  // behaves), so unlike launch-at-login we only gate it on the
+  // electron context — not on app.isPackaged.
+  const quitOnCloseSupported = isElectron && quitOnClose !== null
 
   return (
     <Card className="bg-card border-border">
@@ -1328,9 +1373,9 @@ function StartupCard() {
         <div className="flex items-center gap-2">
           <Power className="h-5 w-5 text-primary" />
           <div>
-            <CardTitle className="text-base">Startup</CardTitle>
+            <CardTitle className="text-base">Startup &amp; Shutdown</CardTitle>
             <CardDescription>
-              Have ScriptureLive AI ready before you sit down for service prep
+              When ScriptureLive AI starts, and what happens when you close the window
             </CardDescription>
           </div>
         </div>
@@ -1352,6 +1397,27 @@ function StartupCard() {
             disabled={busy || !supported}
             onCheckedChange={handleToggle}
             aria-label="Launch ScriptureLive AI when the computer boots"
+          />
+        </div>
+
+        <Separator />
+
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <Label className="text-sm font-medium">When I close the window, also quit the app</Label>
+            <p className="text-xs mt-0.5 text-muted-foreground">
+              {!isElectron
+                ? 'This setting is only available in the desktop app.'
+                : quitOnClose === null
+                  ? 'Checking…'
+                  : 'Off (recommended) keeps ScriptureLive AI running in the system tray when you click the X button — NDI and the secondary screen stay live. Turn ON if you want the X button to fully quit the app and free its memory (single-monitor setups, kiosks).'}
+            </p>
+          </div>
+          <Switch
+            checked={quitOnClose === true}
+            disabled={closeBusy || !quitOnCloseSupported}
+            onCheckedChange={handleQuitOnCloseToggle}
+            aria-label="Quit ScriptureLive AI when the main window is closed"
           />
         </div>
       </CardContent>
