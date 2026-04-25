@@ -40,6 +40,13 @@ Format rules (so the workflow's extractor keeps working):
   positives like "John had 3 apples" → "John 3" in the Detected Verses
   panel. The minimum confidence floor for committing a detection was
   also raised so word-soup matches drop silently.
+- **Manual Bible Lookup still accepts whole-chapter inputs.** Typing
+  "Psalms 23", "1 Corinthians 13", or "Gen 1" into the lookup search
+  box continues to pull the entire chapter, even though the speech
+  detector now requires a colon or context word. The lookup parser
+  uses a tolerant whole-string match that can never trigger on a
+  sentence excerpt — your typed reference, and only your typed
+  reference, is what gets looked up.
 
 ## v0.5.29 — 2026-04-25
 
