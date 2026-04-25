@@ -784,12 +784,70 @@ jobs:
           done
           cat SHA256SUMS.txt
 
+      # Extract the section of CHANGELOG.md matching the tag we're releasing.
+      # The convention (documented in CHANGELOG.md itself) is one section per
+      # version headed by `## v<X.Y.Z>`. We grab everything from that heading
+      # up to the next `## v` heading and feed it to softprops/action-gh-release
+      # as `body`. If no match is found (forgot to update CHANGELOG before
+      # tagging), we fall back to GitHub's auto-generated "Full Changelog"
+      # link instead of failing the release.
+      - name: Extract changelog section for this tag
+        id: changelog
+        shell: bash
+        env:
+          TAG_NAME: ${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+          if [ ! -f CHANGELOG.md ]; then
+            echo "::warning title=Missing CHANGELOG.md::No CHANGELOG.md at repo root; release body will use GitHub's auto-generated notes."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Pull lines from `## ${TAG_NAME}` (with optional trailing chars
+          # like ` — date`) up to but not including the next `## v` heading.
+          section="$(awk -v tag="$TAG_NAME" '
+            BEGIN { found=0 }
+            /^## v/ {
+              if (found) { exit }
+              # Match "## v0.5.28" or "## v0.5.28 — ..." but not "## v0.5.280".
+              if ($0 ~ "^## " tag "([^0-9].*)?$") { found=1; next }
+            }
+            found { print }
+          ' CHANGELOG.md)"
+          # Trim leading/trailing blank lines.
+          section="$(printf '%s' "$section" | sed -e '/./,$!d' | tac | sed -e '/./,$!d' | tac)"
+          if [ -z "$section" ]; then
+            echo "::warning title=No changelog entry for $TAG_NAME::CHANGELOG.md has no '## $TAG_NAME' section; release body will use GitHub's auto-generated notes."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          # Use a randomised heredoc delimiter so user-supplied content can't
+          # close the GITHUB_OUTPUT block prematurely.
+          delim="EOF_$(openssl rand -hex 8)"
+          {
+            echo "body<<$delim"
+            printf '%s\n' "$section"
+            # Append the auto-generated diff link as a footer so operators
+            # can still drill into the commit list if they want to.
+            echo ""
+            echo "---"
+            echo ""
+            echo "**Full commit history:** https://github.com/${GITHUB_REPOSITORY}/compare/$(git describe --tags --abbrev=0 "$TAG_NAME^" 2>/dev/null || echo 'HEAD')...$TAG_NAME"
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+          echo "Extracted $(printf '%s' "$section" | wc -l) lines of release notes for $TAG_NAME."
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.name }}
           name: ScriptureLive AI ${{ steps.tag.outputs.name }}
-          generate_release_notes: true
+          # Prefer hand-written notes from CHANGELOG.md when available, fall
+          # back to GitHub's auto-generated "compare" link otherwise so a
+          # forgotten changelog entry never blocks a release.
+          body: ${{ steps.changelog.outputs.body }}
+          generate_release_notes: ${{ steps.changelog.outputs.found != 'true' }}
           files: |
             dist/*.exe
             dist/*.yml
