@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 
-import { cleanReleaseNotes } from '@/lib/release-notes'
+import { previewReleaseNotes } from '@/lib/release-notes'
 
 /**
  * UpdateNotifier — surfaces auto-updater events as one-click in-app
@@ -59,29 +59,6 @@ type ScriptureLiveBridge = {
     getStatus?: () => Promise<NdiStatusSlim>
     onStatus?: (cb: (s: NdiStatusSlim) => void) => () => void
   }
-}
-
-// Strip markdown / HTML noise from GitHub release notes so the toast
-// description stays readable. We don't try to render markdown — just
-// show enough of the first meaningful paragraph for the operator to
-// know what's in the release.
-//
-// Run the raw notes through `cleanReleaseNotes` first so GitHub
-// boilerplate (the auto "## What's Changed" heading, the "## New
-// Contributors" section, and the "Full Changelog: <url>" footer)
-// doesn't end up dominating the 180-char preview when those blocks
-// happen to land near the top of the notes.
-function previewReleaseNotes(raw: string | undefined): string | undefined {
-  if (!raw) return undefined
-  const deboilerplated = cleanReleaseNotes(raw)
-  if (!deboilerplated) return undefined
-  const cleaned = deboilerplated
-    .replace(/<[^>]+>/g, ' ')             // strip HTML tags
-    .replace(/[#*_`>~\[\]()]/g, '')       // strip markdown punctuation
-    .replace(/\s+/g, ' ')                 // collapse whitespace
-    .trim()
-  if (!cleaned) return undefined
-  return cleaned.length > 180 ? cleaned.slice(0, 177) + '…' : cleaned
 }
 
 export function UpdateNotifier() {

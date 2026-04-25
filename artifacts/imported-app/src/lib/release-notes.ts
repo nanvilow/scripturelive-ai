@@ -44,3 +44,67 @@ export function cleanReleaseNotes(raw: string | null | undefined): string {
   out = out.replace(/\n{3,}/g, '\n\n')
   return out.trim()
 }
+
+// Match an inline markdown image: `![alt](url)`. We drop these
+// entirely from the preview — there's no useful prose to surface and
+// the alt text is usually descriptive of the asset, not the change.
+const MARKDOWN_IMAGE = /!\[[^\]]*\]\([^)]*\)/g
+// Match an inline markdown link: `[label](url)`. We collapse to just
+// the label so a single long GitHub URL can't eat the entire preview
+// budget. Labels are non-empty and don't contain `]`; URLs don't
+// contain `)` (GitHub-rendered URLs never do — they'd be percent-
+// encoded). Captured group #1 is the visible label.
+const MARKDOWN_LINK = /\[([^\]]+)\]\([^)]*\)/g
+// Match a bare http(s) URL not already collapsed by the link strip
+// above. Stops at whitespace so it doesn't eat following prose.
+const BARE_URL = /\bhttps?:\/\/\S+/gi
+
+/**
+ * Build a single-line, human-readable preview of release notes for
+ * surfaces with a tight character budget (e.g. the desktop update
+ * toast description).
+ *
+ * Pipeline (order matters):
+ *   1. `cleanReleaseNotes` strips GitHub auto-generated boilerplate
+ *      so it can't dominate the preview.
+ *   2. HTML tags are stripped — also removes `<https://...>` autolinks
+ *      that GitHub sometimes emits.
+ *   3. Markdown images `![alt](url)` are dropped wholesale.
+ *   4. Markdown links `[label](url)` are collapsed to just `label`,
+ *      so a long URL never blows the budget.
+ *   5. Any remaining bare http(s) URLs are dropped.
+ *   6. Markdown punctuation (`# * _ \` > ~ [ ] ( )`) is stripped so
+ *      the preview reads as plain prose.
+ *   7. All whitespace is collapsed to single spaces and trimmed.
+ *   8. Result is truncated to `maxLen` chars with an ellipsis.
+ *
+ * Returns `undefined` when the input is empty/blank or there's no
+ * meaningful content left after cleaning. Callers can branch on the
+ * `undefined` to fall back to a generic description.
+ *
+ * Note: this is preview-only. The persistent in-app update banner
+ * (`components/update-banner.tsx`) and the modal update dialog
+ * (`components/providers/update-dialog.tsx`) render the full
+ * markdown — they call `cleanReleaseNotes` directly and are
+ * unaffected by this helper.
+ */
+export function previewReleaseNotes(
+  raw: string | null | undefined,
+  maxLen = 180,
+): string | undefined {
+  if (!raw) return undefined
+  const deboilerplated = cleanReleaseNotes(raw)
+  if (!deboilerplated) return undefined
+  const cleaned = deboilerplated
+    .replace(/<[^>]+>/g, ' ')
+    .replace(MARKDOWN_IMAGE, ' ')
+    .replace(MARKDOWN_LINK, '$1')
+    .replace(BARE_URL, ' ')
+    .replace(/[#*_`>~\[\]()]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!cleaned) return undefined
+  if (cleaned.length <= maxLen) return cleaned
+  // Reserve one char for the ellipsis so we never exceed maxLen.
+  return cleaned.slice(0, Math.max(0, maxLen - 1)) + '…'
+}
