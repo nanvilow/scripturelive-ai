@@ -91,6 +91,20 @@ const api = {
     set: (value: boolean): Promise<{ ok: boolean; error?: string; value: boolean }> =>
       ipcRenderer.invoke('app:set-quit-on-close', value),
   },
+  /**
+   * Operator preference: when OFF, the OS-level "Update ready to
+   * install" toast (fired by main-process `notifyUpdateDownloaded`)
+   * is suppressed. Tray badge / tooltip and the in-app banner stay
+   * intact. Useful on kiosk / projection PCs where any OS notification
+   * can pop over the congregation feed when the desktop is mirrored.
+   * Persisted in `userData/preferences.json` alongside `quitOnClose`.
+   */
+  desktopUpdateToast: {
+    get: (): Promise<{ value: boolean }> =>
+      ipcRenderer.invoke('app:get-desktop-update-toast'),
+    set: (value: boolean): Promise<{ ok: boolean; error?: string; value: boolean }> =>
+      ipcRenderer.invoke('app:set-desktop-update-toast', value),
+  },
   updater: {
     getState: (): Promise<UpdateState> => ipcRenderer.invoke('updater:get-state'),
     check: (): Promise<UpdateState> => ipcRenderer.invoke('updater:check'),

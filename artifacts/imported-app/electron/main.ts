@@ -130,6 +130,13 @@ let pendingDownloadedNotification: UpdateState | null = null
 // the very first close after launch — before any IPC traffic from
 // the renderer. See `loadAppPreferences` / `setQuitOnCloseAndPersist`.
 let quitOnClose = false
+// Operator preference: when false, the update-ready OS toast (the
+// one fired by `notifyUpdateDownloaded`) is suppressed. Hidden in
+// `userData/preferences.json` alongside `quitOnClose`. Default true
+// — same surface operators have been getting since the toast shipped.
+// Hydrated at boot by `loadAppPreferences` so the very first
+// `onUpdateState` callback honors the saved choice.
+let desktopUpdateToastEnabled = true
 
 function serializeNdi<T>(fn: () => Promise<T>): Promise<T> {
   const next = ndiTransition.then(() => fn(), () => fn())
@@ -188,6 +195,13 @@ async function getPinnedPort(preferred = 47330): Promise<number> {
  */
 type AppPreferences = {
   quitOnClose?: boolean
+  // When false, `notifyUpdateDownloaded` skips firing the OS toast.
+  // Tray badge / tooltip / mac title and the renderer's in-app banner
+  // are NOT affected — they're driven by separate `onUpdateState`
+  // subscribers. Default is true (toast on) to preserve the behavior
+  // that operators originally opted into when we shipped the
+  // update-ready notification.
+  desktopUpdateToastEnabled?: boolean
 }
 
 function getPreferencesPath(): string {
@@ -241,6 +255,33 @@ function setQuitOnCloseAndPersist(next: boolean): void {
   prefs.quitOnClose = next
   writeAppPreferences(prefs)
   quitOnClose = next
+}
+
+/**
+ * Hydrate the in-memory `desktopUpdateToastEnabled` flag from disk.
+ * Default is true — the legacy behavior — so a missing pref or a
+ * brand-new install still pops the toast that operators expect.
+ * Read once at boot before the updater fires its first state push.
+ */
+function hydrateDesktopUpdateToastFromDisk(): void {
+  const prefs = loadAppPreferences()
+  // Only treat an explicit `false` as "off"; anything else (missing,
+  // null, true) means the operator hasn't opted out, so keep the
+  // toast on.
+  desktopUpdateToastEnabled = prefs.desktopUpdateToastEnabled !== false
+  console.log('[prefs] desktopUpdateToastEnabled =', desktopUpdateToastEnabled)
+}
+
+/**
+ * Persist the desktop-toast preference and update the in-memory flag.
+ * No restart needed: the next time `notifyUpdateDownloaded` fires it
+ * reads the live flag and either fires the toast or short-circuits.
+ */
+function setDesktopUpdateToastEnabledAndPersist(next: boolean): void {
+  const prefs = loadAppPreferences()
+  prefs.desktopUpdateToastEnabled = next
+  writeAppPreferences(prefs)
+  desktopUpdateToastEnabled = next
 }
 
 function getUserDbPath(): string {
@@ -938,6 +979,18 @@ function isMainWindowVisiblyFocused(): boolean {
 }
 function notifyUpdateDownloaded(state: UpdateState) {
   if (state.status !== 'downloaded') return
+  // Operator opt-out: the kiosk-PC use case where any OS toast is
+  // unwelcome (it can pop over a projected congregation feed when
+  // the desktop is mirrored). Tray badge / tooltip / mac title and
+  // the in-app banner stay live — those are wired through separate
+  // `onUpdateState` subscribers and do NOT consult this flag. We
+  // also don't bother stashing the state for replay: if the operator
+  // has opted out, replaying after an NDI off-air transition would
+  // just hit this same early-return.
+  if (!desktopUpdateToastEnabled) {
+    console.log(`[updater-notify] desktop toast disabled by operator — skipping update-ready toast for v${state.version}`)
+    return
+  }
   // Hold the OS toast while NDI is on the air. The whole point of
   // this guard is to NOT pop a "Restart Now" surface in the operator's
   // face mid-service. The state is stashed and replayed by
@@ -1228,6 +1281,30 @@ function setupIpc() {
         ok: false,
         error: err instanceof Error ? err.message : String(err),
         value: quitOnClose,
+      }
+    }
+  })
+
+  // ── Desktop update-ready toast (Settings → Help & Updates card) ──
+  // Operator opt-out for the OS notification fired by
+  // `notifyUpdateDownloaded`. Tray badge / tooltip / in-app banner
+  // are unaffected — they read from `onUpdateState` directly. Stored
+  // alongside `quitOnClose` in `userData/preferences.json` so a
+  // single file holds every operator preference. Default is true to
+  // preserve the toast behavior shipped with the helper.
+  ipcMain.handle('app:get-desktop-update-toast', () => ({
+    value: desktopUpdateToastEnabled,
+  }))
+  ipcMain.handle('app:set-desktop-update-toast', (_e, value: unknown) => {
+    const next = value === true
+    try {
+      setDesktopUpdateToastEnabledAndPersist(next)
+      return { ok: true, value: desktopUpdateToastEnabled }
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        value: desktopUpdateToastEnabled,
       }
     }
   })
@@ -1558,6 +1635,10 @@ app.whenReady().then(async () => {
   // first close after launch already honors what the operator chose
   // last session — no IPC round-trip required.
   hydrateQuitOnCloseFromDisk()
+  // Same store, different toggle: read the desktop-toast opt-out
+  // before the updater fires its first state push so the very first
+  // "downloaded" event already honors the operator's choice.
+  hydrateDesktopUpdateToastFromDisk()
 
   // ── Permissions ────────────────────────────────────────────────
   // Auto-grant the renderer the permissions it needs to behave like

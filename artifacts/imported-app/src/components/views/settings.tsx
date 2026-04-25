@@ -1235,6 +1235,14 @@ type ScriptureLiveUpdaterBridge = {
     install?: () => Promise<{ ok: boolean; error?: string }>
     onState?: (cb: (s: UpdaterState) => void) => () => void
   }
+  // Operator preference for the OS-level "Update ready to install"
+  // toast. Lives on the same `scriptureLive` bridge as the updater
+  // so the Help & Updates card can read/write it without pulling in
+  // a second bridge type. Kept local to mirror preload.ts.
+  desktopUpdateToast?: {
+    get?: () => Promise<{ value: boolean }>
+    set?: (value: boolean) => Promise<{ ok: boolean; error?: string; value: boolean }>
+  }
 }
 
 // Bridge type shape mirrored from electron/preload.ts. Kept local to
@@ -1436,6 +1444,13 @@ function HelpAndUpdatesCard() {
     process.env.NEXT_PUBLIC_APP_VERSION || '0.5.6',
   )
   const [state, setState] = useState<UpdaterState>({ status: 'idle' })
+  // Operator preference: pop a desktop notification when an update is
+  // ready. `null` while we're still reading it from the main process
+  // (or when running in a browser preview, where the bridge is
+  // absent); the row renders disabled with an explanation in that
+  // state, mirroring how launch-at-login behaves.
+  const [desktopToastOn, setDesktopToastOn] = useState<boolean | null>(null)
+  const [toastBusy, setToastBusy] = useState(false)
   const isElectron =
     typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)
 
@@ -1454,6 +1469,13 @@ function HelpAndUpdatesCard() {
     bridge.updater?.getState?.().then((s) => {
       if (!cancelled && s) setState(s)
     }).catch(() => { /* ignore */ })
+    // Hydrate the desktop-toast opt-out so the row renders with the
+    // current persisted value instead of flashing the default. If the
+    // bridge is missing or the call rejects we leave it as `null` so
+    // the toggle stays disabled with the "checking…" copy.
+    bridge.desktopUpdateToast?.get?.().then((res) => {
+      if (!cancelled) setDesktopToastOn(res.value === true)
+    }).catch(() => { /* ignore — row renders disabled */ })
     // Subscribe to background update-state pushes (the updater also
     // checks on a 4h interval and on launch). This keeps the card in
     // sync without polling.
@@ -1532,6 +1554,33 @@ function HelpAndUpdatesCard() {
       // via the updater:state channel — no need to duplicate here.
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Download failed')
+    }
+  }
+
+  const handleDesktopToastToggle = async (next: boolean) => {
+    const bridge = (window as unknown as { scriptureLive?: ScriptureLiveUpdaterBridge })
+      .scriptureLive
+    const setter = bridge?.desktopUpdateToast?.set
+    if (!setter) return
+    setToastBusy(true)
+    try {
+      const result = await setter(next)
+      setDesktopToastOn(result.value === true)
+      if (!result.ok) {
+        toast.error(result.error ?? 'Failed to update notification preference.')
+        return
+      }
+      toast.success(
+        next
+          ? 'A desktop notification will pop when an update is ready.'
+          : 'Desktop update notifications turned off — the tray badge and in-app banner still appear.',
+      )
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : 'Failed to update notification preference.',
+      )
+    } finally {
+      setToastBusy(false)
     }
   }
 
@@ -1636,6 +1685,38 @@ function HelpAndUpdatesCard() {
               {checking ? 'Checking…' : 'Check Now'}
             </Button>
           )}
+        </div>
+
+        <Separator />
+
+        {/*
+          Operator toggle for the OS-level "Update ready to install"
+          toast. Off → suppress just the desktop notification while
+          leaving the tray badge / tooltip and the in-app banner
+          intact (those are wired through separate update-state
+          subscribers in the main process). Disabled-with-explanation
+          in the browser preview, mirroring how launch-at-login and
+          quit-on-close behave.
+        */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <Label className="text-sm font-medium">
+              Pop a desktop notification when an update is ready
+            </Label>
+            <p className="text-xs mt-0.5 text-muted-foreground">
+              {!isElectron
+                ? 'This setting is only available in the desktop app.'
+                : desktopToastOn === null
+                  ? 'Checking…'
+                  : 'On (recommended) shows a system toast the moment an update finishes downloading. Turn OFF on a kiosk PC where the desktop is mirrored — the tray badge and the in-app banner still update so you never miss it.'}
+            </p>
+          </div>
+          <Switch
+            checked={desktopToastOn === true}
+            disabled={toastBusy || !isElectron || desktopToastOn === null}
+            onCheckedChange={handleDesktopToastToggle}
+            aria-label="Pop a desktop notification when an update is ready"
+          />
         </div>
 
         <Separator />
