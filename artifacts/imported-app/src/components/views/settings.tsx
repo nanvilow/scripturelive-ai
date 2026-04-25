@@ -80,6 +80,7 @@ import { StartupCard } from './startup-card'
 import { OutputPreview } from '@/components/settings/output-preview'
 import { FONT_REGISTRY } from '@/lib/fonts'
 import { quickStartUrl, troubleshootingUrl, newIssueUrl } from '@/lib/github-repo'
+import { APP_VERSION } from '@/lib/app-version'
 import { useNdi } from '@/lib/use-electron'
 
 export function SettingsView() {
@@ -1275,10 +1276,11 @@ function HelpAndUpdatesCard() {
   // Installed version: trust the main process (app.getVersion()) over
   // any baked-in env var. The env var is unreliable in production
   // because Next builds don't see package.json at runtime when bundled
-  // inside Electron. Falls back to env var, then to package version.
-  const [appVersion, setAppVersion] = useState<string>(
-    process.env.NEXT_PUBLIC_APP_VERSION || '0.5.6',
-  )
+  // inside Electron. Falls back to env var, then to the package.json
+  // version that shipped with this build (see lib/app-version.ts) so
+  // the card never flashes a stale literal before the bridge handshake
+  // lands.
+  const [appVersion, setAppVersion] = useState<string>(APP_VERSION)
   const [state, setState] = useState<UpdaterState>({ status: 'idle' })
   // Operator preference: pop a desktop notification when an update is
   // ready. `null` while we're still reading it from the main process
