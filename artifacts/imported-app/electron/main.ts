@@ -673,12 +673,7 @@ function buildTrayMenu(state: UpdateState): Menu {
   } else if (state.status === 'downloaded') {
     items.push({
       label: `Restart Now to Install v${state.version}`,
-      click: () => {
-        void (async () => {
-          const { autoUpdater } = await import('electron-updater')
-          setImmediate(() => autoUpdater.quitAndInstall(false, true))
-        })()
-      },
+      click: () => { quitAndInstallUpdate() },
     })
   } else {
     items.push({
@@ -757,6 +752,75 @@ async function prepareTrayBadges(baseIconPath: string, size: number) {
     // log prefix `[tray-badge-disabled]` is intentional so support can
     // grep launch.log for it without wading through other tray logs.
     console.warn('[tray-badge-disabled] badge pre-render failed (non-fatal, falling back to plain icon):', err)
+  }
+}
+
+/**
+ * Quit-and-install handler shared by every "Restart Now" surface
+ * (tray menu, dialog, desktop notification). Pulled into one place so
+ * a future change — e.g. holding restarts during a live broadcast —
+ * only has to update one call site. `setImmediate` defers the call
+ * past the current tick so the click handler can return cleanly
+ * before Electron starts tearing the process down.
+ */
+function quitAndInstallUpdate() {
+  void (async () => {
+    try {
+      const { autoUpdater } = await import('electron-updater')
+      setImmediate(() => autoUpdater.quitAndInstall(false, true))
+    } catch (err) {
+      console.error('[updater] quitAndInstall failed:', err)
+    }
+  })()
+}
+
+// One-shot OS toast when an update finishes downloading. Operators
+// who minimize or hide the main window during a live service won't
+// see the in-app "Restart to install" banner; the tray icon and
+// tooltip already reflect the state, but a proactive notification
+// surfaces the news without forcing them to glance at the
+// notification area.
+//
+// `lastNotifiedDownloadedVersion` gates re-fires: electron-updater
+// can re-emit `update-downloaded` if the operator triggers another
+// check after a download completed, and our own `broadcast()`
+// re-sends state to listeners. We only want to pop the toast on the
+// transition INTO `downloaded` for a given version — never on every
+// redundant rebroadcast, and never on download-progress events
+// (which arrive dozens per second).
+let lastNotifiedDownloadedVersion: string | null = null
+function notifyUpdateDownloaded(state: UpdateState) {
+  if (state.status !== 'downloaded') return
+  if (lastNotifiedDownloadedVersion === state.version) return
+  lastNotifiedDownloadedVersion = state.version
+
+  const title = 'Update ready to install'
+  const body = `ScriptureLive AI ${state.version} has been downloaded. Click Restart Now to install it, or use the tray icon when you're ready.`
+
+  try {
+    if (!Notification.isSupported()) {
+      console.log('[updater-notify] desktop notifications unsupported — relying on tray badge / in-app banner')
+      return
+    }
+    const n = new Notification({
+      title,
+      body,
+      icon: resolveTrayIconPath(),
+      // macOS-only: action buttons. Windows/Linux ignore this field
+      // and the operator gets the same effect by clicking the body
+      // of the toast (handled below). Using a single button keeps
+      // the surface uncluttered and matches the "Restart now"
+      // wording from the in-app banner / dialog.
+      actions: [{ type: 'button', text: 'Restart Now' }],
+      // Not silent — the operator explicitly opted into this update
+      // by clicking Download, and the whole point is to alert them
+      // that it's ready. The OS still respects Do Not Disturb.
+    })
+    n.on('click', () => { quitAndInstallUpdate() })
+    n.on('action', () => { quitAndInstallUpdate() })
+    n.show()
+  } catch (err) {
+    console.warn('[updater-notify] failed to show update-ready notification (non-fatal):', err)
   }
 }
 
@@ -1334,6 +1398,12 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error('[updater] init failed (non-fatal):', err)
   }
+  // Pop a one-shot OS toast when an update finishes downloading. Wired
+  // here (not inside setupTray) so the notification still fires on the
+  // rare desktops where tray init failed — the operator's only signal
+  // would otherwise be the in-app banner, which they can't see when
+  // the window is hidden during a live service.
+  onUpdateState(notifyUpdateDownloaded)
   try {
     setupTray()
   } catch (err) {
