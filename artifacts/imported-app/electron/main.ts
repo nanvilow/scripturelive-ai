@@ -272,12 +272,21 @@ async function startNextServer(): Promise<string> {
   throw new Error(`Next server failed to start within 60s. Last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`)
 }
 
-async function createMainWindow(url: string) {
+async function createMainWindow(url: string, opts: { show?: boolean } = {}) {
+  // `show` defaults to BrowserWindow's own default (true). The
+  // launch-at-login boot path passes `show: false` so the operator's
+  // PC comes up to a populated system tray + active NDI sender, with
+  // no main window stealing focus from whatever they were doing
+  // pre-service. The window still loads the URL, so when they later
+  // click the tray icon `showMainWindow()` produces an instantly-
+  // ready window instead of having to spin up Next/render from scratch.
+  const showInitially = opts.show !== false
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1024,
     minHeight: 640,
+    show: showInitially,
     backgroundColor: '#0a0a0a',
     icon: process.platform === 'win32'
       ? path.join(process.resourcesPath, 'app', '.next', 'standalone', 'artifacts', 'imported-app', 'public', 'icon-512.png')
@@ -897,6 +906,30 @@ function broadcastNdiStatus(status: NdiStatus) {
   }
 }
 
+/**
+ * Read the OS-level auto-launch entry for this app and shape it into
+ * the renderer's `LaunchAtLoginInfo` contract. Linux returns
+ * `supported: false` (Electron's `setLoginItemSettings` is a no-op
+ * there per the official docs). Dev builds also return `supported:
+ * false` because registering an auto-launch entry from `electron.exe`
+ * inside `node_modules` would fire on every login of the developer's
+ * machine and point at a path that won't survive `pnpm install`.
+ */
+function readLaunchAtLogin(): { supported: boolean; openAtLogin: boolean; openAsHidden: boolean; reason?: string } {
+  if (process.platform === 'linux') {
+    return { supported: false, openAtLogin: false, openAsHidden: false, reason: 'Launch-at-login is not supported on Linux desktops by Electron.' }
+  }
+  if (!app.isPackaged) {
+    return { supported: false, openAtLogin: false, openAsHidden: false, reason: 'Only available in installed builds. The dev build cannot register a stable auto-launch entry.' }
+  }
+  try {
+    const s = app.getLoginItemSettings()
+    return { supported: true, openAtLogin: s.openAtLogin, openAsHidden: s.openAsHidden }
+  } catch (err) {
+    return { supported: false, openAtLogin: false, openAsHidden: false, reason: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 function setupIpc() {
   ipcMain.handle('app:info', () => ({
     version: app.getVersion(),
@@ -906,6 +939,35 @@ function setupIpc() {
     ndiAvailable: ndi.isAvailable(),
     ndiUnavailableReason: ndi.unavailableReason(),
   }))
+
+  // ── Launch-at-login (Settings → Startup card) ─────────────────────
+  ipcMain.handle('app:get-launch-at-login', () => readLaunchAtLogin())
+  ipcMain.handle('app:set-launch-at-login', (_e, openAtLogin: unknown) => {
+    const want = openAtLogin === true
+    const current = readLaunchAtLogin()
+    if (!current.supported) {
+      return { ok: false, error: current.reason ?? 'Launch-at-login is not supported on this platform.', info: current }
+    }
+    try {
+      // `openAsHidden: true` + `args: ['--hidden']` together tell the
+      // boot path (see `bootHidden` in app.whenReady) to bring the app
+      // up tray-only with NDI auto-started, rather than popping the
+      // main window in the operator's face on every login. Setting
+      // `openAtLogin: false` removes the entry entirely.
+      app.setLoginItemSettings({
+        openAtLogin: want,
+        openAsHidden: want,
+        args: want ? ['--hidden'] : [],
+      })
+      return { ok: true, info: readLaunchAtLogin() }
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        info: readLaunchAtLogin(),
+      }
+    }
+  })
 
   ipcMain.handle('ndi:status', () => ndi.getStatus())
 
@@ -1155,7 +1217,48 @@ function setupIpc() {
   })
 }
 
+// ── Single-instance enforcement ─────────────────────────────────────
+// Critical for the launch-at-login flow: when the app auto-starts
+// hidden at boot, the operator's natural reaction to "I want to make
+// a slide" is to double-click the desktop / Start-menu shortcut.
+// Without this lock, that spawns a SECOND process — which loses the
+// PORT race against the existing Next server, fails to bind NDI
+// (sender name collision), and leaves two tray icons. We want the
+// second launch to surface the existing hidden window instead.
+//
+// Must run BEFORE app.whenReady (well, the lock acquisition can
+// safely happen at any time before window creation, but we want the
+// duplicate-process branch to exit cleanly without ever firing
+// `whenReady`'s heavy startup path — startNextServer, NDI probe,
+// updater init are all expensive and pointless in a doomed second
+// instance).
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  // The other (primary) instance will receive a `second-instance`
+  // event and surface its window. This process should exit *now* —
+  // do NOT proceed into whenReady.
+  console.log('[boot] another instance is already running — exiting')
+  app.quit()
+} else {
+  app.on('second-instance', (_event, _argv, _workingDirectory) => {
+    // The user (or shell) tried to launch the app again. Surface the
+    // existing main window instead of spawning a duplicate. This path
+    // also fires when the operator double-clicks the shortcut after
+    // an auto-launched (hidden) startup, which is the whole reason
+    // the lock exists for this feature.
+    showMainWindow().catch((err) => {
+      console.error('[single-instance] failed to surface main window:', err)
+    })
+  })
+}
+
 app.whenReady().then(async () => {
+  // If we lost the single-instance lock above, app.quit() is in
+  // flight — bail out of whenReady before doing any expensive work
+  // (Next server boot, NDI probe, updater init) that the doomed
+  // second process would just throw away.
+  if (!gotSingleInstanceLock) return
+
   setupFileLogging()
 
   // ── Permissions ────────────────────────────────────────────────
@@ -1201,8 +1304,28 @@ app.whenReady().then(async () => {
   } catch (err) {
     fatalError('startNextServer', err); app.quit(); return
   }
+  // ── Launch-at-login: hidden boot detection ──────────────────────
+  // The OS-registered auto-launch entry was set via
+  // `app.setLoginItemSettings({ ... args: ['--hidden'], openAsHidden:
+  // true })`. We honor it two ways for robustness:
+  //   1. `--hidden` argv marker (works on all platforms; survives
+  //      cases where Windows drops `wasOpenedAsHidden` due to a
+  //      Group Policy / registry quirk).
+  //   2. Windows-specific `wasOpenedAsHidden` flag from the
+  //      LoginItemSettings record — set by the OS when the entry
+  //      itself was registered with `openAsHidden`.
+  // When either is true we still create the BrowserWindow (so the
+  // renderer mounts and Next is warm), just with show:false. The
+  // tray's "Show Main Window" path already calls `mainWindow.show()`.
+  let bootHidden = process.argv.includes('--hidden')
+  if (!bootHidden && process.platform === 'win32') {
+    try {
+      bootHidden = app.getLoginItemSettings().wasOpenedAsHidden === true
+    } catch { /* ignore — fall back to argv-only detection */ }
+  }
   try {
-    await createMainWindow(appBaseUrl)
+    await createMainWindow(appBaseUrl, { show: !bootHidden })
+    if (bootHidden) console.log('[boot] launched hidden — main window created with show:false, tray-only UI')
   } catch (err) {
     fatalError('createMainWindow', err); app.quit(); return
   }

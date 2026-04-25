@@ -48,9 +48,37 @@ export type UpdateState =
   | { status: 'downloaded'; version: string; releaseNotes?: string; releaseName?: string }
   | { status: 'error'; message: string }
 
+export type LaunchAtLoginInfo = {
+  /**
+   * `false` when the OS doesn't support launch-at-login (Linux, where
+   * Electron's `setLoginItemSettings` is a no-op) OR when running in
+   * dev. Renderer should disable / hide the toggle in that case.
+   */
+  supported: boolean
+  openAtLogin: boolean
+  openAsHidden: boolean
+  /** Human-readable explanation when `supported` is false. */
+  reason?: string
+}
+
 const api = {
   isDesktop: true as const,
   getInfo: (): Promise<AppInfo> => ipcRenderer.invoke('app:info'),
+  /**
+   * Launch-at-login (a.k.a. "start with Windows"). The renderer-side
+   * Settings toggle in src/components/views/settings.tsx calls these.
+   * Both reads and writes go through Electron's
+   * `app.getLoginItemSettings()` / `app.setLoginItemSettings()`. The
+   * setter passes `args: ['--hidden']` and `openAsHidden: true` so
+   * the boot path knows to skip showing the main window — the app
+   * comes up directly into the system tray with NDI auto-started.
+   */
+  launchAtLogin: {
+    get: (): Promise<LaunchAtLoginInfo> =>
+      ipcRenderer.invoke('app:get-launch-at-login'),
+    set: (openAtLogin: boolean): Promise<{ ok: boolean; error?: string; info: LaunchAtLoginInfo }> =>
+      ipcRenderer.invoke('app:set-launch-at-login', openAtLogin),
+  },
   updater: {
     getState: (): Promise<UpdateState> => ipcRenderer.invoke('updater:get-state'),
     check: (): Promise<UpdateState> => ipcRenderer.invoke('updater:check'),
