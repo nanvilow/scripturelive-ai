@@ -7,13 +7,15 @@ copyright: ScriptureLive AI
 # triggers: "Cannot compute electron version from installed node modules".
 electronVersion: 33.4.11
 # electron-updater pulls signed installers from this GitHub repo.
-# Update `owner` and `repo` to match where your CI publishes
-# releases. The Build Windows Installer GH workflow uses GITHUB_TOKEN
-# so no extra config is required.
+# `owner` and `repo` are intentionally NOT inlined here — electron-builder
+# auto-detects them from the `repository` field in package.json, which is
+# the single source of truth shared with the renderer (see
+# src/lib/github-repo.ts). To move the project to a different repo, update
+# package.json's `repository.url` and both this build config and the
+# in-app links will follow. The Build Windows Installer GH workflow uses
+# GITHUB_TOKEN so no extra config is required.
 publish:
   - provider: github
-    owner: nanvilow
-    repo: scripturelive-ai
     releaseType: release
 directories:
   output: release

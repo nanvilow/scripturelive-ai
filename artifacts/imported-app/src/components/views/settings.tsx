@@ -61,6 +61,7 @@ import { cn } from '@/lib/utils'
 import { NdiOutputPanel } from './ndi-output-panel'
 import { OutputPreview } from '@/components/settings/output-preview'
 import { FONT_REGISTRY } from '@/lib/fonts'
+import { quickStartUrl, troubleshootingUrl, newIssueUrl } from '@/lib/github-repo'
 
 export function SettingsView() {
   const { settings, updateSettings, setSelectedTranslation } = useAppStore()
@@ -1641,7 +1642,7 @@ function HelpAndUpdatesCard() {
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <a
-            href="https://github.com/nanvilow/scripturelive-ai#quick-start"
+            href={quickStartUrl()}
             target="_blank"
             rel="noreferrer"
             className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border hover:bg-muted/40 text-xs"
@@ -1650,7 +1651,7 @@ function HelpAndUpdatesCard() {
             <ExternalLink className="h-3 w-3 opacity-60" />
           </a>
           <a
-            href="https://github.com/nanvilow/scripturelive-ai/blob/main/docs/TROUBLESHOOTING.md"
+            href={troubleshootingUrl()}
             target="_blank"
             rel="noreferrer"
             className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border hover:bg-muted/40 text-xs"
@@ -1659,7 +1660,7 @@ function HelpAndUpdatesCard() {
             <ExternalLink className="h-3 w-3 opacity-60" />
           </a>
           <a
-            href="https://github.com/nanvilow/scripturelive-ai/issues/new"
+            href={newIssueUrl()}
             target="_blank"
             rel="noreferrer"
             className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border hover:bg-muted/40 text-xs"

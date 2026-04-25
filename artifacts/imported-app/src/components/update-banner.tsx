@@ -5,10 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import { useDesktop, useNdi, type UpdateState } from '@/lib/use-electron'
 import { cleanReleaseNotes } from '@/lib/release-notes'
-
-// Mirrors the publish.owner/publish.repo block in electron-builder.yml.
-// Used to build a "View on GitHub" link to the canonical release page.
-const GITHUB_RELEASES_BASE = 'https://github.com/nanvilow/scripturelive-ai/releases'
+import { releaseTagUrl } from '@/lib/github-repo'
 
 function formatPercent(p: number): string {
   if (!Number.isFinite(p)) return '0%'
@@ -27,12 +24,10 @@ function getNotes(state: UpdateState): string {
 
 function getReleaseUrl(state: UpdateState): string | null {
   if (state.status !== 'available' && state.status !== 'downloaded') return null
-  const v = state.version?.trim()
-  if (!v) return `${GITHUB_RELEASES_BASE}/latest`
-  // electron-updater hands us bare semvers (e.g. "1.4.2"). GitHub release
-  // tags are conventionally prefixed with "v", but tolerate either form.
-  const tag = v.startsWith('v') ? v : `v${v}`
-  return `${GITHUB_RELEASES_BASE}/tag/${encodeURIComponent(tag)}`
+  // electron-updater hands us bare semvers (e.g. "1.4.2"). releaseTagUrl
+  // tolerates either "1.4.2" or "v1.4.2" and falls back to the "latest"
+  // release page when the version is missing.
+  return releaseTagUrl(state.version)
 }
 
 export function UpdateBanner() {

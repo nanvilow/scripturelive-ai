@@ -3,6 +3,10 @@
   "version": "0.5.27",
   "private": true,
   "main": "dist-electron/main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nanvilow/scripturelive-ai.git"
+  },
   "pnpm": {
     "onlyBuiltDependencies": [
       "@parcel/watcher",
