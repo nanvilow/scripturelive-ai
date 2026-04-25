@@ -640,14 +640,35 @@ jobs:
           fi
           echo "value=$opt_out" >> "$GITHUB_OUTPUT"
 
+      # Same auto-skip rule as the build job's `signconf` step: if
+      # WIN_CSC_LINK isn't configured, electron-builder produced an
+      # unsigned installer and there's nothing for osslsigncode to
+      # verify. Treat "no cert configured" as the same intent as
+      # "unsigned-release" so unsigned CI runs (typical for early dev
+      # tags) don't have to be republished via workflow_dispatch with
+      # allow_unsigned=true every time.
+      - name: Detect Windows signing configuration
+        id: signconf
+        shell: bash
+        env:
+          HAS_CSC: ${{ secrets.WIN_CSC_LINK != '' }}
+        run: |
+          if [ "$HAS_CSC" = "true" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "Windows code signing IS configured (WIN_CSC_LINK is set)."
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Windows code signing not configured::WIN_CSC_LINK secret is unset; the installer in this release is unsigned and the publish-time signature verification step will be skipped. End users will see a SmartScreen warning when running the installer."
+          fi
+
       - name: Install signature verification tools
-        if: steps.optout.outputs.value != 'true'
+        if: steps.optout.outputs.value != 'true' && steps.signconf.outputs.configured == 'true'
         run: |
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends osslsigncode
 
       - name: Verify Windows installer signatures
-        if: steps.optout.outputs.value != 'true'
+        if: steps.optout.outputs.value != 'true' && steps.signconf.outputs.configured == 'true'
         env:
           EXPECTED_WIN_PUBLISHER_CN: ${{ vars.EXPECTED_WIN_PUBLISHER_CN }}
         run: |
