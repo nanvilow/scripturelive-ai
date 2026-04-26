@@ -275,7 +275,7 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
       const apiKey = getOpenAIKey()
       if (!apiKey) {
         throw new Error(
-          'No OpenAI key configured. Open Admin (Ctrl+Shift+P) → Settings to paste an override.',
+          'Cloud transcription is temporarily unavailable. Please contact your administrator.',
         )
       }
       const fd = new FormData()

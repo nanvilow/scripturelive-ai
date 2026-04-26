@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { useLicense } from './license-provider'
-import { ShieldCheck, Copy, Mail, Phone, RefreshCw, KeyRound, AlertTriangle, CheckCircle2, Loader2, Settings as SettingsIcon, Save, Sparkles, UserPlus } from 'lucide-react'
+import { ShieldCheck, Copy, Mail, Phone, RefreshCw, KeyRound, AlertTriangle, CheckCircle2, Loader2, Settings as SettingsIcon, Save, Sparkles, UserPlus, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -177,6 +177,32 @@ export function AdminModal() {
     } catch (e) {
       setConfirmResult({ ok: false, msg: e instanceof Error ? e.message : String(e) })
     } finally { setConfirmBusy(false) }
+  }
+
+  // v0.5.53 — Generic delete helper used by the trash-icon buttons on
+  // the Recent Payments / Activations / Notifications tables. Each of
+  // the three POST endpoints accepts a small body identifying the row;
+  // the helper just centralises the error toast + reload.
+  const delRow = async (
+    endpoint: 'delete-payment' | 'delete-activation' | 'delete-notification',
+    body: Record<string, string>,
+    label: string,
+  ) => {
+    try {
+      const r = await fetch(`/api/license/admin/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({} as Record<string, unknown>))
+        throw new Error((j as { error?: string }).error || `HTTP ${r.status}`)
+      }
+      toast.success(`${label} deleted`)
+      await reload()
+    } catch (e) {
+      toast.error(`Delete failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
   }
 
   const generateCode = async () => {
@@ -345,7 +371,6 @@ export function AdminModal() {
           <DialogTitle className="flex items-center gap-2">
             <ShieldCheck className="h-4 w-4 text-emerald-400" />
             ScriptureLive AI — Admin Panel
-            <Badge className="ml-2 bg-zinc-800 text-zinc-400 border-zinc-700 text-[9px]">Ctrl+Shift+P</Badge>
           </DialogTitle>
           <DialogDescription className="text-zinc-400 text-xs">
             Owner-only. Confirm MoMo payments, generate activation codes, monitor subscription state.
@@ -574,12 +599,28 @@ export function AdminModal() {
                           <td className="px-2 py-1.5"><div className="truncate max-w-[160px]">{p.email}</div><div className="text-zinc-500 font-mono text-[10px]">{p.whatsapp}</div></td>
                           <td className="px-2 py-1.5"><Badge className={cn('text-[9px]', p.status === 'WAITING_PAYMENT' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : p.status === 'PAID' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : p.status === 'CONSUMED' ? 'bg-sky-500/20 text-sky-300 border-sky-500/40' : 'bg-zinc-700 text-zinc-300 border-zinc-600')}>{p.status}</Badge></td>
                           <td className="px-2 py-1.5 text-right">
-                            {p.status === 'WAITING_PAYMENT' && (
-                              <Button size="sm" className="h-6 text-[10px] bg-emerald-600 hover:bg-emerald-500" onClick={() => confirm(p.ref)} disabled={confirmBusy}>Confirm</Button>
-                            )}
-                            {p.activationCode && (
-                              <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => copy(p.activationCode!)}>Copy code</Button>
-                            )}
+                            <div className="inline-flex items-center gap-1">
+                              {p.status === 'WAITING_PAYMENT' && (
+                                <Button size="sm" className="h-6 text-[10px] bg-emerald-600 hover:bg-emerald-500" onClick={() => confirm(p.ref)} disabled={confirmBusy}>Confirm</Button>
+                              )}
+                              {p.activationCode && (
+                                <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => copy(p.activationCode!)}>Copy code</Button>
+                              )}
+                              {/* v0.5.53 — owner can clear a stale row */}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 w-6 p-0 text-rose-400 hover:text-rose-300 hover:bg-rose-950/40"
+                                title={`Delete payment ${p.ref}`}
+                                onClick={() => {
+                                  if (window.confirm(`Delete payment ${p.ref}? This only removes the row from the audit log.`)) {
+                                    delRow('delete-payment', { ref: p.ref }, `Payment ${p.ref}`)
+                                  }
+                                }}
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -627,9 +668,25 @@ export function AdminModal() {
                             <td className="px-2 py-1.5">{a.isUsed ? <span className="text-emerald-400">Yes</span> : <span className="text-amber-400">No</span>}</td>
                             <td className="px-2 py-1.5 font-mono text-[10px] text-zinc-400">{a.subscriptionExpiresAt ? new Date(a.subscriptionExpiresAt).toLocaleDateString() : '—'}</td>
                             <td className="px-2 py-1.5 text-right">
-                              <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => copy(a.code)}>
-                                <Copy className="h-3 w-3 mr-1" /> Copy
-                              </Button>
+                              <div className="inline-flex items-center gap-1">
+                                <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => copy(a.code)}>
+                                  <Copy className="h-3 w-3 mr-1" /> Copy
+                                </Button>
+                                {/* v0.5.53 — owner can purge a row */}
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-6 w-6 p-0 text-rose-400 hover:text-rose-300 hover:bg-rose-950/40"
+                                  title={`Delete activation ${a.code}`}
+                                  onClick={() => {
+                                    if (window.confirm(`Delete activation ${a.code}? The active subscription on this install is unaffected — this only clears the audit log.`)) {
+                                      delRow('delete-activation', { code: a.code }, `Activation ${a.code}`)
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              </div>
                             </td>
                           </tr>
                         )
@@ -654,6 +711,20 @@ export function AdminModal() {
                           {n.channel === 'email' ? <Mail className="h-3 w-3 text-sky-400" /> : <Phone className="h-3 w-3 text-emerald-400" />}
                           <span className="font-semibold">{n.subject}</span>
                           <Badge className={cn('text-[9px] ml-auto', n.status === 'sent' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : n.status === 'pending' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-rose-500/20 text-rose-300 border-rose-500/40')}>{n.status}</Badge>
+                          {/* v0.5.53 — owner can dismiss a notification row */}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-5 w-5 p-0 text-rose-400 hover:text-rose-300 hover:bg-rose-950/40"
+                            title="Delete notification"
+                            onClick={() => {
+                              if (window.confirm('Dismiss this notification from the audit log?')) {
+                                delRow('delete-notification', { id: n.id }, 'Notification')
+                              }
+                            }}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
                         </div>
                         <div className="text-zinc-500 text-[10px]">to {n.to} · {new Date(n.ts).toLocaleString()}</div>
                         {n.status !== 'sent' && (
@@ -738,7 +809,7 @@ export function AdminModal() {
                         className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
                         autoComplete="new-password"
                       />
-                      <p className="text-[10px] text-zinc-500">Stored locally. Leave blank to disable owner gate. (Currently the modal opens via Ctrl+Shift+P only.)</p>
+                      <p className="text-[10px] text-zinc-500">Stored locally. Leave blank to disable owner gate.</p>
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase tracking-wider text-zinc-500">Trial length (minutes)</label>
