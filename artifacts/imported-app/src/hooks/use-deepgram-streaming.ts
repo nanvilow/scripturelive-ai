@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { cleanTranscriptText } from '@/lib/transcript-cleaner'
 import { useAppStore } from '@/lib/store'
+import { bootstrapRuntimeKeys, getDeepgramKey } from '@/lib/runtime-keys'
 
 /**
  * Cloud-only Deepgram streaming speech recognition for the desktop
@@ -300,32 +301,49 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
 
   const openWebSocket = useCallback(
     async (sessionAtStart: number): Promise<WebSocket> => {
-      // Discover the WSS URL via the local /api/transcribe-stream/info
-      // route. The Next.js server reads TRANSCRIBE_PROXY_URL (set by
-      // Electron main on every spawn) and derives the wss URL.
-      // eslint-disable-next-line no-console
-      console.log('[deepgram-hook] openWebSocket: fetching /api/transcribe-stream/info')
-      const r = await fetch('/api/transcribe-stream/info', { cache: 'no-store' })
-      if (!r.ok) {
-        let detail = `HTTP ${r.status}`
-        try {
-          const j = (await r.json()) as { error?: string }
-          if (j?.error) detail = j.error
-        } catch { /* not JSON */ }
-        // eslint-disable-next-line no-console
-        console.error('[deepgram-hook] /info failed:', detail)
-        throw new Error(detail)
+      // v0.5.52 — Direct connection to Deepgram from the renderer
+      // using the baked NEXT_PUBLIC_SCRIPTURELIVE_DEEPGRAM_KEY (or
+      // an admin override loaded from /api/license/admin/keys). We
+      // wait for the bootstrap fetch to land so a freshly-saved
+      // override key is honoured on the very next start.
+      await bootstrapRuntimeKeys()
+      const dgKey = getDeepgramKey()
+      if (!dgKey) {
+        throw new Error(
+          'No Deepgram key configured. Open Admin (Ctrl+Shift+P) → Settings to paste an override.',
+        )
       }
-      const j = (await r.json()) as { wssUrl?: string; error?: string }
-      if (!j.wssUrl) {
-        // eslint-disable-next-line no-console
-        console.error('[deepgram-hook] /info returned no wssUrl:', j)
-        throw new Error(j.error || 'No wssUrl returned by /api/transcribe-stream/info')
-      }
+      // Bias the speech model toward Bible book names so chapter:
+      // verse references survive the transcription. `keyterm` accepts
+      // multiple values via repetition.
+      const KEY_TERMS = [
+        'Genesis','Exodus','Leviticus','Numbers','Deuteronomy','Joshua','Judges','Ruth',
+        'Samuel','Kings','Chronicles','Ezra','Nehemiah','Esther','Job','Psalms','Proverbs',
+        'Ecclesiastes','Song of Solomon','Isaiah','Jeremiah','Lamentations','Ezekiel',
+        'Daniel','Hosea','Joel','Amos','Obadiah','Jonah','Micah','Nahum','Habakkuk',
+        'Zephaniah','Haggai','Zechariah','Malachi','Matthew','Mark','Luke','John','Acts',
+        'Romans','Corinthians','Galatians','Ephesians','Philippians','Colossians',
+        'Thessalonians','Timothy','Titus','Philemon','Hebrews','James','Peter','Jude',
+        'Revelation','chapter','verse','Jesus','Christ','Lord','God',
+      ]
+      const params = new URLSearchParams({
+        model: 'nova-3',
+        language: 'en',
+        smart_format: 'true',
+        interim_results: 'true',
+        punctuate: 'true',
+        encoding: 'linear16',
+        sample_rate: String(TARGET_SAMPLE_RATE),
+      })
+      for (const k of KEY_TERMS) params.append('keyterm', k)
+      const wssUrl = `wss://api.deepgram.com/v1/listen?${params.toString()}`
       // eslint-disable-next-line no-console
-      console.log('[deepgram-hook] /info ok, wssUrl =', j.wssUrl)
+      console.log('[deepgram-hook] direct WSS to api.deepgram.com')
 
-      const ws = new WebSocket(j.wssUrl)
+      // Auth via Sec-WebSocket-Protocol per Deepgram's browser SDK
+      // contract: ['token', '<KEY>']. Browsers don't allow custom
+      // headers on WebSocket; this is the only supported channel.
+      const ws = new WebSocket(wssUrl, ['token', dgKey])
       ws.binaryType = 'arraybuffer'
       ws.onopen = () => {
         // eslint-disable-next-line no-console

@@ -24,6 +24,9 @@ import {
   Check,
   MonitorSpeaker,
   Users,
+  Play,
+  Pause,
+  Footprints,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -46,10 +49,32 @@ const getCongregationOutputUrl = () => {
   return new URL('/api/output/congregation', window.location.origin).toString()
 }
 
-function SlideContent({ slide, theme, large = false, settings }: { slide: { type: string; title: string; subtitle: string; content: string[] }; theme: { accent: string }; large?: boolean; settings: { fontSize: string; fontFamily: string; textShadow: boolean; showReferenceOnOutput: boolean } }) {
+// v0.5.52 — operator-pickable highlight tints for the active verse in
+// multi-verse passages (T006). Keys map to the values exposed by the
+// Theme Designer (Settings → Theme Designer) and persisted on the
+// Zustand store at `state.highlightColor`.
+const HIGHLIGHT_TINTS: Record<string, string> = {
+  amber: 'bg-amber-500/30 ring-2 ring-amber-400',
+  red: 'bg-red-500/30 ring-2 ring-red-400',
+  emerald: 'bg-emerald-500/30 ring-2 ring-emerald-400',
+  sky: 'bg-sky-500/30 ring-2 ring-sky-400',
+  violet: 'bg-violet-500/30 ring-2 ring-violet-400',
+  rose: 'bg-rose-500/30 ring-2 ring-rose-400',
+}
+
+function SlideContent({ slide, theme, large = false, settings, activeVerseIndex, highlightColor, verseRefs }: {
+  slide: { type: string; title: string; subtitle: string; content: string[] };
+  theme: { accent: string };
+  large?: boolean;
+  settings: { fontSize: string; fontFamily: string; textShadow: boolean; showReferenceOnOutput: boolean };
+  activeVerseIndex?: number;
+  highlightColor?: string;
+  verseRefs?: React.MutableRefObject<Array<HTMLParagraphElement | null>>;
+}) {
   const sizeClass = large ? fontSizeMap[settings.fontSize as keyof typeof fontSizeMap] || 'text-2xl md:text-3xl lg:text-4xl' : 'text-lg md:text-2xl'
   const fontClass = fontFamilyMap[settings.fontFamily as keyof typeof fontFamilyMap] || 'font-sans'
   const shadow = settings.textShadow ? { textShadow: '0 2px 12px rgba(0,0,0,0.3)' } : {}
+  const tintClass = HIGHLIGHT_TINTS[highlightColor ?? 'amber'] ?? HIGHLIGHT_TINTS.amber
 
   if (slide.type === 'title') {
     return (
@@ -63,12 +88,34 @@ function SlideContent({ slide, theme, large = false, settings }: { slide: { type
   }
 
   if (slide.type === 'verse' || slide.type === 'lyrics') {
+    const isMulti = (slide.content?.length ?? 0) > 1
+    const hasActive = isMulti && typeof activeVerseIndex === 'number'
     return (
       <div className={cn('text-center max-w-3xl', fontClass)}>
         {settings.showReferenceOnOutput && <p className={cn('opacity-50 mb-4', theme.accent, large ? 'text-lg' : 'text-xs')} style={shadow}>{slide.title}</p>}
-        {slide.content.map((line, i) => (
-          <p key={i} className={cn('font-medium leading-relaxed', theme.accent, sizeClass)} style={shadow}>{line}</p>
-        ))}
+        {slide.content.map((line, i) => {
+          const isActive = hasActive && i === activeVerseIndex
+          const isDimmed = hasActive && i !== activeVerseIndex
+          return (
+            <p
+              key={i}
+              ref={(el) => {
+                if (verseRefs) verseRefs.current[i] = el
+              }}
+              className={cn(
+                'font-medium leading-relaxed transition-all duration-300',
+                theme.accent,
+                sizeClass,
+                hasActive && 'rounded-md px-3 py-2 my-1',
+                isActive && tintClass,
+                isDimmed && 'opacity-50',
+              )}
+              style={shadow}
+            >
+              {line}
+            </p>
+          )
+        })}
       </div>
     )
   }
@@ -103,14 +150,33 @@ function LowerThirdContent({ slide, theme, settings }: { slide: { type: string; 
   )
 }
 
-function SlidePreviewCard({ slide, themeKey, label, isActive, onClick, size = 'md', settings }: {
+function SlidePreviewCard({ slide, themeKey, label, isActive, onClick, size = 'md', settings, activeVerseIndex, highlightColor, verseRefs, scrollable }: {
   slide: { id: string; type: string; title: string; subtitle: string; content: string[] }
   themeKey: string; label: string; isActive: boolean; onClick?: () => void; size?: 'sm' | 'md' | 'lg'
   settings: { fontSize: string; fontFamily: string; textShadow: boolean; showReferenceOnOutput: boolean; lowerThirdHeight: string; lowerThirdPosition: string; displayMode: string; customBackground: string | null }
+  activeVerseIndex?: number
+  highlightColor?: string
+  verseRefs?: React.MutableRefObject<Array<HTMLParagraphElement | null>>
+  scrollable?: boolean
 }) {
   const theme = slideThemes[themeKey] || defaultTheme
   const isLarge = size === 'lg'
   const isLowerThird = settings.displayMode.startsWith('lower-third')
+
+  // v0.5.52 — when the live card hosts a multi-verse passage we wrap
+  // the content in a ScrollArea so scrollIntoView in the auto-scroll
+  // / speaker-follow path can keep the active verse in view.
+  const inner = (
+    <SlideContent
+      slide={slide}
+      theme={theme}
+      large={isLarge}
+      settings={settings as any}
+      activeVerseIndex={activeVerseIndex}
+      highlightColor={highlightColor}
+      verseRefs={verseRefs}
+    />
+  )
 
   return (
     <div className={cn('relative w-full overflow-hidden transition-all aspect-video', isActive ? 'ring-2 ring-primary' : '', onClick && 'cursor-pointer')} onClick={onClick}>
@@ -119,7 +185,13 @@ function SlidePreviewCard({ slide, themeKey, label, isActive, onClick, size = 'm
       </div>
       {isLowerThird
         ? <LowerThirdContent slide={slide} theme={theme} settings={settings as any} />
-        : <div className={cn('absolute inset-0 flex flex-col items-center justify-center', isLarge ? 'p-8 md:p-12' : 'p-3 md:p-6')}><SlideContent slide={slide} theme={theme} large={isLarge} settings={settings as any} /></div>
+        : (
+          <div className={cn('absolute inset-0 flex flex-col items-center justify-center', isLarge ? 'p-8 md:p-12' : 'p-3 md:p-6')}>
+            {scrollable
+              ? <ScrollArea className="w-full h-full"><div className="flex flex-col items-center justify-center min-h-full py-2">{inner}</div></ScrollArea>
+              : inner}
+          </div>
+        )
       }
       <div className="absolute top-2 left-2 z-10">
         <Badge variant={isActive ? 'default' : 'secondary'} className={cn('text-[10px] px-1.5 py-0.5', isActive && 'bg-primary text-primary-foreground', !isActive && 'bg-black/60 text-white border-0')}>{label}</Badge>
@@ -136,6 +208,19 @@ export function LivePresenterView() {
     ndiConnected, setNdiConnected,
     settings, setCurrentView,
   } = useAppStore()
+
+  // v0.5.52 — auto-scroll + speaker-follow + highlight color wiring
+  const liveActiveVerseIndex = useAppStore((s) => s.liveActiveVerseIndex)
+  const setLiveActiveVerseIndex = useAppStore((s) => s.setLiveActiveVerseIndex)
+  const autoScrollEnabled = useAppStore((s) => s.autoScrollEnabled)
+  const setAutoScrollEnabled = useAppStore((s) => s.setAutoScrollEnabled)
+  const autoScrollSpeedMs = useAppStore((s) => s.autoScrollSpeedMs)
+  const setAutoScrollSpeedMs = useAppStore((s) => s.setAutoScrollSpeedMs)
+  const speakerFollowEnabled = useAppStore((s) => s.speakerFollowEnabled)
+  const setSpeakerFollowEnabled = useAppStore((s) => s.setSpeakerFollowEnabled)
+  const highlightColor = useAppStore((s) => s.highlightColor)
+  const verseRefs = useRef<Array<HTMLParagraphElement | null>>([])
+  const autoScrollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const [elapsedTime, setElapsedTime] = useState(0)
   const [outputUrl, setOutputUrl] = useState('')
@@ -162,6 +247,56 @@ export function LivePresenterView() {
     return () => { if (timerRef.current) clearInterval(timerRef.current) }
   }, [isLive])
   const formatTime = (s: number) => `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`
+
+  // ── v0.5.52 — Auto-scroll: reset to verse 0 on new live cue ─────────
+  // Whenever the live slide identity changes (new detection sent live)
+  // we reset the active verse cursor so the operator never inherits an
+  // out-of-range index from the previous passage.
+  const liveSlideId = liveSlide?.id ?? null
+  const liveSlideContentLen = liveSlide?.content?.length ?? 0
+  useEffect(() => {
+    setLiveActiveVerseIndex(0)
+    verseRefs.current = []
+  }, [liveSlideId, setLiveActiveVerseIndex])
+
+  // ── v0.5.52 — Auto-scroll TIMER (independent of speaker-follow) ────
+  // When `autoScrollEnabled` is true AND a multi-verse passage is on
+  // air, advance the active verse on a fixed interval. Cleans up on
+  // toggle / passage change. Auto-stops at the last verse.
+  useEffect(() => {
+    if (autoScrollTimerRef.current) {
+      clearInterval(autoScrollTimerRef.current)
+      autoScrollTimerRef.current = null
+    }
+    if (!autoScrollEnabled) return
+    if (liveSlideContentLen < 2) return
+    autoScrollTimerRef.current = setInterval(() => {
+      const s = useAppStore.getState()
+      const slide = s.liveSlideIndex >= 0 ? s.slides[s.liveSlideIndex] : null
+      const max = slide?.content?.length ? slide.content.length - 1 : 0
+      const next = s.liveActiveVerseIndex + 1
+      if (next > max) {
+        s.setAutoScrollEnabled(false)
+        return
+      }
+      s.setLiveActiveVerseIndex(next)
+    }, autoScrollSpeedMs)
+    return () => {
+      if (autoScrollTimerRef.current) {
+        clearInterval(autoScrollTimerRef.current)
+        autoScrollTimerRef.current = null
+      }
+    }
+  }, [autoScrollEnabled, autoScrollSpeedMs, liveSlideId, liveSlideContentLen])
+
+  // ── v0.5.52 — Scroll the active verse into view inside the LIVE
+  // card's ScrollArea whenever the index changes.
+  useEffect(() => {
+    const el = verseRefs.current[liveActiveVerseIndex]
+    if (el && typeof el.scrollIntoView === 'function') {
+      try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }) } catch { /* ignore */ }
+    }
+  }, [liveActiveVerseIndex, liveSlideId])
 
   // ── Send slide to output via HTTP POST to SSE relay ──────────────────
   const sendToOutput = useCallback(async (slide: typeof liveSlide, live: boolean) => {
@@ -453,20 +588,80 @@ export function LivePresenterView() {
                 <span className="text-sm font-semibold text-foreground">Live Output</span>
                 {liveSlide && <Badge variant="destructive" className="text-[10px] gap-1"><span className="live-indicator inline-block h-1.5 w-1.5 rounded-full bg-white" /> ON AIR</Badge>}
                 {!liveSlide && isLive && <Badge variant="secondary" className="text-[10px]">Black</Badge>}
+                <button
+                  type="button"
+                  onClick={() => setSpeakerFollowEnabled(!speakerFollowEnabled)}
+                  className={cn(
+                    'ml-auto inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-medium transition-colors',
+                    speakerFollowEnabled
+                      ? 'bg-primary/15 border-primary/30 text-primary'
+                      : 'bg-muted border-border text-muted-foreground hover:bg-muted/80',
+                  )}
+                  title="Speaker-Follow: highlight the verse the preacher is currently reading"
+                >
+                  <Footprints className="h-3 w-3" />
+                  Follow {speakerFollowEnabled ? 'ON' : 'OFF'}
+                </button>
                 {outputUrl && (
-                  <a href={outputUrl} target="_blank" rel="noopener noreferrer" className="ml-auto text-[10px] text-primary hover:underline flex items-center gap-1">
+                  <a href={outputUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary hover:underline flex items-center gap-1">
                     <ExternalLink className="h-3 w-3" /> Congregation
                   </a>
                 )}
               </div>
               <div className="flex-1 min-h-0">
-                {liveSlide
-                  ? <SlidePreviewCard slide={liveSlide} themeKey={liveSlide.background || settings.congregationScreenTheme} label="LIVE" isActive={true} size="lg" settings={settings as any} />
-                  : <div className="w-full h-full bg-black rounded-xl flex items-center justify-center">
-                    <div className="text-center space-y-2"><MonitorPlay className="h-8 w-8 text-zinc-600 mx-auto" /><p className="text-sm text-zinc-500">{isLive ? 'Output is black' : 'Nothing live yet'}</p></div>
-                  </div>
-                }
+                <AnimatePresence mode="wait">
+                  {liveSlide
+                    ? (
+                      <motion.div key={liveSlide.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} className="w-full h-full">
+                        <SlidePreviewCard slide={liveSlide} themeKey={liveSlide.background || settings.congregationScreenTheme} label="LIVE" isActive={true} size="lg" settings={settings as any} activeVerseIndex={liveActiveVerseIndex} highlightColor={highlightColor} verseRefs={verseRefs} scrollable={liveSlide.type === 'verse' && (liveSlide.content?.length ?? 0) > 1} />
+                      </motion.div>
+                    )
+                    : (
+                      <div className="w-full h-full bg-black rounded-xl flex items-center justify-center">
+                        <div className="text-center space-y-2"><MonitorPlay className="h-8 w-8 text-zinc-600 mx-auto" /><p className="text-sm text-zinc-500">{isLive ? 'Output is black' : 'Nothing live yet'}</p></div>
+                      </div>
+                    )
+                  }
+                </AnimatePresence>
               </div>
+              {/* v0.5.52 — Auto-Scroll controls (visible only for multi-verse passages on air) */}
+              {liveSlide && liveSlide.type === 'verse' && (liveSlide.content?.length ?? 0) > 1 && (
+                <div className="mt-2 flex items-center justify-between gap-2 px-2 py-1.5 rounded-md bg-card/50 border border-border">
+                  <div className="flex items-center gap-1">
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setAutoScrollEnabled(!autoScrollEnabled)} title={autoScrollEnabled ? 'Pause auto-scroll' : 'Play auto-scroll'}>
+                      {autoScrollEnabled ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                    </Button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => { setAutoScrollEnabled(false); setLiveActiveVerseIndex(0) }} title="Stop & reset to verse 1">
+                      <Square className="h-3.5 w-3.5" />
+                    </Button>
+                    <span className="text-[10px] text-muted-foreground ml-1">
+                      Verse {Math.min(liveActiveVerseIndex + 1, liveSlide.content?.length ?? 1)} / {liveSlide.content?.length ?? 1}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-muted-foreground mr-1">Speed</span>
+                    {[
+                      { label: 'Slow', ms: 6000 },
+                      { label: 'Med', ms: 4000 },
+                      { label: 'Fast', ms: 2000 },
+                    ].map((opt) => (
+                      <button
+                        key={opt.ms}
+                        type="button"
+                        onClick={() => setAutoScrollSpeedMs(opt.ms)}
+                        className={cn(
+                          'px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors',
+                          autoScrollSpeedMs === opt.ms
+                            ? 'bg-primary/15 border-primary/30 text-primary'
+                            : 'bg-muted border-border text-muted-foreground hover:bg-muted/80',
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

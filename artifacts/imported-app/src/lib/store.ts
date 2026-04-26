@@ -262,10 +262,51 @@ interface AppState {
   // SpeechProvider — useful for the LiveTranscription card to display
   // "Auto · Deepgram" vs "Auto · Whisper" so the operator knows which
   // engine actually picked up after a fallback. Not persisted.
-  preferredEngine: 'auto' | 'deepgram' | 'whisper' | 'browser'
-  setPreferredEngine: (e: 'auto' | 'deepgram' | 'whisper' | 'browser') => void
-  activeEngineName: 'deepgram' | 'whisper' | 'browser'
-  setActiveEngineName: (e: 'deepgram' | 'whisper' | 'browser') => void
+  // v0.5.52 — Web Speech engine removed entirely. The desktop build
+  // ships with baked Deepgram + OpenAI Whisper keys so the browser
+  // engine is no longer a useful fallback rung.
+  preferredEngine: 'auto' | 'deepgram' | 'whisper'
+  setPreferredEngine: (e: 'auto' | 'deepgram' | 'whisper') => void
+  activeEngineName: 'deepgram' | 'whisper'
+  setActiveEngineName: (e: 'deepgram' | 'whisper') => void
+
+  // v0.5.52 — Voice Control. When ON, leading-position voice commands
+  // ("next verse", "go to John 3:16", "blank screen") are recognised
+  // before Bible-reference detection runs. Default OFF — opt-in.
+  voiceControlEnabled: boolean
+  setVoiceControlEnabled: (b: boolean) => void
+
+  // v0.5.52 — Speaker-Follow. When ON and a multi-verse passage is
+  // on Live Display, the highlight follows the verse the speaker is
+  // currently quoting. Default OFF.
+  speakerFollowEnabled: boolean
+  setSpeakerFollowEnabled: (b: boolean) => void
+
+  // v0.5.52 — Live Display auto-scroll timer (independent of
+  // speaker-follow). Speed is in ms per verse: slow=6000, med=4000,
+  // fast=2000. Active verse index is shared with speaker-follow.
+  autoScrollEnabled: boolean
+  setAutoScrollEnabled: (b: boolean) => void
+  autoScrollSpeedMs: number
+  setAutoScrollSpeedMs: (n: number) => void
+  /** Current highlighted verse index inside the live multi-verse passage (0-based). */
+  liveActiveVerseIndex: number
+  setLiveActiveVerseIndex: (n: number) => void
+
+  // v0.5.52 — Detection status feedback for the new reference engine.
+  detectionStatus: 'idle' | 'listening' | 'processing' | 'detected' | 'no_match' | 'error'
+  setDetectionStatus: (s: 'idle' | 'listening' | 'processing' | 'detected' | 'no_match' | 'error') => void
+
+  // v0.5.52 — Per-installation custom themes (Theme Designer).
+  customThemes: Array<{ id: string; name: string; settings: Partial<AppSettings> }>
+  setCustomThemes: (
+    next: Array<{ id: string; name: string; settings: Partial<AppSettings> }>,
+  ) => void
+
+  // v0.5.52 — Highlight colour used by the auto-scroll/speaker-follow
+  // overlay. Stored as a Tailwind-friendly string, e.g. "amber".
+  highlightColor: string
+  setHighlightColor: (c: string) => void
 
   // Slides
   slides: Slide[]
@@ -587,6 +628,24 @@ export const useAppStore = create<AppState>()(
       activeEngineName: 'deepgram',
       setActiveEngineName: (e) => set({ activeEngineName: e }),
 
+      // v0.5.52 — feature toggles default OFF for safety.
+      voiceControlEnabled: false,
+      setVoiceControlEnabled: (b) => set({ voiceControlEnabled: b }),
+      speakerFollowEnabled: false,
+      setSpeakerFollowEnabled: (b) => set({ speakerFollowEnabled: b }),
+      autoScrollEnabled: false,
+      setAutoScrollEnabled: (b) => set({ autoScrollEnabled: b }),
+      autoScrollSpeedMs: 4000,
+      setAutoScrollSpeedMs: (n) => set({ autoScrollSpeedMs: n }),
+      liveActiveVerseIndex: 0,
+      setLiveActiveVerseIndex: (n) => set({ liveActiveVerseIndex: n }),
+      detectionStatus: 'idle',
+      setDetectionStatus: (s) => set({ detectionStatus: s }),
+      customThemes: [],
+      setCustomThemes: (next) => set({ customThemes: next }),
+      highlightColor: 'amber',
+      setHighlightColor: (c) => set({ highlightColor: c }),
+
       // Slides
       slides: [],
       setSlides: (s) => set({ slides: s, previewSlideIndex: 0, liveSlideIndex: -1 }),
@@ -828,6 +887,12 @@ export const useAppStore = create<AppState>()(
         bibleOnlyTranscription: state.bibleOnlyTranscription,
         // v0.5.49 — operator's engine preference survives a relaunch.
         preferredEngine: state.preferredEngine,
+        // v0.5.52 — operator's feature preferences survive a relaunch.
+        voiceControlEnabled: state.voiceControlEnabled,
+        speakerFollowEnabled: state.speakerFollowEnabled,
+        autoScrollSpeedMs: state.autoScrollSpeedMs,
+        customThemes: state.customThemes,
+        highlightColor: state.highlightColor,
       }),
     }
   )

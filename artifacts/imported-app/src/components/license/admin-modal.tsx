@@ -69,6 +69,10 @@ interface AdminConfigResp {
     whatsappNumber?: string
     notifyEmail?: string
     planPriceOverrides?: Record<string, number>
+    /** v0.5.52 — admin override for the BAKED OpenAI key. */
+    adminOpenAIKey?: string
+    /** v0.5.52 — admin override for the BAKED Deepgram key. */
+    adminDeepgramKey?: string
     updatedAt?: string
   }
   defaults: {
@@ -122,6 +126,15 @@ export function AdminModal() {
   const [fWhatsapp, setFWhatsapp] = useState('')
   const [fNotifyEmail, setFNotifyEmail] = useState('')
   const [fPrices, setFPrices] = useState<Record<string, string>>({})
+  // v0.5.52 — Cloud key overrides (paste-only; never round-tripped
+  // back into the form on reload — they're treated as write-once
+  // secrets so an over-the-shoulder glance can't read them).
+  const [fOpenAIKey, setFOpenAIKey] = useState('')
+  const [fDeepgramKey, setFDeepgramKey] = useState('')
+  const [keyStatus, setKeyStatus] = useState<{ openai: boolean; deepgram: boolean }>({
+    openai: false,
+    deepgram: false,
+  })
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -239,6 +252,13 @@ export function AdminModal() {
       setFMomoNum(j.config.momoNumber ?? '')
       setFWhatsapp(j.config.whatsappNumber ?? '')
       setFNotifyEmail(j.config.notifyEmail ?? '')
+      // v0.5.52 — Show only WHETHER an override is set, never the value.
+      setKeyStatus({
+        openai: !!(j.config.adminOpenAIKey && j.config.adminOpenAIKey.length > 0),
+        deepgram: !!(j.config.adminDeepgramKey && j.config.adminDeepgramKey.length > 0),
+      })
+      setFOpenAIKey('')
+      setFDeepgramKey('')
       const next: Record<string, string> = {}
       for (const code of Object.keys(j.defaults.planPrices)) {
         const o = j.config.planPriceOverrides?.[code]
@@ -268,7 +288,7 @@ export function AdminModal() {
           if (Number.isFinite(n) && n > 0) priceOverrides[code] = n
         }
       }
-      const body = {
+      const body: Record<string, unknown> = {
         adminPassword: fAdminPwd.trim() === '' ? null : fAdminPwd,
         trialMinutes: trialMinNum,
         momoName: fMomoName.trim() === '' ? null : fMomoName.trim(),
@@ -277,6 +297,15 @@ export function AdminModal() {
         notifyEmail: fNotifyEmail.trim() === '' ? null : fNotifyEmail.trim(),
         planPriceOverrides: priceOverrides,
       }
+      // v0.5.52 — Only send key overrides when the operator typed
+      // something (a non-empty paste sets the override, the literal
+      // string "CLEAR" clears it back to the baked default). An
+      // empty input is left UNCHANGED so a half-filled save doesn't
+      // wipe a previously-saved override.
+      if (fOpenAIKey.trim().toUpperCase() === 'CLEAR') body.adminOpenAIKey = null
+      else if (fOpenAIKey.trim() !== '') body.adminOpenAIKey = fOpenAIKey.trim()
+      if (fDeepgramKey.trim().toUpperCase() === 'CLEAR') body.adminDeepgramKey = null
+      else if (fDeepgramKey.trim() !== '') body.adminDeepgramKey = fDeepgramKey.trim()
       const r = await fetch('/api/license/admin/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -288,6 +317,18 @@ export function AdminModal() {
       }
       const j = (await r.json()) as { ok: boolean; config: AdminConfigResp['config']; defaults: AdminConfigResp['defaults'] }
       setCfg({ config: j.config, defaults: j.defaults })
+      // v0.5.52 — Refresh runtime keys cache so the next mic start
+      // picks up the new override without an app reload.
+      try {
+        const { refreshKeyOverrides } = await import('@/lib/runtime-keys')
+        await refreshKeyOverrides()
+      } catch { /* ignore */ }
+      setKeyStatus({
+        openai: !!(j.config.adminOpenAIKey && j.config.adminOpenAIKey.length > 0),
+        deepgram: !!(j.config.adminDeepgramKey && j.config.adminDeepgramKey.length > 0),
+      })
+      setFOpenAIKey('')
+      setFDeepgramKey('')
       toast.success('Settings saved')
       // Re-poll license status so the overview tab + main UI pick up
       // any trial-length / price changes immediately.
@@ -759,6 +800,56 @@ export function AdminModal() {
                         value={fWhatsapp}
                         onChange={(e) => setFWhatsapp(e.target.value)}
                         className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                      />
+                    </div>
+                  </div>
+                </section>
+
+                {/* v0.5.52 — Cloud-key overrides. Both keys are baked into the
+                    .exe at build time; this section lets the operator paste a
+                    different key per install (useful when the baked one hits a
+                    quota or you want to rotate without a redeploy). Empty input =
+                    keep current; type "CLEAR" = revert to baked default. */}
+                <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3.5 space-y-3">
+                  <div className="text-[11px] uppercase tracking-wider text-zinc-400 flex items-center gap-2">
+                    Cloud Keys (override baked-in)
+                    <Badge className="bg-zinc-800 text-zinc-400 border-zinc-700 text-[9px]">v0.5.52</Badge>
+                  </div>
+                  <p className="text-[10px] text-zinc-500 -mt-1">
+                    Both keys are baked into the installer. Paste a key here to override on this install only.
+                    Type <span className="font-mono text-zinc-300">CLEAR</span> to revert to the baked default. Leave blank to keep current.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase tracking-wider text-zinc-500 flex items-center justify-between">
+                        <span>OpenAI Whisper key</span>
+                        <span className={cn('text-[9px]', keyStatus.openai ? 'text-emerald-400' : 'text-zinc-600')}>
+                          {keyStatus.openai ? 'override active' : 'using baked default'}
+                        </span>
+                      </label>
+                      <Input
+                        type="password"
+                        placeholder={keyStatus.openai ? '(override saved — paste to replace)' : 'sk-...'}
+                        value={fOpenAIKey}
+                        onChange={(e) => setFOpenAIKey(e.target.value)}
+                        className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                        autoComplete="off"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase tracking-wider text-zinc-500 flex items-center justify-between">
+                        <span>Deepgram key</span>
+                        <span className={cn('text-[9px]', keyStatus.deepgram ? 'text-emerald-400' : 'text-zinc-600')}>
+                          {keyStatus.deepgram ? 'override active' : 'using baked default'}
+                        </span>
+                      </label>
+                      <Input
+                        type="password"
+                        placeholder={keyStatus.deepgram ? '(override saved — paste to replace)' : 'paste Deepgram key'}
+                        value={fDeepgramKey}
+                        onChange={(e) => setFDeepgramKey(e.target.value)}
+                        className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                        autoComplete="off"
                       />
                     </div>
                   </div>

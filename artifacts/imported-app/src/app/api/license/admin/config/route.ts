@@ -58,6 +58,9 @@ interface SavePayload {
   whatsappNumber?: string | null
   notifyEmail?: string | null
   planPriceOverrides?: Record<string, number | null> | null
+  /** v0.5.52 — admin-paste cloud key overrides. */
+  adminOpenAIKey?: string | null
+  adminDeepgramKey?: string | null
 }
 
 function clean(v: unknown): unknown {
@@ -80,6 +83,8 @@ export async function POST(req: NextRequest) {
   const patch: Partial<Record<keyof RuntimeConfig, unknown>> = {}
 
   if ('adminPassword' in body) patch.adminPassword = clean(body.adminPassword)
+  if ('adminOpenAIKey' in body) patch.adminOpenAIKey = clean(body.adminOpenAIKey)
+  if ('adminDeepgramKey' in body) patch.adminDeepgramKey = clean(body.adminDeepgramKey)
   if ('momoName' in body) patch.momoName = clean(body.momoName)
   if ('momoNumber' in body) patch.momoNumber = clean(body.momoNumber)
   if ('whatsappNumber' in body) patch.whatsappNumber = clean(body.whatsappNumber)

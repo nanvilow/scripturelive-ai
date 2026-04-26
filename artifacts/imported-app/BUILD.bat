@@ -30,7 +30,7 @@ echo. >> "%SL_LOG%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build  v0.5.51
+echo   ScriptureLive AI - One-click Windows Build  v0.5.52
 echo ================================================================
 echo   Full build log:   %SL_LOG%
 echo.
@@ -132,6 +132,35 @@ if not defined KOFFI_NODE (
   goto :DIE
 )
 echo       koffi binary OK at !KOFFI_NODE!
+
+REM ---- Step 3b: Bundle KJV + NIV + ESV scripture ------------------
+REM v0.5.52 - the offline Bible DB lives in src\data\bibles\*.json.
+REM We fetch all three translations from bolls.life so the .exe ships
+REM with KJV + NIV + ESV preloaded. If a download fails partway, the
+REM script still writes a stub {} so next build never errors on a
+REM missing JSON; lookupVerse() then falls back to fetchBibleVerse at
+REM runtime. The script is idempotent: existing JSON is kept unless
+REM FORCE=1 is set in the environment.
+echo.
+echo [3b/5] Bundling KJV + NIV + ESV scripture (1-3 minutes, silent)...
+call node scripts\bundle-bibles.mjs kjv niv esv >> "%SL_LOG%" 2>&1
+if errorlevel 1 (
+  set "FAIL_STEP=Scripture bundling failed. Common cause: bolls.life unreachable. Re-run with internet, or set SCRIPTURELIVE_SKIP_BUNDLE=1 to ship online-only."
+  goto :DIE
+)
+if not exist "src\data\bibles\kjv.json" (
+  set "FAIL_STEP=src\data\bibles\kjv.json missing after bundle step."
+  goto :DIE
+)
+if not exist "src\data\bibles\niv.json" (
+  set "FAIL_STEP=src\data\bibles\niv.json missing after bundle step."
+  goto :DIE
+)
+if not exist "src\data\bibles\esv.json" (
+  set "FAIL_STEP=src\data\bibles\esv.json missing after bundle step."
+  goto :DIE
+)
+echo       Scripture bundle OK
 
 REM ---- Step 4: Generate Prisma client + build Next.js -------------
 echo.

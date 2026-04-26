@@ -150,3 +150,9 @@ id = "fWLZztr3dbZhjm_4Qn8A-"
 uri = "file://exports/ScriptureLive-AI-v0.5.51-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.51 — source ZIP"
+
+[[outputs]]
+id = "vE-vJqcqax4YzaotWfLyU"
+uri = "file://exports/ScriptureLive-AI-v0.5.52-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.52 source (architect-fixup)"
