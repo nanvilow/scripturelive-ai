@@ -108,3 +108,9 @@ id = "lkkL-kWeqO433npo3zBug"
 uri = "file://screenshots/v0.5.44-pill-top-left.jpg"
 type = "image"
 title = "v0.5.44 — pill moved to top-left next to logo"
+
+[[outputs]]
+id = "va6nW_7wkK-4hBWLuIjLX"
+uri = "file://exports/ScriptureLive-AI-v0.5.45-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.45 — Triple-engine speech (Deepgram → Whisper → Browser)"
