@@ -84,3 +84,15 @@ id = "-IYYY9KLdsUkKN-GWCAo6"
 uri = "file://.local/release/v0.5.41/scripturelive-ai-v0.5.41.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.41 — fixes mangled NDI text + dead detection in dev preview"
+
+[[outputs]]
+id = "6-VGD1sSgCM6c2Mg1Q66z"
+uri = "file://.local/release/v0.5.42/scripturelive-ai-v0.5.42.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.42 — source ZIP"
+
+[[outputs]]
+id = "d7RUp0wDeXP_Cv9wbdLLv"
+uri = "file://screenshots/transcribe-test-page-loaded.jpg"
+type = "image"
+title = "Diagnostic page proof (v0.5.42)"
