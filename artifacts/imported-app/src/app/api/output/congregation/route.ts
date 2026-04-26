@@ -265,17 +265,25 @@ function settingsRenderKey(st){
 // textScale multiplies it. Long passages get bumped down further.
 //
 // v0.5.53 — Operator request: "sync second-screen text size with the
-// Live display." On a 16:9 secondary monitor, the OLD `vmin`-based
+// Live display." On a 16:9 secondary monitor, the OLD vmin-based
 // values rendered noticeably smaller than the same fontSize bucket
 // looked in the operator's Live Display preview card. The fix is two
-// parts: (1) switch the unit from `vmin` to `vw` so the text scales
+// parts: (1) switch the unit from vmin to vw so the text scales
 // with the WIDTH of the screen (matches what the operator sees in
 // the Live preview, which is sized by its container width); (2) bump
 // the baseline bandText values to mirror the live-presenter Tailwind
-// `text-{2xl,3xl,4xl,5xl}` ramp. The result on a 1920×1080 secondary
+// text-{2xl,3xl,4xl,5xl} ramp. The result on a 1920×1080 secondary
 // monitor: e.g. md text rises from ~47 px (4.4vmin) to ~88 px
 // (4.6vw) — much closer to what the operator picks in the preview.
 // Long passages still progressively shrink so they never overflow.
+// (v0.5.55: removed embedded backticks from the three comment lines
+// above. This whole file is one giant JS template literal opened at
+// line 20 (const html = ...) and closed at line 944 (...</html>),
+// so any stray backtick inside a comment is interpreted as the
+// CLOSING delimiter of that template literal and the rest of the
+// file fails to parse. next dev / turbopack-dev was lenient about
+// this; next build / turbopack-prod is not. Keep this whole region
+// backtick-free.)
 function fitFont(base, scale, totalChars){
   var bandTitle={sm:5.6,md:6.6,lg:7.6,xl:9.0}[base]||7.6;
   var bandText={sm:4.0,md:4.6,lg:5.2,xl:6.0}[base]||5.2;

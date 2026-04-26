@@ -162,3 +162,9 @@ id = "xQEh3HVqx9BKS4G_i37I0"
 uri = "file://exports/ScriptureLive-AI-v0.5.54-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.54 source (SMTP + SMS baked)"
+
+[[outputs]]
+id = "aiOJsmDcpcWIb0TbBJzj4"
+uri = "file://exports/ScriptureLive-AI-v0.5.55-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.55 — source ZIP (build hotfix, final)"
