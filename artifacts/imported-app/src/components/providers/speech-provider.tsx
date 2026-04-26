@@ -16,6 +16,20 @@ import { useAppStore } from '@/lib/store'
 // hooks in the same order; we just only drive ONE of them).
 const IS_ELECTRON =
   typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)
+
+// v0.5.41 — pick the Deepgram streaming engine whenever the deployment
+// has a streaming endpoint configured (which now includes the Replit
+// dev workspace via REPLIT_DEV_FALLBACK in /api/transcribe-stream/info).
+// Browsers' Web Speech API was the only choice in v0.5.40 for non-
+// Electron contexts, but it silently fails in sandboxed iframes (the
+// Replit preview pane is one) — operators saw "no transcription, no
+// detection" with no log. Deepgram works in both Electron AND the dev
+// preview because the proxy is server-hosted and reachable via wss
+// from any origin. NEXT_PUBLIC_FORCE_BROWSER_SPEECH=1 escapes back to
+// the legacy Web Speech path if you ever need it.
+const FORCE_BROWSER_SPEECH =
+  typeof process !== 'undefined' &&
+  process.env?.NEXT_PUBLIC_FORCE_BROWSER_SPEECH === '1'
 import { detectVersesInTextWithScore, fetchBibleVerse, PREACHER_ATTRIBUTION } from '@/lib/bible-api'
 import type { BibleSearchHit } from '@/lib/bible-api'
 import type { DetectedVerse } from '@/lib/store'
@@ -34,7 +48,11 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // computed once at module load and never changes during a session.
   const browserEngine = useSpeechRecognition()
   const whisperEngine = useWhisperSpeechRecognition()
-  const active = IS_ELECTRON ? whisperEngine : browserEngine
+  // v0.5.41 — Deepgram is the primary engine in BOTH Electron and the
+  // browser dev preview. Web Speech only kicks in when the operator
+  // explicitly opts back in via NEXT_PUBLIC_FORCE_BROWSER_SPEECH=1.
+  const active = FORCE_BROWSER_SPEECH ? browserEngine : whisperEngine
+  void IS_ELECTRON // retained for future Electron-only branches
   const {
     transcript: hookTranscript,
     interimTranscript: hookInterim,

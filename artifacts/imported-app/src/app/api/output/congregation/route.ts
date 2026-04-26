@@ -654,7 +654,14 @@ function render(s){
     // for slide-grouping; the renderer should treat each slide's lines
     // as one paragraph that wraps naturally — otherwise short opening
     // words like "Who" hang on their own line, misaligned vs the rest.
-    var joined=slide.content.map(esc).join(' ').replace(/\s+/g,' ').trim();
+    // CRITICAL: \\s+ (double-backslash) — this regex literal lives inside
+    // a TS template literal that becomes the served kiosk JS. With a
+    // single backslash, JS string-parsing strips the escape and the
+    // served regex is /s+/g, which replaces every lowercase 's' with a
+    // space ("things"->"thing ", "those"->"tho e", "His"->"Hi ",
+    // "purpose"->"purpo e"). Same hazard as the </S> escape on lines
+    // 541 / 647. v0.5.41 root-cause fix.
+    var joined=slide.content.map(esc).join(' ').replace(/\\s+/g,' ').trim();
     txt='<p class="slide-paragraph" style="font-size:'+fs.text+';'+sh+'">'+joined+'</p>';
   }else{
     txt='<div class="slide-text" style="opacity:.3;font-size:'+fs.text+'">'+esc(slide.title)+'</div>';

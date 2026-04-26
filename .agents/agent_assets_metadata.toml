@@ -78,3 +78,9 @@ id = "Z7aGOhm6y2UAUiUyCAQr0"
 uri = "file://exports/ScriptureLive-AI-v0.5.40-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.40 — single-deployment desktop endpoint"
+
+[[outputs]]
+id = "-IYYY9KLdsUkKN-GWCAo6"
+uri = "file://.local/release/v0.5.41/scripturelive-ai-v0.5.41.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.41 — fixes mangled NDI text + dead detection in dev preview"
