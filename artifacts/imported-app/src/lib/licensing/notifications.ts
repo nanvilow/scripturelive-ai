@@ -25,7 +25,11 @@
 // Customers get the same link as part of the receipt modal in-app.
 
 import { appendNotification, NotificationRecord } from './storage'
-import { NOTIFICATION_EMAIL, NOTIFICATION_WHATSAPP } from './plans'
+import {
+  NOTIFICATION_EMAIL,
+  NOTIFICATION_WHATSAPP,
+  getEffectiveNotificationTargets,
+} from './plans'
 import { sendArkeselSms } from './sms'
 
 // ─── Email ──────────────────────────────────────────────────────────
@@ -60,7 +64,9 @@ export async function notifyEmail(args: {
   subject: string
   body: string
 }): Promise<NotificationRecord> {
-  const to = args.to ?? NOTIFICATION_EMAIL
+  // v0.5.48 — owner can override the notify-email destination from
+  // Admin Settings; fall back to the compiled NOTIFICATION_EMAIL.
+  const to = args.to ?? getEffectiveNotificationTargets().email ?? NOTIFICATION_EMAIL
   const sent = await sendEmailViaSmtp({ to, subject: args.subject, body: args.body })
   return appendNotification({
     channel: 'email',
@@ -88,7 +94,9 @@ export async function notifyWhatsApp(args: {
 }): Promise<NotificationRecord & { waLink: string }> {
   // We always queue WhatsApp as 'pending' because we never have a
   // server-side WhatsApp account; the wa.me link is the delivery method.
-  const to = args.to ?? NOTIFICATION_WHATSAPP
+  // v0.5.48 — owner can override the notify-WhatsApp destination
+  // from Admin Settings; fall back to the compiled NOTIFICATION_WHATSAPP.
+  const to = args.to ?? getEffectiveNotificationTargets().whatsapp ?? NOTIFICATION_WHATSAPP
   const link = waUrl(to, args.body)
   const note = appendNotification({
     channel: 'whatsapp',

@@ -66,8 +66,13 @@ import {
   RefreshCcw,
   Power,
   Radio,
+  ShieldCheck,
+  KeyRound,
+  Sparkles,
+  RefreshCw,
 } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
+import { useLicense } from '@/components/license/license-provider'
 import {
   Tooltip,
   TooltipContent,
@@ -85,6 +90,32 @@ import { useNdi } from '@/lib/use-electron'
 
 export function SettingsView() {
   const { settings, updateSettings, setSelectedTranslation } = useAppStore()
+  // v0.5.48 — License row uses the live license context so the
+  // "Renew" button can open the existing subscription modal and
+  // "Deactivate" can trigger a refresh after the server-side clear.
+  const { status, refresh, openSubscribe } = useLicense()
+  const [licBusy, setLicBusy] = useState(false)
+  const handleCopyLic = (text: string) => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(
+        () => toast.success('Copied to clipboard'),
+        () => toast.error('Copy failed'),
+      )
+    }
+  }
+  const handleDeactivate = async () => {
+    if (!status.subscription) return
+    if (!confirm('Deactivate this subscription on this PC? The activation code will be detached so you can re-use it on a different installation. This does NOT refund your remaining days — the code itself is already spent.')) return
+    setLicBusy(true)
+    try {
+      const r = await fetch('/api/license/deactivate', { method: 'POST' })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      toast.success('Subscription deactivated on this device')
+      await refresh()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to deactivate')
+    } finally { setLicBusy(false) }
+  }
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isUploading, setIsUploading] = useState(false)
   // Resolve absolute URL on the client after hydration to avoid a server/client
@@ -207,6 +238,156 @@ export function SettingsView() {
           </Button>
         </div>
       </div>
+
+      {/* ── License (v0.5.48) ──────────────────────────────────────────
+          Customer-facing summary of the active subscription / trial.
+          Provides Copy / Deactivate / Renew so the operator can
+          self-serve common license tasks without opening the admin
+          panel. */}
+      <Card className="bg-card border-border">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5 text-primary" />
+            <div>
+              <CardTitle className="text-base">License</CardTitle>
+              <CardDescription>Subscription, activation code, and renewal</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* State badge row */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge
+              className={cn(
+                'text-[10px] uppercase tracking-wider',
+                status.state === 'active' && 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40',
+                status.state === 'trial' && 'bg-amber-500/15 text-amber-300 border-amber-500/40',
+                (status.state === 'trial_expired' || status.state === 'expired' || status.state === 'never_activated') && 'bg-rose-500/15 text-rose-300 border-rose-500/40',
+                status.state === 'unknown' && 'bg-zinc-700 text-zinc-300 border-zinc-600',
+              )}
+            >
+              {status.state.replace('_', ' ').toUpperCase()}
+            </Badge>
+            {status.isMaster && (
+              <Badge className="bg-violet-500/15 text-violet-300 border-violet-500/40 text-[10px] uppercase tracking-wider">
+                <Sparkles className="h-3 w-3 mr-1 inline" /> Master · Lifetime
+              </Badge>
+            )}
+            {status.installId && (
+              <span className="text-[10px] text-muted-foreground font-mono break-all">
+                Install: {status.installId.slice(0, 8)}…{status.installId.slice(-6)}
+              </span>
+            )}
+          </div>
+
+          {status.subscription ? (
+            // Active subscription — show plan + expiry + code
+            <div className="space-y-3 rounded-md border border-border bg-muted/30 p-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Plan</div>
+                  <div className="font-semibold text-foreground mt-0.5">{status.subscription.planLabel}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    {status.subscription.isMaster ? 'Type' : 'Expires'}
+                  </div>
+                  <div className="font-mono text-foreground mt-0.5">
+                    {status.subscription.isMaster
+                      ? 'Never'
+                      : new Date(status.subscription.expiresAt).toLocaleDateString()}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    {status.subscription.isMaster ? 'Days remaining' : 'Days left'}
+                  </div>
+                  <div className={cn(
+                    'font-bold mt-0.5',
+                    status.subscription.isMaster
+                      ? 'text-violet-400'
+                      : status.subscription.daysLeft <= 7
+                        ? 'text-amber-400'
+                        : 'text-emerald-400',
+                  )}>
+                    {status.subscription.isMaster ? '∞' : status.subscription.daysLeft}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                  <KeyRound className="h-3 w-3" /> Activation code
+                </Label>
+                <div className="flex items-center gap-2">
+                  <code className="font-mono text-xs bg-background border border-border rounded px-2 py-1.5 flex-1 break-all">
+                    {status.subscription.activationCode}
+                  </code>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleCopyLic(status.subscription!.activationCode)}
+                  >
+                    <Copy className="h-3 w-3 mr-1.5" /> Copy
+                  </Button>
+                </div>
+                {status.subscription.paymentRef && (
+                  <p className="text-[10px] text-muted-foreground">
+                    Payment reference: <span className="font-mono">{status.subscription.paymentRef}</span>
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <Button
+                  size="sm"
+                  variant="default"
+                  onClick={openSubscribe}
+                  className="gap-1.5"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" /> Renew / Extend
+                </Button>
+                {!status.subscription.isMaster && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleDeactivate}
+                    disabled={licBusy}
+                    className="gap-1.5 text-rose-400 hover:text-rose-300 border-rose-500/30 hover:border-rose-500/60 hover:bg-rose-500/10"
+                  >
+                    <Power className="h-3.5 w-3.5" /> Deactivate on this PC
+                  </Button>
+                )}
+              </div>
+            </div>
+          ) : (
+            // No active subscription — trial / expired / never-activated
+            <div className="rounded-md border border-border bg-muted/30 p-3 space-y-3">
+              {status.state === 'trial' && (
+                <div className="text-xs text-muted-foreground">
+                  You are in the free trial. Trial ends in{' '}
+                  <span className="font-bold text-amber-400">
+                    {Math.max(0, Math.ceil(status.trial.msLeft / 60_000))} min
+                  </span>.
+                </div>
+              )}
+              {(status.state === 'trial_expired' || status.state === 'expired' || status.state === 'never_activated') && (
+                <div className="text-xs text-rose-300">
+                  No active subscription. Activate to unlock Live Transcription.
+                </div>
+              )}
+              <Button
+                size="sm"
+                variant="default"
+                onClick={openSubscribe}
+                className="gap-1.5"
+              >
+                <ShieldCheck className="h-3.5 w-3.5" /> Activate / Subscribe
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Bible Settings */}
       <Card className="bg-card border-border">

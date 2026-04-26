@@ -9,7 +9,12 @@
 // "reference" field when paying.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { findPlan, isPlanCode, MOMO_RECIPIENT } from '@/lib/licensing/plans'
+import {
+  findPlan,
+  isPlanCode,
+  getEffectivePlans,
+  getEffectiveMoMo,
+} from '@/lib/licensing/plans'
 import { createPaymentCode } from '@/lib/licensing/storage'
 
 export const runtime = 'nodejs'
@@ -24,7 +29,12 @@ export async function POST(req: NextRequest) {
   const whatsapp = String(b.whatsapp ?? '').trim()
 
   if (!isPlanCode(planCode)) return bad(`Unknown planCode "${planCode}"`)
-  const plan = findPlan(planCode)!
+  // v0.5.48 — pull the effective plan (may have an owner-set price
+  // override) instead of the compiled-in default. `findPlan` is still
+  // the source of truth for the canonical label/days; we only swap
+  // amountGhs from the effective list.
+  const effective = getEffectivePlans().find((p) => p.code === planCode)
+  const plan = effective ?? findPlan(planCode)!
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return bad('Valid email required')
   if (!whatsapp || whatsapp.replace(/\D/g, '').length < 7) return bad('Valid WhatsApp number required')
 
@@ -42,7 +52,8 @@ export async function POST(req: NextRequest) {
     amountGhs: rec.amountGhs,
     createdAt: rec.createdAt,
     expiresAt: rec.expiresAt,
-    momoRecipient: MOMO_RECIPIENT,
+    // Owner-overridable MoMo recipient (Admin Settings tab).
+    momoRecipient: getEffectiveMoMo(),
   })
 }
 

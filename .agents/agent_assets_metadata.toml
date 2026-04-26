@@ -126,3 +126,9 @@ id = "RxjezFHwslVGIH0rTr9TY"
 uri = "file://.local/exports/scripturelive-ai-v0.5.47.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.47 (Arkesel SMS)"
+
+[[outputs]]
+id = "hhbxbyi_LauvPuH3PFCJI"
+uri = "file://.local/exports/scripturelive-ai-v0.5.48.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.48 — source ZIP"

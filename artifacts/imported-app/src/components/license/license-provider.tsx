@@ -26,6 +26,23 @@ export interface ActiveSubscription {
   isMaster: boolean
 }
 
+/** v0.5.48 — Customer-facing subscription summary returned by
+ *  /api/license/status. Lets the Settings → License row render
+ *  without a second roundtrip and without exposing internal storage
+ *  fields. `daysLeft` is clamped to 36500 for master codes so we
+ *  don't print a year-3000 expiry to the operator. */
+export interface SubscriptionSummary {
+  planCode: string
+  planLabel: string
+  days: number
+  activatedAt: string
+  expiresAt: string
+  daysLeft: number
+  isMaster: boolean
+  activationCode: string
+  paymentRef?: string
+}
+
 export interface LicenseStatus {
   state: LicenseState
   daysLeft: number
@@ -34,6 +51,8 @@ export interface LicenseStatus {
   activeSubscription: ActiveSubscription | null
   trial: { startedAt: string; expiresAt: string; expired: boolean; msLeft: number }
   installId: string
+  /** v0.5.48 — populated when there's an active subscription. */
+  subscription?: SubscriptionSummary | null
 }
 
 interface LicenseContextValue {
@@ -61,6 +80,7 @@ const initialStatus: LicenseStatus = {
   activeSubscription: null,
   trial: { startedAt: '', expiresAt: '', expired: false, msLeft: 0 },
   installId: '',
+  subscription: null,
 }
 
 const Ctx = createContext<LicenseContextValue | null>(null)

@@ -246,6 +246,17 @@ function settingsRenderKey(st){
     rfSh: st.referenceTextShadow,
     rfTs: st.referenceTextScale,
     rfTa: st.referenceTextAlign,
+    // NDI-only typography overrides (v0.5.48). Re-render the captured
+    // NDI window when any of them change so vMix/OBS see the new look
+    // immediately. They're absent on the secondary-screen render
+    // because resolveTypography() below only honours them when
+    // IS_NDI=true, but including them in the key for both surfaces is
+    // harmless and keeps the key shape stable across windows.
+    ndFs: st.ndiFontSize,
+    ndFf: st.ndiFontFamily,
+    ndSh: st.ndiTextShadow,
+    ndTs: st.ndiTextScale,
+    ndTa: st.ndiTextAlign,
   });
 }
 
@@ -506,17 +517,28 @@ function render(s){
   var tk=slide.background||(st.congregationScreenTheme||'minimal');
   var tc=themes[tk]||'theme-minimal';
   var isLT=dm&&dm.indexOf('lower-third')===0;
-  var sh=st.textShadow!==false?'text-shadow:0 2px 12px rgba(0,0,0,.4);':'';
+  // ── NDI-only typography overrides (v0.5.48) ──────────────────────
+  // When IS_NDI is true AND the operator has set an ndi* override,
+  // use it. Otherwise fall back to the Live Display setting. The
+  // reference typography (rf*) keeps its existing fallback chain
+  // (rf || body), but the "body" source is now NDI-aware via T_*.
+  var T_FF=(IS_NDI && st.ndiFontFamily) ? st.ndiFontFamily : st.fontFamily;
+  var T_FS=(IS_NDI && st.ndiFontSize) ? st.ndiFontSize : (st.fontSize||'lg');
+  var T_SH_BOOL=(IS_NDI && (typeof st.ndiTextShadow==='boolean')) ? st.ndiTextShadow : (st.textShadow!==false);
+  var T_TS=(IS_NDI && (typeof st.ndiTextScale==='number')) ? st.ndiTextScale : (typeof st.textScale==='number'?st.textScale:1);
+  var T_TA=(IS_NDI && st.ndiTextAlign) ? st.ndiTextAlign : (st.textAlign||'center');
+  var sh=T_SH_BOOL?'text-shadow:0 2px 12px rgba(0,0,0,.4);':'';
   var bg=st.customBackground?'<img class="bg-image" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>':'';
   // Reference typography (Bug #5): the operator now has independent
   // controls for the reference label. Each field falls back to the
   // body equivalent when unset so persisted settings keep working.
-  var rfFam=resolveFont(st.referenceFontFamily||st.fontFamily);
-  var rfShOn=(typeof st.referenceTextShadow==='boolean')?st.referenceTextShadow:(st.textShadow!==false);
+  // (NDI body fallback is honoured via T_FF / T_FS / T_SH_BOOL etc.)
+  var rfFam=resolveFont(st.referenceFontFamily||T_FF);
+  var rfShOn=(typeof st.referenceTextShadow==='boolean')?st.referenceTextShadow:T_SH_BOOL;
   var rfShCss=rfShOn?'text-shadow:0 2px 12px rgba(0,0,0,.4);':'';
-  var rfTsRaw=(typeof st.referenceTextScale==='number')?st.referenceTextScale:(typeof st.textScale==='number'?st.textScale:1);
+  var rfTsRaw=(typeof st.referenceTextScale==='number')?st.referenceTextScale:T_TS;
   var rfTs=Math.min(2,Math.max(.5,rfTsRaw));
-  var rfBucket=st.referenceFontSize||st.fontSize||'lg';
+  var rfBucket=st.referenceFontSize||T_FS;
   var rfScale=rfTs*(FS_MULT[rfBucket]||1);
   // Reference clamp — same shape as the LT body clamp below, but a
   // narrower band so the reference label stays subordinate to the
@@ -527,7 +549,7 @@ function render(s){
   var rfCap=Math.max(1,1.4*rfScale);
   var rfMin=Math.max(.35,.5*rfScale);
   var rfFs='clamp('+rfMin+'rem,min('+(rfBand*0.5)+'cqw,'+rfBand+'cqh),'+rfCap+'rem)';
-  var rfTa=st.referenceTextAlign||st.textAlign||'center';
+  var rfTa=st.referenceTextAlign||T_TA;
   var refStyle='font-family:'+rfFam+';font-size:'+rfFs+';text-align:'+rfTa+';'+rfShCss;
   // Same Strong's-strip + HTML-escape used for the body — keeps the
   // reference line ("Galatians 2:5 — KJV") safe even if a translation
@@ -546,9 +568,9 @@ function render(s){
   // Combine the operator's manual textScale with the font-size bucket
   // multiplier so picking Small/Medium/Large/Extra Large visibly steps
   // text on the secondary screen too — matching the operator preview.
-  var scale=Math.min(2,Math.max(.5,(typeof st.textScale==='number'?st.textScale:1)))*(FS_MULT[st.fontSize]||1);
-  var fs=fitFont(st.fontSize||'lg',scale,totalChars);
-  var fontFam=resolveFont(st.fontFamily);
+  var scale=Math.min(2,Math.max(.5,T_TS))*(FS_MULT[T_FS]||1);
+  var fs=fitFont(T_FS,scale,totalChars);
+  var fontFam=resolveFont(T_FF);
   var fontStyle='font-family:'+fontFam+';';
   var txt='';
   if(slide.type==='media'&&slide.mediaUrl){

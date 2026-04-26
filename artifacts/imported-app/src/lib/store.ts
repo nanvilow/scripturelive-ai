@@ -142,6 +142,22 @@ export interface AppSettings {
   // `displayMode` for backwards-compat with pre-v0.6 saved state.
   ndiDisplayMode: 'full' | 'lower-third'
 
+  // ── NDI-only typography overrides (v0.5.48) ────────────────────
+  // Same idea as the reference-typography fields above: each value
+  // is optional, and `undefined` means "mirror the Live Display
+  // setting" (i.e. fall back to fontFamily / fontSize / textShadow /
+  // textScale / textAlign). When set, they apply to the NDI feed
+  // ONLY — the secondary screen keeps reading the body settings.
+  // This lets an operator run their projector at one look (large
+  // sans-serif, drop shadow ON) and the broadcast feed at another
+  // (smaller serif, no drop shadow because vMix is compositing it
+  // over a chyron) without two separate sessions.
+  ndiFontFamily?: string
+  ndiFontSize?: 'sm' | 'md' | 'lg' | 'xl'
+  ndiTextShadow?: boolean
+  ndiTextScale?: number
+  ndiTextAlign?: 'left' | 'center' | 'right' | 'justify'
+
   // Item #15 follow-up — when the SSE link to the secondary screen
   // drops, the page used to slam a full-screen "Reconnecting…"
   // overlay over the broadcast. Useful for debugging, ugly during a
@@ -466,6 +482,14 @@ const defaultSettings: AppSettings = {
   autoGoLiveOnDetection: true,
   autoGoLiveOnLookup: false,
   ndiDisplayMode: 'full',
+  // NDI typography overrides (v0.5.48): leave undefined so the NDI
+  // feed mirrors Live Display by default. The operator opts in via
+  // the NDI Output panel.
+  ndiFontFamily: undefined,
+  ndiFontSize: undefined,
+  ndiTextShadow: undefined,
+  ndiTextScale: undefined,
+  ndiTextAlign: undefined,
   showReconnectingOverlay: false,
 }
 

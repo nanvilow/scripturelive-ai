@@ -45,7 +45,12 @@ export interface ActivationCodeRecord {
   planCode: string
   days: number
   generatedAt: string   // ISO
-  generatedFor?: { email?: string; whatsapp?: string; paymentRef?: string }
+  /** v0.5.48 — `note` is a free-text label entered by the owner when
+   *  generating a code by hand from the Admin → Generate panel
+   *  (e.g. "Cathedral Lagos — Pastor John"). It does NOT affect
+   *  licensing logic; it's stored purely so the owner can identify
+   *  who an issued code belongs to in the Recent Activations list. */
+  generatedFor?: { email?: string; whatsapp?: string; paymentRef?: string; note?: string }
   isUsed: boolean
   usedAt?: string       // ISO
   /** populated when the user activates: when the resulting subscription expires */
@@ -75,6 +80,33 @@ export interface ActiveSubscription {
   isMaster: boolean
 }
 
+/**
+ * Owner-controlled runtime configuration (v0.5.48). Lets the owner
+ * tweak prices, contact numbers, trial duration, and admin password
+ * from the in-app Admin Settings tab WITHOUT redeploying. All fields
+ * are optional — when undefined the licensing layer falls back to
+ * the compiled-in defaults (PLANS, MOMO_RECIPIENT, NOTIFICATION_*,
+ * TRIAL_DURATION_MS, ADMIN_PASSWORD).
+ */
+export interface RuntimeConfig {
+  /** Owner-set admin gate password (replaces the compiled default) */
+  adminPassword?: string
+  /** Trial length in minutes (1..1440). Default 60. */
+  trialMinutes?: number
+  /** Override the MoMo recipient phone number */
+  momoNumber?: string
+  /** Override the MoMo recipient name (shown to customers in the modal) */
+  momoName?: string
+  /** Override the WhatsApp number printed in payment receipts + admin */
+  whatsappNumber?: string
+  /** Override the email address that admin notifications go to */
+  notifyEmail?: string
+  /** Per-plan price override map: { '1M': 250, '6M': 1100, ... } */
+  planPriceOverrides?: Partial<Record<string, number>>
+  /** Last time the owner saved this config (ISO) — for audit display */
+  updatedAt?: string
+}
+
 export interface LicenseFile {
   schemaVersion: 1
   installId: string
@@ -87,6 +119,8 @@ export interface LicenseFile {
   paymentCodes: PaymentCodeRecord[]
   activationCodes: ActivationCodeRecord[]
   notifications: NotificationRecord[]
+  /** Owner-controlled runtime config (v0.5.48) */
+  config?: RuntimeConfig
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -157,6 +191,7 @@ function load(): LicenseFile {
       paymentCodes: parsed.paymentCodes ?? [],
       activationCodes: parsed.activationCodes ?? [],
       notifications: parsed.notifications ?? [],
+      config: parsed.config ?? undefined,
     }
     return cache
   } catch (e) {
@@ -368,6 +403,71 @@ export function confirmPaymentAndIssueActivation(
   return { payment, activation, newlyGenerated: true }
 }
 
+// ─── Owner: generate an activation code by hand (v0.5.48) ────────────
+/**
+ * Mint a brand-new activation code without going through a payment
+ * reference. Used by the Admin → Generate Activation Code panel so
+ * the owner can issue codes for free trials, partnerships, or
+ * customers who paid out-of-band (cash, bank transfer, etc.).
+ *
+ * Days may be supplied directly (custom duration) — pass any
+ * integer between 1 and 36500. If omitted, falls back to the plan's
+ * canonical days. The code is recorded as `isUsed: false` so the
+ * recipient still has to type it into the activation modal on their
+ * PC; that's what binds the activation to a specific install.
+ */
+export interface GenerateActivationArgs {
+  planCode: string
+  /** Optional override; defaults to the plan's canonical days. */
+  days?: number
+  /** Owner-supplied label (e.g. customer name + church). */
+  note?: string
+  /** Optional contact email/WhatsApp for record-keeping. */
+  email?: string
+  whatsapp?: string
+}
+
+export function generateStandaloneActivation(
+  args: GenerateActivationArgs,
+  planLookup: (code: string) => { days: number } | null,
+): ActivationCodeRecord {
+  const planCode = args.planCode.trim().toUpperCase()
+  if (!planCode) throw new Error('planCode is required')
+
+  const plan = planLookup(planCode)
+  // For "CUSTOM" we don't require a plan to exist — operator is
+  // explicitly choosing the duration.
+  let days: number
+  if (typeof args.days === 'number' && Number.isFinite(args.days)) {
+    days = Math.max(1, Math.min(36500, Math.floor(args.days)))
+  } else if (plan) {
+    days = plan.days
+  } else {
+    throw new Error(`Unknown planCode "${planCode}" and no custom days supplied`)
+  }
+
+  const f = load()
+  const taken = new Set(f.activationCodes.map((a) => a.code))
+  const code = generateActivationCode(planCode, (c) => taken.has(c))
+
+  const generatedFor: ActivationCodeRecord['generatedFor'] = {}
+  if (args.email?.trim()) generatedFor.email = args.email.trim()
+  if (args.whatsapp?.trim()) generatedFor.whatsapp = args.whatsapp.trim()
+  if (args.note?.trim()) generatedFor.note = args.note.trim()
+
+  const activation: ActivationCodeRecord = {
+    code,
+    planCode,
+    days,
+    generatedAt: new Date().toISOString(),
+    generatedFor: Object.keys(generatedFor).length ? generatedFor : undefined,
+    isUsed: false,
+  }
+  f.activationCodes.push(activation)
+  persist(f)
+  return activation
+}
+
 // ─── User: activate a code ───────────────────────────────────────────
 export interface ActivateResult {
   status: SubscriptionStatus
@@ -445,6 +545,54 @@ export function appendNotification(rec: Omit<NotificationRecord, 'id' | 'ts'>): 
   if (f.notifications.length > 500) f.notifications = f.notifications.slice(-500)
   persist(f)
   return note
+}
+
+// ─── Owner runtime config (v0.5.48) ──────────────────────────────────
+/** Returns the owner-saved config, or `undefined` if never saved. */
+export function getConfig(): RuntimeConfig | undefined {
+  return load().config
+}
+
+/**
+ * Save (merge) owner-supplied config. Pass partial fields — anything
+ * left undefined is preserved from the existing config. Pass `null`
+ * for a field to clear an override (the licensing layer will then
+ * fall back to the compiled default for that field).
+ */
+export function saveConfig(patch: Partial<Record<keyof RuntimeConfig, unknown>>): RuntimeConfig {
+  const f = load()
+  const current: RuntimeConfig = { ...(f.config ?? {}) }
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) {
+      delete (current as Record<string, unknown>)[k]
+    } else if (v !== undefined) {
+      ;(current as Record<string, unknown>)[k] = v
+    }
+  }
+  current.updatedAt = new Date().toISOString()
+  f.config = current
+  // If trialMinutes was set, also sync the on-disk trialDurationMs so
+  // the next computeStatus() picks it up (existing trial windows that
+  // already started keep their absolute end-time anchored at the
+  // firstLaunchAt + new trialDurationMs computation).
+  if (typeof current.trialMinutes === 'number' && current.trialMinutes > 0) {
+    f.trialDurationMs = Math.min(24 * 60, Math.max(1, current.trialMinutes)) * 60 * 1000
+  }
+  persist(f)
+  return current
+}
+
+/** Owner-managed deactivation — clears the active subscription so the
+ *  same activation code can be moved to a different install. We do
+ *  NOT mark the activation as unused; once consumed, an activation is
+ *  spent. This just lets the operator detach it from this device. */
+export function deactivateSubscription(): SubscriptionStatus {
+  const f = load()
+  if (f.activeSubscription) {
+    f.activeSubscription = null
+    persist(f)
+  }
+  return computeStatus()
 }
 
 export function markMasterEmailed(): void {

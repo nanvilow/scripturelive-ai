@@ -30,7 +30,13 @@ interface Plan {
   days: number
   discountLabel?: string
 }
-const PLANS: Plan[] = [
+
+// v0.5.48 — compiled defaults used as a fallback BEFORE the public
+// /api/license/plans endpoint resolves (e.g. cold-start, offline).
+// The modal fetches the EFFECTIVE plan list (with any owner-set
+// price overrides applied) on mount so price changes from Admin
+// Settings show up without rebuilding the renderer bundle.
+const FALLBACK_PLANS: Plan[] = [
   { code: '1M', label: '1 Month',  amountGhs: 200,  days: 31 },
   { code: '2M', label: '2 Months', amountGhs: 350,  days: 62 },
   { code: '3M', label: '3 Months', amountGhs: 550,  days: 93 },
@@ -88,6 +94,21 @@ export function SubscriptionModal() {
   const [error, setError] = useState<string | null>(null)
   const [receipt, setReceipt] = useState<ActivateResp | null>(null)
   const [now, setNow] = useState(() => Date.now())
+  // v0.5.48 — live plans fetched from /api/license/plans so owner
+  // price overrides apply.
+  const [plans, setPlans] = useState<Plan[]>(FALLBACK_PLANS)
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    fetch('/api/license/plans', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (cancelled || !j?.plans) return
+        if (Array.isArray(j.plans) && j.plans.length) setPlans(j.plans as Plan[])
+      })
+      .catch(() => { /* keep fallback */ })
+    return () => { cancelled = true }
+  }, [open])
 
   // 1-Hz tick for the 15-min countdown
   useEffect(() => {
@@ -181,7 +202,7 @@ export function SubscriptionModal() {
         {phase === 'plans' && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              {PLANS.map((p) => (
+              {plans.map((p) => (
                 <button
                   key={p.code}
                   type="button"
