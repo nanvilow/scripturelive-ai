@@ -1,6 +1,6 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.5.39",
+  "version": "0.5.40",
   "private": true,
   "main": "dist-electron/main.js",
   "repository": {
@@ -26,7 +26,7 @@
   "scripts": {
     "dev": "cross-env DATABASE_URL=file:../db/custom.db next dev -H 0.0.0.0 -p ${PORT:-3000}",
     "build": "cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build",
-    "start": "cross-env DATABASE_URL=file:../db/custom.db NODE_ENV=production next start -H 0.0.0.0 -p ${PORT:-3000}",
+    "start": "cross-env DATABASE_URL=file:../db/custom.db NODE_ENV=production HOST=0.0.0.0 PORT=${PORT:-3000} node server.mjs",
     "postinstall": "node -e \"process.exit(0)\"",
     "lint": "eslint .",
     "test": "vitest run",
@@ -112,6 +112,7 @@
     "tailwindcss-animate": "^1.0.7",
     "uuid": "^11.1.0",
     "vaul": "^1.1.2",
+    "ws": "^8.20.0",
     "yjs": "^13.6.30",
     "z-ai-web-dev-sdk": "^0.0.17",
     "zod": "^4.0.2",
@@ -124,6 +125,7 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.1",
     "bun-types": "^1.3.4",
     "cross-env": "^7.0.3",
     "electron": "^33.2.1",
