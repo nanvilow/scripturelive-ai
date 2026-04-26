@@ -278,7 +278,7 @@ function settingsRenderKey(st){
 // Long passages still progressively shrink so they never overflow.
 // (v0.5.55: removed embedded backticks from the three comment lines
 // above. This whole file is one giant JS template literal opened at
-// line 20 (const html = ...) and closed at line 936 (...</html>),
+// line 20 (const html = ...) and closed at line 944 (...</html>),
 // so any stray backtick inside a comment is interpreted as the
 // CLOSING delimiter of that template literal and the rest of the
 // file fails to parse. next dev / turbopack-dev was lenient about
