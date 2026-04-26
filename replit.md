@@ -2,6 +2,24 @@
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It supports live congregation output, NDI broadcasting, and advanced speech recognition. The system targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service.
 
+## v0.5.52 — Mega-release (Apr 2026)
+
+ONE mega-release covering five operator-requested feature streams plus build-time key baking and offline scripture bundling. Standing rule: BUILD.bat banner string mirrors `package.json` version.
+
+**Build-time scripture bundle** — `scripts/bundle-bibles.mjs` downloads KJV / NIV / ESV from bolls.life into `src/data/bibles/{kjv,niv,esv}.json`. The new `src/lib/bibles/local-bible.ts` exposes synchronous `lookupVerse` / `lookupRange` / `isTranslationBundled` helpers so the speech path resolves text without any network call when the operator's translation is bundled. Operator accepts the NIV/ESV redistribution risk for the in-house desktop deploy.
+
+**Baked cloud keys** — Deepgram + OpenAI keys ship inside the .exe via `next.config.ts` `env` (`SCRIPTURELIVE_DEEPGRAM_KEY`, `SCRIPTURELIVE_OPENAI_KEY`). Runtime helper `runtime-keys.ts` bootstraps from baked defaults and refreshes from `/api/license/admin/keys`, where Admin-panel overrides (`adminOpenAIKey` / `adminDeepgramKey` in `license.json`) win when set. Browser Web Speech engine + the Replit-proxy transcription path are removed end to end. The Settings UI no longer surfaces an API Key field — operators are told the engine is administrator-managed and to use Ctrl+Shift+P for overrides.
+
+**Bible Reference Engine v2** — `src/lib/bibles/reference-engine.ts` is a full rewrite with text normalization, word-to-digit conversion, fuzzy book matching (Levenshtein), `Book C:V` / `Book C V` / `Book C V to W` patterns, structural validation, and a 0-100 confidence score. The speech-provider pre-pass now uses `detectBestReference` and only commits a reference at confidence ≥80, with 30-second duplicate suppression and a `detectionStatus` mood emitted on the Zustand store.
+
+**Voice Commands (T004)** — `src/lib/voice/commands.ts` parses leading-position commands (`next verse`, `previous verse`, `go to <ref>`, `scroll up/down`, `start/pause/stop auto scroll`, `clear/blank screen`). Voice control is opt-in (Settings toggle, default OFF). When matched, the speech provider dispatches via `dispatchVoiceCommand`, suspends speaker-follow for 2 s, suppresses Bible detection on the same transcript, and emits a Sonner toast.
+
+**Speaker-Follow (T005)** — `src/lib/voice/speaker-follow.ts` ranks each verse of the live multi-verse passage against the last ~8 s of speech via token-trigram Jaccard, with hysteresis (switch ≥0.20 AND ≥current+0.05). Toggle lives both in Settings and in the Live Output column header (`Footprints` icon). Defaults OFF.
+
+**Auto-Scroll + Highlight (T006)** — `live-presenter.tsx` now renders multi-verse passages with per-verse highlight (`bg-<color>-500/30 ring-2`) for the active verse and `opacity-50` for the rest, wrapped in a `ScrollArea` with `scrollIntoView({block:'center'})` on every change. Footer controls expose Play/Pause, Stop+Reset, and 6s/4s/2s speed presets. Resets to verse 0 whenever the live slide identity changes. Active-verse colour is operator-pickable.
+
+**Theme Designer (T007)** — Settings → Theme Designer card adds three hard-coded presets (Dark Church / Light Presentation / Classic Worship), an active-verse highlight colour picker, and Save / Apply / Delete custom themes persisted on the Zustand store under `customThemes` (the existing `persist` middleware writes them to localStorage).
+
 # User Preferences
 
 - **After EVERY fix / version bump, build and present a fresh ZIP** of `artifacts/imported-app/` so the user can download it and run `BUILD.bat` on their Windows PC. Naming convention: `exports/ScriptureLive-AI-v<version>-source.zip`. Exclude `node_modules`, `.next`, `dist-electron`, `release`, `.turbo`, `.git`, `*.tsbuildinfo`, `build-log.txt`. Always use the `present_asset` tool to surface the zip — never assume the user will find it on their own.

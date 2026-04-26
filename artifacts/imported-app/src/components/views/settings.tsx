@@ -713,6 +713,12 @@ export function SettingsView() {
         </CardContent>
       </Card>
 
+      {/* v0.5.52 — Voice Control & Speaker-Follow */}
+      <VoiceControlCard />
+
+      {/* v0.5.52 — Theme Designer */}
+      <ThemeDesignerCard updateSettings={updateSettings} settings={settings} />
+
       {/* Native NDI (desktop app) */}
       <NdiOutputPanel />
 
@@ -1897,6 +1903,243 @@ function HelpAndUpdatesCard() {
             <span className="font-medium">Report a Bug</span>
             <ExternalLink className="h-3 w-3 opacity-60" />
           </a>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// ───────────────────────── v0.5.52 — Voice Control Card ─────────────
+// Operator-facing toggle row for the new voice features (T004 / T005)
+// plus a brief help block explaining the supported commands. The
+// state lives on the Zustand store so the speech-provider observes it
+// without prop-drilling. Defaults are OFF for safety: a fresh install
+// behaves like v0.5.51 until the operator opts in.
+function VoiceControlCard() {
+  const voiceControlEnabled = useAppStore((s) => s.voiceControlEnabled)
+  const setVoiceControlEnabled = useAppStore((s) => s.setVoiceControlEnabled)
+  const speakerFollowEnabled = useAppStore((s) => s.speakerFollowEnabled)
+  const setSpeakerFollowEnabled = useAppStore((s) => s.setSpeakerFollowEnabled)
+  return (
+    <Card className="bg-card border-border">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Voice Control & Speaker-Follow</CardTitle>
+        <CardDescription>
+          Spoken commands and live verse tracking. Both default OFF — turn them on per-service as needed.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <Label className="text-sm font-medium">Voice Control</Label>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Listen for: &ldquo;next verse&rdquo;, &ldquo;previous verse&rdquo;, &ldquo;go to John 3 16&rdquo;,
+              &ldquo;scroll up/down&rdquo;, &ldquo;start/pause/stop auto scroll&rdquo;, &ldquo;clear screen&rdquo;,
+              &ldquo;blank screen&rdquo;.
+            </p>
+          </div>
+          <Switch checked={voiceControlEnabled} onCheckedChange={setVoiceControlEnabled} />
+        </div>
+        <Separator />
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <Label className="text-sm font-medium">Speaker-Follow Mode</Label>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              When a multi-verse passage is on Live, automatically advance the highlight to the verse the
+              preacher is currently reading. Toggle is also available in the Live Output column header.
+            </p>
+          </div>
+          <Switch checked={speakerFollowEnabled} onCheckedChange={setSpeakerFollowEnabled} />
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Speech engine is managed by the administrator. Cloud keys live in the Admin panel
+          (<kbd className="px-1 py-0.5 rounded bg-muted font-mono text-[10px]">Ctrl+Shift+P</kbd>).
+        </p>
+      </CardContent>
+    </Card>
+  )
+}
+
+// ─────────────────────── v0.5.52 — Theme Designer Card ──────────────
+// Three hard-coded presets (Dark Church / Light Presentation /
+// Classic Worship), a highlight-colour picker (T006), and save /
+// load / delete custom themes persisted via Zustand+localStorage at
+// `customThemes` (the store already wires `persist`).
+function ThemeDesignerCard({ updateSettings, settings }: {
+  updateSettings: (patch: Partial<AppSettings>) => void
+  settings: AppSettings
+}) {
+  const customThemes = useAppStore((s) => s.customThemes)
+  const setCustomThemes = useAppStore((s) => s.setCustomThemes)
+  const highlightColor = useAppStore((s) => s.highlightColor)
+  const setHighlightColor = useAppStore((s) => s.setHighlightColor)
+  const [newName, setNewName] = useState('')
+
+  const HARD_PRESETS: Array<{ id: string; name: string; settings: Partial<AppSettings> }> = [
+    {
+      id: 'preset-dark-church',
+      name: 'Dark Church',
+      settings: {
+        congregationScreenTheme: 'sermon',
+        fontSize: 'lg',
+        fontFamily: 'serif',
+        textShadow: true,
+        showReferenceOnOutput: true,
+      } as Partial<AppSettings>,
+    },
+    {
+      id: 'preset-light-presentation',
+      name: 'Light Presentation',
+      settings: {
+        congregationScreenTheme: 'minimal',
+        fontSize: 'md',
+        fontFamily: 'sans',
+        textShadow: false,
+        showReferenceOnOutput: true,
+      } as Partial<AppSettings>,
+    },
+    {
+      id: 'preset-classic-worship',
+      name: 'Classic Worship',
+      settings: {
+        congregationScreenTheme: 'worship',
+        fontSize: 'xl',
+        fontFamily: 'serif',
+        textShadow: true,
+        showReferenceOnOutput: true,
+      } as Partial<AppSettings>,
+    },
+  ]
+
+  const HIGHLIGHTS = ['amber', 'red', 'emerald', 'sky', 'violet', 'rose']
+
+  const saveCurrent = () => {
+    const name = newName.trim()
+    if (!name) {
+      toast.error('Please enter a theme name')
+      return
+    }
+    const id = `custom-${Date.now()}`
+    const next = [
+      ...customThemes,
+      {
+        id,
+        name,
+        settings: {
+          congregationScreenTheme: settings.congregationScreenTheme,
+          fontSize: settings.fontSize,
+          fontFamily: settings.fontFamily,
+          textShadow: settings.textShadow,
+          showReferenceOnOutput: settings.showReferenceOnOutput,
+          textScale: settings.textScale,
+        } as Partial<AppSettings>,
+      },
+    ]
+    setCustomThemes(next)
+    setNewName('')
+    toast.success(`Saved theme: ${name}`)
+  }
+
+  const applyTheme = (patch: Partial<AppSettings>, label: string) => {
+    updateSettings(patch)
+    toast.success(`Applied: ${label}`)
+  }
+
+  const deleteTheme = (id: string) => {
+    setCustomThemes(customThemes.filter((t) => t.id !== id))
+  }
+
+  return (
+    <Card className="bg-card border-border">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Theme Designer</CardTitle>
+        <CardDescription>
+          Highlight colour, presets, and save / load your own themes.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">Active-verse highlight color</Label>
+          <div className="flex flex-wrap gap-2">
+            {HIGHLIGHTS.map((c) => (
+              <button
+                key={c}
+                onClick={() => setHighlightColor(c)}
+                className={cn(
+                  'px-3 py-1.5 rounded-md text-xs font-medium transition-colors border capitalize flex items-center gap-2',
+                  highlightColor === c
+                    ? 'bg-primary/15 border-primary/30 text-primary'
+                    : 'bg-muted border-border text-muted-foreground hover:bg-muted/80',
+                )}
+              >
+                <span className={cn('inline-block h-3 w-3 rounded-full',
+                  c === 'amber' && 'bg-amber-400',
+                  c === 'red' && 'bg-red-400',
+                  c === 'emerald' && 'bg-emerald-400',
+                  c === 'sky' && 'bg-sky-400',
+                  c === 'violet' && 'bg-violet-400',
+                  c === 'rose' && 'bg-rose-400',
+                )} />
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <Separator />
+
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">Built-in presets</Label>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {HARD_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => applyTheme(p.settings, p.name)}
+                className="px-3 py-2 rounded-md border border-border bg-muted text-left hover:bg-muted/80 transition-colors"
+              >
+                <p className="text-sm font-medium">{p.name}</p>
+                <p className="text-[10px] text-muted-foreground capitalize">
+                  {(p.settings.congregationScreenTheme as string) ?? 'minimal'} · {p.settings.fontFamily as string} · {p.settings.fontSize as string}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <Separator />
+
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">Save current as a custom theme</Label>
+          <div className="flex gap-2">
+            <Input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="e.g. Sunday Morning"
+              className="flex-1"
+            />
+            <Button onClick={saveCurrent} variant="secondary">Save</Button>
+          </div>
+          {customThemes.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+              {customThemes.map((t) => (
+                <div key={t.id} className="flex items-center gap-2 px-3 py-2 rounded-md border border-border bg-muted/30">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{t.name}</p>
+                    <p className="text-[10px] text-muted-foreground capitalize truncate">
+                      {(t.settings.congregationScreenTheme as string) ?? 'minimal'} · {t.settings.fontFamily as string} · {t.settings.fontSize as string}
+                    </p>
+                  </div>
+                  <Button size="sm" variant="ghost" onClick={() => applyTheme(t.settings, t.name)}>Apply</Button>
+                  <Button size="sm" variant="ghost" onClick={() => deleteTheme(t.id)}>Delete</Button>
+                </div>
+              ))}
+            </div>
+          )}
+          {customThemes.length === 0 && (
+            <p className="text-[11px] text-muted-foreground">
+              No custom themes yet. Tweak the Display & Output settings above, then save here.
+            </p>
+          )}
         </div>
       </CardContent>
     </Card>

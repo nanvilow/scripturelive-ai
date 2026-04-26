@@ -3,6 +3,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { cleanTranscriptText } from '@/lib/transcript-cleaner'
 import { useAppStore } from '@/lib/store'
+import { bootstrapRuntimeKeys, getOpenAIKey } from '@/lib/runtime-keys'
+
+// v0.5.52 — OpenAI Whisper now called DIRECTLY from the renderer.
+// No proxy through /api/transcribe; the baked NEXT_PUBLIC_*_OPENAI_KEY
+// is used (admin override wins). This removes a network hop and the
+// dependency on the local Next.js server being able to forward to a
+// Replit-hosted proxy.
+const WHISPER_ENDPOINT = 'https://api.openai.com/v1/audio/transcriptions'
+const BIBLE_PROMPT =
+  'The speaker is delivering a Christian sermon and may quote the Bible. ' +
+  'Common Bible book names: Genesis, Exodus, Leviticus, Numbers, Deuteronomy, ' +
+  'Joshua, Judges, Ruth, Samuel, Kings, Chronicles, Ezra, Nehemiah, Esther, ' +
+  'Job, Psalms, Proverbs, Ecclesiastes, Song of Solomon, Isaiah, Jeremiah, ' +
+  'Lamentations, Ezekiel, Daniel, Hosea, Joel, Amos, Obadiah, Jonah, Micah, ' +
+  'Nahum, Habakkuk, Zephaniah, Haggai, Zechariah, Malachi, Matthew, Mark, ' +
+  'Luke, John, Acts, Romans, Corinthians, Galatians, Ephesians, Philippians, ' +
+  'Colossians, Thessalonians, Timothy, Titus, Philemon, Hebrews, James, Peter, ' +
+  'Jude, Revelation.'
 
 /**
  * Cloud-only Whisper speech recognition for the desktop (Electron) build.
@@ -252,22 +270,38 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
       }
     }
     try {
+      // v0.5.52 — direct call to OpenAI Whisper from the renderer.
+      await bootstrapRuntimeKeys()
+      const apiKey = getOpenAIKey()
+      if (!apiKey) {
+        throw new Error(
+          'No OpenAI key configured. Open Admin (Ctrl+Shift+P) → Settings to paste an override.',
+        )
+      }
       const fd = new FormData()
-      fd.append('audio', blob, 'chunk.webm')
+      fd.append('file', blob, 'chunk.webm')
+      fd.append('model', 'whisper-1')
       fd.append('language', 'en')
-      const r = await fetch('/api/transcribe', { method: 'POST', body: fd })
+      fd.append('response_format', 'json')
+      fd.append('temperature', '0')
+      fd.append('prompt', BIBLE_PROMPT)
+      const r = await fetch(WHISPER_ENDPOINT, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: fd,
+      })
       if (!stillCurrent()) return
       if (!r.ok) {
         let detail = `HTTP ${r.status}`
         try {
-          const j = (await r.json()) as { error?: string }
-          if (j?.error) detail = j.error
+          const j = (await r.json()) as { error?: { message?: string } | string }
+          if (typeof j?.error === 'string') detail = j.error
+          else if (j?.error?.message) detail = j.error.message
         } catch { /* not JSON */ }
         throw new Error(detail)
       }
-      const j = (await r.json()) as { text?: string; error?: string }
+      const j = (await r.json()) as { text?: string }
       if (!stillCurrent()) return
-      if (j.error) throw new Error(j.error)
       const cleaned = cleanTranscriptText(j.text || '')
       // v0.5.50 — Hallucination guard. Whisper occasionally emits
       // canned YouTube-caption phrases ("Thanks for watching",

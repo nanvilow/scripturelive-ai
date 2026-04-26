@@ -333,19 +333,15 @@ function LiveTranscriptionCard() {
   // mic is hot the dot also pulses to preserve the live cue. The full
   // "Auto · Deepgram" / pinned-name explanation lives in the tooltip
   // and the dropdown items themselves.
+  // v0.5.52 — Browser engine retired; only Deepgram + Whisper remain.
   const engineShort: Record<typeof activeEngineName, string> = {
     deepgram: 'DG',
     whisper: 'WH',
-    browser: 'BR',
   }
   const engineLabel =
     preferredEngine === 'auto' ? 'AUTO' : engineShort[preferredEngine]
   const engineDotColor =
-    activeEngineName === 'deepgram'
-      ? 'bg-emerald-400'
-      : activeEngineName === 'whisper'
-        ? 'bg-amber-400'
-        : 'bg-sky-400'
+    activeEngineName === 'deepgram' ? 'bg-emerald-400' : 'bg-amber-400'
   const engineTitle =
     preferredEngine === 'auto'
       ? `Engine: Auto (active: ${activeEngineName}). Click to pin.`
@@ -452,10 +448,9 @@ function LiveTranscriptionCard() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-[14rem]">
             {([
-              { v: 'auto',     label: 'Auto (recommended)',    sub: 'Deepgram → Whisper → Browser fallback' },
+              { v: 'auto',     label: 'Auto (recommended)',    sub: 'Deepgram → Whisper fallback' },
               { v: 'deepgram', label: 'Deepgram (streaming)',  sub: 'Lowest latency, requires WSS' },
               { v: 'whisper',  label: 'OpenAI Whisper',        sub: '~2.5 s chunks via HTTPS' },
-              { v: 'browser',  label: 'Browser (Web Speech)',  sub: 'Last-ditch, lower accuracy' },
             ] as const).map((opt) => (
               <DropdownMenuItem
                 key={opt.v}
