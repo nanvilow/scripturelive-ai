@@ -2,6 +2,10 @@
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It supports live congregation output, NDI broadcasting, and advanced speech recognition. The system targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service.
 
+## v0.5.56 — First cloud build with credentials (Apr 2026)
+
+Operator added the 11 bake-time secrets in *Settings → Secrets and variables → Actions* on `nanvilow/scripturelive-ai` (`OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `MAIL_HOST/USER/PASS/FROM/PORT/SECURE`, `SMS_API_KEY/SENDER/SANDBOX`). v0.5.56 is a no-code-change version bump whose only purpose is to trigger the GitHub Actions Windows build now that the secrets are in place — the previous tag v0.5.55 was built before the secrets existed and would have shipped empty constants. The package version bump alone was enough to retag and re-run the workflow; no source files changed. The first installer produced from this run is the first cloud-built `.exe` to ship with all credentials baked.
+
 ## v0.5.55 — Production build hotfix (Apr 2026)
 
 GitHub Actions Windows build (`Release ScriptureLive AI Desktop`) failed on `package:win` with two unrelated issues that together meant nobody could actually produce a `.exe` from v0.5.53 or v0.5.54:
