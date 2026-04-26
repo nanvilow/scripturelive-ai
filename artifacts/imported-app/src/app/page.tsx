@@ -10,7 +10,6 @@ import { SettingsView } from '@/components/views/settings'
 // v1 licensing — wrap the app so every subtree can consult the
 // subscription state and open the Subscribe / Admin modals.
 import { LicenseProvider } from '@/components/license/license-provider'
-import { LicenseTopBarButton } from '@/components/license/license-button'
 import { SubscriptionModal } from '@/components/license/subscription-modal'
 import { AdminModal } from '@/components/license/admin-modal'
 import { useAppStore } from '@/lib/store'
@@ -102,7 +101,10 @@ export default function Home() {
           Settings overlay. */}
       <LicenseProvider>
         <AppContent />
-        <LicenseTopBarButton />
+        {/* v0.5.44 — pill is now rendered INSIDE the TopToolbar
+            (left side, right after the logo). The two modals stay
+            here as siblings of the shell so they can sit above the
+            Settings overlay (z-50). */}
         <SubscriptionModal />
         <AdminModal />
       </LicenseProvider>

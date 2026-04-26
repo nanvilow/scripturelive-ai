@@ -1,41 +1,81 @@
 'use client'
 
-import { useEffect, useCallback, useRef } from 'react'
-// v0.5.42 — DUAL-ENGINE ARCHITECTURE REMOVED.
+import { useEffect, useCallback, useRef, useState } from 'react'
+import { toast } from 'sonner'
+// v0.5.44 — DUAL-ENGINE WITH AUTO-FALLBACK.
 //
-// Prior versions (v0.5.34 and earlier) used the browser's Web Speech
-// API; v0.5.35 added a Deepgram streaming hook but kept the browser
-// engine as a fallback selected by IS_ELECTRON. v0.5.41 swapped the
-// default to Deepgram but still mounted both hooks. That dual-mount
-// architecture was the silent failure source operators kept hitting:
-// the browser engine's `isSupported` check (window.webkitSpeechRecognition)
-// returned false in the Replit preview iframe, the store's `speechSupported`
-// flag flipped to false, and the mic button's `if (!speechSupported)`
-// guard short-circuited every click with no log line, no toast that
-// the operator could see, no /info request — nothing. The api-server
-// log showed zero traffic because the renderer never even tried.
+// Field report after v0.5.42/43 shipped: the dev preview throws WS
+// 1006 ("WebSocket could not be established") when the operator
+// clicks the mic, because the Replit iframe proxy's WS upgrade is
+// flaky for the api-server's /api/transcribe-stream route. Operators
+// running the packaged Electron build get a clean Deepgram path
+// (api-server is on localhost:3001 and the upgrade handler is
+// always reachable), but anyone testing in a browser through a
+// reverse proxy could see the silent-mic experience.
 //
-// v0.5.42 makes the path UNCONDITIONAL: only Deepgram, only one hook,
-// `speechSupported` always true (Deepgram works in any modern browser
-// or Electron with mic + WebSocket + AudioContext), and visible
-// diagnostic console.log at every checkpoint so the next regression
-// shows up in the browser DevTools immediately.
+// v0.5.44 mounts BOTH engines:
+//   - Deepgram streaming (preferred, server-grade accuracy + interim)
+//   - Web Speech API (browser-native, works without WSS)
+// On startListening:
+//   1. We try Deepgram first.
+//   2. If Deepgram surfaces an error containing "WebSocket" /
+//      "1006" / "connection failed" within 4 s, we automatically
+//      stop Deepgram and restart with the browser engine, then
+//      surface a one-time toast so the operator knows the
+//      fallback engaged.
+//   3. The active engine name is mirrored into the store as
+//      `speechEngine` ('deepgram' | 'browser') for any UI that
+//      wants to badge it.
+// Once a session has fallen back, we remember that for the rest of
+// the session so we don't keep retrying Deepgram and bouncing the
+// audio graph. The operator can force a retry by toggling the mic
+// off and on again from a fresh page load.
 import { useDeepgramStreaming } from '@/hooks/use-deepgram-streaming'
+import { useSpeechRecognition } from '@/hooks/use-speech-recognition'
 import { useAppStore } from '@/lib/store'
 import { detectVersesInTextWithScore, fetchBibleVerse, PREACHER_ATTRIBUTION } from '@/lib/bible-api'
 import type { BibleSearchHit } from '@/lib/bible-api'
 import type { DetectedVerse } from '@/lib/store'
 
+type EngineName = 'deepgram' | 'browser'
+
 /**
  * SpeechProvider - Persistent speech recognition that survives view navigation.
  *
  * This component wraps the entire app and manages the Deepgram streaming
- * lifecycle. It syncs transcript/state to the Zustand store so any view
- * can access it. Verse detection and auto go-live processing happen here,
- * ensuring they work even when the user is on a different page/tab.
+ * lifecycle (with browser-engine auto-fallback). It syncs transcript/state
+ * to the Zustand store so any view can access it. Verse detection and
+ * auto go-live processing happen here, ensuring they work even when the
+ * user is on a different page/tab.
  */
 export function SpeechProvider({ children }: { children: React.ReactNode }) {
-  const engine = useDeepgramStreaming()
+  // ── Both engines mounted unconditionally ───────────────────────────
+  // Mounting both is cheap — neither opens the mic or any WebSocket
+  // until startListening() is called. Reading from both on every
+  // render does mean we re-render slightly more, which is acceptable.
+  const dgEngine = useDeepgramStreaming()
+  const brEngine = useSpeechRecognition()
+
+  // Currently active engine. Defaults to Deepgram (better accuracy);
+  // auto-flips to 'browser' if Deepgram fails to establish a WS in
+  // the user's environment (e.g. behind a reverse proxy that doesn't
+  // forward Upgrade headers).
+  const [activeEngine, setActiveEngine] = useState<EngineName>('deepgram')
+  // Once we've fallen back this session, stay fallen back. Avoids the
+  // "keep trying Deepgram, audio graph thrashes every time" loop.
+  const fallenBackRef = useRef(false)
+  // Timestamp of the most recent startListening() — used to scope the
+  // 4 s fallback window so we don't auto-fall-back days later when an
+  // unrelated network blip happens to mention "WebSocket".
+  const startedAtRef = useRef(0)
+  // Holds the latest stableProcessCallback so the fallback path can
+  // re-arm browser.startListening with the same transcript handler.
+  const lastCallbackRef = useRef<((text: string) => void) | null>(null)
+  // One-shot guard so the "switched to browser" toast only fires once
+  // per session.
+  const announcedFallbackRef = useRef(false)
+
+  const engine = activeEngine === 'deepgram' ? dgEngine : brEngine
   const {
     transcript: hookTranscript,
     interimTranscript: hookInterim,
@@ -65,27 +105,106 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     setLiveInterimTranscript(hookInterim)
   }, [hookInterim, setLiveInterimTranscript])
 
-  // v0.5.42 — speechSupported is now ALWAYS true in any browser-like
-  // environment. The Deepgram engine only requires mic + WebSocket +
-  // AudioContext, all of which exist in any Chromium build (Electron,
-  // packaged Windows app, Replit preview iframe, customer Chrome). If
-  // any of those genuinely missing the engine surfaces a clear error
-  // message via `hookError` instead of silently bailing.
+  // v0.5.44 — speechSupported is true if EITHER engine is available.
+  // Deepgram works in any modern browser/Electron with mic + WS +
+  // AudioContext. Web Speech is available in Chrome / Edge / Electron.
+  // Together they cover essentially every operator environment, so
+  // we keep the unconditional-true policy but also report the actual
+  // capability surface in the console for support tickets.
   useEffect(() => {
     setSpeechSupported(true)
     if (typeof window !== 'undefined') {
       // eslint-disable-next-line no-console
-      console.log('[SpeechProvider] speechSupported forced TRUE (Deepgram engine, hook isSupported =', hookSupported, ')')
+      console.log(
+        '[SpeechProvider] dual-engine: deepgramSupported =',
+        dgEngine.isSupported,
+        '  browserSupported =',
+        brEngine.isSupported,
+        '  active =',
+        activeEngine,
+      )
     }
-  }, [hookSupported, setSpeechSupported])
+  }, [dgEngine.isSupported, brEngine.isSupported, activeEngine, setSpeechSupported])
+
+  // ── Auto-fallback: Deepgram WS failure → browser engine ────────────
+  // We watch the Deepgram engine's error stream while the active
+  // engine is still Deepgram. If, within 4 s of starting, the error
+  // mentions WebSocket / 1006 / "connection failed" / "could not be
+  // established", we treat that as a structural environment failure
+  // (no WS upgrade, blocked port, etc.) and silently swap to the
+  // browser engine. The operator sees a single toast + a console log
+  // explaining the swap so this is never invisible.
+  useEffect(() => {
+    if (activeEngine !== 'deepgram') return
+    if (fallenBackRef.current) return
+    if (!dgEngine.error) return
+    const since = Date.now() - startedAtRef.current
+    if (startedAtRef.current === 0 || since > 8_000) return
+
+    const err = dgEngine.error.toLowerCase()
+    const isStructural =
+      err.includes('websocket') ||
+      err.includes('1006') ||
+      err.includes('connection failed') ||
+      err.includes('could not be established') ||
+      err.includes('disconnected')
+    if (!isStructural) return
+
+    if (!brEngine.isSupported) {
+      // No fallback available — leave the Deepgram error visible
+      // so the operator knows what to fix.
+      // eslint-disable-next-line no-console
+      console.error('[SpeechProvider] Deepgram failed AND browser engine unavailable:', dgEngine.error)
+      return
+    }
+
+    fallenBackRef.current = true
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[SpeechProvider] Deepgram failed (',
+      dgEngine.error,
+      ') — switching to browser engine and restarting.',
+    )
+
+    // Tear down Deepgram's audio graph + WS so the OS mic indicator
+    // goes off and the dead engine stops re-emitting errors.
+    try { dgEngine.stopListening() } catch { /* ignore */ }
+
+    setActiveEngine('browser')
+
+    // Re-arm the browser engine with the same callback the operator
+    // last requested. We defer one tick so React commits the engine
+    // swap before we fire startListening on the new instance.
+    const cb = lastCallbackRef.current
+    setTimeout(() => {
+      try {
+        // eslint-disable-next-line no-console
+        console.log('[SpeechProvider] -> brEngine.startListening() (fallback)')
+        brEngine.startListening(cb ?? undefined)
+        startedAtRef.current = Date.now()
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[SpeechProvider] browser fallback start failed:', e)
+      }
+    }, 0)
+
+    if (!announcedFallbackRef.current) {
+      announcedFallbackRef.current = true
+      toast.message('Live transcription switched to browser engine', {
+        description:
+          'Deepgram streaming is unreachable in this environment, so we automatically fell back to the browser speech engine. Detection and auto-go-live still work.',
+        duration: 6000,
+      })
+    }
+  }, [activeEngine, dgEngine, brEngine])
 
   useEffect(() => {
     setSpeechError(hookError)
     if (hookError && typeof window !== 'undefined') {
       // eslint-disable-next-line no-console
-      console.error('[SpeechProvider] hookError:', hookError)
+      console.error('[SpeechProvider] hookError (engine =', activeEngine, '):', hookError)
     }
-  }, [hookError, setSpeechError])
+  }, [hookError, setSpeechError, activeEngine])
 
   useEffect(() => {
     setIsListening(hookListening)
@@ -374,14 +493,14 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     }
     if (speechCommand === 'start') {
       processedRefsRef.current = new Set()
-      // v0.5.42 — no more device-claim getUserMedia dance. The
-      // Deepgram engine itself calls getUserMedia with the chosen
-      // deviceId (read from window.__selectedMicrophoneId), so the
-      // earlier "claim then release" pattern was redundant AND
-      // doubled the chance of a permission prompt failure. Just
-      // start.
+      // v0.5.44 — track WHEN we started so the auto-fallback effect
+      // can scope its 8 s WS-failure window, and remember the
+      // callback so the fallback path can re-arm it on the browser
+      // engine without losing transcript routing.
+      lastCallbackRef.current = stableProcessCallback
+      startedAtRef.current = Date.now()
       // eslint-disable-next-line no-console
-      console.log('[SpeechProvider] -> startListening()')
+      console.log('[SpeechProvider] -> startListening() on engine =', activeEngine)
       startListening(stableProcessCallback)
       setSpeechCommand(null)
     } else if (speechCommand === 'stop') {
