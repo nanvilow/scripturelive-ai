@@ -38,12 +38,67 @@ export function isPlanCode(s: unknown): s is PlanCode {
   return typeof s === 'string' && PLANS.some((p) => p.code === s)
 }
 
-// MoMo recipient — operator-supplied. Hard-coded by spec.
+// MoMo recipient — operator-supplied. Hard-coded as the v1 default
+// but overridable at runtime via Admin Settings (v0.5.48).
 export const MOMO_RECIPIENT = {
   name: 'Richard Kwesi Attieku',
   number: '0530686367',
 } as const
 
-// Where receipts and notifications are sent.
+// Where receipts and notifications are sent (defaults; overridable).
 export const NOTIFICATION_EMAIL = 'nanvilow@gmail.com'
 export const NOTIFICATION_WHATSAPP = '0246798526'
+
+// ─── Runtime resolution helpers (v0.5.48) ────────────────────────────
+// All three of these consult the owner-saved RuntimeConfig (Admin
+// Settings tab) before falling back to the compiled-in defaults
+// above. Server routes that need prices, contact numbers, or trial
+// length should call these functions instead of reading the
+// constants directly so the owner's saved overrides apply.
+
+/** Live plan list with any per-plan price overrides applied. */
+export function getEffectivePlans(): Plan[] {
+  // Lazy-import to avoid circular dependency between plans.ts and
+  // storage.ts (storage.ts imports types from this file in some
+  // commits; require-at-call keeps the import graph acyclic).
+  let overrides: Partial<Record<string, number>> | undefined
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getConfig } = require('./storage') as typeof import('./storage')
+    overrides = getConfig()?.planPriceOverrides
+  } catch { /* storage not available (e.g. pure-client bundle) */ }
+  return PLANS.map((p) => {
+    const o = overrides?.[p.code]
+    return typeof o === 'number' && o > 0 ? { ...p, amountGhs: o } : { ...p }
+  })
+}
+
+/** Effective MoMo recipient (config overrides applied). */
+export function getEffectiveMoMo(): { name: string; number: string } {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getConfig } = require('./storage') as typeof import('./storage')
+    const c = getConfig()
+    return {
+      name: c?.momoName?.trim() || MOMO_RECIPIENT.name,
+      number: c?.momoNumber?.trim() || MOMO_RECIPIENT.number,
+    }
+  } catch {
+    return { ...MOMO_RECIPIENT }
+  }
+}
+
+/** Effective notification destinations (config overrides applied). */
+export function getEffectiveNotificationTargets(): { email: string; whatsapp: string } {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getConfig } = require('./storage') as typeof import('./storage')
+    const c = getConfig()
+    return {
+      email: c?.notifyEmail?.trim() || NOTIFICATION_EMAIL,
+      whatsapp: c?.whatsappNumber?.trim() || NOTIFICATION_WHATSAPP,
+    }
+  } catch {
+    return { email: NOTIFICATION_EMAIL, whatsapp: NOTIFICATION_WHATSAPP }
+  }
+}

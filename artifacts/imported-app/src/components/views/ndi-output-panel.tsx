@@ -35,6 +35,22 @@ export function NdiOutputPanel() {
   // while feeding vMix/OBS a Lower Third (v0.5.5 spec).
   const ndiDisplayMode = useAppStore((s) => s.settings.ndiDisplayMode)
   const updateSettings = useAppStore((s) => s.updateSettings)
+  // v0.5.48 — NDI-only typography overrides. Each is independent of
+  // the Live Display setting; an undefined value means "mirror Live
+  // Display". The operator opts in by picking a value below.
+  const liveFontFamily = useAppStore((s) => s.settings.fontFamily)
+  const liveFontSize = useAppStore((s) => s.settings.fontSize)
+  const liveTextShadow = useAppStore((s) => s.settings.textShadow)
+  const liveTextAlign = useAppStore((s) => s.settings.textAlign)
+  const ndiFontFamily = useAppStore((s) => s.settings.ndiFontFamily)
+  const ndiFontSize = useAppStore((s) => s.settings.ndiFontSize)
+  const ndiTextShadow = useAppStore((s) => s.settings.ndiTextShadow)
+  const ndiTextAlign = useAppStore((s) => s.settings.ndiTextAlign)
+  const ndiHasOverrides =
+    ndiFontFamily !== undefined ||
+    ndiFontSize !== undefined ||
+    ndiTextShadow !== undefined ||
+    ndiTextAlign !== undefined
 
   if (!desktop) {
     return (
@@ -231,7 +247,7 @@ export function NdiOutputPanel() {
         </button>
 
         {showAdvanced && (
-          <div className="rounded-md border border-border bg-muted/10 p-3 space-y-2">
+          <div className="rounded-md border border-border bg-muted/10 p-3 space-y-3">
             <div className="space-y-1.5">
               <label className="text-[11px] text-muted-foreground">NDI source name</label>
               <input
@@ -244,6 +260,119 @@ export function NdiOutputPanel() {
               <p className="text-[10px] text-muted-foreground">
                 How the source appears in vMix / OBS / NDI Studio Monitor.
                 Stop and restart the sender to apply a name change.
+              </p>
+            </div>
+
+            {/* v0.5.48 — NDI-only typography overrides */}
+            <div className="border-t border-border/60 pt-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-[11px] font-semibold text-foreground">NDI Typography</div>
+                  <p className="text-[10px] text-muted-foreground leading-snug">
+                    Independent of Live Display. Leave a control unset to mirror Live Display.
+                  </p>
+                </div>
+                {ndiHasOverrides && (
+                  <button
+                    onClick={() =>
+                      updateSettings({
+                        ndiFontFamily: undefined,
+                        ndiFontSize: undefined,
+                        ndiTextShadow: undefined,
+                        ndiTextAlign: undefined,
+                        ndiTextScale: undefined,
+                      })
+                    }
+                    className="text-[10px] text-muted-foreground hover:text-foreground underline"
+                  >
+                    Reset all
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                {/* Font family */}
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Font</label>
+                  <select
+                    value={ndiFontFamily ?? '__inherit__'}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      updateSettings({ ndiFontFamily: v === '__inherit__' ? undefined : v })
+                    }}
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <option value="__inherit__">Mirror Live ({liveFontFamily})</option>
+                    <option value="sans">Sans-serif</option>
+                    <option value="serif">Serif</option>
+                    <option value="mono">Monospace</option>
+                    <option value="playfair">Playfair</option>
+                    <option value="merriweather">Merriweather</option>
+                    <option value="lora">Lora</option>
+                    <option value="inter">Inter</option>
+                    <option value="poppins">Poppins</option>
+                    <option value="roboto">Roboto</option>
+                  </select>
+                </div>
+                {/* Font size */}
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Size</label>
+                  <select
+                    value={ndiFontSize ?? '__inherit__'}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      updateSettings({ ndiFontSize: v === '__inherit__' ? undefined : (v as 'sm' | 'md' | 'lg' | 'xl') })
+                    }}
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <option value="__inherit__">Mirror Live ({liveFontSize})</option>
+                    <option value="sm">Small</option>
+                    <option value="md">Medium</option>
+                    <option value="lg">Large</option>
+                    <option value="xl">Extra Large</option>
+                  </select>
+                </div>
+                {/* Drop shadow */}
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Drop shadow</label>
+                  <select
+                    value={ndiTextShadow === undefined ? '__inherit__' : ndiTextShadow ? 'on' : 'off'}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      updateSettings({
+                        ndiTextShadow: v === '__inherit__' ? undefined : v === 'on',
+                      })
+                    }}
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <option value="__inherit__">Mirror Live ({liveTextShadow ? 'On' : 'Off'})</option>
+                    <option value="on">On</option>
+                    <option value="off">Off</option>
+                  </select>
+                </div>
+                {/* Alignment */}
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Align</label>
+                  <select
+                    value={ndiTextAlign ?? '__inherit__'}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      updateSettings({
+                        ndiTextAlign: v === '__inherit__' ? undefined : (v as 'left' | 'center' | 'right' | 'justify'),
+                      })
+                    }}
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <option value="__inherit__">Mirror Live ({liveTextAlign})</option>
+                    <option value="left">Left</option>
+                    <option value="center">Center</option>
+                    <option value="right">Right</option>
+                    <option value="justify">Justify</option>
+                  </select>
+                </div>
+              </div>
+              <p className="text-[10px] text-muted-foreground leading-snug">
+                Changes apply instantly to the NDI capture window — your projector keeps its own look.
               </p>
             </div>
           </div>

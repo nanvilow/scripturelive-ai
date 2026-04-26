@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { useLicense } from './license-provider'
-import { ShieldCheck, Copy, Mail, Phone, RefreshCw, KeyRound, AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react'
+import { ShieldCheck, Copy, Mail, Phone, RefreshCw, KeyRound, AlertTriangle, CheckCircle2, Loader2, Settings as SettingsIcon, Save, Sparkles, UserPlus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -32,7 +32,7 @@ interface AdminPayment {
 interface AdminActivation {
   code: string; planCode: string; days: number; generatedAt: string; isUsed: boolean;
   usedAt?: string; subscriptionExpiresAt?: string; isMaster?: boolean
-  generatedFor?: { email?: string; whatsapp?: string; paymentRef?: string }
+  generatedFor?: { email?: string; whatsapp?: string; paymentRef?: string; note?: string }
 }
 interface AdminNotification {
   id: string; ts: string; channel: 'email' | 'whatsapp'; to: string; subject: string;
@@ -49,11 +49,39 @@ interface AdminListResp {
   notifications: AdminNotification[]
 }
 
+// v0.5.48 — owner-tunable runtime config returned by
+// GET /api/license/admin/config. `defaults` shows the compiled
+// fallback so the form can render placeholders + "reset to default"
+// affordances. `config` is the currently-saved override map (any
+// field may be missing → use the default).
+interface AdminConfigResp {
+  config: {
+    adminPassword?: string
+    trialMinutes?: number
+    momoName?: string
+    momoNumber?: string
+    whatsappNumber?: string
+    notifyEmail?: string
+    planPriceOverrides?: Record<string, number>
+    updatedAt?: string
+  }
+  defaults: {
+    trialMinutes: number
+    momoName: string
+    momoNumber: string
+    notifyEmail: string
+    whatsappNumber: string
+    planPrices: Record<string, number>
+  }
+}
+
 function copy(t: string) {
   if (typeof navigator !== 'undefined' && navigator.clipboard) {
     navigator.clipboard.writeText(t).then(() => toast.success('Copied'), () => toast.error('Copy failed'))
   }
 }
+
+type AdminTab = 'overview' | 'settings'
 
 export function AdminModal() {
   const { ui, refresh } = useLicense()
@@ -64,6 +92,30 @@ export function AdminModal() {
   const [confirmRef, setConfirmRef] = useState('')
   const [confirmBusy, setConfirmBusy] = useState(false)
   const [confirmResult, setConfirmResult] = useState<{ ok: boolean; msg: string; code?: string } | null>(null)
+  // v0.5.48 — "Generate Activation Code" section state. Lets the
+  // owner mint a code by hand for free trials, partnerships, or
+  // out-of-band payments (cash, bank transfer).
+  const [genPlan, setGenPlan] = useState<string>('1M')
+  const [genDays, setGenDays] = useState<string>('') // empty ⇒ use plan default
+  const [genNote, setGenNote] = useState<string>('') // username / church / label
+  const [genEmail, setGenEmail] = useState<string>('')
+  const [genWhatsapp, setGenWhatsapp] = useState<string>('')
+  const [genBusy, setGenBusy] = useState(false)
+  const [genResult, setGenResult] = useState<{ ok: boolean; msg: string; code?: string; days?: number } | null>(null)
+  // v0.5.48 — Settings tab state. Loaded lazily the first time the
+  // tab is shown so the Overview tab opens instantly.
+  const [tab, setTab] = useState<AdminTab>('overview')
+  const [cfg, setCfg] = useState<AdminConfigResp | null>(null)
+  const [cfgLoading, setCfgLoading] = useState(false)
+  const [cfgSaving, setCfgSaving] = useState(false)
+  // Form fields — strings so empty input means "use default".
+  const [fAdminPwd, setFAdminPwd] = useState('')
+  const [fTrialMin, setFTrialMin] = useState('')
+  const [fMomoName, setFMomoName] = useState('')
+  const [fMomoNum, setFMomoNum] = useState('')
+  const [fWhatsapp, setFWhatsapp] = useState('')
+  const [fNotifyEmail, setFNotifyEmail] = useState('')
+  const [fPrices, setFPrices] = useState<Record<string, string>>({})
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -108,10 +160,135 @@ export function AdminModal() {
     } finally { setConfirmBusy(false) }
   }
 
+  const generateCode = async () => {
+    setGenResult(null)
+    if (!genPlan) { setGenResult({ ok: false, msg: 'Pick a plan or CUSTOM.' }); return }
+    const daysNum = genDays.trim() === '' ? undefined : Math.floor(Number(genDays))
+    if (genDays.trim() !== '' && (!Number.isFinite(daysNum) || (daysNum as number) < 1 || (daysNum as number) > 36500)) {
+      setGenResult({ ok: false, msg: 'Days must be a whole number between 1 and 36500.' })
+      return
+    }
+    if (genPlan === 'CUSTOM' && daysNum == null) {
+      setGenResult({ ok: false, msg: 'CUSTOM plan requires a days value.' })
+      return
+    }
+    setGenBusy(true)
+    try {
+      const r = await fetch('/api/license/admin/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          planCode: genPlan,
+          days: daysNum,
+          note: genNote.trim() || undefined,
+          email: genEmail.trim() || undefined,
+          whatsapp: genWhatsapp.trim() || undefined,
+        }),
+      })
+      const j = await r.json()
+      if (!r.ok) {
+        setGenResult({ ok: false, msg: j.error || `HTTP ${r.status}` })
+      } else {
+        setGenResult({
+          ok: true,
+          msg: `Issued ${j.activation.days}-day code${genNote.trim() ? ` for ${genNote.trim()}` : ''}.`,
+          code: j.activation.code,
+          days: j.activation.days,
+        })
+        // Reset note + contact so the next code starts clean; keep
+        // plan + days so issuing 5 in a row is one click each.
+        setGenNote('')
+        setGenEmail('')
+        setGenWhatsapp('')
+        await reload()
+        await refresh()
+      }
+    } catch (e) {
+      setGenResult({ ok: false, msg: e instanceof Error ? e.message : String(e) })
+    } finally { setGenBusy(false) }
+  }
+
   const emailMaster = async () => {
     const r = await fetch('/api/license/master', { method: 'POST' })
     if (r.ok) { toast.success('Master code queued for email + WhatsApp'); reload() }
     else toast.error('Failed to queue master code')
+  }
+
+  // ─── Settings tab ──────────────────────────────────────────────────
+  // Load owner config the first time the Settings tab opens (and every
+  // time it's re-opened — config changes are owner-driven so this is
+  // cheap and gives us write-after-read consistency).
+  const loadCfg = useCallback(async () => {
+    setCfgLoading(true)
+    try {
+      const r = await fetch('/api/license/admin/config', { cache: 'no-store' })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const j = (await r.json()) as AdminConfigResp
+      setCfg(j)
+      // Hydrate form fields from saved config (NOT defaults). Empty
+      // string in a field means "fall back to default at save time".
+      setFAdminPwd(j.config.adminPassword ?? '')
+      setFTrialMin(j.config.trialMinutes != null ? String(j.config.trialMinutes) : '')
+      setFMomoName(j.config.momoName ?? '')
+      setFMomoNum(j.config.momoNumber ?? '')
+      setFWhatsapp(j.config.whatsappNumber ?? '')
+      setFNotifyEmail(j.config.notifyEmail ?? '')
+      const next: Record<string, string> = {}
+      for (const code of Object.keys(j.defaults.planPrices)) {
+        const o = j.config.planPriceOverrides?.[code]
+        next[code] = o != null ? String(o) : ''
+      }
+      setFPrices(next)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to load settings')
+    } finally { setCfgLoading(false) }
+  }, [])
+
+  useEffect(() => {
+    if (open && tab === 'settings' && !cfg && !cfgLoading) loadCfg()
+  }, [open, tab, cfg, cfgLoading, loadCfg])
+
+  const saveCfg = async () => {
+    if (!cfg) return
+    setCfgSaving(true)
+    try {
+      // Build the patch — empty string ⇒ null (clear override).
+      const trialMinNum = fTrialMin.trim() === '' ? null : Math.floor(Number(fTrialMin))
+      const priceOverrides: Record<string, number | null> = {}
+      for (const [code, val] of Object.entries(fPrices)) {
+        if (val.trim() === '') priceOverrides[code] = null
+        else {
+          const n = Math.floor(Number(val))
+          if (Number.isFinite(n) && n > 0) priceOverrides[code] = n
+        }
+      }
+      const body = {
+        adminPassword: fAdminPwd.trim() === '' ? null : fAdminPwd,
+        trialMinutes: trialMinNum,
+        momoName: fMomoName.trim() === '' ? null : fMomoName.trim(),
+        momoNumber: fMomoNum.trim() === '' ? null : fMomoNum.trim(),
+        whatsappNumber: fWhatsapp.trim() === '' ? null : fWhatsapp.trim(),
+        notifyEmail: fNotifyEmail.trim() === '' ? null : fNotifyEmail.trim(),
+        planPriceOverrides: priceOverrides,
+      }
+      const r = await fetch('/api/license/admin/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}))
+        throw new Error(j.error || `HTTP ${r.status}`)
+      }
+      const j = (await r.json()) as { ok: boolean; config: AdminConfigResp['config']; defaults: AdminConfigResp['defaults'] }
+      setCfg({ config: j.config, defaults: j.defaults })
+      toast.success('Settings saved')
+      // Re-poll license status so the overview tab + main UI pick up
+      // any trial-length / price changes immediately.
+      await refresh()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save settings')
+    } finally { setCfgSaving(false) }
   }
 
   return (
@@ -128,13 +305,39 @@ export function AdminModal() {
           </DialogDescription>
         </DialogHeader>
 
-        {!data && (
+        {/* Tab bar (v0.5.48). Overview keeps the existing payment +
+            activation + notifications view; Settings shows the
+            owner-tunable runtime config. */}
+        <div className="flex gap-1 border-b border-zinc-800 -mt-1 mb-1">
+          <button
+            type="button"
+            onClick={() => setTab('overview')}
+            className={cn(
+              'px-3 py-1.5 text-[11px] uppercase tracking-wider border-b-2 -mb-px transition-colors',
+              tab === 'overview'
+                ? 'border-emerald-400 text-emerald-300'
+                : 'border-transparent text-zinc-500 hover:text-zinc-300',
+            )}
+          >Overview</button>
+          <button
+            type="button"
+            onClick={() => setTab('settings')}
+            className={cn(
+              'px-3 py-1.5 text-[11px] uppercase tracking-wider border-b-2 -mb-px transition-colors flex items-center gap-1.5',
+              tab === 'settings'
+                ? 'border-emerald-400 text-emerald-300'
+                : 'border-transparent text-zinc-500 hover:text-zinc-300',
+            )}
+          ><SettingsIcon className="h-3 w-3" /> Settings</button>
+        </div>
+
+        {!data && tab === 'overview' && (
           <div className="py-12 text-center text-zinc-400 text-sm">
             <Loader2 className="h-6 w-6 mx-auto animate-spin mb-2" /> Loading…
           </div>
         )}
 
-        {data && (
+        {data && tab === 'overview' && (
           <div className="space-y-5">
             {/* ── Install + Master ──────────────────────────────────────── */}
             <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3.5 space-y-2">
@@ -197,6 +400,110 @@ export function AdminModal() {
               )}
             </section>
 
+            {/* ── Generate Activation Code (v0.5.48) ─────────────────────
+                Mints a code by hand for free trials, partnerships,
+                or out-of-band payments (cash, bank transfer). The
+                recipient still types the code into the activation
+                modal on their PC — that's what binds it to a
+                specific install. */}
+            <section className="rounded-lg border border-violet-500/40 bg-violet-950/10 p-3.5 space-y-3">
+              <div className="text-[11px] uppercase tracking-wider text-violet-300 flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5" /> Generate Activation Code (no payment required)
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                <div className="sm:col-span-3 space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-zinc-500">Plan</label>
+                  <select
+                    value={genPlan}
+                    onChange={(e) => {
+                      setGenPlan(e.target.value)
+                      // Switching to a fixed plan clears the days
+                      // override so the canonical duration applies.
+                      if (e.target.value !== 'CUSTOM') setGenDays('')
+                    }}
+                    className="w-full bg-zinc-950 border border-zinc-800 text-zinc-100 rounded-md px-2 py-1.5 text-xs h-9"
+                  >
+                    <option value="1M">1 Month (31 d)</option>
+                    <option value="2M">2 Months (62 d)</option>
+                    <option value="3M">3 Months (93 d)</option>
+                    <option value="4M">4 Months (124 d)</option>
+                    <option value="5M">5 Months (155 d)</option>
+                    <option value="6M">6 Months (186 d)</option>
+                    <option value="1Y">1 Year (365 d)</option>
+                    <option value="CUSTOM">Custom (any days)</option>
+                  </select>
+                </div>
+                <div className="sm:col-span-2 space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-zinc-500">
+                    Days {genPlan !== 'CUSTOM' && <span className="text-zinc-600">(opt)</span>}
+                  </label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={36500}
+                    placeholder={genPlan === 'CUSTOM' ? 'e.g. 30' : 'default'}
+                    value={genDays}
+                    onChange={(e) => setGenDays(e.target.value)}
+                    className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                  />
+                </div>
+                <div className="sm:col-span-7 space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-zinc-500">Username / label</label>
+                  <Input
+                    placeholder="e.g. Pastor John — Cathedral Lagos"
+                    value={genNote}
+                    onChange={(e) => setGenNote(e.target.value)}
+                    className="bg-zinc-950 border-zinc-800 text-zinc-100"
+                  />
+                </div>
+                <div className="sm:col-span-6 space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-zinc-500">Email (optional)</label>
+                  <Input
+                    type="email"
+                    placeholder="customer@example.com"
+                    value={genEmail}
+                    onChange={(e) => setGenEmail(e.target.value)}
+                    className="bg-zinc-950 border-zinc-800 text-zinc-100"
+                  />
+                </div>
+                <div className="sm:col-span-6 space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-zinc-500">WhatsApp (optional)</label>
+                  <Input
+                    placeholder="0246798526"
+                    value={genWhatsapp}
+                    onChange={(e) => setGenWhatsapp(e.target.value)}
+                    className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[10px] text-zinc-500">
+                  Pick a plan (or CUSTOM with explicit days), add the customer's name in the label field, then click Generate. The code appears below — copy it and send it to the customer on WhatsApp / email.
+                </p>
+                <Button
+                  onClick={generateCode}
+                  disabled={genBusy}
+                  className="bg-violet-600 hover:bg-violet-500 shrink-0"
+                >
+                  {genBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><UserPlus className="h-3.5 w-3.5 mr-1.5" /> Generate Code</>}
+                </Button>
+              </div>
+              {genResult && (
+                <div className={cn('text-[11px] flex items-start gap-1.5', genResult.ok ? 'text-violet-200' : 'text-rose-300')}>
+                  {genResult.ok ? <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0" /> : <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />}
+                  <div className="flex-1">
+                    <div>{genResult.msg}</div>
+                    {genResult.code && (
+                      <div className="mt-1 flex items-center gap-2">
+                        <code className="font-mono bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-emerald-300 font-bold flex-1 break-all">{genResult.code}</code>
+                        <Button size="sm" variant="ghost" onClick={() => copy(genResult.code!)}><Copy className="h-3 w-3" /></Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </section>
+
             {/* ── Pending + recent payments ────────────────────────────── */}
             <section>
               <div className="flex items-center justify-between mb-1.5">
@@ -244,18 +551,42 @@ export function AdminModal() {
                 ) : (
                   <table className="w-full text-[11px]">
                     <thead className="bg-zinc-900/60 text-zinc-400 uppercase tracking-wider text-[9px]">
-                      <tr><th className="text-left px-2 py-1.5">Code</th><th className="text-left px-2 py-1.5">Plan</th><th className="text-left px-2 py-1.5">Days</th><th className="text-left px-2 py-1.5">Used?</th><th className="text-left px-2 py-1.5">Expires</th></tr>
+                      <tr>
+                        <th className="text-left px-2 py-1.5">Code</th>
+                        <th className="text-left px-2 py-1.5">Plan</th>
+                        <th className="text-left px-2 py-1.5">Days</th>
+                        <th className="text-left px-2 py-1.5">For</th>
+                        <th className="text-left px-2 py-1.5">Used?</th>
+                        <th className="text-left px-2 py-1.5">Expires</th>
+                        <th className="text-right px-2 py-1.5">Action</th>
+                      </tr>
                     </thead>
                     <tbody>
-                      {data.activationCodes.map((a) => (
-                        <tr key={a.code} className="border-t border-zinc-800 hover:bg-zinc-900/40">
-                          <td className="px-2 py-1.5 font-mono">{a.code}</td>
-                          <td className="px-2 py-1.5">{a.planCode}</td>
-                          <td className="px-2 py-1.5">{a.days}</td>
-                          <td className="px-2 py-1.5">{a.isUsed ? <span className="text-emerald-400">Yes</span> : <span className="text-amber-400">No</span>}</td>
-                          <td className="px-2 py-1.5 font-mono text-[10px] text-zinc-400">{a.subscriptionExpiresAt ? new Date(a.subscriptionExpiresAt).toLocaleDateString() : '—'}</td>
-                        </tr>
-                      ))}
+                      {data.activationCodes.map((a) => {
+                        // v0.5.48 — surface the owner-supplied label
+                        // first (most useful), then fall back to the
+                        // captured payment email / WhatsApp / ref.
+                        const forLabel =
+                          a.generatedFor?.note
+                            ?? a.generatedFor?.email
+                            ?? a.generatedFor?.whatsapp
+                            ?? (a.generatedFor?.paymentRef ? `ref ${a.generatedFor.paymentRef}` : '—')
+                        return (
+                          <tr key={a.code} className="border-t border-zinc-800 hover:bg-zinc-900/40">
+                            <td className="px-2 py-1.5 font-mono">{a.code}</td>
+                            <td className="px-2 py-1.5">{a.planCode}</td>
+                            <td className="px-2 py-1.5">{a.days}</td>
+                            <td className="px-2 py-1.5 max-w-[200px]"><div className="truncate" title={forLabel}>{forLabel}</div></td>
+                            <td className="px-2 py-1.5">{a.isUsed ? <span className="text-emerald-400">Yes</span> : <span className="text-amber-400">No</span>}</td>
+                            <td className="px-2 py-1.5 font-mono text-[10px] text-zinc-400">{a.subscriptionExpiresAt ? new Date(a.subscriptionExpiresAt).toLocaleDateString() : '—'}</td>
+                            <td className="px-2 py-1.5 text-right">
+                              <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => copy(a.code)}>
+                                <Copy className="h-3 w-3 mr-1" /> Copy
+                              </Button>
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 )}
@@ -295,6 +626,138 @@ export function AdminModal() {
                 Tip: SMTP is unconfigured by default. Set MAIL_HOST / MAIL_USER / MAIL_PASS / MAIL_FROM in the deployment secrets to send emails automatically. Until then, copy any pending message above into your own email or WhatsApp client.
               </div>
             </section>
+          </div>
+        )}
+
+        {/* ── SETTINGS TAB (v0.5.48) ─────────────────────────────────── */}
+        {tab === 'settings' && (
+          <div className="space-y-5">
+            {cfgLoading && !cfg && (
+              <div className="py-12 text-center text-zinc-400 text-sm">
+                <Loader2 className="h-6 w-6 mx-auto animate-spin mb-2" /> Loading settings…
+              </div>
+            )}
+            {cfg && (
+              <>
+                <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3.5 space-y-3">
+                  <div className="text-[11px] uppercase tracking-wider text-zinc-400">Access &amp; Trial</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase tracking-wider text-zinc-500">Admin password</label>
+                      <Input
+                        type="password"
+                        placeholder="(leave blank for default)"
+                        value={fAdminPwd}
+                        onChange={(e) => setFAdminPwd(e.target.value)}
+                        className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                        autoComplete="new-password"
+                      />
+                      <p className="text-[10px] text-zinc-500">Stored locally. Leave blank to disable owner gate. (Currently the modal opens via Ctrl+Shift+P only.)</p>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase tracking-wider text-zinc-500">Trial length (minutes)</label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={1440}
+                        placeholder={String(cfg.defaults.trialMinutes)}
+                        value={fTrialMin}
+                        onChange={(e) => setFTrialMin(e.target.value)}
+                        className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                      />
+                      <p className="text-[10px] text-zinc-500">Default {cfg.defaults.trialMinutes} min. Range 1–1440. Applies to new installs; existing trial windows keep their original end-time.</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3.5 space-y-3">
+                  <div className="text-[11px] uppercase tracking-wider text-zinc-400">MoMo Recipient (paid into)</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase tracking-wider text-zinc-500">Recipient name</label>
+                      <Input
+                        placeholder={cfg.defaults.momoName}
+                        value={fMomoName}
+                        onChange={(e) => setFMomoName(e.target.value)}
+                        className="bg-zinc-950 border-zinc-800 text-zinc-100"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase tracking-wider text-zinc-500">MoMo phone number</label>
+                      <Input
+                        placeholder={cfg.defaults.momoNumber}
+                        value={fMomoNum}
+                        onChange={(e) => setFMomoNum(e.target.value)}
+                        className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                      />
+                    </div>
+                  </div>
+                </section>
+
+                <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3.5 space-y-3">
+                  <div className="text-[11px] uppercase tracking-wider text-zinc-400">Notification Targets</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase tracking-wider text-zinc-500">Notify email</label>
+                      <Input
+                        type="email"
+                        placeholder={cfg.defaults.notifyEmail}
+                        value={fNotifyEmail}
+                        onChange={(e) => setFNotifyEmail(e.target.value)}
+                        className="bg-zinc-950 border-zinc-800 text-zinc-100"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase tracking-wider text-zinc-500">Notify WhatsApp</label>
+                      <Input
+                        placeholder={cfg.defaults.whatsappNumber}
+                        value={fWhatsapp}
+                        onChange={(e) => setFWhatsapp(e.target.value)}
+                        className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                      />
+                    </div>
+                  </div>
+                </section>
+
+                <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3.5 space-y-3">
+                  <div className="text-[11px] uppercase tracking-wider text-zinc-400">Plan Prices (GHS)</div>
+                  <p className="text-[10px] text-zinc-500 -mt-1">Leave a field blank to use the default. New prices apply immediately to all customers without a redeploy.</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {Object.entries(cfg.defaults.planPrices).map(([code, def]) => (
+                      <div key={code} className="space-y-1">
+                        <label className="text-[10px] uppercase tracking-wider text-zinc-500 flex items-center justify-between">
+                          <span>{code}</span>
+                          <span className="text-zinc-600">def {def}</span>
+                        </label>
+                        <Input
+                          type="number"
+                          min={1}
+                          placeholder={String(def)}
+                          value={fPrices[code] ?? ''}
+                          onChange={(e) => setFPrices((p) => ({ ...p, [code]: e.target.value }))}
+                          className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] text-zinc-500">
+                    {cfg.config.updatedAt
+                      ? <>Last saved {new Date(cfg.config.updatedAt).toLocaleString()}</>
+                      : <>No owner overrides saved yet.</>}
+                  </div>
+                  <Button
+                    onClick={saveCfg}
+                    disabled={cfgSaving}
+                    className="bg-emerald-600 hover:bg-emerald-500"
+                  >
+                    {cfgSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Save className="h-3.5 w-3.5 mr-1.5" /> Save Settings</>}
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         )}
       </DialogContent>

@@ -145,6 +145,11 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // session and direction (e.g. dg->whisper toast, whisper->browser
   // toast).
   const announcedHandoffsRef = useRef<Set<string>>(new Set())
+  // v0.5.48 — set the first time the active engine emits ANY
+  // transcript text, used by the auto-fallback effect to decide
+  // whether to enforce the 8 s window or fall back unconditionally
+  // on a structural error (cold-start handshake can exceed 8 s).
+  const sawTranscriptRef = useRef(false)
 
   // Read from whichever engine is currently active. All three hooks
   // expose the identical surface (verified at compile time by the
@@ -179,6 +184,11 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // ── Sync hook state → store (so any view can read it) ──────────────
   useEffect(() => {
     setLiveTranscript(hookTranscript)
+    // v0.5.48 — flip the "did this engine ever produce text?" latch so
+    // the auto-fallback effect can distinguish a never-worked engine
+    // (always fall back on structural error) from a once-worked engine
+    // that hit a transient mid-service blip (respect the 8 s window).
+    if (hookTranscript && hookTranscript.length > 0) sawTranscriptRef.current = true
   }, [hookTranscript, setLiveTranscript])
 
   useEffect(() => {
@@ -225,9 +235,23 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       activeEngine === 'deepgram' ? dgEngine : activeEngine === 'whisper' ? wsEngine : brEngine
 
     if (!liveEngine.error) return
-    const since = Date.now() - startedAtRef.current
-    if (startedAtRef.current === 0 || since > 8_000) return
+    if (startedAtRef.current === 0) return
     if (!isStructuralError(activeEngine, liveEngine.error)) return
+    // v0.5.48 — was: gate on `since > 8_000`. Reality: the user can
+    // open the app, immediately hit the mic, and Deepgram's
+    // /api/transcribe-stream/info → WS handshake takes longer than
+    // 8 s on a cold server (e.g. deployed Replit Autoscale spinning
+    // up). When the WS finally fails with 1006 we'd skip fallback
+    // because the window had elapsed, leaving the operator stuck
+    // with a dead engine and no transcript. New rule:
+    //   - If we have NEVER received a transcript in this session,
+    //     ALWAYS fall back on a structural error regardless of
+    //     elapsed time.
+    //   - If we've previously received transcripts (i.e. the engine
+    //     was working and then broke), keep the 8 s window so a
+    //     transient mid-service blip doesn't cycle engines.
+    const since = Date.now() - startedAtRef.current
+    if (sawTranscriptRef.current && since > 8_000) return
 
     const target = nextEngine(activeEngine)
     if (!target) {
@@ -289,6 +313,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         console.log(`[SpeechProvider] -> ${chosen}.startListening() (fallback)`)
         nextHandle.startListening(cb ?? undefined)
         startedAtRef.current = Date.now()
+        sawTranscriptRef.current = false
       } catch (e) {
         // eslint-disable-next-line no-console
         console.error(`[SpeechProvider] ${chosen} fallback start failed:`, e)
@@ -607,6 +632,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       // engine without losing transcript routing.
       lastCallbackRef.current = stableProcessCallback
       startedAtRef.current = Date.now()
+      sawTranscriptRef.current = false
       // eslint-disable-next-line no-console
       console.log('[SpeechProvider] -> startListening() on engine =', activeEngine)
       startListening(stableProcessCallback)

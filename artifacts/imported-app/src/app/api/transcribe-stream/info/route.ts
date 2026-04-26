@@ -47,15 +47,49 @@ function deriveWssFromHttp(httpUrl: string): string | null {
   }
 }
 
-function deriveReplitDevWss(req: NextRequest): string | null {
-  if (!process.env.REPLIT_DEV_DOMAIN) return null
+function deriveReplitWss(req: NextRequest): string | null {
+  // v0.5.48 ROOT-CAUSE FIX — the previous version of this function
+  // was gated on REPLIT_DEV_DOMAIN being set, which meant it ONLY
+  // worked in workspace dev. In a deployed Replit Autoscale build
+  // REPLIT_DEV_DOMAIN is not set, so this returned null, the GET
+  // handler fell through to the 503 branch, the renderer surfaced
+  // "Streaming transcription is not configured", the WebSocket
+  // could not be opened, and the operator saw "1006: WebSocket
+  // could not be established".
+  //
+  // Reality: BOTH workspace dev AND deployed Replit use the same
+  // path-based artifact router. The api-server is registered at
+  // `/__api-server` in `.replit-artifact/artifact.toml`, and its
+  // WS upgrade handler in artifacts/api-server/src/routes/
+  // transcribe-stream.ts strips the `/__api-server` prefix before
+  // matching routes. So the same `wss://${host}/__api-server/...`
+  // URL works in workspace dev AND in production deployments —
+  // the `REPLIT_DEV_DOMAIN` gate was a left-over from before
+  // path-based routing existed.
+  //
+  // We do still want to refuse to invent a URL when the request
+  // host isn't a Replit-style domain (i.e. someone's running this
+  // outside of Replit entirely without setting any of the explicit
+  // env vars). Detect that by checking for `.replit.dev` /
+  // `.replit.app` in the host header. Anything else falls through
+  // to the 503 branch with the clear "set TRANSCRIBE_STREAM_WSS_URL"
+  // hint, which is the correct error for, say, a customer-installed
+  // Electron build whose main process forgot to set the env var.
   const host = req.headers.get('host')
   if (!host) return null
-  // The workspace-preview proxy uses HTTPS publicly even though the
-  // upstream is plain HTTP, so the matching ws scheme is wss.
-  // The api-server is mounted at the `/__api-server` path; its WS
-  // upgrade handler strips that prefix before matching routes.
-  return `wss://${host}/__api-server/api/transcribe-stream`
+  const looksReplit =
+    host.endsWith('.replit.dev') ||
+    host.endsWith('.replit.app') ||
+    host.endsWith('.repl.co') ||
+    host.startsWith('localhost') ||
+    host.startsWith('127.0.0.1') ||
+    host.startsWith('0.0.0.0')
+  if (!looksReplit) return null
+  // localhost in workspace dev is plain http, so use ws:// for it.
+  // Replit public domains are always TLS-fronted, so wss://.
+  const isInsecure = host.startsWith('localhost') || host.startsWith('127.0.0.1') || host.startsWith('0.0.0.0')
+  const scheme = isInsecure ? 'ws' : 'wss'
+  return `${scheme}://${host}/__api-server/api/transcribe-stream`
 }
 
 export async function GET(req: NextRequest) {
@@ -72,9 +106,12 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const devWss = deriveReplitDevWss(req)
-  if (devWss) {
-    return NextResponse.json({ wssUrl: devWss, source: 'REPLIT_DEV_FALLBACK' })
+  const replitWss = deriveReplitWss(req)
+  if (replitWss) {
+    return NextResponse.json({
+      wssUrl: replitWss,
+      source: process.env.REPLIT_DEV_DOMAIN ? 'REPLIT_DEV_FALLBACK' : 'REPLIT_HOST_FALLBACK',
+    })
   }
 
   return NextResponse.json(
