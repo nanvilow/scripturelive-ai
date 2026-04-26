@@ -286,10 +286,15 @@ function LiveTranscriptionCard() {
   const setBibleOnlyTranscription = useAppStore((s) => s.setBibleOnlyTranscription)
 
   const toggleMic = () => {
-    if (!speechSupported) {
-      toast.error('Speech recognition is not supported in this browser')
-      return
-    }
+    // v0.5.42 — `speechSupported` is forced TRUE by SpeechProvider in
+    // any browser-like environment because the Deepgram engine works
+    // wherever there is mic + WebSocket + AudioContext. The legacy
+    // guard short-circuited every click in the Replit preview iframe
+    // and produced the silent-mic bug operators kept hitting. We
+    // still log the support flag so any genuine regression is visible
+    // in the browser DevTools.
+    // eslint-disable-next-line no-console
+    console.log('[mic-button] click. supported =', speechSupported, ' isListening =', isListening)
     setSpeechCommand(isListening ? 'stop' : 'start')
   }
 

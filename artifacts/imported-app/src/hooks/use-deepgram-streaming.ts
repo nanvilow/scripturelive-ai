@@ -303,6 +303,8 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
       // Discover the WSS URL via the local /api/transcribe-stream/info
       // route. The Next.js server reads TRANSCRIBE_PROXY_URL (set by
       // Electron main on every spawn) and derives the wss URL.
+      // eslint-disable-next-line no-console
+      console.log('[deepgram-hook] openWebSocket: fetching /api/transcribe-stream/info')
       const r = await fetch('/api/transcribe-stream/info', { cache: 'no-store' })
       if (!r.ok) {
         let detail = `HTTP ${r.status}`
@@ -310,14 +312,24 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
           const j = (await r.json()) as { error?: string }
           if (j?.error) detail = j.error
         } catch { /* not JSON */ }
+        // eslint-disable-next-line no-console
+        console.error('[deepgram-hook] /info failed:', detail)
         throw new Error(detail)
       }
       const j = (await r.json()) as { wssUrl?: string; error?: string }
-      if (!j.wssUrl) throw new Error(j.error || 'No wssUrl returned by /api/transcribe-stream/info')
+      if (!j.wssUrl) {
+        // eslint-disable-next-line no-console
+        console.error('[deepgram-hook] /info returned no wssUrl:', j)
+        throw new Error(j.error || 'No wssUrl returned by /api/transcribe-stream/info')
+      }
+      // eslint-disable-next-line no-console
+      console.log('[deepgram-hook] /info ok, wssUrl =', j.wssUrl)
 
       const ws = new WebSocket(j.wssUrl)
       ws.binaryType = 'arraybuffer'
       ws.onopen = () => {
+        // eslint-disable-next-line no-console
+        console.log('[deepgram-hook] WS OPEN')
         if (sessionRef.current !== sessionAtStart) {
           try { ws.close(1000, 'session stale') } catch { /* ignore */ }
           return
@@ -329,9 +341,15 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
         for (const buf of backlog) {
           try { ws.send(buf) } catch { /* ignore */ }
         }
+        if (backlog.length) {
+          // eslint-disable-next-line no-console
+          console.log('[deepgram-hook] flushed', backlog.length, 'backlog audio frames')
+        }
       }
       ws.onmessage = (ev) => {
         if (typeof ev.data === 'string') {
+          // eslint-disable-next-line no-console
+          console.log('[deepgram-hook] WS msg:', ev.data.slice(0, 200))
           handleDeepgramJson(ev.data, sessionAtStart)
         }
       }
@@ -372,7 +390,17 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
 
   const startListening = useCallback(
     (onResult?: (text: string) => void) => {
+      // eslint-disable-next-line no-console
+      console.log('[deepgram-hook] startListening() called. isSupported =', isSupported)
       if (!isSupported) {
+        // eslint-disable-next-line no-console
+        console.error('[deepgram-hook] env not supported:', {
+          hasWindow: typeof window !== 'undefined',
+          hasNavigator: typeof navigator !== 'undefined',
+          hasGetUserMedia: !!navigator?.mediaDevices?.getUserMedia,
+          hasWebSocket: typeof WebSocket !== 'undefined',
+          hasAudioContext: typeof AudioContext !== 'undefined',
+        })
         setError('Audio recording is not available in this environment.')
         return
       }

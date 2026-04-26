@@ -1,35 +1,27 @@
 'use client'
 
 import { useEffect, useCallback, useRef } from 'react'
-import { useSpeechRecognition } from '@/hooks/use-speech-recognition'
-// v0.5.35 — Whisper hook replaced by Deepgram streaming. The
-// public hook interface is unchanged; only the underlying engine
-// switched from chunked OpenAI Whisper to real-time Deepgram
-// Nova-3 streaming via the api-server WebSocket proxy. The old
-// `use-whisper-speech-recognition.ts` file is intentionally kept
-// in the repo as a fallback we can wire back in via env if needed.
-import { useDeepgramStreaming as useWhisperSpeechRecognition } from '@/hooks/use-deepgram-streaming'
+// v0.5.42 — DUAL-ENGINE ARCHITECTURE REMOVED.
+//
+// Prior versions (v0.5.34 and earlier) used the browser's Web Speech
+// API; v0.5.35 added a Deepgram streaming hook but kept the browser
+// engine as a fallback selected by IS_ELECTRON. v0.5.41 swapped the
+// default to Deepgram but still mounted both hooks. That dual-mount
+// architecture was the silent failure source operators kept hitting:
+// the browser engine's `isSupported` check (window.webkitSpeechRecognition)
+// returned false in the Replit preview iframe, the store's `speechSupported`
+// flag flipped to false, and the mic button's `if (!speechSupported)`
+// guard short-circuited every click with no log line, no toast that
+// the operator could see, no /info request — nothing. The api-server
+// log showed zero traffic because the renderer never even tried.
+//
+// v0.5.42 makes the path UNCONDITIONAL: only Deepgram, only one hook,
+// `speechSupported` always true (Deepgram works in any modern browser
+// or Electron with mic + WebSocket + AudioContext), and visible
+// diagnostic console.log at every checkpoint so the next regression
+// shows up in the browser DevTools immediately.
+import { useDeepgramStreaming } from '@/hooks/use-deepgram-streaming'
 import { useAppStore } from '@/lib/store'
-
-// Detected once at module load — userAgent is stable for the session,
-// so React's Rules of Hooks are satisfied (we always call BOTH engine
-// hooks in the same order; we just only drive ONE of them).
-const IS_ELECTRON =
-  typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)
-
-// v0.5.41 — pick the Deepgram streaming engine whenever the deployment
-// has a streaming endpoint configured (which now includes the Replit
-// dev workspace via REPLIT_DEV_FALLBACK in /api/transcribe-stream/info).
-// Browsers' Web Speech API was the only choice in v0.5.40 for non-
-// Electron contexts, but it silently fails in sandboxed iframes (the
-// Replit preview pane is one) — operators saw "no transcription, no
-// detection" with no log. Deepgram works in both Electron AND the dev
-// preview because the proxy is server-hosted and reachable via wss
-// from any origin. NEXT_PUBLIC_FORCE_BROWSER_SPEECH=1 escapes back to
-// the legacy Web Speech path if you ever need it.
-const FORCE_BROWSER_SPEECH =
-  typeof process !== 'undefined' &&
-  process.env?.NEXT_PUBLIC_FORCE_BROWSER_SPEECH === '1'
 import { detectVersesInTextWithScore, fetchBibleVerse, PREACHER_ATTRIBUTION } from '@/lib/bible-api'
 import type { BibleSearchHit } from '@/lib/bible-api'
 import type { DetectedVerse } from '@/lib/store'
@@ -37,22 +29,13 @@ import type { DetectedVerse } from '@/lib/store'
 /**
  * SpeechProvider - Persistent speech recognition that survives view navigation.
  *
- * This component wraps the entire app and manages the Web Speech API lifecycle.
- * It syncs transcript/state to the Zustand store so any view can access it.
- * Verse detection and auto go-live processing happen here, ensuring they work
- * even when the user is on a different page/tab.
+ * This component wraps the entire app and manages the Deepgram streaming
+ * lifecycle. It syncs transcript/state to the Zustand store so any view
+ * can access it. Verse detection and auto go-live processing happen here,
+ * ensuring they work even when the user is on a different page/tab.
  */
 export function SpeechProvider({ children }: { children: React.ReactNode }) {
-  // Always call BOTH hooks in the same order — Rules of Hooks. We
-  // pick which one drives the store based on IS_ELECTRON, which is
-  // computed once at module load and never changes during a session.
-  const browserEngine = useSpeechRecognition()
-  const whisperEngine = useWhisperSpeechRecognition()
-  // v0.5.41 — Deepgram is the primary engine in BOTH Electron and the
-  // browser dev preview. Web Speech only kicks in when the operator
-  // explicitly opts back in via NEXT_PUBLIC_FORCE_BROWSER_SPEECH=1.
-  const active = FORCE_BROWSER_SPEECH ? browserEngine : whisperEngine
-  void IS_ELECTRON // retained for future Electron-only branches
+  const engine = useDeepgramStreaming()
   const {
     transcript: hookTranscript,
     interimTranscript: hookInterim,
@@ -62,7 +45,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     startListening,
     stopListening,
     resetTranscript,
-  } = active
+  } = engine
 
   // Store actions for syncing
   const setLiveTranscript = useAppStore((s) => s.setLiveTranscript)
@@ -82,16 +65,34 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     setLiveInterimTranscript(hookInterim)
   }, [hookInterim, setLiveInterimTranscript])
 
+  // v0.5.42 — speechSupported is now ALWAYS true in any browser-like
+  // environment. The Deepgram engine only requires mic + WebSocket +
+  // AudioContext, all of which exist in any Chromium build (Electron,
+  // packaged Windows app, Replit preview iframe, customer Chrome). If
+  // any of those genuinely missing the engine surfaces a clear error
+  // message via `hookError` instead of silently bailing.
   useEffect(() => {
-    setSpeechSupported(hookSupported)
+    setSpeechSupported(true)
+    if (typeof window !== 'undefined') {
+      // eslint-disable-next-line no-console
+      console.log('[SpeechProvider] speechSupported forced TRUE (Deepgram engine, hook isSupported =', hookSupported, ')')
+    }
   }, [hookSupported, setSpeechSupported])
 
   useEffect(() => {
     setSpeechError(hookError)
+    if (hookError && typeof window !== 'undefined') {
+      // eslint-disable-next-line no-console
+      console.error('[SpeechProvider] hookError:', hookError)
+    }
   }, [hookError, setSpeechError])
 
   useEffect(() => {
     setIsListening(hookListening)
+    if (typeof window !== 'undefined') {
+      // eslint-disable-next-line no-console
+      console.log('[SpeechProvider] isListening ->', hookListening)
+    }
   }, [hookListening, setIsListening])
 
   // ── Verse detection processing ─────────────────────────────────────
@@ -225,20 +226,6 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       const minKeywords = hasAttribution ? 2 : 3
       const minWords = hasAttribution ? 3 : 4
       const throttle = hasAttribution ? 500 : 800
-      // Bug #1B — drop the `references.length === 0` gate so we ALSO
-      // run the fuzzy text-search snap when whisper *did* parse a
-      // reference. This rescues the common pattern where the speaker
-      // says the reference clearly ("Romans 8:2") but whisper garbles
-      // the body ("Chri t Je u… law of in and death") — without this
-      // the operator's congregation sees the noisy raw body, but with
-      // it we substitute the canonical Bible text from the matched hit.
-      //
-      // Cross-path dedupe (architect feedback): we now seed the
-      // text-search dedupe set with any references the explicit-
-      // reference path will process below in the same chunk. That
-      // way if whisper extracted "Romans 8:2" AND text-search finds
-      // the same canonical "Romans 8:2", only one path commits — the
-      // explicit-reference loop, which has the better confidence.
       if (
         allWords.length >= minWords &&
         keywords.length >= minKeywords &&
@@ -250,11 +237,6 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           const r = await fetch(`/api/bible?${params.toString()}`)
           if (r.ok) {
             const { hits } = (await r.json()) as { hits: BibleSearchHit[] }
-            // Pick the candidate that the spoken text most closely
-            // matches — not just the first keyword hit. Bolls returns
-            // hits in keyword-frequency order, but for paraphrases the
-            // best lexical match isn't always #1. Re-rank by content-
-            // word overlap with the recent transcript.
             const recentSpoken = recentText
             type Ranked = { hit: BibleSearchHit; sim: number }
             const ranked: Ranked[] = (hits || [])
@@ -263,33 +245,16 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             const best = ranked[0]
             const top = best?.hit
             const sim = best?.sim ?? 0
-            // Cross-path dedupe: if the explicit-reference loop
-            // below is already going to handle this same reference
-            // (e.g., whisper got the citation right but the body
-            // was garbled), skip the text-search commit so we don't
-            // double-add to Detected Verses / Verse History or
-            // potentially auto-live twice.
             const willHandleBelow = top
               ? references.includes(top.reference) ||
                 processedRefsRef.current.has(top.reference)
               : false
             if (top && !willHandleBelow && !processedTextHitsRef.current.has(top.reference)) {
-              // Threshold is relaxed to 0.32 when an attribution
-              // phrase preceded the candidate — paraphrasing styles
-              // ("the Word of God tells us that we are more than
-              // conquerors" vs Romans 8:37) often only share 35-40%
-              // of content words but the attribution makes it a
-              // confident match. Cold matches still need 0.4 to
-              // avoid flooding the panel with junk.
               const minSim = hasAttribution ? 0.32 : 0.4
               if (sim < minSim) {
                 /* not a real quotation — drop silently */
               } else {
                 processedTextHitsRef.current = new Set(processedTextHitsRef.current).add(top.reference)
-                // Attribution phrases give a small confidence bonus
-                // since the speaker explicitly framed the line as
-                // scripture — that's strong evidence even when the
-                // word-overlap is moderate.
                 const baseConf = Math.min(1, 0.5 + (sim - minSim) * 0.83)
                 const confidence = hasAttribution ? Math.min(1, baseConf + 0.08) : baseConf
                 const detected: DetectedVerse = {
@@ -311,11 +276,6 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   chapter: top.chapter,
                   verseStart: top.verse,
                 })
-                // Auto-live a text-search hit ONLY when the speaker
-                // quoted the verse very closely (≥85% of content words).
-                // Example: "In the beginning God created heaven and
-                // earth" vs Genesis 1:1 — passes. A passing keyword
-                // collision will not.
                 if (autoLiveOn && sim >= 0.85) {
                   const slide = {
                     id: `slide-${Date.now()}`,
@@ -343,25 +303,12 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
 
       for (const detectedRef of detectedRefs) {
         const ref = detectedRef.reference
-        // Architect feedback (round 2) — also dedupe against the
-        // text-search committed set, otherwise an earlier text-search
-        // hit for R followed by a later invocation that explicitly
-        // parses R would commit R twice (once per path). Keeping the
-        // sets separate is fine for diagnostics but the skip clause
-        // here treats them as a unified "already handled this session"
-        // membership check.
         if (processedRefsRef.current.has(ref) || processedTextHitsRef.current.has(ref)) continue
         processedRefsRef.current = new Set(processedRefsRef.current).add(ref)
 
         try {
           const verse = await fetchBibleVerse(ref, state.selectedTranslation)
           if (verse) {
-            // Mark the current transcript length as a paragraph break.
-            // Each detected scripture pushes a break point so the Live
-            // Transcription pane visually starts a new paragraph for
-            // every detection. We don't mutate the transcript string
-            // itself because the speech hook re-emits the full text on
-            // every audio chunk and would clobber any inline markers.
             const t = useAppStore.getState().liveTranscript
             useAppStore.getState().pushTranscriptBreak(t.length)
             const detected: DetectedVerse = {
@@ -376,19 +323,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             useAppStore.getState().addDetectedVerse(detected)
             useAppStore.getState().setLiveVerse(verse)
             useAppStore.getState().addToVerseHistory(verse)
-            // Suppressed per FRS — Detected Verses panel is the source of truth.
 
-            // Auto go-live ONLY when ALL of these hold:
-            //   1. Operator has AUTO enabled
-            //   2. Confidence ≥ threshold (default 90%)
-            //   3. The speaker actually said an explicit verse number
-            //      ("John 3:16" / "John chapter 3 verse 16"), not just
-            //      a book + chapter.
-            // Bare book-and-chapter references (e.g. "John 3") still
-            // land in the Detected Verses panel as a suggestion but
-            // never auto-display, so the congregation never sees a
-            // partial reference that might not match the speaker's
-            // intent.
             const latestState = useAppStore.getState()
             const passesThreshold =
               detectedRef.confidence >= threshold && detectedRef.hasExplicitVerse
@@ -409,7 +344,6 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               useAppStore.getState().setPreviewSlideIndex(newLiveIndex)
               useAppStore.getState().setLiveSlideIndex(newLiveIndex)
               useAppStore.getState().setIsLive(true)
-              // Suppressed per FRS — live pill is the source of truth.
             }
           }
         } catch {
@@ -424,7 +358,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     processCallbackRef.current(text)
   }, [])
 
-  // Keep the global mic-id mirror in sync so the Whisper engine can
+  // Keep the global mic-id mirror in sync so the Deepgram engine can
   // see it (it's hookless and reads window.__selectedMicrophoneId).
   const selectedMicId = useAppStore((s) => s.selectedMicrophoneId)
   useEffect(() => {
@@ -434,37 +368,30 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
 
   // ── Handle speech commands from store (start / stop / reset) ───────
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      // eslint-disable-next-line no-console
+      console.log('[SpeechProvider] command:', speechCommand)
+    }
     if (speechCommand === 'start') {
       processedRefsRef.current = new Set()
-      // If the user picked a specific mic, claim it via getUserMedia first.
-      // Browsers' Web Speech API doesn't expose deviceId directly, but
-      // acquiring the chosen input device prompts the OS / browser to route
-      // recognition through it. We then immediately release the stream so we
-      // don't hold the mic open in parallel. The Whisper engine reads the
-      // device id from window.__selectedMicrophoneId itself.
-      const chosenId = useAppStore.getState().selectedMicrophoneId
-      const beginRecognition = () => {
-        startListening(stableProcessCallback)
-        setSpeechCommand(null)
-      }
-      if (!IS_ELECTRON && chosenId && typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-        navigator.mediaDevices
-          .getUserMedia({ audio: { deviceId: { exact: chosenId } } })
-          .then((stream) => {
-            stream.getTracks().forEach((t) => t.stop())
-            beginRecognition()
-          })
-          .catch(() => {
-            // Fall back to system default if the chosen mic is unavailable.
-            beginRecognition()
-          })
-      } else {
-        beginRecognition()
-      }
+      // v0.5.42 — no more device-claim getUserMedia dance. The
+      // Deepgram engine itself calls getUserMedia with the chosen
+      // deviceId (read from window.__selectedMicrophoneId), so the
+      // earlier "claim then release" pattern was redundant AND
+      // doubled the chance of a permission prompt failure. Just
+      // start.
+      // eslint-disable-next-line no-console
+      console.log('[SpeechProvider] -> startListening()')
+      startListening(stableProcessCallback)
+      setSpeechCommand(null)
     } else if (speechCommand === 'stop') {
+      // eslint-disable-next-line no-console
+      console.log('[SpeechProvider] -> stopListening()')
       stopListening()
       setSpeechCommand(null)
     } else if (speechCommand === 'reset') {
+      // eslint-disable-next-line no-console
+      console.log('[SpeechProvider] -> resetTranscript()')
       resetTranscript()
       setLiveTranscript('')
       setLiveInterimTranscript('')
