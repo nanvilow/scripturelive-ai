@@ -7,6 +7,12 @@ import { UpdateNotifier } from '@/components/providers/update-notifier'
 import { UpdateAvailableDialog } from '@/components/providers/update-dialog'
 import { LogosShell } from '@/components/layout/logos-shell'
 import { SettingsView } from '@/components/views/settings'
+// v1 licensing — wrap the app so every subtree can consult the
+// subscription state and open the Subscribe / Admin modals.
+import { LicenseProvider } from '@/components/license/license-provider'
+import { LicenseTopBarButton } from '@/components/license/license-button'
+import { SubscriptionModal } from '@/components/license/subscription-modal'
+import { AdminModal } from '@/components/license/admin-modal'
 import { useAppStore } from '@/lib/store'
 import { ArrowLeft } from 'lucide-react'
 
@@ -87,7 +93,19 @@ export default function Home() {
           shows once per version per session so the operator actually
           sees the update notice when they open the app. */}
       <UpdateAvailableDialog />
-      <AppContent />
+      {/* v1 LICENSING — wraps the entire console so the LogosShell, the
+          Settings overlay, and the floating Activate button can all read
+          subscription state from one source of truth. The provider also
+          owns the Ctrl+Shift+P listener that opens the owner Admin
+          panel and the 30-second status poll. The two modals are
+          rendered as siblings so they sit above every Card and the
+          Settings overlay. */}
+      <LicenseProvider>
+        <AppContent />
+        <LicenseTopBarButton />
+        <SubscriptionModal />
+        <AdminModal />
+      </LicenseProvider>
     </SpeechProvider>
   )
 }
