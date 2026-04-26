@@ -64,6 +64,8 @@ export function StableStage({
   children,
   scale = 1,
   className,
+  isLive,
+  overlay,
 }: {
   /**
    * Slide content to render at the fixed 1920×1080 reference size.
@@ -81,9 +83,28 @@ export function StableStage({
   scale?: number
   /**
    * Extra classes for the OUTER container (the one that occupies the
-   * column). Use this to pass `ring-2 ring-red-500` etc.
+   * column). Use this to pass extra ring/border/etc.
    */
   className?: string
+  /**
+   * When true, paints a 2px red ring on the OUTER container — at the
+   * actual on-screen column size, not inside the scaled-down 1920px
+   * stage. We need this here because the inner SlideThumb's own
+   * `ring-2 ring-red-500` lives inside the GPU-scaled inner stage,
+   * so it'd get scaled to sub-pixel thickness on a narrow column.
+   * Drawing the ring on the outer keeps the on-air cue clearly
+   * visible no matter how small the column is dragged.
+   */
+  isLive?: boolean
+  /**
+   * Optional overlay rendered on top of the scaled inner stage,
+   * inside the OUTER container (so it stays at device-pixel size,
+   * not scaled with the slide). Use this for things like the small
+   * "Lower Third · bottom" reference badge that would otherwise
+   * shrink with the rest of the stage and become unreadable at
+   * narrow column widths.
+   */
+  overlay?: ReactNode
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   // Fit factor = REAL column width ÷ 1920. Starts at 0 so the inner
@@ -132,6 +153,11 @@ export function StableStage({
       ref={containerRef}
       className={cn(
         'relative w-full aspect-video overflow-hidden',
+        // On-air ring is drawn at the OUTER (device-pixel) size so
+        // it stays a crisp 2px red border no matter how narrow the
+        // column is. Inset slightly so it sits inside the column
+        // edge and doesn't get clipped by parent overflow rules.
+        isLive && 'ring-2 ring-red-500 ring-inset',
         className,
       )}
     >
@@ -153,6 +179,15 @@ export function StableStage({
       >
         {children}
       </div>
+      {/* Optional overlay rendered OUTSIDE the scaled inner stage so
+          its content (typically a small reference badge) stays at
+          the actual on-screen pixel size and remains readable on
+          narrow columns. */}
+      {overlay && (
+        <div className="pointer-events-none absolute inset-0">
+          {overlay}
+        </div>
+      )}
     </div>
   )
 }

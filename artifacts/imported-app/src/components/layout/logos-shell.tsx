@@ -1547,8 +1547,12 @@ function LiveDisplayCard({
               // works exactly as before AND the bible text stays
               // perfectly still while the operator drags the column
               // splitter (no font-size jitter, no word-wrap shifts,
-              // no alignment drift mid-drag).
-              <StableStage scale={actualSize}>
+              // no alignment drift mid-drag). The on-air red ring is
+              // moved to StableStage's outer (device-pixel sized) so
+              // it stays a crisp 2px border on narrow columns rather
+              // than getting scaled to sub-pixel thickness with the
+              // slide.
+              <StableStage scale={actualSize} isLive={!!liveSlide}>
                 <SlideThumb
                   slide={slide}
                   themeKey={liveSlide?.background || settings.congregationScreenTheme}
@@ -1586,8 +1590,23 @@ function LiveDisplayCard({
             // frame and the bible text inside the bar would jiggle
             // and re-wrap as the column width changed. Now the LT
             // bar lives inside a 1920×1080 reference stage that is
-            // simply scaled by transform — text is frozen.
-            <StableStage scale={actualSize}>
+            // simply scaled by transform — text is frozen. The
+            // small "Lower Third · bottom" reference badge is
+            // hoisted out via the `overlay` prop so it stays
+            // readable at the column's real pixel size instead of
+            // shrinking with the rest of the stage.
+            <StableStage
+              scale={actualSize}
+              isLive={!!liveSlide}
+              overlay={
+                <div className="absolute top-1 left-1 z-10">
+                  <Badge className="text-[8px] px-1 py-0 font-bold uppercase tracking-wider border-0 bg-sky-600 text-white">
+                    {isBlackBackdrop ? 'L/3 · Black · ' : 'Lower Third · '}
+                    {ltPos}
+                  </Badge>
+                </div>
+              }
+            >
               <div className="relative w-full aspect-video bg-black overflow-hidden ring-1 ring-zinc-800">
                 {/* lower-third uses the themed/custom background as
                     backdrop; lower-third-black uses pure black so the
@@ -1689,12 +1708,11 @@ function LiveDisplayCard({
                     </div>
                   )
                 })()}
-                <div className="absolute top-1 left-1 z-10">
-                  <Badge className="text-[8px] px-1 py-0 font-bold uppercase tracking-wider border-0 bg-sky-600 text-white">
-                    {isBlackBackdrop ? 'L/3 · Black · ' : 'Lower Third · '}
-                    {ltPos}
-                  </Badge>
-                </div>
+                {/* v0.5.51 — the Lower-Third reference badge that
+                    used to live here was hoisted into StableStage's
+                    `overlay` slot above so it renders OUTSIDE the
+                    GPU-scaled inner stage and stays readable at any
+                    column width. */}
               </div>
             </StableStage>
           )
