@@ -105,3 +105,15 @@ User added a Personal Access Token as the Replit secret `GH_PAT` (verified 2026-
 4. **Push workflow files.** `.github/workflows/release-desktop.yml` updates from Tasks #25/#26 (signtool check, verify-macos job) MUST be included in the next push — they were deferred from v0.5.27.
 5. **Read the resulting Actions run.** With `GH_PAT` the `/actions/runs?head_sha=<sha>` endpoint works; report the specific run URL back to the user so they don't have to dig through the Actions tab.
 6. **Token hygiene.** Never echo the value, never write it to a committed file, never include it in any URL stored on disk. It only flows through API headers / git remote URLs at runtime.
+# Release v0.5.37 (2026-04-26)
+
+**Critical SSE bug fix.** The `/api/output/congregation` page's `EventSource.onmessage` matched on `d.type === 'state'` for the entire history of this route — but the broadcaster has always shipped `{type:'slide'|'clear', ..., event:'state'}`. So **every SSE delivery has been silently dropped**, and operator updates only ever reached the secondary screen / NDI feed via the 1.5 s polling fallback.
+
+On a fullscreen kiosk window that Chromium background-throttles to ~1 Hz (because the operator console window has focus, not the projector), that fallback can pause for tens of seconds. Combined with the broken SSE, that's exactly the "screens stuck black, never updates" report.
+
+**Fix** in `artifacts/imported-app/src/app/api/output/congregation/route.ts`:
+1. `es.onmessage` accepts the real `event:'state'` payload (defensive against the legacy `type:'state'` shape too).
+2. New `wakeAndPoll()` wired to `visibilitychange` / `focus` / `pageshow` / `online` — forces a fresh poll the instant the kiosk surface becomes visible or reconnects, with cache-key reset so byte-identical state still paints.
+3. `package.json` bumped to 0.5.37; `BUILD.bat` banner matches.
+
+Verified: SSE stream raw inspection (`curl -N /api/output`) confirms payload shape; compiled clean; served HTML contains the new handler and listeners. Screenshot tool's headless browser doesn't execute JS reliably (no `?format=json` polls in workflow logs after page load) — that's a tool limitation, not the app. Real Electron Chromium runs the JS every page load.
