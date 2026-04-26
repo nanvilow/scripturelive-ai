@@ -22,7 +22,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { findPlan } from '@/lib/licensing/plans'
 import { confirmPaymentAndIssueActivation } from '@/lib/licensing/storage'
-import { notifyEmail, notifyWhatsApp } from '@/lib/licensing/notifications'
+import { notifyEmail, notifyWhatsApp, notifySms } from '@/lib/licensing/notifications'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -48,10 +48,33 @@ export async function POST(req: NextRequest) {
   const planLabel = plan?.label ?? payment.planCode
 
   // Notifications — best-effort, never block the admin response.
-  let emailNote = null
+  let emailNote: { id: string; status: string; error?: string } | null = null
   let waNote: { id: string; waLink: string } | null = null
+  let smsNote: { id: string; status: string; error?: string; to: string } | null = null
   try {
     if (newlyGenerated) {
+      // ── Customer activation SMS via Arkesel ──────────────────────
+      // Spec: "ScriptureLive AI: Activation successful. Code:
+      // SL-1M-83KF92. Enjoy 31 days of seamless live scripture display."
+      // Sent BEFORE the operator notifications so a slow Gmail SMTP
+      // doesn't delay the customer's receipt. Errors are recorded
+      // in the audit log; they never block the response.
+      try {
+        const customerSmsBody =
+          `ScriptureLive AI: Activation successful. Code: ${activation.code}. ` +
+          `Enjoy ${activation.days} days of seamless live scripture display.`
+        const s = await notifySms({
+          to: payment.whatsapp,
+          subject: `[ScriptureLive] Activation code for ${planLabel}`,
+          body: customerSmsBody,
+        })
+        smsNote = { id: s.id, status: s.status, error: s.error, to: s.to }
+      } catch (e) {
+        // notifySms swallows internally, but belt-and-braces.
+        // eslint-disable-next-line no-console
+        console.error('[admin/confirm] customer SMS failed:', e)
+      }
+
       const ownerSubject = `[ScriptureLive] Payment confirmed — ${planLabel} (${payment.email})`
       const ownerBody = [
         'A new ScriptureLive AI subscription has been activated.',
@@ -94,6 +117,6 @@ export async function POST(req: NextRequest) {
       generatedAt: activation.generatedAt,
     },
     newlyGenerated,
-    notifications: { email: emailNote, whatsapp: waNote },
+    notifications: { email: emailNote, whatsapp: waNote, sms: smsNote },
   })
 }
