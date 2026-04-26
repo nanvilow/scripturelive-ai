@@ -17,6 +17,28 @@ Format rules (so the workflow's extractor keeps working):
 - Write for the operator, not the engineer. "Verses now appear within
   ~250ms" beats "reduced CHUNK_MS from 4500 to 2500".
 
+## v0.5.36 — 2026-04-26
+
+### Fixed
+
+- **Last words of every utterance are no longer lost on Stop.** When
+  the operator pressed Stop (or the engine restarted), the desktop
+  app used to close the streaming connection too quickly, before
+  Deepgram had finished sending the tail of the current sentence
+  (~200-500 ms of pending transcript). Now both ends do a graceful
+  drain — the desktop tells the server it's done, the server tells
+  Deepgram to flush, the final results flow back, and only then
+  does the connection close. Operators see complete sentences in
+  the transcript panel instead of cut-off ones.
+- **Mic indicator turns off when the connection drops unexpectedly.**
+  If the streaming connection died mid-sermon (network blip, server
+  restart), the OS microphone indicator used to stay lit and the UI
+  kept claiming the engine was "listening" even though no audio was
+  reaching the server. The desktop now detects unexpected
+  disconnects, surfaces a clear toast ("Live transcription
+  disconnected"), and tears down the mic capture so the OS
+  indicator goes dark.
+
 ## v0.5.35 — 2026-04-26
 
 ### Changed

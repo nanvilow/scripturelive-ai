@@ -166,6 +166,16 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
     setInterimTranscript('')
   }, [])
 
+  // v0.5.36 — graceful WebSocket drain window. After we send "CLOSE"
+  // to the proxy, the server forwards CloseStream to Deepgram and
+  // waits for any in-flight final results (~200-500 ms of pending
+  // transcript after the last audio frame) to flow back over our
+  // socket. Closing the socket from the client immediately would
+  // race that drain and lose the operator's last words. We defer
+  // the actual ws.close() until after this grace window OR until
+  // the server closes the socket itself, whichever comes first.
+  const WS_DRAIN_GRACE_MS = 1500
+
   const teardown = useCallback(() => {
     stopRequestedRef.current = true
     sessionRef.current += 1
@@ -200,8 +210,14 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
       streamRef.current = null
     }
 
-    // 3. Close the WebSocket politely. Send "CLOSE" so the server
-    //    can flush Deepgram's final results before tearing down.
+    // 3. Drain + close the WebSocket. We capture the ws into a local
+    //    variable so the deferred close still works after we null
+    //    wsRef. The onmessage handler stays attached during the drain
+    //    window so any tail-of-utterance final result still reaches
+    //    the transcript via handleDeepgramJson (it ignores stale
+    //    sessions automatically — but stopRequestedRef is true so
+    //    onResult isn't fired anymore; the operator's transcript
+    //    panel still updates with the final words via setTranscript).
     const ws = wsRef.current
     wsRef.current = null
     wsReadyRef.current = false
@@ -212,7 +228,16 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
           ws.send('CLOSE')
         }
       } catch { /* ignore */ }
-      try { ws.close(1000, 'client stop') } catch { /* ignore */ }
+      // If the socket is already closing/closed, no point waiting.
+      if (ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) {
+        return
+      }
+      const forceClose = setTimeout(() => {
+        try { ws.close(1000, 'client stop drain timeout') } catch { /* ignore */ }
+      }, WS_DRAIN_GRACE_MS)
+      // If the server initiates close first (the happy path after it
+      // gets Deepgram's drain ack), cancel the safety timer.
+      ws.addEventListener('close', () => clearTimeout(forceClose), { once: true })
     }
   }, [])
 
@@ -314,9 +339,20 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
         if (sessionRef.current !== sessionAtStart) return
         setError('Live transcription connection failed.')
       }
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         if (sessionRef.current !== sessionAtStart) return
         wsReadyRef.current = false
+        // v0.5.36 — if the operator did NOT request stop, this is an
+        // unexpected close (proxy crashed, network blip, Deepgram
+        // sent us 1011, etc.). Surface the error and tear the audio
+        // graph down so the OS mic indicator goes off and the UI
+        // doesn't keep claiming we're "listening" to a dead socket.
+        if (!stopRequestedRef.current) {
+          const code = ev.code || 0
+          const reason = ev.reason || 'connection closed'
+          setError(`Live transcription disconnected (${code}: ${reason}).`)
+          teardown()
+        }
       }
       return ws
     },

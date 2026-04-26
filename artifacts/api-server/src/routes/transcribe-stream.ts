@@ -108,23 +108,53 @@ export function attachTranscribeStream(server: HttpServer): WebSocketServer {
     const audioBacklog: Buffer[] = [];
     let totalAudioBytes = 0;
     let totalDgMessages = 0;
+    // v0.5.36 — two-phase close. When the client signals end-of-stream
+    // we send CloseStream to Deepgram and WAIT for Deepgram's own
+    // close event before tearing down the client socket. This lets
+    // any in-flight final results (typically ~200-500 ms of pending
+    // transcript after the last audio frame) flow back through the
+    // proxy. A safety timer guarantees the client socket closes even
+    // if Deepgram never acknowledges.
+    let drainTimer: NodeJS.Timeout | null = null;
+    const DEEPGRAM_DRAIN_MS = 2000;
 
-    const closeBoth = (code = 1000, reason = "") => {
+    const closeClient = (code = 1000, reason = "") => {
+      if (drainTimer) { clearTimeout(drainTimer); drainTimer = null; }
       try {
         if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
           client.close(code, reason);
         }
       } catch { /* ignore */ }
+    };
+
+    const drainAndClose = (reason: string) => {
+      // Tell Deepgram to flush, then wait for its close event in the
+      // dg.on("close") handler below (which calls closeClient). If
+      // Deepgram doesn't close within the drain window, force-close.
+      if (dg.readyState === WebSocket.OPEN) {
+        try { dg.send(JSON.stringify({ type: "CloseStream" })); } catch { /* ignore */ }
+      } else if (dg.readyState === WebSocket.CONNECTING) {
+        try { dg.close(1000, reason); } catch { /* ignore */ }
+      }
+      if (!drainTimer) {
+        drainTimer = setTimeout(() => {
+          log.warn("deepgram drain timeout — forcing close");
+          try { dg.terminate(); } catch { /* ignore */ }
+          closeClient(1000, reason);
+        }, DEEPGRAM_DRAIN_MS);
+      }
+    };
+
+    // Hard-close path used when Deepgram or client errors out — no
+    // drain because there's nothing to drain.
+    const closeBoth = (code = 1011, reason = "") => {
+      if (drainTimer) { clearTimeout(drainTimer); drainTimer = null; }
       try {
         if (dg.readyState === WebSocket.OPEN || dg.readyState === WebSocket.CONNECTING) {
-          // Deepgram requires the literal text "CloseStream" to flush the
-          // last results before we tear down the socket.
-          if (dg.readyState === WebSocket.OPEN) {
-            try { dg.send(JSON.stringify({ type: "CloseStream" })); } catch { /* ignore */ }
-          }
           dg.close(code, reason);
         }
       } catch { /* ignore */ }
+      closeClient(code, reason);
     };
 
     // ─── Deepgram → client ──────────────────────────────────────────
@@ -156,16 +186,21 @@ export function attachTranscribeStream(server: HttpServer): WebSocketServer {
         { code, reason: reason.toString(), totalAudioBytes, totalDgMessages },
         "deepgram socket closed",
       );
-      closeBoth(1000, "deepgram closed");
+      // Deepgram has flushed everything it had — pending JSON results
+      // were already forwarded to the client by the message handler
+      // above. Now it's safe to close the client socket.
+      closeClient(1000, "deepgram closed");
     });
 
     // ─── client → Deepgram ──────────────────────────────────────────
     client.on("message", (data, isBinary) => {
       if (!isBinary) {
         // Tiny control protocol: client sends "CLOSE" to gracefully end.
+        // We honor it via the two-phase drain so the operator sees the
+        // tail of their final utterance instead of losing it.
         const text = data.toString().trim();
         if (text === "CLOSE") {
-          closeBoth(1000, "client close");
+          drainAndClose("client close");
           return;
         }
         // Anything else as text is ignored — we expect binary audio.
@@ -200,7 +235,14 @@ export function attachTranscribeStream(server: HttpServer): WebSocketServer {
         { code, reason: reason.toString(), totalAudioBytes, totalDgMessages },
         "client socket closed",
       );
-      closeBoth(1000, "client closed");
+      // Client gone — close Deepgram immediately. No drain needed
+      // because there's no one to deliver pending results to.
+      if (drainTimer) { clearTimeout(drainTimer); drainTimer = null; }
+      try {
+        if (dg.readyState === WebSocket.OPEN || dg.readyState === WebSocket.CONNECTING) {
+          dg.close(1000, "client closed");
+        }
+      } catch { /* ignore */ }
     });
   });
 
