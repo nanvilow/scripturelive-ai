@@ -716,6 +716,33 @@ function pollOnce(){
 // autoscale deployments where SSE can land on a different replica.
 setInterval(pollOnce,1500);
 
+// v0.5.37 -- Chromium background-throttling defence. The kiosk window
+// is fullscreen on a secondary display and is NOT the focused window
+// (the operator main console is). Modern Chromium aggressively
+// throttles setInterval / setTimeout in unfocused windows -- the rate
+// can drop to 1 Hz or less, and after a few minutes can pause
+// entirely. That is exactly how the operator would see "black
+// screen, never updates" even when SSE is also failing. We keep a
+// page-visibility listener that force-polls the moment the surface
+// becomes visible OR comes back into focus, so any missed update
+// catches up immediately. This is in ADDITION to the 1.5 s interval.
+function wakeAndPoll(){
+  // Reset cache keys so the next payload always paints, even if
+  // it's byte-identical to whatever we last drew before throttle.
+  lastRenderKey='';
+  lastSlideFingerprint='';
+  pollOnce();
+}
+document.addEventListener('visibilitychange',function(){
+  if(document.visibilityState==='visible')wakeAndPoll();
+});
+window.addEventListener('focus',wakeAndPoll);
+window.addEventListener('pageshow',wakeAndPoll);
+// Also re-poll whenever the OS reports we are back online -- proxy
+// drops or VPN reconnects on the operator PC used to leave the
+// projector frozen on the last frame.
+window.addEventListener('online',wakeAndPoll);
+
 // v0.5.32 — Watchdog #1: recover from a stuck soft-in animation.
 // The new soft-fade-in approach (paint-first, animate opacity 0.25→1)
 // can't go to opacity:0 like the old fade-out did, so a stuck animation
@@ -788,12 +815,33 @@ function connect(){
     setTimeout(pollOnce,50);
   };
   es.onmessage=function(e){
+    // v0.5.37 -- CRITICAL bug fix. The SSE broadcast payload is
+    //   {type:slide|clear, ..., event:state, timestamp:N}
+    // The previous handler matched on d.type==="state", but
+    // d.type is "slide" or "clear" -- the "state" marker lives
+    // in d.event. So every SSE delivery has been silently
+    // dropped since this route shipped, and the secondary screen
+    // / NDI feed have only been receiving updates from the 1.5 s
+    // polling fallback. On a kiosk window that Chromium aggressively
+    // background-throttles, that polling can stretch to multi-second
+    // gaps or stall for tens of seconds -- the operator verse change
+    // never appears, the screen looks "stuck black", and the only
+    // recovery path was a manual reload. We now accept any payload
+    // that looks like state (slide/clear type plus a timestamp) and
+    // call applyRender unconditionally.
     try{
       var d=JSON.parse(e.data);
-      if(d.type==='state'){
-        if(d.timestamp)lastPolled=d.timestamp;
-        applyRender(d);
-      }
+      if(!d || typeof d!=='object')return;
+      // Accept both the legacy "type:state" shape and the actual
+      // "event:state" shape produced by output-broadcast.ts.
+      var looksLikeState =
+        d.event==='state' ||
+        d.type==='state' ||
+        d.type==='slide' ||
+        d.type==='clear';
+      if(!looksLikeState)return;
+      if(typeof d.timestamp==='number')lastPolled=d.timestamp;
+      applyRender(d);
     }catch(err){}
   };
   es.onerror=function(){

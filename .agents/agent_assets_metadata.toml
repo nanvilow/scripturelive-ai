@@ -60,3 +60,9 @@ id = "R_7Rf4zR2U0ZUZD5p_i25"
 uri = "file://exports/scripturelive-ai-v0.5.36.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.36 source (drain + unexpected-close fix — supersedes v0.5.35)"
+
+[[outputs]]
+id = "sC2-REACE7QX-tp0Pox7L"
+uri = "file://exports/ScriptureLive-AI-v0.5.37-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.37 — source ZIP"
