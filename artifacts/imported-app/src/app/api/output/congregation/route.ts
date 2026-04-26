@@ -110,6 +110,17 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
      first poll lands. The renderer replaces this on first state. -->
 <div id="stage"><div id="output"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;color:#fff;text-align:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif"><div style="font-size:clamp(2rem,7vmin,7rem);font-weight:600;letter-spacing:-.01em;line-height:1.05;opacity:.4">Scripture AI</div><div style="margin-top:1.4vmin;font-size:clamp(.85rem,1.8vmin,1.6rem);opacity:.3;font-weight:500">Powered By WassMedia (+233246798526)</div></div></div></div>
 <script>
+// Surface any uncaught script error as a visible red banner instead of
+// silently leaving the splash up forever (which is exactly how the
+// regex-flag parse error masked itself for so many builds). Cheap
+// safety net — fires at the parser level, so it works even if the
+// rest of this script has a typo we missed during review.
+window.addEventListener('error', function(ev){
+  try{
+    var el=document.getElementById('output');
+    if(el){ el.innerHTML='<div style="position:fixed;inset:0;background:#400;color:#fff;font:14px monospace;padding:12px;white-space:pre-wrap;z-index:99999">[ScriptureLive] Renderer error: '+(ev&&ev.message)+'\\n  at '+(ev&&ev.filename)+':'+(ev&&ev.lineno)+':'+(ev&&ev.colno)+'</div>'; }
+  }catch(_e){}
+});
 const themes={worship:'theme-worship',sermon:'theme-sermon',easter:'theme-easter',christmas:'theme-christmas',praise:'theme-praise',minimal:'theme-minimal'};
 // Font registry mirrored from src/lib/fonts.ts so we can resolve
 // fontFamily keys (e.g. "playfair") to the same CSS stack the operator
@@ -521,7 +532,13 @@ function render(s){
   // Same Strong's-strip + HTML-escape used for the body — keeps the
   // reference line ("Galatians 2:5 — KJV") safe even if a translation
   // ever leaks markup into a book name.
-  function _stripRefStrong(t){return String(t==null?'':t).replace(/<S>[^<]*<\/S>/gi,'').replace(/<[^>]+>/g,'')}
+  // NOTE: \\\\/ (TS source) -> \\/ (browser JS) so the regex's closing-slash
+  // is escaped. Earlier versions used \\/ (TS) -> / (browser), which broke the
+  // regex literal at parse time and silently killed the entire <script> tag.
+  // That single bug was the root cause of every "kiosk shows splash forever"
+  // report — pollOnce() and the SSE handler were never reached because the
+  // script never finished parsing.
+  function _stripRefStrong(t){return String(t==null?'':t).replace(/<S>[^<]*<\\/S>/gi,'').replace(/<[^>]+>/g,'')}
   function _escRef(t){return _stripRefStrong(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
   var ref=st.showReferenceOnOutput!==false&&slide.title?'<div class="slide-reference" style="'+refStyle+'">'+_escRef(slide.title)+(slide.subtitle?' \\u2014 '+_escRef(slide.subtitle):'')+'</div>':'';
   var totalChars=0;
@@ -626,7 +643,8 @@ function render(s){
   // adjacent to the tag — e.g. "subjection" rendered as "ubjection",
   // "gospel" as "go pel". Strip Strong's first, then escape the rest
   // so any stray <, >, & in verse text never re-enters the DOM as HTML.
-  function stripStrong(t){return String(t==null?'':t).replace(/<S>[^<]*<\/S>/gi,'').replace(/<[^>]+>/g,'')}
+  // Same parse-time-safety fix as _stripRefStrong above. Keep as \\\\/ in TS.
+  function stripStrong(t){return String(t==null?'':t).replace(/<S>[^<]*<\\/S>/gi,'').replace(/<[^>]+>/g,'')}
   function esc(t){return stripStrong(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
   if(slide.type==='title'){
     txt='<div class="slide-title" style="font-size:'+fs.title+';'+sh+'">'+esc(slide.title)+'</div>'+(slide.subtitle?'<div class="slide-subtitle" style="font-size:'+fs.sub+';'+sh+'">'+esc(slide.subtitle)+'</div>':'');

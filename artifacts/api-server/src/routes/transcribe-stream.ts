@@ -72,7 +72,16 @@ export function attachTranscribeStream(server: HttpServer): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on("upgrade", (req: IncomingMessage, socket: Socket, head: Buffer) => {
-    const url = req.url || "";
+    let url = req.url || "";
+    // Replit's workspace-preview proxy forwards WS upgrades for the
+    // api-server through the `/__api-server` path prefix without
+    // stripping it (unlike production Cloud Run which serves the
+    // service at the root). Accept either form so the same client
+    // code (the renderer's WSS URL discovery) works in dev preview,
+    // an embedded Electron build, and a future split-domain prod.
+    if (url.startsWith("/__api-server/")) {
+      url = url.slice("/__api-server".length); // leave the leading slash
+    }
     if (!url.startsWith("/api/transcribe-stream")) return;
 
     const apiKey = process.env["DEEPGRAM_API_KEY"];
