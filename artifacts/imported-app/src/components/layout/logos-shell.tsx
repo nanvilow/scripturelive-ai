@@ -16,6 +16,7 @@ import { useAppStore } from '@/lib/store'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { SlideThumb } from '@/components/presenter/slide-renderer'
+import { StableStage } from '@/components/presenter/stable-stage'
 import { getFontStack } from '@/lib/fonts'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -945,7 +946,13 @@ function PreviewCard() {
         </div>
         <div className="flex-1 min-w-0 flex items-center justify-center">
           {previewSlide ? (
-            <div className="w-full max-w-full">
+            // v0.5.51 — wrap the rendered slide in a StableStage so
+            // the bible text stays still (and keeps every alignment)
+            // while the operator drags the column splitter between
+            // Preview and the panels next to it. Inside StableStage
+            // the stage is always 1920×1080 and only a GPU transform
+            // is animated on resize — text never reflows mid-drag.
+            <StableStage>
               {/* The Preview pane mirrors the Live pane's display-mode
                   composite so flipping Settings → Display Mode between
                   Full Screen and Lower Third reflects on Preview
@@ -958,7 +965,7 @@ function PreviewCard() {
                 themeKey={previewSlide.background || settings.congregationScreenTheme}
                 settings={settings}
               />
-            </div>
+            </StableStage>
           ) : (
             <div className="text-center text-[11px] text-zinc-600">
               <BookOpen className="h-8 w-8 mx-auto opacity-30 mb-2" />
@@ -1533,14 +1540,15 @@ function LiveDisplayCard({
             }
           if (!isLT) {
             return (
-              <div
-                className="relative w-full max-w-full"
-                style={{
-                  transform: `scale(${actualSize})`,
-                  transformOrigin: 'center',
-                  willChange: 'transform',
-                }}
-              >
+              // v0.5.51 — StableStage replaces the previous bare
+              // transform-scale wrapper. The user-supplied SIZE
+              // slider value (`actualSize`) is now multiplied on top
+              // of the auto-fit-to-column scale, so the slider still
+              // works exactly as before AND the bible text stays
+              // perfectly still while the operator drags the column
+              // splitter (no font-size jitter, no word-wrap shifts,
+              // no alignment drift mid-drag).
+              <StableStage scale={actualSize}>
                 <SlideThumb
                   slide={slide}
                   themeKey={liveSlide?.background || settings.congregationScreenTheme}
@@ -1548,7 +1556,7 @@ function LiveDisplayCard({
                   size="lg"
                   settings={settings}
                 />
-              </div>
+              </StableStage>
             )
           }
           // Build the verse reference + body the same way the
@@ -1571,14 +1579,15 @@ function LiveDisplayCard({
                   ? [slide.title]
                   : []
           return (
-            <div
-              className="relative w-full max-w-full"
-              style={{
-                transform: `scale(${actualSize})`,
-                transformOrigin: 'center',
-                willChange: 'transform',
-              }}
-            >
+            // v0.5.51 — same StableStage wrap as the full-screen
+            // branch above, applied to the lower-third composite
+            // path. Without this, dragging the column splitter
+            // re-evaluated `cqw`/`cqh` inside the LT bar every
+            // frame and the bible text inside the bar would jiggle
+            // and re-wrap as the column width changed. Now the LT
+            // bar lives inside a 1920×1080 reference stage that is
+            // simply scaled by transform — text is frozen.
+            <StableStage scale={actualSize}>
               <div className="relative w-full aspect-video bg-black overflow-hidden ring-1 ring-zinc-800">
                 {/* lower-third uses the themed/custom background as
                     backdrop; lower-third-black uses pure black so the
@@ -1687,7 +1696,7 @@ function LiveDisplayCard({
                   </Badge>
                 </div>
               </div>
-            </div>
+            </StableStage>
           )
         })()}
         {hidden && (
