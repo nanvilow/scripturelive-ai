@@ -349,7 +349,18 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
         // doesn't keep claiming we're "listening" to a dead socket.
         if (!stopRequestedRef.current) {
           const code = ev.code || 0
-          const reason = ev.reason || 'connection closed'
+          // 1006 is the browser's "abnormal closure" code — emitted
+          // when the WebSocket handshake itself failed or the remote
+          // host vanished without sending a close frame. The most
+          // common cause in this app is the WSS endpoint not having
+          // a WebSocket upgrade handler attached (e.g. pointing at
+          // the imported-app's Next.js domain instead of the
+          // api-server). Spell that out so the operator can fix it.
+          const reason =
+            ev.reason ||
+            (code === 1006
+              ? 'WebSocket could not be established — verify the streaming endpoint hosts the api-server (DEEPGRAM_API_KEY, /api/transcribe-stream upgrade handler).'
+              : 'connection closed')
           setError(`Live transcription disconnected (${code}: ${reason}).`)
           teardown()
         }

@@ -66,3 +66,9 @@ id = "sC2-REACE7QX-tp0Pox7L"
 uri = "file://exports/ScriptureLive-AI-v0.5.37-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.37 — source ZIP"
+
+[[outputs]]
+id = "NFAmg-6F3KrWBHC8zXotR"
+uri = "file://exports/ScriptureLive-AI-v0.5.39-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.39 — Deepgram WS 1006 disconnect fix"
