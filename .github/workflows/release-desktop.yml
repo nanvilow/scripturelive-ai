@@ -69,6 +69,24 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          # v0.5.55 — credentials baked into the .exe by
+          # scripts/inject-keys.mjs (the prebuild step). Configure each
+          # of these as a repo secret in Settings → Secrets and
+          # variables → Actions. If a secret is unset the inject script
+          # bakes an empty string and the corresponding feature
+          # (transcription / SMTP delivery / SMS delivery) silently
+          # disables itself in the packaged .exe.
+          OPENAI_API_KEY:   ${{ secrets.OPENAI_API_KEY }}
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+          MAIL_HOST:        ${{ secrets.MAIL_HOST }}
+          MAIL_USER:        ${{ secrets.MAIL_USER }}
+          MAIL_PASS:        ${{ secrets.MAIL_PASS }}
+          MAIL_FROM:        ${{ secrets.MAIL_FROM }}
+          MAIL_PORT:        ${{ secrets.MAIL_PORT }}
+          MAIL_SECURE:      ${{ secrets.MAIL_SECURE }}
+          SMS_API_KEY:      ${{ secrets.SMS_API_KEY }}
+          SMS_SENDER:       ${{ secrets.SMS_SENDER }}
+          SMS_SANDBOX:      ${{ secrets.SMS_SANDBOX }}
         run: pnpm --filter @workspace/imported-app run package:win
 
       - name: Resolve tag

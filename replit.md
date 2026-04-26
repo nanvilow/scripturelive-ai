@@ -2,6 +2,14 @@
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It supports live congregation output, NDI broadcasting, and advanced speech recognition. The system targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service.
 
+## v0.5.55 — Production build hotfix (Apr 2026)
+
+GitHub Actions Windows build (`Release ScriptureLive AI Desktop`) failed on `package:win` with two unrelated issues that together meant nobody could actually produce a `.exe` from v0.5.53 or v0.5.54:
+
+1. **Syntax error in `congregation/route.ts`.** Line 20 of that file opens one giant JavaScript template literal (`` const html = ` ``) that closes at line 936. My v0.5.53 comments at lines 268/271/275 included literal backticks around `` `vmin` ``, `` `vw` ``, and `` `text-{2xl,3xl,4xl,5xl}` ``. Inside a template literal those backticks were interpreted as the *closing* delimiter, which made the rest of the file parse as garbage. `next dev` (turbopack dev mode) is lenient about this and the workflow ran fine in dev; `next build` (turbopack production) refuses the file. Fix: stripped the backticks out of those three comment lines so the surrounding `` `<!DOCTYPE html>...</html>` `` template literal stays intact end-to-end.
+
+2. **GitHub Actions never passed the bake-time secrets.** `.github/workflows/release-desktop.yml` only forwarded the Windows code-signing certs (`CSC_LINK`, `CSC_KEY_PASSWORD`) into `package:win`. None of `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `MAIL_HOST/USER/PASS/FROM/PORT/SECURE`, or `SMS_API_KEY/SENDER/SANDBOX` were exposed to the runner, so `prebuild → scripts/inject-keys.mjs` baked all-empty constants into the cloud-built `.exe`. The local `BUILD.bat` flow against the source ZIP was unaffected (the operator's source ZIP ships with the baked files pre-populated). Fix: added explicit `env:` mappings in the `Build & package Windows installer` step so each secret travels into the bake. The operator must add the matching repo secrets in *Settings → Secrets and variables → Actions* for the cloud build to ship working credentials.
+
 ## v0.5.54 — SMTP + SMS baked into build (Apr 2026)
 
 Operator field report: "SMTP not configured / SMS not configured" banner appearing on every fresh install of the packaged .exe even though the credentials work fine in dev. Root cause: v0.5.53 only baked the renderer-side cloud keys (OpenAI, Deepgram); the server-side `notifications.ts`, `sms.ts`, `instrumentation.ts`, and `admin/list/route.ts` still read `process.env` directly. The packaged `.exe` runs on operator/customer Windows machines that have no `MAIL_*` / `SMS_*` env vars set, so the activation-email and activation-SMS pipelines silently fell through to "pending" and the admin banner permanently said "missing".
