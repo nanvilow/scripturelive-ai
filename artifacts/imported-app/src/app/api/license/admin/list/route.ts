@@ -22,12 +22,18 @@ export const dynamic = 'force-dynamic'
 // Mirrors the env-var checks done inline in lib/licensing/notifications
 // (sendEmailViaSmtp) and lib/licensing/sms (sendViaArkesel) — the same
 // fields that those modules look at, no more, no less.
+//
+// IMPORTANT: sendEmailViaSmtp treats MAIL_FROM as OPTIONAL — it falls
+// back to MAIL_USER when MAIL_FROM is not set (`from = MAIL_FROM ||
+// MAIL_USER`). So we must NOT require MAIL_FROM here; otherwise the
+// banner would falsely report "credentials missing" on installs that
+// can in fact send (Gmail SMTP being the canonical example, where
+// MAIL_USER doubles as the From address).
 function detectNotificationDelivery() {
   const smtpConfigured = !!(
     process.env.MAIL_HOST &&
     process.env.MAIL_USER &&
-    process.env.MAIL_PASS &&
-    process.env.MAIL_FROM
+    process.env.MAIL_PASS
   )
   const smsConfigured = !!process.env.SMS_API_KEY
   return { smtpConfigured, smsConfigured }

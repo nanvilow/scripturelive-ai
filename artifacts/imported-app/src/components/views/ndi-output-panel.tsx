@@ -176,7 +176,7 @@ export function NdiOutputPanel() {
             {isRunning ? (
               <>
                 <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                Broadcasting · 1080p30 · {status?.frameCount.toLocaleString() || 0} frames sent
+                Broadcasting · 1080p60 · {status?.frameCount.toLocaleString() || 0} frames sent
               </>
             ) : (
               <>
