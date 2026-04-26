@@ -11,11 +11,29 @@ const STRUCTURE = JSON.parse(
 
 const BOOK_ORDER = Object.keys(STRUCTURE).filter((k) => !k.startsWith('_'))
 
-const TRANSLATIONS = (process.argv.slice(2).length ? process.argv.slice(2) : ['kjv'])
+// v0.5.52 — operator decision is to bundle KJV + NIV + ESV, so the
+// default when no args are given is all three (not just KJV). Pass
+// explicit args to override (e.g. `node scripts/bundle-bibles.mjs kjv`).
+const TRANSLATIONS = (process.argv.slice(2).length ? process.argv.slice(2) : ['kjv', 'niv', 'esv'])
   .map((t) => t.toLowerCase())
 
 const OUT_DIR = path.join(repoRoot, 'src/data/bibles')
 fs.mkdirSync(OUT_DIR, { recursive: true })
+
+// Always write empty `{}` stubs for the three operator translations if
+// they are not present yet. This guarantees `next build` succeeds even
+// when the operator chose to skip the bundle step (or it failed on a
+// flaky network) — local-bible.ts then sees an empty object and
+// lookupVerse / lookupRange return null, so callers transparently fall
+// back to the online fetchBibleVerse path. FORCE=1 leaves the stubs
+// alone and lets the download below overwrite them.
+for (const t of ['kjv', 'niv', 'esv']) {
+  const f = path.join(OUT_DIR, `${t}.json`)
+  if (!fs.existsSync(f)) {
+    fs.writeFileSync(f, '{}')
+    console.log(`[stub]  wrote empty ${t}.json so the next build never errors on a missing import`)
+  }
+}
 
 function bookId(book) {
   const idx = BOOK_ORDER.indexOf(book)

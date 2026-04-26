@@ -446,7 +446,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   }, [hookListening, setIsListening])
 
   // ── Verse detection processing ─────────────────────────────────────
-  const processedRefsRef = useRef<Set<string>>(new Set())
+  // Map of refKey -> timestamp(ms) of last fire. The v2 reference
+  // engine consults this with a 30 s TTL so a passage spoken twice in
+  // the same service still re-detects the second time (architect-flag
+  // fix in v0.5.52). Legacy callers below treat presence as a session
+  // suppression and don't read the timestamp — they only check `.has`.
+  const processedRefsRef = useRef<Map<string, number>>(new Map())
+  const REF_DEDUPE_TTL_MS = 30_000
 
   // Use a ref-based callback so the hook always calls the latest version
   const processCallbackRef = useRef<(text: string) => Promise<void>>(async () => {})
@@ -706,8 +712,15 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           v2.verseEnd && v2.verseEnd !== v2.verseStart ? `-${v2.verseEnd}` : ''
         }`
         const dedupKey = `v2:${refKey}`
-        if (!processedRefsRef.current.has(dedupKey)) {
-          processedRefsRef.current = new Set(processedRefsRef.current).add(dedupKey)
+        const now = Date.now()
+        const lastAt = processedRefsRef.current.get(dedupKey) ?? 0
+        if (now - lastAt >= REF_DEDUPE_TTL_MS) {
+          // Prune stale entries opportunistically so the map doesn't grow
+          // unbounded across a long service.
+          for (const [k, ts] of processedRefsRef.current) {
+            if (now - ts >= REF_DEDUPE_TTL_MS) processedRefsRef.current.delete(k)
+          }
+          processedRefsRef.current.set(dedupKey, now)
           const tx = state.selectedTranslation
           const vEnd = v2.verseEnd ?? v2.verseStart
           // Try the bundled JSON first (instant). If the operator's
@@ -887,7 +900,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       for (const detectedRef of detectedRefs) {
         const ref = detectedRef.reference
         if (processedRefsRef.current.has(ref) || processedTextHitsRef.current.has(ref)) continue
-        processedRefsRef.current = new Set(processedRefsRef.current).add(ref)
+        processedRefsRef.current.set(ref, Date.now())
 
         try {
           const verse = await fetchBibleVerse(ref, state.selectedTranslation)
@@ -956,7 +969,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       console.log('[SpeechProvider] command:', speechCommand)
     }
     if (speechCommand === 'start') {
-      processedRefsRef.current = new Set()
+      processedRefsRef.current = new Map()
       // v0.5.44 — track WHEN we started so the auto-fallback effect
       // can scope its 8 s WS-failure window, and remember the
       // callback so the fallback path can re-arm it on the browser
@@ -980,7 +993,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       setLiveTranscript('')
       setLiveInterimTranscript('')
       useAppStore.getState().clearTranscriptBreaks()
-      processedRefsRef.current = new Set()
+      processedRefsRef.current = new Map()
       setSpeechCommand(null)
     }
   }, [
