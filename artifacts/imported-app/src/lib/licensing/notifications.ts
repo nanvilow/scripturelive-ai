@@ -26,6 +26,7 @@
 
 import { appendNotification, NotificationRecord } from './storage'
 import { NOTIFICATION_EMAIL, NOTIFICATION_WHATSAPP } from './plans'
+import { sendArkeselSms } from './sms'
 
 // ─── Email ──────────────────────────────────────────────────────────
 async function sendEmailViaSmtp(args: {
@@ -101,4 +102,32 @@ export async function notifyWhatsApp(args: {
 
 export function whatsappLink(toRaw: string, body: string): string {
   return waUrl(toRaw, body)
+}
+
+// ─── SMS (Arkesel) ──────────────────────────────────────────────────
+//
+// Used to deliver the activation code straight to the customer's
+// phone the moment the admin confirms their MoMo payment. The
+// `subject` field mirrors email/whatsapp for audit log consistency
+// but is NOT included in the actual SMS body — Arkesel charges per
+// segment so we keep the wire payload tight (just `body`).
+//
+// On success: appends a 'sent' notification with channel='sms'.
+// On failure: appends a 'pending' notification carrying the error
+// message; the operator will see it in the admin panel and can
+// re-send by hand if needed.
+export async function notifySms(args: {
+  to: string
+  subject: string
+  body: string
+}): Promise<NotificationRecord> {
+  const result = await sendArkeselSms({ to: args.to, message: args.body })
+  return appendNotification({
+    channel: 'sms',
+    to: args.to,
+    subject: args.subject,
+    body: args.body,
+    status: result.ok ? 'sent' : 'pending',
+    error: result.ok ? undefined : result.error,
+  })
 }

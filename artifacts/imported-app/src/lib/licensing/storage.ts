@@ -57,7 +57,7 @@ export interface ActivationCodeRecord {
 export interface NotificationRecord {
   id: string
   ts: string
-  channel: 'email' | 'whatsapp'
+  channel: 'email' | 'whatsapp' | 'sms'
   to: string
   subject: string
   body: string
