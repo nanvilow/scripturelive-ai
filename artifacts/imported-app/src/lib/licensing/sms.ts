@@ -69,16 +69,18 @@ export async function sendArkeselSms(args: {
   to: string
   message: string
 }): Promise<ArkeselSendResult> {
-  const apiKey = process.env.SMS_API_KEY
+  // v0.5.54 — env-var-or-baked. See baked-credentials.ts header.
+  const { getSmsApiKey, getSmsSender, getSmsSandbox } = await import('../baked-credentials')
+  const apiKey = getSmsApiKey()
   if (!apiKey) {
     return { ok: false, status: 'pending', error: 'SMS_API_KEY not configured' }
   }
-  const sender = (process.env.SMS_SENDER || 'ScriptureAI').slice(0, 11)
+  const sender = (getSmsSender() || 'ScriptureAI').slice(0, 11)
   const recipient = normalizeGhPhone(args.to)
   if (!recipient) {
     return { ok: false, status: 'pending', error: `Invalid recipient phone: "${args.to}"` }
   }
-  const url = process.env.SMS_SANDBOX === '1' ? ARKESEL_SANDBOX_URL : ARKESEL_LIVE_URL
+  const url = getSmsSandbox() === '1' ? ARKESEL_SANDBOX_URL : ARKESEL_LIVE_URL
 
   try {
     // eslint-disable-next-line no-console

@@ -30,7 +30,7 @@ echo. >> "%SL_LOG%"
 
 echo.
 echo ================================================================
-echo   ScriptureLive AI - One-click Windows Build  v0.5.53
+echo   ScriptureLive AI - One-click Windows Build  v0.5.54
 echo ================================================================
 echo   Full build log:   %SL_LOG%
 echo.
@@ -133,15 +133,17 @@ if not defined KOFFI_NODE (
 )
 echo       koffi binary OK at !KOFFI_NODE!
 
-REM ---- Step 3a: Bake operator's cloud transcription keys ----------
-REM v0.5.53 - scripts\inject-keys.mjs writes src\lib\keys.baked.ts
-REM with literal OPENAI_API_KEY + DEEPGRAM_API_KEY constants so the
-REM packaged .exe ships with working transcription out of the box.
-REM The script preserves any keys already in keys.baked.ts (i.e. the
-REM ones I shipped with this source ZIP) when no env vars are set,
-REM so the operator does NOT need to define anything in their shell.
+REM ---- Step 3a: Bake operator's credentials -----------------------
+REM v0.5.54 - scripts\inject-keys.mjs writes TWO source files with
+REM literal credentials so the packaged .exe ships with everything
+REM it needs out of the box:
+REM   src\lib\keys.baked.ts         -> renderer (OpenAI, Deepgram)
+REM   src\lib\baked-credentials.ts  -> server   (SMTP, Arkesel SMS)
+REM The script preserves whatever values are already in those files
+REM when no env vars are set, so the operator does NOT need to
+REM define anything in their shell.
 echo.
-echo [3a/5] Baking cloud transcription keys...
+echo [3a/5] Baking cloud + notification credentials...
 call node scripts\inject-keys.mjs >> "%SL_LOG%" 2>&1
 if errorlevel 1 (
   set "FAIL_STEP=inject-keys.mjs failed. Check Node version (must be 20+)."
@@ -151,7 +153,11 @@ if not exist "src\lib\keys.baked.ts" (
   set "FAIL_STEP=src\lib\keys.baked.ts missing after inject step. Re-extract the source ZIP."
   goto :DIE
 )
-echo       Cloud keys baked OK
+if not exist "src\lib\baked-credentials.ts" (
+  set "FAIL_STEP=src\lib\baked-credentials.ts missing after inject step. Re-extract the source ZIP."
+  goto :DIE
+)
+echo       Cloud + notification credentials baked OK
 
 REM ---- Step 3b: Bundle KJV + NIV + ESV scripture ------------------
 REM v0.5.52 - the offline Bible DB lives in src\data\bibles\*.json.

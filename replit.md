@@ -2,6 +2,14 @@
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It supports live congregation output, NDI broadcasting, and advanced speech recognition. The system targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service.
 
+## v0.5.54 — SMTP + SMS baked into build (Apr 2026)
+
+Operator field report: "SMTP not configured / SMS not configured" banner appearing on every fresh install of the packaged .exe even though the credentials work fine in dev. Root cause: v0.5.53 only baked the renderer-side cloud keys (OpenAI, Deepgram); the server-side `notifications.ts`, `sms.ts`, `instrumentation.ts`, and `admin/list/route.ts` still read `process.env` directly. The packaged `.exe` runs on operator/customer Windows machines that have no `MAIL_*` / `SMS_*` env vars set, so the activation-email and activation-SMS pipelines silently fell through to "pending" and the admin banner permanently said "missing".
+
+Fix: extended `scripts/inject-keys.mjs` to generate a SECOND baked file `src/lib/baked-credentials.ts` containing literal constants for `MAIL_HOST`, `MAIL_USER`, `MAIL_PASS`, `MAIL_FROM`, `MAIL_PORT`, `MAIL_SECURE`, `SMS_API_KEY`, `SMS_SENDER`, and `SMS_SANDBOX`, plus `getMailHost()` / `getSmsApiKey()` / etc. resolvers that prefer `process.env` and fall back to the baked literal. Updated `notifications.ts`, `sms.ts`, `instrumentation.ts`, and `admin/list/route.ts` to call those resolvers instead of touching `process.env` directly. Result: the .exe ships with working SMTP + SMS out of the box, no operator setup required, and a deployment that DOES set env vars (Replit/etc.) still wins via the env-first ordering.
+
+`baked-credentials.ts` is `.gitignored` (same secret-scanner protection as `keys.baked.ts`); the source-ZIP packager includes it explicitly. `BUILD.bat` Step 3a now hard-fails if either generated file is missing after the inject step.
+
 ## v0.5.53 — Operator follow-up (Apr 2026)
 
 Nine small operator-driven items addressing post-v0.5.52 field feedback. No new product surfaces; just polish, fixes, and trust signals.

@@ -23,21 +23,19 @@ export const dynamic = 'force-dynamic'
 // (sendEmailViaSmtp) and lib/licensing/sms (sendViaArkesel) — the same
 // fields that those modules look at, no more, no less.
 //
+// v0.5.54 — Detector now consults the baked-credentials resolver,
+// which prefers process.env when set and falls back to the values
+// baked into the .exe at build time. This is what fixed the post-
+// v0.5.53 operator complaint where the banner reported "SMTP not
+// configured" on every install — the packaged .exe has no env vars
+// by default but DOES carry the operator's keys baked in.
+//
 // IMPORTANT: sendEmailViaSmtp treats MAIL_FROM as OPTIONAL — it falls
-// back to MAIL_USER when MAIL_FROM is not set (`from = MAIL_FROM ||
-// MAIL_USER`). So we must NOT require MAIL_FROM here; otherwise the
-// banner would falsely report "credentials missing" on installs that
-// can in fact send (Gmail SMTP being the canonical example, where
-// MAIL_USER doubles as the From address).
-function detectNotificationDelivery() {
-  const smtpConfigured = !!(
-    process.env.MAIL_HOST &&
-    process.env.MAIL_USER &&
-    process.env.MAIL_PASS
-  )
-  const smsConfigured = !!process.env.SMS_API_KEY
-  return { smtpConfigured, smsConfigured }
-}
+// back to MAIL_USER when MAIL_FROM is not set. So we must NOT require
+// MAIL_FROM here; otherwise the banner would falsely report
+// "credentials missing" on installs that can in fact send (Gmail SMTP
+// being the canonical example, where MAIL_USER doubles as From).
+import { detectNotificationDelivery } from '@/lib/baked-credentials'
 
 export async function GET() {
   const f = getFile()
