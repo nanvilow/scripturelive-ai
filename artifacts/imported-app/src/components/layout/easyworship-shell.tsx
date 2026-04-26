@@ -54,6 +54,9 @@ import {
 import { useNdi } from '@/lib/use-electron'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { MonitorPlay } from 'lucide-react'
+// v0.5.44 — Activate / Trial / Active pill, rendered inline next to
+// the logo in the TopToolbar.
+import { LicenseTopBarButton } from '@/components/license/license-button'
 
 // ──────────────────────────────────────────────────────────────────────
 // Library tab definitions
@@ -581,7 +584,10 @@ export function TopToolbar({
             <p className="text-[9px] text-zinc-500 tracking-wide">Powered by WassMedia (+233246798526)</p>
           </div>
         </div>
-
+        {/* v0.5.44 — Activate / Trial / Active pill lives here, just
+            after the logo with a comfortable gap. Renders nothing
+            when status is still loading. */}
+        <LicenseTopBarButton />
       </div>
 
       <div className="flex items-center gap-2">

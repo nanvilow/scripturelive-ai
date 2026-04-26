@@ -96,3 +96,15 @@ id = "d7RUp0wDeXP_Cv9wbdLLv"
 uri = "file://screenshots/transcribe-test-page-loaded.jpg"
 type = "image"
 title = "Diagnostic page proof (v0.5.42)"
+
+[[outputs]]
+id = "28DXnZH5GqMpCPqbfAuPz"
+uri = "file://exports/ScriptureLive-AI-v0.5.44-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.44 source (inline pill + dual-engine speech)"
+
+[[outputs]]
+id = "lkkL-kWeqO433npo3zBug"
+uri = "file://screenshots/v0.5.44-pill-top-left.jpg"
+type = "image"
+title = "v0.5.44 — pill moved to top-left next to logo"
