@@ -16,6 +16,23 @@ import { getFile, computeStatus } from '@/lib/licensing/storage'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+// v0.5.50 — Tells the admin panel which delivery channels actually
+// have credentials configured, so the operator can see at a glance
+// (and from a banner) why notifications are stuck in 'pending' state.
+// Mirrors the env-var checks done inline in lib/licensing/notifications
+// (sendEmailViaSmtp) and lib/licensing/sms (sendViaArkesel) — the same
+// fields that those modules look at, no more, no less.
+function detectNotificationDelivery() {
+  const smtpConfigured = !!(
+    process.env.MAIL_HOST &&
+    process.env.MAIL_USER &&
+    process.env.MAIL_PASS &&
+    process.env.MAIL_FROM
+  )
+  const smsConfigured = !!process.env.SMS_API_KEY
+  return { smtpConfigured, smsConfigured }
+}
+
 export async function GET() {
   const f = getFile()
   const status = computeStatus()
@@ -39,5 +56,6 @@ export async function GET() {
     paymentCodes: recent(f.paymentCodes, 30),
     activationCodes: recent(f.activationCodes, 30),
     notifications: recent(f.notifications, 30),
+    notificationDelivery: detectNotificationDelivery(),
   }, { headers: { 'Cache-Control': 'no-store' } })
 }

@@ -88,11 +88,15 @@ export function NdiOutputPanel() {
         if (!res.ok) toast.error(res.error || 'Failed to stop NDI')
         else toast.success('NDI output stopped')
       } else {
+        // v0.5.50 — bumped capture rate from 30 → 60 fps so vMix /
+        // OBS receive a smoother feed (the previous 30 fps capture
+        // was the main source of operator complaints about the NDI
+        // looking less crisp than the in-app Live Display).
         const res = await desktop.ndi.start({
           name: sourceName.trim() || 'ScriptureLive AI',
           width: 1920,
           height: 1080,
-          fps: 30,
+          fps: 60,
         })
         if (!res.ok) toast.error(res.error || 'Failed to start NDI')
         else toast.success(`Broadcasting "${sourceName}" on the LAN`)
