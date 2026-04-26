@@ -2,7 +2,13 @@
 
 import { useEffect, useCallback, useRef } from 'react'
 import { useSpeechRecognition } from '@/hooks/use-speech-recognition'
-import { useWhisperSpeechRecognition } from '@/hooks/use-whisper-speech-recognition'
+// v0.5.35 — Whisper hook replaced by Deepgram streaming. The
+// public hook interface is unchanged; only the underlying engine
+// switched from chunked OpenAI Whisper to real-time Deepgram
+// Nova-3 streaming via the api-server WebSocket proxy. The old
+// `use-whisper-speech-recognition.ts` file is intentionally kept
+// in the repo as a fallback we can wire back in via env if needed.
+import { useDeepgramStreaming as useWhisperSpeechRecognition } from '@/hooks/use-deepgram-streaming'
 import { useAppStore } from '@/lib/store'
 
 // Detected once at module load — userAgent is stable for the session,

@@ -17,6 +17,46 @@ Format rules (so the workflow's extractor keeps working):
 - Write for the operator, not the engineer. "Verses now appear within
   ~250ms" beats "reduced CHUNK_MS from 4500 to 2500".
 
+## v0.5.35 — 2026-04-26
+
+### Changed
+
+- **Live Transcription is now real-time.** Replaced the chunked Whisper
+  loop (which posted a fresh 2.5-second audio clip every cycle) with
+  Deepgram Nova-3 streaming over a single WebSocket. Words now appear
+  in the transcript panel within ~250 ms of being spoken instead of
+  waiting for the next 2.5-second chunk to upload, transcribe, and
+  return. Verse detection fires the moment the speaker finishes the
+  reference, not seconds later.
+- **Bible book names are pre-boosted.** Every Deepgram session is
+  primed with all 66 Bible book names (in singular, "1/2/3", and
+  spoken "First/Second/Third" forms) plus reference vocabulary
+  ("chapter", "verse", "turn to", "the Bible says"). Hard-to-spell
+  books like Habakkuk, Zephaniah, and Philippians now transcribe
+  reliably; previously Whisper would mishear them as everyday words
+  and verse detection would silently miss the reference.
+
+### Fixed
+
+- **No more silence-hallucinations in the transcript panel.** Whisper
+  used to invent phrases like "thanks for watching", "subscribe", and
+  "you" during natural pauses in speech. Deepgram does not. The
+  v0.5.30 hallucination blocklist is no longer needed because the
+  source no longer produces those phrases at all.
+- **Mid-utterance verses are no longer split by chunk boundaries.** The
+  old chunked path could cut a reference in half ("…three" / "sixteen")
+  and never recognise it. Streaming sees the whole utterance as one
+  continuous transcript.
+
+### Notes for operators
+
+After installing this update, the api-server on Replit must be
+republished so the new `/api/transcribe-stream` WebSocket endpoint is
+live on `scripturelive.replit.app`. Until then, the desktop app's
+transcription will surface a "Live transcription unavailable" error
+on the Live Display footer. The shared Deepgram key lives only on
+Replit and is never installed on customer machines.
+
 ## v0.5.33 — 2026-04-25
 
 ### Fixed
