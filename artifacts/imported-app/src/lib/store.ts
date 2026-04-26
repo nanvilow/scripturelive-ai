@@ -246,6 +246,27 @@ interface AppState {
   bibleOnlyTranscription: boolean
   setBibleOnlyTranscription: (b: boolean) => void
 
+  // v0.5.49 — Speech engine source picker.
+  //
+  // `preferredEngine` is the operator's CHOICE for which engine to use:
+  //   • 'auto'     — start with Deepgram, auto-fallback through the
+  //                  ENGINE_CHAIN (Deepgram → Whisper → Browser) on
+  //                  structural failures (default).
+  //   • 'deepgram' — pin to Deepgram, no fallback. If it fails, the
+  //                  operator sees the error and stays on Deepgram.
+  //   • 'whisper'  — pin to OpenAI Whisper.
+  //   • 'browser'  — pin to the native browser Web Speech API.
+  // Persisted: the operator's choice should survive a relaunch.
+  //
+  // `activeEngineName` is the engine currently RUNNING in the
+  // SpeechProvider — useful for the LiveTranscription card to display
+  // "Auto · Deepgram" vs "Auto · Whisper" so the operator knows which
+  // engine actually picked up after a fallback. Not persisted.
+  preferredEngine: 'auto' | 'deepgram' | 'whisper' | 'browser'
+  setPreferredEngine: (e: 'auto' | 'deepgram' | 'whisper' | 'browser') => void
+  activeEngineName: 'deepgram' | 'whisper' | 'browser'
+  setActiveEngineName: (e: 'deepgram' | 'whisper' | 'browser') => void
+
   // Slides
   slides: Slide[]
   setSlides: (s: Slide[]) => void
@@ -558,6 +579,14 @@ export const useAppStore = create<AppState>()(
       bibleOnlyTranscription: true,
       setBibleOnlyTranscription: (b) => set({ bibleOnlyTranscription: b }),
 
+      // v0.5.49 — Speech engine source picker. `auto` lets the
+      // SpeechProvider pick Deepgram and fall back through the chain
+      // on structural failures; the explicit choices pin the engine.
+      preferredEngine: 'auto',
+      setPreferredEngine: (e) => set({ preferredEngine: e }),
+      activeEngineName: 'deepgram',
+      setActiveEngineName: (e) => set({ activeEngineName: e }),
+
       // Slides
       slides: [],
       setSlides: (s) => set({ slides: s, previewSlideIndex: 0, liveSlideIndex: -1 }),
@@ -797,6 +826,8 @@ export const useAppStore = create<AppState>()(
         // never freezes its own input pipeline silently.
         micGain: state.micGain,
         bibleOnlyTranscription: state.bibleOnlyTranscription,
+        // v0.5.49 — operator's engine preference survives a relaunch.
+        preferredEngine: state.preferredEngine,
       }),
     }
   )

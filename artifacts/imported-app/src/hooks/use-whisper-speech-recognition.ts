@@ -35,6 +35,18 @@ const FIRST_CHUNK_MS = 1500
 // Reduced from 6 KB to match the new shorter chunk size — 6 KB at
 // 2.5 s would suppress real but quiet speech.
 const MIN_CHUNK_BYTES = 3 * 1024
+// v0.5.49 — Voice activity detection (VAD) silence floor. The peak
+// RMS observed in the chunk window must exceed this threshold or the
+// chunk is dropped before upload. Whisper otherwise hallucinates
+// "Thanks for watching" / "Subtitles by …" / "[Music]" on near-silent
+// audio (prayer, song breaks, mic-on-but-no-speech). 0.008 (≈ -42 dB
+// FS RMS over a chunk) reliably catches normal soft speech while
+// killing room tone, fan noise, AC hum, and silence.
+const VAD_RMS_THRESHOLD = 0.008
+// VAD analyser sample interval. Cheap getFloatTimeDomainData read +
+// RMS calc; running it every 50 ms gives 50 RMS samples per 2.5 s
+// chunk, plenty of resolution to catch a brief utterance.
+const VAD_SAMPLE_MS = 50
 
 interface UseWhisperSpeechRecognitionReturn {
   isListening: boolean
@@ -91,6 +103,18 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
   const gainNodeRef = useRef<GainNode | null>(null)
   const micPausedRef = useRef(false)
   const micGainRef = useRef(1)
+  // v0.5.49 — VAD analyser. The Source node is fanned out to BOTH the
+  // gain → MediaStreamDestination (which feeds MediaRecorder) AND this
+  // analyser, so the recorder is unaffected. A 50 ms interval polls
+  // getFloatTimeDomainData and updates `maxRmsInWindowRef` (peak RMS
+  // since the last chunk rotation). `chunkIdToMaxRmsRef` snapshots
+  // that peak per chunk-id at the moment of `ondataavailable`, so
+  // `upload(id)` can decide post-facto whether to drop the chunk as
+  // silence regardless of which session/timing it arrives in.
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const vadTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const maxRmsInWindowRef = useRef(0)
+  const chunkIdToMaxRmsRef = useRef<Map<number, number>>(new Map())
 
   // Mirror the live store values into refs so the long-lived
   // ondataavailable closure and audio graph see the latest operator
@@ -158,6 +182,22 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
       drainOrdered()
       return
     }
+    // v0.5.49 — VAD silence gate. The peak RMS captured during this
+    // chunk's window must exceed VAD_RMS_THRESHOLD; otherwise the
+    // chunk is room tone / fan noise / pure silence and we drop it
+    // without billing OpenAI or risking a hallucinated transcript.
+    // Falls open (allows upload) when no VAD reading was captured —
+    // happens when the AudioContext is unavailable in the host
+    // environment, in which case we revert to the v0.5.48 behaviour
+    // and rely on MIN_CHUNK_BYTES alone.
+    const peakRms = chunkIdToMaxRmsRef.current.get(id)
+    chunkIdToMaxRmsRef.current.delete(id)
+    if (peakRms !== undefined && peakRms < VAD_RMS_THRESHOLD) {
+      if (!stillCurrent()) return
+      pendingByIdRef.current.set(id, '')
+      drainOrdered()
+      return
+    }
     try {
       const fd = new FormData()
       fd.append('audio', blob, 'chunk.webm')
@@ -197,6 +237,17 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
       clearInterval(chunkTimerRef.current)
       chunkTimerRef.current = null
     }
+    // v0.5.49 — tear down the VAD analyser interval alongside the
+    // chunk timer so we don't leak setIntervals across stop/start
+    // cycles. The AnalyserNode itself is GC'd with the AudioContext
+    // close() below.
+    if (vadTimerRef.current) {
+      clearInterval(vadTimerRef.current)
+      vadTimerRef.current = null
+    }
+    analyserRef.current = null
+    maxRmsInWindowRef.current = 0
+    chunkIdToMaxRmsRef.current.clear()
     const rec = recorderRef.current
     recorderRef.current = null
     if (rec && rec.state !== 'inactive') {
@@ -268,6 +319,32 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
             const dest = ctx.createMediaStreamDestination()
             source.connect(gain)
             gain.connect(dest)
+            // v0.5.49 — Fan the source out to a VAD analyser as well.
+            // It runs in parallel with the gain → recorder pipeline,
+            // so it doesn't affect the captured audio at all. We pin
+            // fftSize to 2048 (~46 ms of samples at 44.1 kHz) — small
+            // enough that getFloatTimeDomainData every 50 ms reads a
+            // fresh window each time.
+            const analyser = ctx.createAnalyser()
+            analyser.fftSize = 2048
+            source.connect(analyser)
+            analyserRef.current = analyser
+            // Reset the rolling peak so a fresh session starts clean.
+            maxRmsInWindowRef.current = 0
+            const tdata = new Float32Array(analyser.fftSize)
+            vadTimerRef.current = setInterval(() => {
+              const a = analyserRef.current
+              if (!a) return
+              try {
+                a.getFloatTimeDomainData(tdata)
+              } catch {
+                return // analyser disposed mid-tick
+              }
+              let sumSq = 0
+              for (let i = 0; i < tdata.length; i++) sumSq += tdata[i] * tdata[i]
+              const rms = Math.sqrt(sumSq / tdata.length)
+              if (rms > maxRmsInWindowRef.current) maxRmsInWindowRef.current = rms
+            }, VAD_SAMPLE_MS)
             audioCtxRef.current = ctx
             gainNodeRef.current = gain
             recordingStream = dest.stream
@@ -296,6 +373,18 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
         recorder.ondataavailable = (ev) => {
           if (!ev.data || ev.data.size === 0) return
           const id = segmentSeqRef.current++
+          // v0.5.49 — Snapshot the peak RMS captured during this chunk's
+          // recording window so `upload()` can apply the VAD threshold.
+          // We only record a value when the analyser actually ran in
+          // this environment; missing => upload() falls open.
+          if (analyserRef.current) {
+            chunkIdToMaxRmsRef.current.set(id, maxRmsInWindowRef.current)
+          }
+          // Reset the rolling peak for the NEXT chunk window. The
+          // recorder.stop() in rotateChunk() fires this ondataavailable
+          // synchronously before recorder.start() on the new instance,
+          // so resetting here cleanly partitions samples between chunks.
+          maxRmsInWindowRef.current = 0
           upload(ev.data, id, sessionAtStart)
         }
         recorder.onerror = (ev) => {

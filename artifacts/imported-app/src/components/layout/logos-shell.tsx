@@ -53,6 +53,8 @@ import {
   AlignJustify,
   Check,
   Zap,
+  Cpu,
+  Lock,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -70,6 +72,10 @@ import { TopToolbar, TransportBar } from '@/components/layout/easyworship-shell'
 // v1 LICENSING — overlay rendered inside the Live Transcription Card
 // when the subscription is not active.
 import { LiveTranscriptionLockOverlay } from '@/components/license/lock-overlay'
+// v0.5.49 — Read isLocked here so the action buttons (Bible / Clear /
+// Mic / Auto) can render disabled instead of letting clicks slip past
+// the backdrop-blur overlay onto the underlying mic.
+import { useLicense } from '@/components/license/license-provider'
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -287,8 +293,25 @@ function LiveTranscriptionCard() {
   // sermon doesn't leave 2 000 lines of unrelated chatter on screen.
   const bibleOnlyTranscription = useAppStore((s) => s.bibleOnlyTranscription)
   const setBibleOnlyTranscription = useAppStore((s) => s.setBibleOnlyTranscription)
+  // v0.5.49 — Engine picker (Auto / Deepgram / Whisper / Browser).
+  // Operators occasionally need to pin one engine when, e.g., their
+  // venue's network blocks Deepgram WSS but Whisper HTTP works fine,
+  // or their bundled Electron build can't reach the browser-engine
+  // upstream. We also surface the currently-active engine so they
+  // know which one actually picked up after a fallback.
+  const preferredEngine = useAppStore((s) => s.preferredEngine)
+  const setPreferredEngine = useAppStore((s) => s.setPreferredEngine)
+  const activeEngineName = useAppStore((s) => s.activeEngineName)
+  // v0.5.49 — Subscription gate. The lock overlay covers the body
+  // visually (backdrop-blur), but earlier the action buttons in the
+  // Card header sat OUTSIDE that overlay's z-stack and remained
+  // clickable. Reading isLocked here lets us short-circuit each
+  // handler AND render the buttons visually inert (disabled +
+  // opacity drop) so the locked state is unambiguous.
+  const { isLocked } = useLicense()
 
   const toggleMic = () => {
+    if (isLocked) return // v0.5.49 — locked subscription, no-op
     // v0.5.42 — `speechSupported` is forced TRUE by SpeechProvider in
     // any browser-like environment because the Deepgram engine works
     // wherever there is mic + WebSocket + AudioContext. The legacy
@@ -300,6 +323,32 @@ function LiveTranscriptionCard() {
     console.log('[mic-button] click. supported =', speechSupported, ' isListening =', isListening)
     setSpeechCommand(isListening ? 'stop' : 'start')
   }
+
+  // v0.5.49 — Engine label for the picker trigger. We keep the visible
+  // text to a single short token so the badge never wraps inside a
+  // narrow ResizablePanel. The COLOUR of the dot before the label
+  // tells the operator which engine is currently doing the work
+  // (emerald = Deepgram, amber = Whisper, sky = Browser). When the
+  // mic is hot the dot also pulses to preserve the live cue. The full
+  // "Auto · Deepgram" / pinned-name explanation lives in the tooltip
+  // and the dropdown items themselves.
+  const engineShort: Record<typeof activeEngineName, string> = {
+    deepgram: 'DG',
+    whisper: 'WH',
+    browser: 'BR',
+  }
+  const engineLabel =
+    preferredEngine === 'auto' ? 'AUTO' : engineShort[preferredEngine]
+  const engineDotColor =
+    activeEngineName === 'deepgram'
+      ? 'bg-emerald-400'
+      : activeEngineName === 'whisper'
+        ? 'bg-amber-400'
+        : 'bg-sky-400'
+  const engineTitle =
+    preferredEngine === 'auto'
+      ? `Engine: Auto (active: ${activeEngineName}). Click to pin.`
+      : `Engine pinned to ${preferredEngine}. Click to change.`
 
   // Build paragraphs by slicing the running transcript at every
   // detection break point. The speech provider pushes a break index
@@ -372,24 +421,61 @@ function LiveTranscriptionCard() {
     <Card
       title="Live Transcription"
       badge={
-        <Badge
-          className={cn(
-            'h-4 px-1.5 text-[9px] uppercase tracking-wider font-semibold border',
-            isListening
-              ? 'bg-rose-500/15 text-rose-300 border-rose-500/40 animate-pulse'
-              : 'bg-zinc-800 text-zinc-400 border-zinc-700',
-          )}
-        >
-          {isListening ? '● Listening' : 'Idle'}
-        </Badge>
+        // v0.5.49 — The engine picker lives in the BADGE slot now. The
+        // mic Button below already conveys listening state (rose color
+        // + MicOff icon + "Stop" label when active), so the legacy
+        // Listening/Idle pill was redundant. Putting the picker here
+        // frees the actions row for the four control buttons (Bible /
+        // Clear / Mic / Auto) and gives the engine badge full breathing
+        // room. The dot before the label pulses when the mic is hot,
+        // preserving the "live" cue.
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              title={engineTitle}
+              className={cn(
+                'inline-flex items-center gap-1 h-5 px-1.5 rounded-md text-[9px] uppercase tracking-wider font-semibold border whitespace-nowrap',
+                'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-700',
+              )}
+            >
+              <span
+                className={cn(
+                  'inline-block h-1.5 w-1.5 rounded-full',
+                  engineDotColor,
+                  isListening && 'animate-pulse',
+                )}
+              />
+              {engineLabel}
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[14rem]">
+            {([
+              { v: 'auto',     label: 'Auto (recommended)',    sub: 'Deepgram → Whisper → Browser fallback' },
+              { v: 'deepgram', label: 'Deepgram (streaming)',  sub: 'Lowest latency, requires WSS' },
+              { v: 'whisper',  label: 'OpenAI Whisper',        sub: '~2.5 s chunks via HTTPS' },
+              { v: 'browser',  label: 'Browser (Web Speech)',  sub: 'Last-ditch, lower accuracy' },
+            ] as const).map((opt) => (
+              <DropdownMenuItem
+                key={opt.v}
+                onClick={() => setPreferredEngine(opt.v)}
+                className="flex flex-col items-start gap-0.5"
+              >
+                <span className="flex items-center gap-2 text-[12px] font-medium">
+                  {preferredEngine === opt.v && <Check className="h-3 w-3 text-emerald-400" />}
+                  {opt.label}
+                </span>
+                <span className="text-[10px] text-zinc-500 pl-5">{opt.sub}</span>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       }
       actions={
         <div className="flex items-center gap-1">
-          {/* Clear Transcription — wipes the running transcript and
-              the detection break markers without stopping the mic.
-              Routes through the speech provider's `reset` command so
-              recognition stays connected and the next utterance starts
-              a fresh paragraph. */}
+          {/* Bible / Clear / Mic / Auto — all gated on isLocked so a
+              locked subscription can't slip a click through the
+              backdrop-blur overlay onto the mic. */}
           {/* v0.5.30 — Bible-only filter toggle. ON by default. When
               ON we show only paragraphs containing a Bible reference;
               when OFF the operator sees the full raw transcript (the
@@ -398,9 +484,13 @@ function LiveTranscriptionCard() {
               you're looking at a curated view". */}
           <Button
             size="sm"
-            onClick={() => setBibleOnlyTranscription(!bibleOnlyTranscription)}
+            disabled={isLocked}
+            aria-disabled={isLocked}
+            onClick={() => { if (isLocked) return; setBibleOnlyTranscription(!bibleOnlyTranscription) }}
             title={
-              bibleOnlyTranscription
+              isLocked
+                ? 'Activate a subscription to use Live Transcription controls.'
+                : bibleOnlyTranscription
                 ? 'Bible-only filter ON — only verses appear. Click to show full transcript.'
                 : 'Showing full transcript. Click to filter to Bible references only.'
             }
@@ -409,40 +499,61 @@ function LiveTranscriptionCard() {
               bibleOnlyTranscription
                 ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
                 : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-700',
+              isLocked && 'opacity-50 cursor-not-allowed pointer-events-none',
             )}
           >
-            <BookOpen className="h-3 w-3" />
+            {isLocked ? <Lock className="h-3 w-3" /> : <BookOpen className="h-3 w-3" />}
             {bibleOnlyTranscription ? 'Bible' : 'All'}
           </Button>
           <Button
             size="sm"
-            onClick={() => setSpeechCommand('reset')}
-            title="Clear transcription"
-            className="h-7 px-2 text-[10px] uppercase tracking-wider gap-1 font-semibold bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700"
+            disabled={isLocked}
+            aria-disabled={isLocked}
+            onClick={() => { if (isLocked) return; setSpeechCommand('reset') }}
+            title={isLocked ? 'Activate a subscription to use Live Transcription controls.' : 'Clear transcription'}
+            className={cn(
+              'h-7 px-2 text-[10px] uppercase tracking-wider gap-1 font-semibold bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700',
+              isLocked && 'opacity-50 cursor-not-allowed pointer-events-none',
+            )}
           >
-            <Trash2 className="h-3 w-3" />
+            {isLocked ? <Lock className="h-3 w-3" /> : <Trash2 className="h-3 w-3" />}
             Clear
           </Button>
           <Button
             size="sm"
+            disabled={isLocked}
+            aria-disabled={isLocked}
             onClick={toggleMic}
+            title={isLocked ? 'Activate a subscription to enable Live Transcription.' : undefined}
             className={cn(
               'h-7 px-2.5 text-[10px] uppercase tracking-wider gap-1.5 font-semibold',
-              isListening
+              isLocked
+                ? 'bg-zinc-700 text-zinc-300'
+                : isListening
                 ? 'bg-rose-600 hover:bg-rose-700 text-white'
                 : 'bg-sky-600 hover:bg-sky-700 text-white',
+              isLocked && 'opacity-60 cursor-not-allowed pointer-events-none',
             )}
           >
-            {isListening ? <MicOff className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
-            {isListening ? 'Stop' : isLive ? 'Listening' : 'Detect Verses Now'}
+            {isLocked
+              ? <Lock className="h-3 w-3" />
+              : isListening ? <MicOff className="h-3 w-3" /> : <Mic className="h-3 w-3" />
+            }
+            {isLocked
+              ? 'Locked'
+              : isListening ? 'Stop' : isLive ? 'Listening' : 'Detect Verses Now'}
           </Button>
           {/* AUTO Display: when ON, every detected scripture is auto-staged
               and auto-sent to Live Display without an operator click. */}
           <Button
             size="sm"
-            onClick={() => setAutoLive(!autoLive)}
+            disabled={isLocked}
+            aria-disabled={isLocked}
+            onClick={() => { if (isLocked) return; setAutoLive(!autoLive) }}
             title={
-              autoLive
+              isLocked
+                ? 'Activate a subscription to use AUTO Display.'
+                : autoLive
                 ? 'AUTO Display ON — detected verses go live automatically. Click to disable.'
                 : 'AUTO Display OFF — verses preview only. Click to auto-send to Live Display.'
             }
@@ -451,9 +562,10 @@ function LiveTranscriptionCard() {
               autoLive
                 ? 'bg-amber-500 hover:bg-amber-400 text-black border-amber-300 shadow-md shadow-amber-500/30'
                 : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-700',
+              isLocked && 'opacity-50 cursor-not-allowed pointer-events-none',
             )}
           >
-            <Zap className={cn('h-3 w-3', autoLive && 'fill-black')} />
+            {isLocked ? <Lock className="h-3 w-3" /> : <Zap className={cn('h-3 w-3', autoLive && 'fill-black')} />}
             Auto
           </Button>
         </div>
