@@ -2,42 +2,106 @@
 
 import { useEffect, useCallback, useRef, useState } from 'react'
 import { toast } from 'sonner'
-// v0.5.44 — DUAL-ENGINE WITH AUTO-FALLBACK.
+// v0.5.45 — TRIPLE-ENGINE WITH AUTO-FALLBACK CHAIN.
 //
-// Field report after v0.5.42/43 shipped: the dev preview throws WS
-// 1006 ("WebSocket could not be established") when the operator
-// clicks the mic, because the Replit iframe proxy's WS upgrade is
-// flaky for the api-server's /api/transcribe-stream route. Operators
-// running the packaged Electron build get a clean Deepgram path
-// (api-server is on localhost:3001 and the upgrade handler is
-// always reachable), but anyone testing in a browser through a
-// reverse proxy could see the silent-mic experience.
+// v0.5.44 added a 2-engine fallback (Deepgram -> browser Web Speech).
+// v0.5.45 inserts the OpenAI Whisper engine (the original "previous
+// one" the operator asked back in) as the middle tier. The chain is:
 //
-// v0.5.44 mounts BOTH engines:
-//   - Deepgram streaming (preferred, server-grade accuracy + interim)
-//   - Web Speech API (browser-native, works without WSS)
+//   1. Deepgram streaming     (preferred — real-time WS, interim
+//                              transcripts, server-grade accuracy)
+//   2. OpenAI Whisper         (HTTP, ~2.5 s chunks via /api/transcribe;
+//                              uses OPENAI_API_KEY directly when set,
+//                              else the api-server proxy in Electron)
+//   3. Web Speech API         (browser-native, last-ditch fallback,
+//                              works offline-ish but lower accuracy)
+//
+// All three hooks expose the identical surface (transcript, interim,
+// isListening, isSupported, error, startListening, stopListening,
+// resetTranscript), so the rest of the provider reads from a single
+// "active" engine without branching downstream.
+//
 // On startListening:
-//   1. We try Deepgram first.
-//   2. If Deepgram surfaces an error containing "WebSocket" /
-//      "1006" / "connection failed" within 4 s, we automatically
-//      stop Deepgram and restart with the browser engine, then
-//      surface a one-time toast so the operator knows the
-//      fallback engaged.
-//   3. The active engine name is mirrored into the store as
-//      `speechEngine` ('deepgram' | 'browser') for any UI that
-//      wants to badge it.
-// Once a session has fallen back, we remember that for the rest of
-// the session so we don't keep retrying Deepgram and bouncing the
-// audio graph. The operator can force a retry by toggling the mic
-// off and on again from a fresh page load.
+//   - We try Deepgram first.
+//   - If its error within 8 s contains "WebSocket" / "1006" /
+//     "connection failed" / "could not be established" /
+//     "disconnected", we stop it and advance to Whisper.
+//   - If Whisper's error within 8 s contains "503" / "openai" /
+//     "api key" / "fetch" / "network" / "upstream" / "proxy" /
+//     "HTTP 4xx/5xx", we stop it and advance to the browser engine.
+//   - Each advance fires a one-time sonner toast so the operator
+//     always sees which engine ended up running.
+// Once a session has advanced through the chain we don't retry the
+// earlier engines until the next page load — alternative is a
+// thrashing audio graph and confused state.
 import { useDeepgramStreaming } from '@/hooks/use-deepgram-streaming'
+import { useWhisperSpeechRecognition } from '@/hooks/use-whisper-speech-recognition'
 import { useSpeechRecognition } from '@/hooks/use-speech-recognition'
 import { useAppStore } from '@/lib/store'
 import { detectVersesInTextWithScore, fetchBibleVerse, PREACHER_ATTRIBUTION } from '@/lib/bible-api'
 import type { BibleSearchHit } from '@/lib/bible-api'
 import type { DetectedVerse } from '@/lib/store'
 
-type EngineName = 'deepgram' | 'browser'
+type EngineName = 'deepgram' | 'whisper' | 'browser'
+
+// Ordered fallback chain. Index 0 is the preferred engine. nextEngine
+// returns the name of the next engine in the chain, or null if we're
+// at the end.
+const ENGINE_CHAIN: EngineName[] = ['deepgram', 'whisper', 'browser']
+function nextEngine(cur: EngineName): EngineName | null {
+  const i = ENGINE_CHAIN.indexOf(cur)
+  if (i < 0) return null
+  return ENGINE_CHAIN[i + 1] ?? null
+}
+
+// Returns true if the engine's error message looks like a structural
+// failure (cannot reach backend, key missing, WS won't upgrade, etc.) —
+// i.e. something the operator cannot fix mid-service and that we
+// should auto-route around.
+function isStructuralError(engine: EngineName, msg: string): boolean {
+  const e = msg.toLowerCase()
+  if (engine === 'deepgram') {
+    return (
+      e.includes('websocket') ||
+      e.includes('1006') ||
+      e.includes('connection failed') ||
+      e.includes('could not be established') ||
+      e.includes('disconnected')
+    )
+  }
+  if (engine === 'whisper') {
+    return (
+      e.includes('503') ||
+      e.includes('502') ||
+      e.includes('504') ||
+      e.includes('500') ||
+      e.includes('openai') ||
+      e.includes('api key') ||
+      e.includes('quota') ||
+      e.includes('fetch') ||
+      e.includes('network') ||
+      e.includes('upstream') ||
+      e.includes('proxy') ||
+      e.includes('http ')
+    )
+  }
+  return false
+}
+
+// One-time human-readable toast copy per engine handoff.
+const ENGINE_LABELS: Record<EngineName, string> = {
+  deepgram: 'Deepgram',
+  whisper: 'OpenAI Whisper',
+  browser: 'browser speech engine',
+}
+function fallbackToastCopy(from: EngineName, to: EngineName): { title: string; description: string } {
+  return {
+    title: `Live transcription switched to ${ENGINE_LABELS[to]}`,
+    description:
+      `${ENGINE_LABELS[from]} was unreachable in this environment, so we automatically fell back to ${ENGINE_LABELS[to]}. ` +
+      `Detection and auto-go-live still work.`,
+  }
+}
 
 /**
  * SpeechProvider - Persistent speech recognition that survives view navigation.
@@ -49,33 +113,49 @@ type EngineName = 'deepgram' | 'browser'
  * user is on a different page/tab.
  */
 export function SpeechProvider({ children }: { children: React.ReactNode }) {
-  // ── Both engines mounted unconditionally ───────────────────────────
-  // Mounting both is cheap — neither opens the mic or any WebSocket
-  // until startListening() is called. Reading from both on every
-  // render does mean we re-render slightly more, which is acceptable.
+  // ── All three engines mounted unconditionally ──────────────────────
+  // Mounting all three is cheap — none of them opens the mic, a
+  // MediaRecorder, or a WebSocket until startListening() is called.
+  // Reading from each on every render means a few extra refs but no
+  // measurable overhead.
   const dgEngine = useDeepgramStreaming()
+  const wsEngine = useWhisperSpeechRecognition()
   const brEngine = useSpeechRecognition()
 
-  // Currently active engine. Defaults to Deepgram (better accuracy);
-  // auto-flips to 'browser' if Deepgram fails to establish a WS in
-  // the user's environment (e.g. behind a reverse proxy that doesn't
-  // forward Upgrade headers).
+  // Currently active engine. Defaults to Deepgram (best accuracy +
+  // lowest latency); the auto-fallback effect below advances it
+  // through ENGINE_CHAIN whenever the active engine surfaces a
+  // structural error within the post-start window.
   const [activeEngine, setActiveEngine] = useState<EngineName>('deepgram')
-  // Once we've fallen back this session, stay fallen back. Avoids the
-  // "keep trying Deepgram, audio graph thrashes every time" loop.
-  const fallenBackRef = useRef(false)
-  // Timestamp of the most recent startListening() — used to scope the
-  // 4 s fallback window so we don't auto-fall-back days later when an
-  // unrelated network blip happens to mention "WebSocket".
+  // Tracks how many times we've stepped down the chain in this
+  // session. Once we've stepped, we don't go back — the alternative
+  // is a thrashing audio graph and OS mic indicator flashes every
+  // time the WS to Deepgram retries.
+  const fallbackStepsRef = useRef(0)
+  // Timestamp of the most recent startListening() (or fallback
+  // startListening) — used to scope the 8 s structural-failure
+  // window per engine so an unrelated network blip days later
+  // doesn't auto-step.
   const startedAtRef = useRef(0)
   // Holds the latest stableProcessCallback so the fallback path can
-  // re-arm browser.startListening with the same transcript handler.
+  // re-arm the next engine's startListening with the same transcript
+  // handler.
   const lastCallbackRef = useRef<((text: string) => void) | null>(null)
-  // One-shot guard so the "switched to browser" toast only fires once
-  // per session.
-  const announcedFallbackRef = useRef(false)
+  // One-shot guards so each handoff toast only fires once per
+  // session and direction (e.g. dg->whisper toast, whisper->browser
+  // toast).
+  const announcedHandoffsRef = useRef<Set<string>>(new Set())
 
-  const engine = activeEngine === 'deepgram' ? dgEngine : brEngine
+  // Read from whichever engine is currently active. All three hooks
+  // expose the identical surface (verified at compile time by the
+  // shared destructure below — TS errors here would mean a hook
+  // signature drift).
+  const engine =
+    activeEngine === 'deepgram'
+      ? dgEngine
+      : activeEngine === 'whisper'
+      ? wsEngine
+      : brEngine
   const {
     transcript: hookTranscript,
     interimTranscript: hookInterim,
@@ -116,87 +196,115 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     if (typeof window !== 'undefined') {
       // eslint-disable-next-line no-console
       console.log(
-        '[SpeechProvider] dual-engine: deepgramSupported =',
+        '[SpeechProvider] triple-engine: deepgramSupported =',
         dgEngine.isSupported,
+        '  whisperSupported =',
+        wsEngine.isSupported,
         '  browserSupported =',
         brEngine.isSupported,
         '  active =',
         activeEngine,
       )
     }
-  }, [dgEngine.isSupported, brEngine.isSupported, activeEngine, setSpeechSupported])
+  }, [dgEngine.isSupported, wsEngine.isSupported, brEngine.isSupported, activeEngine, setSpeechSupported])
 
-  // ── Auto-fallback: Deepgram WS failure → browser engine ────────────
-  // We watch the Deepgram engine's error stream while the active
-  // engine is still Deepgram. If, within 4 s of starting, the error
-  // mentions WebSocket / 1006 / "connection failed" / "could not be
-  // established", we treat that as a structural environment failure
-  // (no WS upgrade, blocked port, etc.) and silently swap to the
-  // browser engine. The operator sees a single toast + a console log
-  // explaining the swap so this is never invisible.
+  // ── Auto-fallback: structural failure on active engine → next ──────
+  // Watches whichever engine is currently active. If, within 8 s of
+  // the latest startListening, that engine surfaces an error matching
+  // its structural-failure regex (WS 1006 for Deepgram, HTTP/network
+  // for Whisper), we tear it down, advance activeEngine to the next
+  // entry in ENGINE_CHAIN, and re-arm startListening with the same
+  // callback. Browser engine is the last link — if it fails, the
+  // hookError surface still lights up but we don't try to step
+  // beyond it.
   useEffect(() => {
-    if (activeEngine !== 'deepgram') return
-    if (fallenBackRef.current) return
-    if (!dgEngine.error) return
+    // Pick the live engine handle for the current active name. We
+    // index off this rather than dgEngine directly so the same
+    // effect handles each step in the chain.
+    const liveEngine =
+      activeEngine === 'deepgram' ? dgEngine : activeEngine === 'whisper' ? wsEngine : brEngine
+
+    if (!liveEngine.error) return
     const since = Date.now() - startedAtRef.current
     if (startedAtRef.current === 0 || since > 8_000) return
+    if (!isStructuralError(activeEngine, liveEngine.error)) return
 
-    const err = dgEngine.error.toLowerCase()
-    const isStructural =
-      err.includes('websocket') ||
-      err.includes('1006') ||
-      err.includes('connection failed') ||
-      err.includes('could not be established') ||
-      err.includes('disconnected')
-    if (!isStructural) return
-
-    if (!brEngine.isSupported) {
-      // No fallback available — leave the Deepgram error visible
-      // so the operator knows what to fix.
+    const target = nextEngine(activeEngine)
+    if (!target) {
+      // We're already on the last engine. Surface the error to the
+      // operator via the hookError pipe — nothing else we can do.
       // eslint-disable-next-line no-console
-      console.error('[SpeechProvider] Deepgram failed AND browser engine unavailable:', dgEngine.error)
+      console.error(
+        '[SpeechProvider] last engine in chain failed (',
+        activeEngine,
+        '):',
+        liveEngine.error,
+      )
       return
     }
 
-    fallenBackRef.current = true
+    // The next engine must actually be supported in this environment;
+    // otherwise step PAST it and try the one after. (E.g. browser
+    // engine would be unsupported in a server-side render context.)
+    let chosen: EngineName | null = target
+    while (chosen) {
+      const candidate = chosen === 'deepgram' ? dgEngine : chosen === 'whisper' ? wsEngine : brEngine
+      if (candidate.isSupported) break
+      chosen = nextEngine(chosen)
+    }
+    if (!chosen) {
+      // eslint-disable-next-line no-console
+      console.error(
+        '[SpeechProvider] no remaining engines support this environment after',
+        activeEngine,
+        'failed.',
+      )
+      return
+    }
+
+    const from = activeEngine
+    fallbackStepsRef.current += 1
     // eslint-disable-next-line no-console
     console.warn(
-      '[SpeechProvider] Deepgram failed (',
-      dgEngine.error,
-      ') — switching to browser engine and restarting.',
+      `[SpeechProvider] ${from} failed (`,
+      liveEngine.error,
+      `) — switching to ${chosen} and restarting.`,
     )
 
-    // Tear down Deepgram's audio graph + WS so the OS mic indicator
-    // goes off and the dead engine stops re-emitting errors.
-    try { dgEngine.stopListening() } catch { /* ignore */ }
+    // Tear down the failed engine's audio graph / WS / recorder so
+    // the OS mic indicator goes off and the dead engine stops
+    // re-emitting errors into our error effect.
+    try { liveEngine.stopListening() } catch { /* ignore */ }
 
-    setActiveEngine('browser')
+    setActiveEngine(chosen)
 
-    // Re-arm the browser engine with the same callback the operator
-    // last requested. We defer one tick so React commits the engine
+    // Re-arm the next engine with the same callback the operator
+    // last requested. Defer one tick so React commits the engine
     // swap before we fire startListening on the new instance.
     const cb = lastCallbackRef.current
+    const nextHandle = chosen === 'deepgram' ? dgEngine : chosen === 'whisper' ? wsEngine : brEngine
     setTimeout(() => {
       try {
         // eslint-disable-next-line no-console
-        console.log('[SpeechProvider] -> brEngine.startListening() (fallback)')
-        brEngine.startListening(cb ?? undefined)
+        console.log(`[SpeechProvider] -> ${chosen}.startListening() (fallback)`)
+        nextHandle.startListening(cb ?? undefined)
         startedAtRef.current = Date.now()
       } catch (e) {
         // eslint-disable-next-line no-console
-        console.error('[SpeechProvider] browser fallback start failed:', e)
+        console.error(`[SpeechProvider] ${chosen} fallback start failed:`, e)
       }
     }, 0)
 
-    if (!announcedFallbackRef.current) {
-      announcedFallbackRef.current = true
-      toast.message('Live transcription switched to browser engine', {
-        description:
-          'Deepgram streaming is unreachable in this environment, so we automatically fell back to the browser speech engine. Detection and auto-go-live still work.',
+    const handoffKey = `${from}->${chosen}`
+    if (!announcedHandoffsRef.current.has(handoffKey)) {
+      announcedHandoffsRef.current.add(handoffKey)
+      const copy = fallbackToastCopy(from, chosen)
+      toast.message(copy.title, {
+        description: copy.description,
         duration: 6000,
       })
     }
-  }, [activeEngine, dgEngine, brEngine])
+  }, [activeEngine, dgEngine, wsEngine, brEngine])
 
   useEffect(() => {
     setSpeechError(hookError)
