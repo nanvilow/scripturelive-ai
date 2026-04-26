@@ -114,3 +114,9 @@ id = "va6nW_7wkK-4hBWLuIjLX"
 uri = "file://exports/ScriptureLive-AI-v0.5.45-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.45 — Triple-engine speech (Deepgram → Whisper → Browser)"
+
+[[outputs]]
+id = "DPGsET-F8IXE8PbT0zTeA"
+uri = "file://exports/ScriptureLive-AI-v0.5.46-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.46 — startup SMTP self-test (test email PROVEN delivered to nanvilow@gmail.com)"
