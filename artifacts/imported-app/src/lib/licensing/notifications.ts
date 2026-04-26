@@ -52,9 +52,15 @@ async function sendEmailViaSmtp(args: {
   try {
     // nodemailer is a heavy import — only load when actually configured.
     const nm = await import('nodemailer')
+    // v0.5.54 — defensively coerce port: invalid/NaN/0 -> 587. The
+    // inject script already filters placeholder values like
+    // MAIL_PORT="MAIL_PORT", but a runtime override via process.env
+    // could still be garbage, so guard at use-site too.
+    const portRaw = Number(getMailPort())
+    const port = Number.isFinite(portRaw) && portRaw > 0 && portRaw < 65536 ? portRaw : 587
     const tx = nm.createTransport({
       host,
-      port: Number(getMailPort() || 587),
+      port,
       secure: getMailSecure() === '1',
       auth: { user, pass },
     })
