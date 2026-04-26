@@ -103,6 +103,12 @@ export interface RuntimeConfig {
   notifyEmail?: string
   /** Per-plan price override map: { '1M': 250, '6M': 1100, ... } */
   planPriceOverrides?: Partial<Record<string, number>>
+  /** v0.5.52 — Override the BAKED OpenAI Whisper key. When empty,
+   *  the renderer uses NEXT_PUBLIC_SCRIPTURELIVE_OPENAI_KEY. */
+  adminOpenAIKey?: string
+  /** v0.5.52 — Override the BAKED Deepgram key. When empty,
+   *  the renderer uses NEXT_PUBLIC_SCRIPTURELIVE_DEEPGRAM_KEY. */
+  adminDeepgramKey?: string
   /** Last time the owner saved this config (ISO) — for audit display */
   updatedAt?: string
 }
