@@ -1,0 +1,43 @@
+// GET /api/license/admin/list
+//
+// Returns the full audit-state the admin panel needs:
+//   - active subscription
+//   - all payment codes (filterable; default = last 30 by createdAt desc)
+//   - all activation codes (last 30 by generatedAt desc)
+//   - last 30 notifications (especially useful when SMTP isn't wired —
+//     the operator can copy text out of the panel into their own
+//     email / WhatsApp client)
+//
+// No mutation; safe to poll.
+
+import { NextResponse } from 'next/server'
+import { getFile, computeStatus } from '@/lib/licensing/storage'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+export async function GET() {
+  const f = getFile()
+  const status = computeStatus()
+  const recent = <T extends { createdAt?: string; generatedAt?: string; ts?: string }>(arr: T[], n: number) =>
+    [...arr]
+      .sort((a, b) => (b.createdAt ?? b.generatedAt ?? b.ts ?? '').localeCompare(a.createdAt ?? a.generatedAt ?? a.ts ?? ''))
+      .slice(0, n)
+
+  return NextResponse.json({
+    installId: f.installId,
+    firstLaunchAt: f.firstLaunchAt,
+    masterCode: f.masterCode,
+    masterCodeEmailedAt: f.masterCodeEmailedAt,
+    activeSubscription: f.activeSubscription,
+    status: {
+      state: status.state,
+      daysLeft: status.daysLeft,
+      msLeft: Math.min(status.msLeft, Number.MAX_SAFE_INTEGER),
+      isMaster: status.isMaster,
+    },
+    paymentCodes: recent(f.paymentCodes, 30),
+    activationCodes: recent(f.activationCodes, 30),
+    notifications: recent(f.notifications, 30),
+  }, { headers: { 'Cache-Control': 'no-store' } })
+}

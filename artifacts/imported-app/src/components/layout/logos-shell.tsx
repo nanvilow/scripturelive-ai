@@ -67,6 +67,9 @@ import {
 } from '@/components/ui/popover'
 import { BibleLookupCompact } from '@/components/layout/library-compact'
 import { TopToolbar, TransportBar } from '@/components/layout/easyworship-shell'
+// v1 LICENSING — overlay rendered inside the Live Transcription Card
+// when the subscription is not active.
+import { LiveTranscriptionLockOverlay } from '@/components/license/lock-overlay'
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -455,6 +458,11 @@ function LiveTranscriptionCard() {
           </Button>
         </div>
       }
+      // v1 LICENSING — make the Card body a positioning context so the
+      // lock overlay below can `absolute inset-0` the entire visible
+      // pane (not the scroll content). `flex flex-col` is preserved
+      // from the Card primitive default.
+      bodyClassName="relative"
     >
       <div
         ref={transcriptScrollRef}
@@ -497,6 +505,13 @@ function LiveTranscriptionCard() {
           )}
         </div>
       </div>
+      {/* v1 LICENSING — Live Transcription is the gated feature. When
+          the subscription is not active (trial expired / never
+          activated / expired) this overlay covers the entire body and
+          presents the "Activate AI Detection Now" CTA. While trial or
+          active, useLicense().isLocked is false and the overlay
+          renders nothing — the transcript is fully usable. */}
+      <LiveTranscriptionLockOverlay />
     </Card>
   )
 }
