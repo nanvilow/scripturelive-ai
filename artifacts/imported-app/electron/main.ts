@@ -1778,42 +1778,20 @@ app.whenReady().then(async () => {
     console.error('[tray] init failed (non-fatal):', err)
   }
 
-  // ── Auto-start NDI sender ─────────────────────────────────────
-  // The whole point of "one-click NDI" is that the user shouldn't have
-  // to click anything. As soon as the app is up and the NDI runtime is
-  // present, fire up the sender on its own with sensible defaults so
-  // the source appears in vMix / Wirecast / OBS / NDI Studio Monitor
-  // immediately on the LAN. The user can stop it from the NDI panel
-  // if they don't want it.
+  // ── NDI sender is OPT-IN as of v0.5.49 ────────────────────────
+  // Earlier builds auto-started the NDI sender at app launch so the
+  // source appeared on the LAN with no clicks. Customer feedback
+  // (April 2026): they don't want the desktop app broadcasting their
+  // service to the LAN until they explicitly say so — auto-broadcast
+  // pushed slides into vMix / OBS sessions that were preparing
+  // unrelated content. The sender now starts ONLY when the operator
+  // clicks "Start NDI Output" in the NDI Output panel; the IPC
+  // handlers (`ndi:start` / `ndi:stop`) below remain wired to the
+  // same FrameCapture pipeline so manual start works identically.
   if (ndi.isAvailable()) {
-    try {
-      await ndi.start({ name: 'ScriptureLive AI', width: 1920, height: 1080, fps: 30 })
-      frameCapture = new FrameCapture({
-        baseUrl: appBaseUrl,
-        onFrame: (buf, w, h) => ndi.sendFrame(buf, w, h),
-        onStatus: (msg) => broadcastNdiStatus({ ...ndi.getStatus(), captureMessage: msg }),
-      })
-      await frameCapture.start({
-        width: 1920,
-        height: 1080,
-        fps: 30,
-        // ?ndi=1 → renderer treats this as the NDI surface and uses
-        // settings.ndiDisplayMode (Full / Lower Third) instead of the
-        // projector's displayMode, so the operator's choice in
-        // Settings → NDI actually takes effect.
-        path: '/api/output/congregation?ndi=1',
-        transparent: false,
-      })
-      broadcastNdiStatus(ndi.getStatus())
-      console.log('[ndi] auto-started sender "ScriptureLive AI" @ 1080p30')
-    } catch (err) {
-      console.error('[ndi] auto-start failed (non-fatal):', err)
-      try { if (frameCapture) await frameCapture.stop() } catch { /* ignore */ }
-      frameCapture = null
-      try { await ndi.stop() } catch { /* ignore */ }
-    }
+    console.log('[ndi] runtime detected — sender NOT started (manual start required as of v0.5.49)')
   } else {
-    console.log('[ndi] runtime not detected — sender not auto-started:', ndi.unavailableReason())
+    console.log('[ndi] runtime not detected:', ndi.unavailableReason())
   }
 })
 

@@ -122,11 +122,18 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   const wsEngine = useWhisperSpeechRecognition()
   const brEngine = useSpeechRecognition()
 
-  // Currently active engine. Defaults to Deepgram (best accuracy +
-  // lowest latency); the auto-fallback effect below advances it
-  // through ENGINE_CHAIN whenever the active engine surfaces a
-  // structural error within the post-start window.
-  const [activeEngine, setActiveEngine] = useState<EngineName>('deepgram')
+  // v0.5.49 — Honor the operator's engine preference. `preferredEngine`
+  // is read once at mount to seed activeEngine; the auto-fallback chain
+  // below is gated on `preferredEngine === 'auto'` so a pinned engine
+  // never silently switches to another one.
+  const preferredEngine = useAppStore((s) => s.preferredEngine)
+  const setActiveEngineNameInStore = useAppStore((s) => s.setActiveEngineName)
+  const initialEngine: EngineName = preferredEngine === 'auto' ? 'deepgram' : preferredEngine
+  // Currently active engine. With preferredEngine === 'auto' the
+  // auto-fallback effect below advances it through ENGINE_CHAIN
+  // whenever the active engine surfaces a structural error within the
+  // post-start window. With a pinned preference we stay put.
+  const [activeEngine, setActiveEngine] = useState<EngineName>(initialEngine)
   // Tracks how many times we've stepped down the chain in this
   // session. Once we've stepped, we don't go back — the alternative
   // is a thrashing audio graph and OS mic indicator flashes every
@@ -150,6 +157,56 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // whether to enforce the 8 s window or fall back unconditionally
   // on a structural error (cold-start handshake can exceed 8 s).
   const sawTranscriptRef = useRef(false)
+
+  // v0.5.49 — Race guard for engine switches. Both the auto-fallback
+  // effect and the mid-session preferredEngine-change effect defer
+  // their `startListening()` call by one tick (so React commits the
+  // activeEngine state swap first). If the operator rapid-fires the
+  // engine picker, two stale starts could land in order, leaving
+  // activeEngine state out of sync with whichever engine is actually
+  // hot. We defend in two layers:
+  //   1. `engineSwitchGenRef` increments on every scheduled switch
+  //      and the deferred callback aborts unless its captured gen
+  //      still equals the latest gen.
+  //   2. `pendingStartTimerRef` holds the active timer handle so a
+  //      newer switch can `clearTimeout()` the previous one before
+  //      it ever fires. Belt + suspenders — the gen check alone is
+  //      enough, but cancelling the timer is cheap and reduces log
+  //      noise.
+  const engineSwitchGenRef = useRef(0)
+  const pendingStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const scheduleEngineStart = (
+    target: EngineName,
+    handle: { startListening: (cb?: (t: string) => void) => void },
+    cb: ((text: string) => void) | null,
+    label: string,
+  ) => {
+    const gen = ++engineSwitchGenRef.current
+    if (pendingStartTimerRef.current !== null) {
+      clearTimeout(pendingStartTimerRef.current)
+      pendingStartTimerRef.current = null
+    }
+    pendingStartTimerRef.current = setTimeout(() => {
+      pendingStartTimerRef.current = null
+      // Stale-switch guard. If a newer scheduleEngineStart was queued
+      // after us, gen will have advanced and we abort silently.
+      if (gen !== engineSwitchGenRef.current) {
+        // eslint-disable-next-line no-console
+        console.log(`[SpeechProvider] (stale) ${label} → ${target} aborted (gen ${gen} < ${engineSwitchGenRef.current})`)
+        return
+      }
+      try {
+        // eslint-disable-next-line no-console
+        console.log(`[SpeechProvider] -> ${target}.startListening() (${label})`)
+        handle.startListening(cb ?? undefined)
+        startedAtRef.current = Date.now()
+        sawTranscriptRef.current = false
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error(`[SpeechProvider] ${target} ${label} start failed:`, e)
+      }
+    }, 0)
+  }
 
   // Read from whichever engine is currently active. All three hooks
   // expose the identical surface (verified at compile time by the
@@ -228,6 +285,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // hookError surface still lights up but we don't try to step
   // beyond it.
   useEffect(() => {
+    // v0.5.49 — Skip the entire fallback chain when the operator has
+    // pinned a specific engine. They explicitly chose Deepgram /
+    // Whisper / Browser; silently switching to another one would
+    // contradict that choice. Pinned engines surface their error
+    // through the existing speechError pipe instead.
+    if (preferredEngine !== 'auto') return
+
     // Pick the live engine handle for the current active name. We
     // index off this rather than dgEngine directly so the same
     // effect handles each step in the chain.
@@ -237,21 +301,17 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     if (!liveEngine.error) return
     if (startedAtRef.current === 0) return
     if (!isStructuralError(activeEngine, liveEngine.error)) return
-    // v0.5.48 — was: gate on `since > 8_000`. Reality: the user can
-    // open the app, immediately hit the mic, and Deepgram's
-    // /api/transcribe-stream/info → WS handshake takes longer than
-    // 8 s on a cold server (e.g. deployed Replit Autoscale spinning
-    // up). When the WS finally fails with 1006 we'd skip fallback
-    // because the window had elapsed, leaving the operator stuck
-    // with a dead engine and no transcript. New rule:
-    //   - If we have NEVER received a transcript in this session,
-    //     ALWAYS fall back on a structural error regardless of
-    //     elapsed time.
-    //   - If we've previously received transcripts (i.e. the engine
-    //     was working and then broke), keep the 8 s window so a
-    //     transient mid-service blip doesn't cycle engines.
+    // v0.5.49 — Tightened the post-start window from 8 s to 3 s.
+    // Operator complaint: the previous 8 s wait meant they sat
+    // staring at a dead transcription panel for 8 seconds before
+    // anything happened. With Deepgram cold-start fixed in v0.5.48,
+    // 3 s is plenty for the WS handshake on any reachable network;
+    // anything longer is a real failure that should fall back fast.
+    //   - Never received a transcript yet → ALWAYS fall back.
+    //   - Already produced transcripts → respect the 3 s window so a
+    //     transient mid-service network blip doesn't cycle engines.
     const since = Date.now() - startedAtRef.current
-    if (sawTranscriptRef.current && since > 8_000) return
+    if (sawTranscriptRef.current && since > 3_000) return
 
     const target = nextEngine(activeEngine)
     if (!target) {
@@ -305,20 +365,11 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     // Re-arm the next engine with the same callback the operator
     // last requested. Defer one tick so React commits the engine
     // swap before we fire startListening on the new instance.
+    // v0.5.49 — `scheduleEngineStart` carries a generation token +
+    // cancellable timer so a rapid second switch supersedes us.
     const cb = lastCallbackRef.current
     const nextHandle = chosen === 'deepgram' ? dgEngine : chosen === 'whisper' ? wsEngine : brEngine
-    setTimeout(() => {
-      try {
-        // eslint-disable-next-line no-console
-        console.log(`[SpeechProvider] -> ${chosen}.startListening() (fallback)`)
-        nextHandle.startListening(cb ?? undefined)
-        startedAtRef.current = Date.now()
-        sawTranscriptRef.current = false
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.error(`[SpeechProvider] ${chosen} fallback start failed:`, e)
-      }
-    }, 0)
+    scheduleEngineStart(chosen, nextHandle, cb, 'fallback')
 
     const handoffKey = `${from}->${chosen}`
     if (!announcedHandoffsRef.current.has(handoffKey)) {
@@ -329,7 +380,50 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         duration: 6000,
       })
     }
-  }, [activeEngine, dgEngine, wsEngine, brEngine])
+  }, [activeEngine, dgEngine, wsEngine, brEngine, preferredEngine])
+
+  // v0.5.49 — Mirror the live activeEngine name into the store so the
+  // LiveTranscription card can show "Auto · Deepgram" / "Auto · Whisper"
+  // / "Auto · Browser" badges. Cheap one-liner effect; the store
+  // selector below is a no-op when the value is unchanged.
+  useEffect(() => {
+    setActiveEngineNameInStore(activeEngine)
+  }, [activeEngine, setActiveEngineNameInStore])
+
+  // v0.5.49 — React to a mid-session `preferredEngine` change. If the
+  // operator switches from "Auto" to "Whisper" while the mic is hot, we
+  // tear down the current engine (which may be Deepgram), swap activeEngine
+  // to the chosen one, and restart the new engine with the same callback.
+  // Switching TO "Auto" simply re-enables the fallback chain — we don't
+  // forcibly hop back to Deepgram, the operator's current engine keeps
+  // running until it errors structurally.
+  const lastPreferredRef = useRef(preferredEngine)
+  useEffect(() => {
+    if (lastPreferredRef.current === preferredEngine) return
+    lastPreferredRef.current = preferredEngine
+    if (preferredEngine === 'auto') return // no forced swap
+
+    const target: EngineName = preferredEngine
+    if (activeEngine === target) return // already on it
+
+    const fromHandle =
+      activeEngine === 'deepgram' ? dgEngine : activeEngine === 'whisper' ? wsEngine : brEngine
+    const wasListening = fromHandle.isListening
+    try { fromHandle.stopListening() } catch { /* ignore */ }
+
+    setActiveEngine(target)
+    fallbackStepsRef.current = 0
+    sawTranscriptRef.current = false
+    announcedHandoffsRef.current = new Set()
+
+    if (wasListening) {
+      const cb = lastCallbackRef.current
+      const nextHandle = target === 'deepgram' ? dgEngine : target === 'whisper' ? wsEngine : brEngine
+      // v0.5.49 — race-safe via scheduleEngineStart (gen token +
+      // cancellable timer). Rapid picker toggles supersede each other.
+      scheduleEngineStart(target, nextHandle, cb, 'preferredEngine-swap')
+    }
+  }, [preferredEngine, activeEngine, dgEngine, wsEngine, brEngine])
 
   useEffect(() => {
     setSpeechError(hookError)
