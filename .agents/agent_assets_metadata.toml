@@ -42,3 +42,21 @@ id = "Qeeen8jlrstBM-RcWQduj"
 uri = "file://exports/ScriptureLive-AI-v0.5.33-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.33 — source ZIP"
+
+[[outputs]]
+id = "SXHIvEZMjDwrSqEHC5NbM"
+uri = "file://exports/scripturelive-ai-v0.5.34.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.34 (auto-go-live default ON)"
+
+[[outputs]]
+id = "iuVTIdqe9IdNeWgopps9y"
+uri = "file://exports/scripturelive-ai-v0.5.35.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.35 source (Deepgram streaming)"
+
+[[outputs]]
+id = "R_7Rf4zR2U0ZUZD5p_i25"
+uri = "file://exports/scripturelive-ai-v0.5.36.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.36 source (drain + unexpected-close fix — supersedes v0.5.35)"
