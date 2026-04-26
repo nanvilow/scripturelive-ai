@@ -38,18 +38,30 @@ async function sendEmailViaSmtp(args: {
   subject: string
   body: string
 }): Promise<{ ok: true } | { ok: false; error: string }> {
-  const host = process.env.MAIL_HOST
-  const user = process.env.MAIL_USER
-  const pass = process.env.MAIL_PASS
-  const from = process.env.MAIL_FROM || user
+  // v0.5.54 — env-var-or-baked. The packaged .exe has no env vars
+  // set by default, so we fall back to the credentials baked at
+  // build time. Operator can still override at runtime by setting
+  // MAIL_HOST etc in the deployment environment.
+  const { getMailHost, getMailUser, getMailPass, getMailFrom, getMailPort, getMailSecure } =
+    await import('../baked-credentials')
+  const host = getMailHost()
+  const user = getMailUser()
+  const pass = getMailPass()
+  const from = getMailFrom() || user
   if (!host || !user || !pass || !from) return { ok: false, error: 'SMTP not configured' }
   try {
     // nodemailer is a heavy import — only load when actually configured.
     const nm = await import('nodemailer')
+    // v0.5.54 — defensively coerce port: invalid/NaN/0 -> 587. The
+    // inject script already filters placeholder values like
+    // MAIL_PORT="MAIL_PORT", but a runtime override via process.env
+    // could still be garbage, so guard at use-site too.
+    const portRaw = Number(getMailPort())
+    const port = Number.isFinite(portRaw) && portRaw > 0 && portRaw < 65536 ? portRaw : 587
     const tx = nm.createTransport({
       host,
-      port: Number(process.env.MAIL_PORT || 587),
-      secure: process.env.MAIL_SECURE === '1',
+      port,
+      secure: getMailSecure() === '1',
       auth: { user, pass },
     })
     await tx.sendMail({ from, to: args.to, subject: args.subject, text: args.body })

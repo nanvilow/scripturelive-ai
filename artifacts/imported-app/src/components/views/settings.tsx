@@ -1951,10 +1951,6 @@ function VoiceControlCard() {
           </div>
           <Switch checked={speakerFollowEnabled} onCheckedChange={setSpeakerFollowEnabled} />
         </div>
-        <p className="text-[11px] text-muted-foreground">
-          Speech engine is managed by the administrator. Cloud keys live in the Admin panel
-          (<kbd className="px-1 py-0.5 rounded bg-muted font-mono text-[10px]">Ctrl+Shift+P</kbd>).
-        </p>
       </CardContent>
     </Card>
   )

@@ -310,7 +310,7 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
       const dgKey = getDeepgramKey()
       if (!dgKey) {
         throw new Error(
-          'No Deepgram key configured. Open Admin (Ctrl+Shift+P) → Settings to paste an override.',
+          'Cloud transcription is temporarily unavailable. Please contact your administrator.',
         )
       }
       // Bias the speech model toward Bible book names so chapter:

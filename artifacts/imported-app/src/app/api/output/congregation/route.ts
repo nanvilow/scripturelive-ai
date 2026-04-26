@@ -263,20 +263,34 @@ function settingsRenderKey(st){
 // Compute clamp() font sizes that scale with the viewport so text is
 // always readable but never overflows. fontSize picks the base, and
 // textScale multiplies it. Long passages get bumped down further.
+//
+// v0.5.53 — Operator request: "sync second-screen text size with the
+// Live display." On a 16:9 secondary monitor, the OLD `vmin`-based
+// values rendered noticeably smaller than the same fontSize bucket
+// looked in the operator's Live Display preview card. The fix is two
+// parts: (1) switch the unit from `vmin` to `vw` so the text scales
+// with the WIDTH of the screen (matches what the operator sees in
+// the Live preview, which is sized by its container width); (2) bump
+// the baseline bandText values to mirror the live-presenter Tailwind
+// `text-{2xl,3xl,4xl,5xl}` ramp. The result on a 1920×1080 secondary
+// monitor: e.g. md text rises from ~47 px (4.4vmin) to ~88 px
+// (4.6vw) — much closer to what the operator picks in the preview.
+// Long passages still progressively shrink so they never overflow.
 function fitFont(base, scale, totalChars){
-  // base mid-vmin per fontSize bucket, scaled to viewport with min/max
-  var bandTitle={sm:5,md:6,lg:7,xl:8.5}[base]||7;
-  var bandText={sm:3.6,md:4.4,lg:5.2,xl:6.4}[base]||5.2;
-  if(totalChars>180)bandText-=.6;
-  if(totalChars>320)bandText-=.6;
-  if(totalChars>480)bandText-=.6;
-  if(totalChars>700)bandText-=.6;
+  var bandTitle={sm:5.6,md:6.6,lg:7.6,xl:9.0}[base]||7.6;
+  var bandText={sm:4.0,md:4.6,lg:5.2,xl:6.0}[base]||5.2;
+  if(totalChars>140)bandText-=.4;
+  if(totalChars>220)bandText-=.5;
+  if(totalChars>320)bandText-=.5;
+  if(totalChars>440)bandText-=.5;
+  if(totalChars>600)bandText-=.5;
+  if(totalChars>800)bandText-=.5;
   if(bandText<2.2)bandText=2.2;
   bandTitle*=scale;bandText*=scale;
   return {
-    title:'clamp(1.2rem,'+bandTitle+'vmin,8rem)',
-    text:'clamp(1rem,'+bandText+'vmin,5.5rem)',
-    sub:'clamp(.9rem,'+(bandTitle*.55)+'vmin,2.5rem)',
+    title:'clamp(1.4rem,'+bandTitle+'vw,10rem)',
+    text:'clamp(1.1rem,'+bandText+'vw,7rem)',
+    sub:'clamp(.9rem,'+(bandTitle*.55)+'vw,3rem)',
   };
 }
 

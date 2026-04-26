@@ -90,6 +90,11 @@ export function SubscriptionModal() {
   const [whatsapp, setWhatsapp] = useState('')
   const [payment, setPayment] = useState<PaymentResp | null>(null)
   const [code, setCode] = useState('')
+  // v0.5.53 — second activation slot for an operator-supplied
+  // generated/master code, surfaced as its own input box right under
+  // Step 3. Both slots feed the same /api/license/activate endpoint;
+  // the only difference is which value is sent on click.
+  const [masterCode, setMasterCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [receipt, setReceipt] = useState<ActivateResp | null>(null)
@@ -125,6 +130,7 @@ export function SubscriptionModal() {
         setSelected(null)
         setPayment(null)
         setCode('')
+        setMasterCode('')
         setBusy(false)
         setError(null)
         setReceipt(null)
@@ -162,9 +168,9 @@ export function SubscriptionModal() {
     } finally { setBusy(false) }
   }
 
-  const submitActivation = async () => {
+  const submitActivation = async (override?: string) => {
     setError(null)
-    const trimmed = code.trim()
+    const trimmed = (override ?? code).trim()
     if (!trimmed) { setError('Enter the activation code first.'); return }
     setBusy(true); setPhase('activating')
     try {
@@ -182,6 +188,20 @@ export function SubscriptionModal() {
       setError(e instanceof Error ? e.message : String(e))
       setPhase('payment')
     } finally { setBusy(false) }
+  }
+
+  // v0.5.53 — Right-click in Electron sometimes swallows the native
+  // paste menu. Bind a paste-on-context-menu handler so the operator
+  // can long-press / right-click any of these inputs and have the
+  // clipboard contents land normalised (uppercased, whitespace
+  // stripped) without ever touching the keyboard.
+  const pasteIntoInput = async (setter: (v: string) => void) => {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        const txt = (await navigator.clipboard.readText()) || ''
+        setter(txt.trim().toUpperCase())
+      }
+    } catch { /* clipboard permission denied — silent */ }
   }
 
   return (
@@ -290,6 +310,13 @@ export function SubscriptionModal() {
                     </div>
                     <Button size="sm" variant="ghost" onClick={() => copy(payment.momoRecipient.number)}><Copy className="h-3.5 w-3.5" /></Button>
                   </div>
+                  {/* v0.5.53 — Operator-requested NOTE under the MoMo number. */}
+                  <div className="rounded-md border border-emerald-500/30 bg-emerald-950/20 px-3 py-2 text-[11px] text-emerald-200/90 leading-relaxed">
+                    <span className="font-semibold uppercase tracking-wider text-[10px] text-emerald-300">NOTE:</span>{' '}
+                    Make sure the recipient name shows as <span className="font-semibold">{payment.momoRecipient.name}</span> before
+                    you confirm the MoMo transaction. If the name is different, STOP and contact support — your funds may be
+                    sent to the wrong account.
+                  </div>
                 </div>
 
                 <div className="text-[10px] text-amber-300/90 leading-relaxed flex items-start gap-1.5">
@@ -307,12 +334,35 @@ export function SubscriptionModal() {
                   placeholder="SL-1Y-XXXXXX"
                   value={code}
                   onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  onContextMenu={(e) => { e.preventDefault(); pasteIntoInput(setCode) }}
                   className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
                 />
-                <Button onClick={submitActivation} disabled={busy} className="bg-emerald-600 hover:bg-emerald-500 text-white">
+                <Button onClick={() => submitActivation(code)} disabled={busy} className="bg-emerald-600 hover:bg-emerald-500 text-white">
                   {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate'}
                 </Button>
               </div>
+              <p className="text-[10px] text-zinc-500">Right-click the box above to paste from clipboard.</p>
+
+              {/* v0.5.53 — Second slot for an operator-issued
+                  generated/master code. Same endpoint, but kept on
+                  its own line so the operator can paste either kind
+                  without overwriting a half-typed customer code. */}
+              <div className="text-[11px] uppercase tracking-wider text-zinc-400 pt-2 border-t border-zinc-800">
+                Or — Enter your generated and master code in here
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="SL-MASTER-XXXXXX or generated code"
+                  value={masterCode}
+                  onChange={(e) => setMasterCode(e.target.value.toUpperCase())}
+                  onContextMenu={(e) => { e.preventDefault(); pasteIntoInput(setMasterCode) }}
+                  className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                />
+                <Button onClick={() => submitActivation(masterCode)} disabled={busy} className="bg-amber-600 hover:bg-amber-500 text-white">
+                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate'}
+                </Button>
+              </div>
+
               {error && phase === 'payment' && <div className="text-[11px] text-rose-400 flex items-start gap-1.5"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />{error}</div>}
             </div>
           </div>

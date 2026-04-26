@@ -609,6 +609,40 @@ export function markMasterEmailed(): void {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// v0.5.53 — Admin-panel delete operations. Each returns true if a
+// matching record was found and removed, false otherwise. The owner
+// sometimes needs to clear stale rows (test payments, expired
+// activations, dismissed notifications) so the panel stays focused on
+// what's actionable now.
+// ─────────────────────────────────────────────────────────────────────
+export function deletePaymentByRef(ref: string): boolean {
+  const f = load()
+  const before = f.paymentCodes.length
+  f.paymentCodes = f.paymentCodes.filter((p) => p.ref !== ref)
+  if (f.paymentCodes.length === before) return false
+  persist(f)
+  return true
+}
+
+export function deleteActivationByCode(code: string): boolean {
+  const f = load()
+  const before = f.activationCodes.length
+  f.activationCodes = f.activationCodes.filter((a) => a.code !== code)
+  if (f.activationCodes.length === before) return false
+  persist(f)
+  return true
+}
+
+export function deleteNotificationById(id: string): boolean {
+  const f = load()
+  const before = f.notifications.length
+  f.notifications = f.notifications.filter((n) => n.id !== id)
+  if (f.notifications.length === before) return false
+  persist(f)
+  return true
+}
+
 /** Test-only: reset the entire file. Guarded against prod use. */
 export function __testReset(): void {
   if (process.env.NODE_ENV === 'production' && !process.env.SCRIPTURELIVE_LICENSE_DIR) {

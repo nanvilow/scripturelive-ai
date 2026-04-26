@@ -28,18 +28,12 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: false,
-  // v0.5.52 — Bake the operator's cloud keys into the renderer bundle
-  // so the desktop install ships with working transcription out of
-  // the box (operator pays for all users). Both keys are exposed as
-  // NEXT_PUBLIC_* (Next inlines those into client bundles) and read
-  // from src/lib/runtime-keys.ts at runtime — admin can override
-  // either key via the Ctrl+Shift+P panel and the override wins.
-  env: {
-    NEXT_PUBLIC_SCRIPTURELIVE_OPENAI_KEY:
-      process.env.SCRIPTURELIVE_OPENAI_KEY ?? process.env.OPENAI_API_KEY ?? "",
-    NEXT_PUBLIC_SCRIPTURELIVE_DEEPGRAM_KEY:
-      process.env.SCRIPTURELIVE_DEEPGRAM_KEY ?? process.env.DEEPGRAM_API_KEY ?? "",
-  },
+  // v0.5.53 — Cloud keys are now baked into src/lib/keys.baked.ts via
+  // scripts/inject-keys.mjs (runs as predev/prebuild and inside
+  // BUILD.bat). The renderer imports the literal constants directly,
+  // which is more reliable than relying on Next's `env` block to
+  // propagate NEXT_PUBLIC_ vars at the right moment. This block is
+  // intentionally omitted now — see runtime-keys.ts for the new flow.
 };
 
 export default nextConfig;

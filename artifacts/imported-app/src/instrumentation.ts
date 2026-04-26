@@ -38,9 +38,13 @@ export async function register() {
   // Cheap early-out: don't even import the notification machinery
   // if the SMTP creds aren't there. Saves cold-start time and keeps
   // the warning message self-contained.
-  const host = process.env.MAIL_HOST
-  const user = process.env.MAIL_USER
-  const pass = process.env.MAIL_PASS
+  // v0.5.54 — read via baked-credentials so the .exe (no env vars
+  // set by default) still finds the operator's MAIL_* values.
+  const { getMailHost, getMailUser, getMailPass, getMailFrom } =
+    await import('./lib/baked-credentials')
+  const host = getMailHost()
+  const user = getMailUser()
+  const pass = getMailPass()
   if (!host || !user || !pass) {
     console.warn(
       '[startup-test-email] SMTP not configured — set MAIL_HOST / MAIL_USER / ' +
@@ -56,7 +60,7 @@ export async function register() {
     const { NOTIFICATION_EMAIL } = await import('./lib/licensing/plans')
 
     const ts = new Date().toISOString()
-    const from = process.env.MAIL_FROM || user
+    const from = getMailFrom() || user
     const subject = `ScriptureLive AI - startup test email (${ts})`
     const body = [
       'This is an automatic test email from ScriptureLive AI.',
