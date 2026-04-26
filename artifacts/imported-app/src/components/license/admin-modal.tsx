@@ -47,6 +47,12 @@ interface AdminListResp {
   paymentCodes: AdminPayment[]
   activationCodes: AdminActivation[]
   notifications: AdminNotification[]
+  // v0.5.50 — server-derived flags telling the panel whether SMTP /
+  // SMS credentials are actually configured. Used to render a clear
+  // banner above the notifications log so the operator knows
+  // immediately why messages are queued in 'pending' rather than
+  // delivered.
+  notificationDelivery?: { smtpConfigured: boolean; smsConfigured: boolean }
 }
 
 // v0.5.48 — owner-tunable runtime config returned by
@@ -622,9 +628,48 @@ export function AdminModal() {
                   </ul>
                 )}
               </div>
-              <div className="text-[10px] text-zinc-500 mt-1.5 italic">
-                Tip: SMTP is unconfigured by default. Set MAIL_HOST / MAIL_USER / MAIL_PASS / MAIL_FROM in the deployment secrets to send emails automatically. Until then, copy any pending message above into your own email or WhatsApp client.
-              </div>
+              {/* v0.5.50 — replaced the static SMTP tip with a
+                  dynamic banner that explicitly tells the operator
+                  which delivery channels (email + SMS) actually have
+                  credentials configured on the running install. The
+                  notification log already records pending/error per
+                  row; this banner explains the WHY at the top of the
+                  section so it doesn't take a click to figure out
+                  that the messages are stuck because env-vars are
+                  missing. */}
+              {data.notificationDelivery && (() => {
+                const { smtpConfigured, smsConfigured } = data.notificationDelivery
+                if (smtpConfigured && smsConfigured) {
+                  return (
+                    <div className="text-[10px] mt-1.5 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 px-2 py-1.5">
+                      <span className="font-semibold">Delivery: live.</span> SMTP + SMS credentials are configured. Activation messages are sent automatically when you confirm a payment.
+                    </div>
+                  )
+                }
+                return (
+                  <div className="text-[10px] mt-1.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-200 px-2 py-1.5 space-y-1">
+                    <div className="font-semibold uppercase tracking-wider text-[9px] text-amber-300">
+                      Notifications queued — credentials missing
+                    </div>
+                    {!smtpConfigured && (
+                      <div>
+                        <span className="font-mono text-amber-100">SMTP not configured.</span>{' '}
+                        Set <span className="font-mono">MAIL_HOST</span> / <span className="font-mono">MAIL_USER</span> /{' '}
+                        <span className="font-mono">MAIL_PASS</span> / <span className="font-mono">MAIL_FROM</span> in the deployment secrets to deliver activation emails automatically.
+                      </div>
+                    )}
+                    {!smsConfigured && (
+                      <div>
+                        <span className="font-mono text-amber-100">SMS not configured.</span>{' '}
+                        Set <span className="font-mono">SMS_API_KEY</span> (Arkesel) in the deployment secrets to deliver activation SMS automatically.
+                      </div>
+                    )}
+                    <div className="text-amber-300/80">
+                      Until then, every queued row above shows a Copy button — paste the body into your own email / WhatsApp client to deliver it manually.
+                    </div>
+                  </div>
+                )
+              })()}
             </section>
           </div>
         )}

@@ -12,15 +12,49 @@
 //   variant="floating" — legacy fixed top-right behaviour, kept in
 //                      case the operator wants the corner pill back.
 
+import { useEffect, useState } from 'react'
 import { Sparkles, ShieldCheck, Lock } from 'lucide-react'
 import { useLicense } from './license-provider'
 import { cn } from '@/lib/utils'
 
+// v0.5.50 — formatter now shows mm:ss when under one hour so the
+// operator can SEE the trial countdown decrementing every second
+// (previously rendered as static "31 min" until the next 30 s status
+// poll). Above one hour we still use the compact "Xh Ym" form because
+// second-precision is irrelevant at that scale.
 function formatTrial(msLeft: number): string {
-  const mins = Math.floor(msLeft / 60_000)
-  if (mins >= 60) return `${Math.floor(mins / 60)}h ${mins % 60}m`
-  if (mins >= 1) return `${mins} min`
-  return `${Math.max(0, Math.floor(msLeft / 1000))}s`
+  const safeMs = Math.max(0, msLeft)
+  const totalSecs = Math.floor(safeMs / 1000)
+  const hours = Math.floor(totalSecs / 3600)
+  const mins = Math.floor((totalSecs % 3600) / 60)
+  const secs = totalSecs % 60
+  if (hours >= 1) return `${hours}h ${mins}m`
+  // Always pad to MM:SS so the badge width never jitters as the
+  // counter ticks down through 9:59 → 9:58 → … → 0:00.
+  const mm = String(mins).padStart(2, '0')
+  const ss = String(secs).padStart(2, '0')
+  return `${mm}:${ss}`
+}
+
+// v0.5.50 — second-resolution clock that re-renders this component
+// every 1 s while a trial is in flight. Without this, the badge only
+// updated on each 30 s status-poll tick, so operators thought the
+// countdown was frozen. We compute msLeft locally as
+// (expiresAt - now) so the displayed value is always current,
+// regardless of how stale the server-snapshot msLeft is.
+function useTickingTrialMsLeft(expiresAt: string | undefined, isTrial: boolean): number | null {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!isTrial || !expiresAt) return
+    // Anchor the first tick on the next 1 s boundary so all running
+    // license badges in the toolbar update in lockstep — looks
+    // intentional rather than a stutter.
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [isTrial, expiresAt])
+  if (!isTrial || !expiresAt) return null
+  const ms = new Date(expiresAt).getTime() - now
+  return Number.isFinite(ms) ? Math.max(0, ms) : 0
 }
 
 interface Props {
@@ -29,6 +63,9 @@ interface Props {
 
 export function LicenseTopBarButton({ variant = 'inline' }: Props) {
   const { status, isActive, isTrial, openSubscribe } = useLicense()
+  // v0.5.50 — local 1 s clock so the trial countdown ticks visibly
+  // instead of waiting for the next 30 s status poll.
+  const tickingMsLeft = useTickingTrialMsLeft(status.trial?.expiresAt, isTrial)
 
   if (status.state === 'unknown') return null
 
@@ -93,7 +130,7 @@ export function LicenseTopBarButton({ variant = 'inline' }: Props) {
         title="You're on the 1-hour free trial. Click to activate a subscription."
       >
         <Sparkles className="h-3 w-3" />
-        Trial — {formatTrial(status.trial.msLeft)} · Activate
+        Trial — {formatTrial(tickingMsLeft ?? status.trial.msLeft)} · Activate
       </button>
     )
   }

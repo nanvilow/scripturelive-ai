@@ -35,18 +35,57 @@ const FIRST_CHUNK_MS = 1500
 // Reduced from 6 KB to match the new shorter chunk size — 6 KB at
 // 2.5 s would suppress real but quiet speech.
 const MIN_CHUNK_BYTES = 3 * 1024
-// v0.5.49 — Voice activity detection (VAD) silence floor. The peak
-// RMS observed in the chunk window must exceed this threshold or the
-// chunk is dropped before upload. Whisper otherwise hallucinates
-// "Thanks for watching" / "Subtitles by …" / "[Music]" on near-silent
-// audio (prayer, song breaks, mic-on-but-no-speech). 0.008 (≈ -42 dB
-// FS RMS over a chunk) reliably catches normal soft speech while
-// killing room tone, fan noise, AC hum, and silence.
-const VAD_RMS_THRESHOLD = 0.008
+// v0.5.50 — Voice activity detection (VAD) silence floor, LOOSENED.
+// v0.5.49 used 0.008 (≈ -42 dB FS RMS) which was too aggressive on
+// low-gain condenser mics — operators reported the Live Transcription
+// column showed nothing because every chunk was being dropped by the
+// VAD before reaching Whisper. v0.5.50 drops the floor to 0.004
+// (≈ -48 dB FS RMS) AND adds a "consecutive silent chunks" rule
+// (VAD_SILENT_RUN_TO_DROP) so a single quiet syllable between two
+// loud ones is uploaded — only sustained silence is suppressed.
+const VAD_RMS_THRESHOLD = 0.004
+// v0.5.50 — number of CONSECUTIVE chunks below VAD_RMS_THRESHOLD
+// before we start dropping. The first quiet chunk in a run is always
+// uploaded (it might be a soft-spoken word or the trailing silence at
+// the end of a sentence); only chunks 2+ in a sustained quiet run are
+// suppressed. Resets the moment any chunk crosses the threshold.
+const VAD_SILENT_RUN_TO_DROP = 2
 // VAD analyser sample interval. Cheap getFloatTimeDomainData read +
 // RMS calc; running it every 50 ms gives 50 RMS samples per 2.5 s
 // chunk, plenty of resolution to catch a brief utterance.
 const VAD_SAMPLE_MS = 50
+
+// v0.5.50 — Whisper hallucination guard. Even with VAD active, the
+// occasional almost-silent chunk slips through and Whisper emits
+// canned YouTube-caption phrases that pollute the running paragraph.
+// Each pattern below has been observed in the wild (Replit issue
+// trail v0.5.45→v0.5.49). Match is case-insensitive and tested
+// against the cleaned transcript text — when it matches we drop the
+// chunk to an empty placeholder and log a [whisper-hallucination]
+// diagnostic so the operator can see in DevTools that the filter
+// fired (rather than wondering why a transcript "disappeared").
+const HALLUCINATION_PATTERNS: RegExp[] = [
+  /thanks?\s+for\s+watching/i,
+  /thank\s+you\s+for\s+watching/i,
+  /subtitles?\s+by/i,
+  /translated\s+by/i,
+  /please\s+(like|subscribe|share)/i,
+  /^\s*\[?\s*music\s*\]?\s*$/i,
+  /^\s*\[?\s*applause\s*\]?\s*$/i,
+  /^\s*\[?\s*silence\s*\]?\s*$/i,
+  /^\s*\(?\s*music\s+playing\s*\)?\s*$/i,
+  /captions?\s+by/i,
+  /amara\.org/i,
+]
+function isHallucination(text: string): boolean {
+  if (!text) return false
+  const t = text.trim()
+  if (t.length === 0) return false
+  // Very-short outputs from a near-silent chunk are almost always
+  // hallucinations (Whisper inventing one or two filler words). Real
+  // speech in a 2.5 s window comes back as ≥3 words on average.
+  return HALLUCINATION_PATTERNS.some((rx) => rx.test(t))
+}
 
 interface UseWhisperSpeechRecognitionReturn {
   isListening: boolean
@@ -115,6 +154,10 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
   const vadTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const maxRmsInWindowRef = useRef(0)
   const chunkIdToMaxRmsRef = useRef<Map<number, number>>(new Map())
+  // v0.5.50 — running count of consecutive chunks below the VAD floor.
+  // First quiet chunk in a run is always uploaded; only chunks 2+ in
+  // a sustained quiet run get suppressed. Resets on any loud chunk.
+  const silentRunCountRef = useRef(0)
 
   // Mirror the live store values into refs so the long-lived
   // ondataavailable closure and audio graph see the latest operator
@@ -182,21 +225,31 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
       drainOrdered()
       return
     }
-    // v0.5.49 — VAD silence gate. The peak RMS captured during this
-    // chunk's window must exceed VAD_RMS_THRESHOLD; otherwise the
-    // chunk is room tone / fan noise / pure silence and we drop it
-    // without billing OpenAI or risking a hallucinated transcript.
-    // Falls open (allows upload) when no VAD reading was captured —
-    // happens when the AudioContext is unavailable in the host
-    // environment, in which case we revert to the v0.5.48 behaviour
-    // and rely on MIN_CHUNK_BYTES alone.
+    // v0.5.50 — VAD silence gate (loosened from v0.5.49). The peak
+    // RMS captured during this chunk's window must exceed
+    // VAD_RMS_THRESHOLD; if it doesn't, we INCREMENT silentRunCountRef
+    // and only drop the chunk once the count reaches
+    // VAD_SILENT_RUN_TO_DROP. The first quiet chunk in a run is always
+    // uploaded — it might be a soft-spoken word or the trailing
+    // silence at the end of a sentence. Real loud audio resets the
+    // counter immediately. Falls open (uploads anyway) when no VAD
+    // reading was captured — happens when the AudioContext is
+    // unavailable in the host environment, in which case we revert to
+    // the v0.5.48 behaviour and rely on MIN_CHUNK_BYTES alone.
     const peakRms = chunkIdToMaxRmsRef.current.get(id)
     chunkIdToMaxRmsRef.current.delete(id)
-    if (peakRms !== undefined && peakRms < VAD_RMS_THRESHOLD) {
-      if (!stillCurrent()) return
-      pendingByIdRef.current.set(id, '')
-      drainOrdered()
-      return
+    if (peakRms !== undefined) {
+      if (peakRms < VAD_RMS_THRESHOLD) {
+        silentRunCountRef.current += 1
+        if (silentRunCountRef.current >= VAD_SILENT_RUN_TO_DROP) {
+          if (!stillCurrent()) return
+          pendingByIdRef.current.set(id, '')
+          drainOrdered()
+          return
+        }
+      } else {
+        silentRunCountRef.current = 0
+      }
     }
     try {
       const fd = new FormData()
@@ -215,7 +268,20 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
       const j = (await r.json()) as { text?: string; error?: string }
       if (!stillCurrent()) return
       if (j.error) throw new Error(j.error)
-      pendingByIdRef.current.set(id, cleanTranscriptText(j.text || ''))
+      const cleaned = cleanTranscriptText(j.text || '')
+      // v0.5.50 — Hallucination guard. Whisper occasionally emits
+      // canned YouTube-caption phrases ("Thanks for watching",
+      // "Subtitles by …", "[Music]") on near-silent or non-speech
+      // audio that slips past the VAD floor. Drop those to an empty
+      // placeholder and surface a console diagnostic so the operator
+      // can see in DevTools that the filter fired (rather than
+      // wondering why a transcript "disappeared").
+      if (isHallucination(cleaned)) {
+        console.warn('[whisper-hallucination] dropped:', JSON.stringify(cleaned))
+        pendingByIdRef.current.set(id, '')
+      } else {
+        pendingByIdRef.current.set(id, cleaned)
+      }
       drainOrdered()
     } catch (e) {
       if (!stillCurrent()) return
@@ -248,6 +314,7 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
     analyserRef.current = null
     maxRmsInWindowRef.current = 0
     chunkIdToMaxRmsRef.current.clear()
+    silentRunCountRef.current = 0
     const rec = recorderRef.current
     recorderRef.current = null
     if (rec && rec.state !== 'inactive') {

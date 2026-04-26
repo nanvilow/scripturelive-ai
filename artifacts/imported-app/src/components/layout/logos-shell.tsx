@@ -482,6 +482,11 @@ function LiveTranscriptionCard() {
               old behaviour). The amber "Bible" pill is meant to mirror
               the AUTO-display pill below it: amber = "active filter,
               you're looking at a curated view". */}
+          {/* v0.5.50 — All four buttons shrunk one notch: h-7 → h-6,
+              px-2 → px-1.5, gap-1 → gap-0.5, icons h-3 → h-2.5. The
+              row was visually clumsy at h-7 on a 1280-wide stage; the
+              tighter sizing keeps every action in view without
+              wrapping or eating engine-picker space. */}
           <Button
             size="sm"
             disabled={isLocked}
@@ -495,14 +500,14 @@ function LiveTranscriptionCard() {
                 : 'Showing full transcript. Click to filter to Bible references only.'
             }
             className={cn(
-              'h-7 px-2 text-[10px] uppercase tracking-wider gap-1 font-semibold border',
+              'h-6 px-1.5 text-[10px] uppercase tracking-wider gap-0.5 font-semibold border',
               bibleOnlyTranscription
                 ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
                 : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-700',
               isLocked && 'opacity-50 cursor-not-allowed pointer-events-none',
             )}
           >
-            {isLocked ? <Lock className="h-3 w-3" /> : <BookOpen className="h-3 w-3" />}
+            {isLocked ? <Lock className="h-2.5 w-2.5" /> : <BookOpen className="h-2.5 w-2.5" />}
             {bibleOnlyTranscription ? 'Bible' : 'All'}
           </Button>
           <Button
@@ -512,11 +517,11 @@ function LiveTranscriptionCard() {
             onClick={() => { if (isLocked) return; setSpeechCommand('reset') }}
             title={isLocked ? 'Activate a subscription to use Live Transcription controls.' : 'Clear transcription'}
             className={cn(
-              'h-7 px-2 text-[10px] uppercase tracking-wider gap-1 font-semibold bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700',
+              'h-6 px-1.5 text-[10px] uppercase tracking-wider gap-0.5 font-semibold bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700',
               isLocked && 'opacity-50 cursor-not-allowed pointer-events-none',
             )}
           >
-            {isLocked ? <Lock className="h-3 w-3" /> : <Trash2 className="h-3 w-3" />}
+            {isLocked ? <Lock className="h-2.5 w-2.5" /> : <Trash2 className="h-2.5 w-2.5" />}
             Clear
           </Button>
           <Button
@@ -524,9 +529,15 @@ function LiveTranscriptionCard() {
             disabled={isLocked}
             aria-disabled={isLocked}
             onClick={toggleMic}
-            title={isLocked ? 'Activate a subscription to enable Live Transcription.' : undefined}
+            title={
+              isLocked
+                ? 'Activate a subscription to enable Live Transcription.'
+                : isListening
+                ? 'Click to stop listening'
+                : 'Click to start detecting verses from speech'
+            }
             className={cn(
-              'h-7 px-2.5 text-[10px] uppercase tracking-wider gap-1.5 font-semibold',
+              'h-6 px-1.5 text-[10px] uppercase tracking-wider gap-0.5 font-semibold',
               isLocked
                 ? 'bg-zinc-700 text-zinc-300'
                 : isListening
@@ -536,12 +547,18 @@ function LiveTranscriptionCard() {
             )}
           >
             {isLocked
-              ? <Lock className="h-3 w-3" />
-              : isListening ? <MicOff className="h-3 w-3" /> : <Mic className="h-3 w-3" />
+              ? <Lock className="h-2.5 w-2.5" />
+              : isListening ? <MicOff className="h-2.5 w-2.5" /> : <Mic className="h-2.5 w-2.5" />
             }
-            {isLocked
-              ? 'Locked'
-              : isListening ? 'Stop' : isLive ? 'Listening' : 'Detect Verses Now'}
+            {/* v0.5.50 — shorter labels. "Detect Verses Now" became
+                just "Detect", and the label is hidden below sm screens
+                so the icon carries the meaning when the toolbar is
+                cramped. */}
+            <span className="hidden sm:inline">
+              {isLocked
+                ? 'Locked'
+                : isListening ? 'Stop' : isLive ? 'Live' : 'Detect'}
+            </span>
           </Button>
           {/* AUTO Display: when ON, every detected scripture is auto-staged
               and auto-sent to Live Display without an operator click. */}
@@ -558,14 +575,14 @@ function LiveTranscriptionCard() {
                 : 'AUTO Display OFF — verses preview only. Click to auto-send to Live Display.'
             }
             className={cn(
-              'h-7 px-2 text-[10px] uppercase tracking-wider gap-1 font-semibold border',
+              'h-6 px-1.5 text-[10px] uppercase tracking-wider gap-0.5 font-semibold border',
               autoLive
                 ? 'bg-amber-500 hover:bg-amber-400 text-black border-amber-300 shadow-md shadow-amber-500/30'
                 : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-700',
               isLocked && 'opacity-50 cursor-not-allowed pointer-events-none',
             )}
           >
-            {isLocked ? <Lock className="h-3 w-3" /> : <Zap className={cn('h-3 w-3', autoLive && 'fill-black')} />}
+            {isLocked ? <Lock className="h-2.5 w-2.5" /> : <Zap className={cn('h-2.5 w-2.5', autoLive && 'fill-black')} />}
             Auto
           </Button>
         </div>
@@ -593,9 +610,33 @@ function LiveTranscriptionCard() {
           {paragraphs.length === 0 && !liveInterimTranscript && (
             <div className="text-center py-6 text-[11px] text-zinc-600">
               <Mic className="h-7 w-7 mx-auto opacity-40 mb-2" />
-              Tap <span className="text-sky-300 font-semibold">Detect Verses Now</span> to start
+              Tap <span className="text-sky-300 font-semibold">Detect</span> to start
               transcribing the speaker. Detected scripture references will fill
               the right-hand panels.
+              {/* v0.5.50 — Surface the active engine + most recent
+                  error inline so an operator looking at a "dead"
+                  transcription column can immediately tell which
+                  engine is live and what (if anything) went wrong.
+                  Previously this only showed in the rose error line
+                  above; engine identity was buried in the Card BADGE
+                  picker dot which operators didn't notice. */}
+              <div className="mt-3 text-[10px] text-zinc-500 space-y-0.5">
+                <div>
+                  Engine:{' '}
+                  <span className="text-zinc-300 font-mono uppercase">
+                    {activeEngineName ?? 'idle'}
+                  </span>
+                  {preferredEngine !== 'auto' && (
+                    <span className="text-zinc-600"> (pinned: {preferredEngine})</span>
+                  )}
+                </div>
+                {isListening && (
+                  <div className="text-emerald-400">Listening — speak normally…</div>
+                )}
+                {speechError && (
+                  <div className="text-rose-400 break-words">Last error: {speechError}</div>
+                )}
+              </div>
             </div>
           )}
           {paragraphs.map((para, i) => (

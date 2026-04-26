@@ -16,6 +16,29 @@ import { getFile, computeStatus } from '@/lib/licensing/storage'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+// v0.5.50 — Tells the admin panel which delivery channels actually
+// have credentials configured, so the operator can see at a glance
+// (and from a banner) why notifications are stuck in 'pending' state.
+// Mirrors the env-var checks done inline in lib/licensing/notifications
+// (sendEmailViaSmtp) and lib/licensing/sms (sendViaArkesel) — the same
+// fields that those modules look at, no more, no less.
+//
+// IMPORTANT: sendEmailViaSmtp treats MAIL_FROM as OPTIONAL — it falls
+// back to MAIL_USER when MAIL_FROM is not set (`from = MAIL_FROM ||
+// MAIL_USER`). So we must NOT require MAIL_FROM here; otherwise the
+// banner would falsely report "credentials missing" on installs that
+// can in fact send (Gmail SMTP being the canonical example, where
+// MAIL_USER doubles as the From address).
+function detectNotificationDelivery() {
+  const smtpConfigured = !!(
+    process.env.MAIL_HOST &&
+    process.env.MAIL_USER &&
+    process.env.MAIL_PASS
+  )
+  const smsConfigured = !!process.env.SMS_API_KEY
+  return { smtpConfigured, smsConfigured }
+}
+
 export async function GET() {
   const f = getFile()
   const status = computeStatus()
@@ -39,5 +62,6 @@ export async function GET() {
     paymentCodes: recent(f.paymentCodes, 30),
     activationCodes: recent(f.activationCodes, 30),
     notifications: recent(f.notifications, 30),
+    notificationDelivery: detectNotificationDelivery(),
   }, { headers: { 'Cache-Control': 'no-store' } })
 }
