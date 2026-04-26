@@ -158,6 +158,56 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // on a structural error (cold-start handshake can exceed 8 s).
   const sawTranscriptRef = useRef(false)
 
+  // v0.5.49 — Race guard for engine switches. Both the auto-fallback
+  // effect and the mid-session preferredEngine-change effect defer
+  // their `startListening()` call by one tick (so React commits the
+  // activeEngine state swap first). If the operator rapid-fires the
+  // engine picker, two stale starts could land in order, leaving
+  // activeEngine state out of sync with whichever engine is actually
+  // hot. We defend in two layers:
+  //   1. `engineSwitchGenRef` increments on every scheduled switch
+  //      and the deferred callback aborts unless its captured gen
+  //      still equals the latest gen.
+  //   2. `pendingStartTimerRef` holds the active timer handle so a
+  //      newer switch can `clearTimeout()` the previous one before
+  //      it ever fires. Belt + suspenders — the gen check alone is
+  //      enough, but cancelling the timer is cheap and reduces log
+  //      noise.
+  const engineSwitchGenRef = useRef(0)
+  const pendingStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const scheduleEngineStart = (
+    target: EngineName,
+    handle: { startListening: (cb?: (t: string) => void) => void },
+    cb: ((text: string) => void) | null,
+    label: string,
+  ) => {
+    const gen = ++engineSwitchGenRef.current
+    if (pendingStartTimerRef.current !== null) {
+      clearTimeout(pendingStartTimerRef.current)
+      pendingStartTimerRef.current = null
+    }
+    pendingStartTimerRef.current = setTimeout(() => {
+      pendingStartTimerRef.current = null
+      // Stale-switch guard. If a newer scheduleEngineStart was queued
+      // after us, gen will have advanced and we abort silently.
+      if (gen !== engineSwitchGenRef.current) {
+        // eslint-disable-next-line no-console
+        console.log(`[SpeechProvider] (stale) ${label} → ${target} aborted (gen ${gen} < ${engineSwitchGenRef.current})`)
+        return
+      }
+      try {
+        // eslint-disable-next-line no-console
+        console.log(`[SpeechProvider] -> ${target}.startListening() (${label})`)
+        handle.startListening(cb ?? undefined)
+        startedAtRef.current = Date.now()
+        sawTranscriptRef.current = false
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error(`[SpeechProvider] ${target} ${label} start failed:`, e)
+      }
+    }, 0)
+  }
+
   // Read from whichever engine is currently active. All three hooks
   // expose the identical surface (verified at compile time by the
   // shared destructure below — TS errors here would mean a hook
@@ -315,20 +365,11 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     // Re-arm the next engine with the same callback the operator
     // last requested. Defer one tick so React commits the engine
     // swap before we fire startListening on the new instance.
+    // v0.5.49 — `scheduleEngineStart` carries a generation token +
+    // cancellable timer so a rapid second switch supersedes us.
     const cb = lastCallbackRef.current
     const nextHandle = chosen === 'deepgram' ? dgEngine : chosen === 'whisper' ? wsEngine : brEngine
-    setTimeout(() => {
-      try {
-        // eslint-disable-next-line no-console
-        console.log(`[SpeechProvider] -> ${chosen}.startListening() (fallback)`)
-        nextHandle.startListening(cb ?? undefined)
-        startedAtRef.current = Date.now()
-        sawTranscriptRef.current = false
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.error(`[SpeechProvider] ${chosen} fallback start failed:`, e)
-      }
-    }, 0)
+    scheduleEngineStart(chosen, nextHandle, cb, 'fallback')
 
     const handoffKey = `${from}->${chosen}`
     if (!announcedHandoffsRef.current.has(handoffKey)) {
@@ -378,17 +419,9 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     if (wasListening) {
       const cb = lastCallbackRef.current
       const nextHandle = target === 'deepgram' ? dgEngine : target === 'whisper' ? wsEngine : brEngine
-      setTimeout(() => {
-        try {
-          // eslint-disable-next-line no-console
-          console.log(`[SpeechProvider] preferredEngine changed → ${target}.startListening()`)
-          nextHandle.startListening(cb ?? undefined)
-          startedAtRef.current = Date.now()
-        } catch (e) {
-          // eslint-disable-next-line no-console
-          console.error(`[SpeechProvider] preferredEngine swap to ${target} failed:`, e)
-        }
-      }, 0)
+      // v0.5.49 — race-safe via scheduleEngineStart (gen token +
+      // cancellable timer). Rapid picker toggles supersede each other.
+      scheduleEngineStart(target, nextHandle, cb, 'preferredEngine-swap')
     }
   }, [preferredEngine, activeEngine, dgEngine, wsEngine, brEngine])
 
