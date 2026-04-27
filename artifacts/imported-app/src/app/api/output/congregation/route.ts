@@ -257,6 +257,19 @@ function settingsRenderKey(st){
     ndSh: st.ndiTextShadow,
     ndTs: st.ndiTextScale,
     ndTa: st.ndiTextAlign,
+    // v0.5.57 — Eight new NDI-only fields (aspect, bible color, line
+    // height, reference {size, style, position, scale}, translation).
+    // Honoured server-side only when IS_NDI=true; included in the
+    // key so the captured NDI window re-renders the moment the
+    // operator nudges any of them in the NDI Output panel.
+    ndAr: st.ndiAspectRatio,
+    ndBc: st.ndiBibleColor,
+    ndBlh: st.ndiBibleLineHeight,
+    ndRfFs: st.ndiRefSize,
+    ndRfSt: st.ndiRefStyle,
+    ndRfPos: st.ndiRefPosition,
+    ndRfTs: st.ndiRefScale,
+    ndTr: st.ndiTranslation,
   });
 }
 
@@ -518,7 +531,12 @@ function render(s){
       ?s.settings.ndiDisplayMode
       :(s.displayMode||'full'));
   var st=s.settings||{};
-  applyRatio(st.displayRatio||'fill');
+  // v0.5.57 — NDI surface gets its own aspect ratio when set.
+  // 'auto' or undefined → fall back to displayRatio (Live Display).
+  var AR=(IS_NDI && st.ndiAspectRatio && st.ndiAspectRatio!=='auto')
+    ? st.ndiAspectRatio
+    : (st.displayRatio||'fill');
+  applyRatio(AR);
   if(!slide){
     // Transparent NDI overlay surface: render NOTHING when nothing is
     // on air so vMix/OBS sees a clean alpha frame instead of a themed
@@ -549,6 +567,14 @@ function render(s){
   var T_SH_BOOL=(IS_NDI && (typeof st.ndiTextShadow==='boolean')) ? st.ndiTextShadow : (st.textShadow!==false);
   var T_TS=(IS_NDI && (typeof st.ndiTextScale==='number')) ? st.ndiTextScale : (typeof st.textScale==='number'?st.textScale:1);
   var T_TA=(IS_NDI && st.ndiTextAlign) ? st.ndiTextAlign : (st.textAlign||'center');
+  // v0.5.57 — NDI-only bible body color + line-height. Both are
+  // pure CSS overrides applied to the .slide-text node only when
+  // IS_NDI is true; the secondary screen keeps the theme defaults.
+  var T_COLOR=(IS_NDI && st.ndiBibleColor) ? st.ndiBibleColor : '';
+  var T_LH=(IS_NDI && typeof st.ndiBibleLineHeight==='number')
+    ? Math.min(2.5, Math.max(0.9, st.ndiBibleLineHeight))
+    : 0;
+  var bibleExtra=(T_COLOR?'color:'+T_COLOR+';':'')+(T_LH?'line-height:'+T_LH+';':'');
   var sh=T_SH_BOOL?'text-shadow:0 2px 12px rgba(0,0,0,.4);':'';
   var bg=st.customBackground?'<img class="bg-image" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>':'';
   // Reference typography (Bug #5): the operator now has independent
@@ -558,10 +584,21 @@ function render(s){
   var rfFam=resolveFont(st.referenceFontFamily||T_FF);
   var rfShOn=(typeof st.referenceTextShadow==='boolean')?st.referenceTextShadow:T_SH_BOOL;
   var rfShCss=rfShOn?'text-shadow:0 2px 12px rgba(0,0,0,.4);':'';
-  var rfTsRaw=(typeof st.referenceTextScale==='number')?st.referenceTextScale:T_TS;
+  // v0.5.57 — NDI-only reference overrides win over the body
+  // fallbacks above when IS_NDI is true. Style ('italic'|'normal'),
+  // position ('top'|'bottom'|'hidden'), and a dedicated scale +
+  // bucket so the broadcast deck can run a tiny italic chyron-style
+  // reference while the in-room projector keeps the standard
+  // body-aligned label.
+  var rfTsRaw=(IS_NDI && typeof st.ndiRefScale==='number')
+    ? st.ndiRefScale
+    : ((typeof st.referenceTextScale==='number')?st.referenceTextScale:T_TS);
   var rfTs=Math.min(2,Math.max(.5,rfTsRaw));
-  var rfBucket=st.referenceFontSize||T_FS;
+  var rfBucket=(IS_NDI && st.ndiRefSize) ? st.ndiRefSize : (st.referenceFontSize||T_FS);
   var rfScale=rfTs*(FS_MULT[rfBucket]||1);
+  var rfStyle=(IS_NDI && st.ndiRefStyle==='italic') ? 'italic' : 'normal';
+  var rfPosition=(IS_NDI && st.ndiRefPosition) ? st.ndiRefPosition : 'top';
+  var rfHidden=(IS_NDI && st.ndiRefPosition==='hidden');
   // Reference clamp — same shape as the LT body clamp below, but a
   // narrower band so the reference label stays subordinate to the
   // verse body. Mirrors lowerThirdClamp() in src/lib/fonts.ts so the
@@ -572,7 +609,7 @@ function render(s){
   var rfMin=Math.max(.35,.5*rfScale);
   var rfFs='clamp('+rfMin+'rem,min('+(rfBand*0.5)+'cqw,'+rfBand+'cqh),'+rfCap+'rem)';
   var rfTa=st.referenceTextAlign||T_TA;
-  var refStyle='font-family:'+rfFam+';font-size:'+rfFs+';text-align:'+rfTa+';'+rfShCss;
+  var refStyle='font-family:'+rfFam+';font-size:'+rfFs+';text-align:'+rfTa+';font-style:'+rfStyle+';'+rfShCss;
   // Same Strong's-strip + HTML-escape used for the body — keeps the
   // reference line ("Galatians 2:5 — KJV") safe even if a translation
   // ever leaks markup into a book name.
@@ -584,7 +621,13 @@ function render(s){
   // script never finished parsing.
   function _stripRefStrong(t){return String(t==null?'':t).replace(/<S>[^<]*<\\/S>/gi,'').replace(/<[^>]+>/g,'')}
   function _escRef(t){return _stripRefStrong(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
-  var ref=st.showReferenceOnOutput!==false&&slide.title?'<div class="slide-reference" style="'+refStyle+'">'+_escRef(slide.title)+(slide.subtitle?' \\u2014 '+_escRef(slide.subtitle):'')+'</div>':'';
+  // v0.5.57 — rfHidden short-circuits the reference render when the
+  // operator picks "Hidden" in the NDI Output panel (e.g. vMix is
+  // already showing a chyron with the reference so the captured
+  // window only carries the verse body).
+  var ref=(!rfHidden && st.showReferenceOnOutput!==false && slide.title)
+    ? '<div class="slide-reference" style="'+refStyle+'">'+_escRef(slide.title)+(slide.subtitle?' \\u2014 '+_escRef(slide.subtitle):'')+'</div>'
+    : '';
   var totalChars=0;
   if(slide.content&&slide.content.length){for(var i=0;i<slide.content.length;i++)totalChars+=(slide.content[i]||'').length;}
   // Combine the operator's manual textScale with the font-size bucket
@@ -691,7 +734,7 @@ function render(s){
   function stripStrong(t){return String(t==null?'':t).replace(/<S>[^<]*<\\/S>/gi,'').replace(/<[^>]+>/g,'')}
   function esc(t){return stripStrong(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
   if(slide.type==='title'){
-    txt='<div class="slide-title" style="font-size:'+fs.title+';'+sh+'">'+esc(slide.title)+'</div>'+(slide.subtitle?'<div class="slide-subtitle" style="font-size:'+fs.sub+';'+sh+'">'+esc(slide.subtitle)+'</div>':'');
+    txt='<div class="slide-title" style="font-size:'+fs.title+';'+sh+bibleExtra+'">'+esc(slide.title)+'</div>'+(slide.subtitle?'<div class="slide-subtitle" style="font-size:'+fs.sub+';'+sh+bibleExtra+'">'+esc(slide.subtitle)+'</div>':'');
   }else if(slide.content&&slide.content.length){
     // Flow verse / lyric lines into a single paragraph so all words
     // sit on the same baseline. The verse splitter chunked the text
@@ -706,10 +749,15 @@ function render(s){
     // "purpose"->"purpo e"). Same hazard as the </S> escape on lines
     // 541 / 647. v0.5.41 root-cause fix.
     var joined=slide.content.map(esc).join(' ').replace(/\\s+/g,' ').trim();
-    txt='<p class="slide-paragraph" style="font-size:'+fs.text+';'+sh+'">'+joined+'</p>';
+    txt='<p class="slide-paragraph" style="font-size:'+fs.text+';'+sh+bibleExtra+'">'+joined+'</p>';
   }else{
-    txt='<div class="slide-text" style="opacity:.3;font-size:'+fs.text+'">'+esc(slide.title)+'</div>';
+    txt='<div class="slide-text" style="opacity:.3;font-size:'+fs.text+';'+bibleExtra+'">'+esc(slide.title)+'</div>';
   }
+  // v0.5.57 — Reference position. 'top' (default) renders ref BEFORE
+  // the verse body; 'bottom' flips the order so vMix-style chyron
+  // setups can put the citation at the foot of the lower-third.
+  // 'hidden' was already handled by emptying `ref` above.
+  var refOrderTop=(rfPosition!=='bottom');
   if(isLT){
     // FORCE_POS (?position=top|bottom) wins over the operator's
     // lowerThirdPosition setting so the legacy NDI overlay capture
@@ -744,7 +792,8 @@ function render(s){
     var boxThemeClass=(dm==='lower-third-black')?'':tc;
     var boxStyleExtra=(dm==='lower-third-black')?'background:#000;':'';
     var ltInnerBg=(dm==='lower-third-black')?'':(st.customBackground?'<img class="lt-bg" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="lt-bg-overlay"></div>':'');
-    $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:transparent;'+fontStyle+'"><div class="lower-third '+pos+'" style="'+ltStyle+'"><div class="lt-box '+boxThemeClass+' '+alignClass+'" style="'+boxStyleExtra+fontStyle+'">'+ltInnerBg+'<div class="lt-content '+alignClass+'">'+ref+ltTxt+'</div></div></div></div>';
+    var ltOrdered=refOrderTop?(ref+ltTxt):(ltTxt+ref);
+    $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:transparent;'+fontStyle+'"><div class="lower-third '+pos+'" style="'+ltStyle+'"><div class="lt-box '+boxThemeClass+' '+alignClass+'" style="'+boxStyleExtra+fontStyle+'">'+ltInnerBg+'<div class="lt-content '+alignClass+'">'+ltOrdered+'</div></div></div></div>';
   }else{
     var ta=st.textAlign||'center';
     var jc=ta==='left'?'flex-start':ta==='right'?'flex-end':'center';
@@ -754,7 +803,8 @@ function render(s){
     // overlay" capture in full-screen mode (i.e. without lowerThird=1).
     var fsTheme=FORCE_TRANSPARENT?'':tc;
     var fsBg=FORCE_TRANSPARENT?'':bg;
-    $('output').innerHTML='<div class="'+fsTheme+'" style="width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';'+fontStyle+'">'+fsBg+'<div class="slide-content" style="text-align:'+ta+';'+fontStyle+'">'+ref+txt+'</div></div>';
+    var fsOrdered=refOrderTop?(ref+txt):(txt+ref);
+    $('output').innerHTML='<div class="'+fsTheme+'" style="width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';'+fontStyle+'">'+fsBg+'<div class="slide-content" style="text-align:'+ta+';'+fontStyle+'">'+fsOrdered+'</div></div>';
   }
   $('output').classList.remove('hidden');
 }

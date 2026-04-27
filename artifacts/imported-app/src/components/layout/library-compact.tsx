@@ -235,6 +235,15 @@ export function BibleLookupCompact() {
       const s = useAppStore.getState()
       s.setSlides([slide])
       s.setPreviewSlideIndex(0)
+      // v0.5.57 — operator complaint #2: when stepping through verses
+      // with the chapter navigator, the Live Display momentarily
+      // cleared/blanked because we never updated liveSlideIndex. If
+      // the operator is mid-broadcast (isLive=true), keep Live in
+      // sync with Preview so the projector follows the navigator
+      // verse-by-verse with no clear step.
+      if (s.isLive) {
+        s.setLiveSlideIndex(0)
+      }
       // Cache for verse history so it shows up in recents.
       addToVerseHistory({
         reference,

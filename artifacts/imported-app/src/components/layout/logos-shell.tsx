@@ -1139,6 +1139,12 @@ function LiveBottomAudioControls() {
   const micPct = Math.round(micGain * 100)
   const effectivelyMuted = globalMuted || globalVolume === 0
 
+  // v0.5.57 — operator wants the mic popover to auto-collapse when
+  // they pick a transport action (Start / Pause / Stop) so it doesn't
+  // sit open over the Live Display covering the next verse. Made the
+  // Popover controlled and close it from each handler.
+  const [micPopoverOpen, setMicPopoverOpen] = useState(false)
+
   const startMic = () => {
     if (!speechSupported) {
       toast.error('Speech recognition is not supported in this browser')
@@ -1146,12 +1152,17 @@ function LiveBottomAudioControls() {
     }
     setMicPaused(false)
     setSpeechCommand('start')
+    setMicPopoverOpen(false)
   }
   const stopMic = () => {
     setMicPaused(false)
     setSpeechCommand('stop')
+    setMicPopoverOpen(false)
   }
-  const togglePause = () => setMicPaused(!micPaused)
+  const togglePause = () => {
+    setMicPaused(!micPaused)
+    setMicPopoverOpen(false)
+  }
 
   // Status copy + colour for the trigger button so an operator can
   // tell at a glance: green/dot = listening, amber = paused, grey =
@@ -1167,7 +1178,7 @@ function LiveBottomAudioControls() {
 
   return (
     <div className="flex items-center gap-1 mr-1">
-      <Popover>
+      <Popover open={micPopoverOpen} onOpenChange={setMicPopoverOpen}>
         <PopoverTrigger asChild>
           <button
             type="button"

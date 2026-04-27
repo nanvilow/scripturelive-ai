@@ -158,6 +158,25 @@ export interface AppSettings {
   ndiTextScale?: number
   ndiTextAlign?: 'left' | 'center' | 'right' | 'justify'
 
+  // ── NDI-only display + reference overrides (v0.5.57) ───────────
+  // The NDI feed used to share aspect-ratio + reference typography
+  // with Live Display. Operators piping into vMix / OBS asked for
+  // these to be carved off so they can run a 4:3 broadcast deck
+  // while the in-room projector stays 16:9, hide the reference
+  // line on the broadcast (lower-third already shows it via a
+  // chyron), or pick a translation that differs from what the
+  // operator searches against.  Every field is optional — when
+  // undefined the renderer falls back to the matching Live Display
+  // setting so existing persisted state keeps rendering identically.
+  ndiAspectRatio?: 'auto' | '16:9' | '4:3' | '21:9'
+  ndiBibleColor?: string
+  ndiBibleLineHeight?: number
+  ndiRefSize?: 'sm' | 'md' | 'lg' | 'xl'
+  ndiRefStyle?: 'normal' | 'italic'
+  ndiRefPosition?: 'top' | 'bottom' | 'hidden'
+  ndiRefScale?: number
+  ndiTranslation?: BibleTranslation
+
   // Item #15 follow-up — when the SSE link to the secondary screen
   // drops, the page used to slam a full-screen "Reconnecting…"
   // overlay over the broadcast. Useful for debugging, ugly during a
@@ -341,6 +360,17 @@ interface AppState {
   // mixers like the vMix Output toggle.
   outputEnabled: boolean
   setOutputEnabled: (b: boolean) => void
+
+  // v0.5.57 — Mirror of LicenseProvider.isLocked, written by an
+  // effect inside <LicenseProvider> at the layer ABOVE this store
+  // selector. Speech / mic providers (which are mounted ABOVE the
+  // license provider in the React tree, so they can't useLicense())
+  // subscribe here to know when to forcibly stop the active engine
+  // and release the OS mic on lockdown. Plain boolean — no nullable
+  // unknown state because LicenseProvider always writes the resolved
+  // value on mount.
+  licenseLocked: boolean
+  setLicenseLocked: (b: boolean) => void
 
   // Hard BLACK / HIDDEN state. When true the secondary screen, the
   // NDI feed and every downstream output render pure black — the
@@ -552,6 +582,16 @@ const defaultSettings: AppSettings = {
   ndiTextShadow: undefined,
   ndiTextScale: undefined,
   ndiTextAlign: undefined,
+  // v0.5.57 — All undefined so existing operators see no behaviour
+  // change until they explicitly opt-in via the NDI Settings panel.
+  ndiAspectRatio: undefined,
+  ndiBibleColor: undefined,
+  ndiBibleLineHeight: undefined,
+  ndiRefSize: undefined,
+  ndiRefStyle: undefined,
+  ndiRefPosition: undefined,
+  ndiRefScale: undefined,
+  ndiTranslation: undefined,
   showReconnectingOverlay: false,
 }
 
@@ -683,6 +723,12 @@ export const useAppStore = create<AppState>()(
 
       outputEnabled: true,
       setOutputEnabled: (b) => set({ outputEnabled: b }),
+
+      // v0.5.57 — License lockdown mirror. Default false (unknown =
+      // not locked) so the speech effect doesn't fire on first paint
+      // before LicenseProvider has resolved the status.
+      licenseLocked: false,
+      setLicenseLocked: (b) => set({ licenseLocked: b }),
 
       outputBlanked: false,
       setOutputBlanked: (b) => set({ outputBlanked: b }),

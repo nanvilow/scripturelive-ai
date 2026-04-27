@@ -634,6 +634,14 @@ export function deleteActivationByCode(code: string): boolean {
   return true
 }
 
+// v0.5.57 — Look up a single notification record by id. Used by the
+// Admin "Resend" endpoint to recover the original channel + recipient
+// + body so the operator can retry a queued/failed delivery without
+// hand-copying the audit log row.
+export function getNotificationById(id: string): NotificationRecord | undefined {
+  return load().notifications.find((n) => n.id === id)
+}
+
 export function deleteNotificationById(id: string): boolean {
   const f = load()
   const before = f.notifications.length

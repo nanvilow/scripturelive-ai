@@ -40,9 +40,13 @@ export function isPlanCode(s: unknown): s is PlanCode {
 
 // MoMo recipient — operator-supplied. Hard-coded as the v1 default
 // but overridable at runtime via Admin Settings (v0.5.48).
+// v0.5.57 — operator switched the receiving MoMo line from the
+// 0530... wallet to the 0246798526 wallet so the same number that
+// appears on customer receipts (NOTIFICATION_WHATSAPP) is the one
+// they pay into. The recipient name stays the same.
 export const MOMO_RECIPIENT = {
   name: 'Richard Kwesi Attieku',
-  number: '0530686367',
+  number: '0246798526',
 } as const
 
 // Where receipts and notifications are sent (defaults; overridable).

@@ -46,11 +46,34 @@ export function NdiOutputPanel() {
   const ndiFontSize = useAppStore((s) => s.settings.ndiFontSize)
   const ndiTextShadow = useAppStore((s) => s.settings.ndiTextShadow)
   const ndiTextAlign = useAppStore((s) => s.settings.ndiTextAlign)
+  const ndiTextScale = useAppStore((s) => s.settings.ndiTextScale)
+  // v0.5.57 — New NDI-only fields. Aspect ratio + bible color +
+  // line-height + reference {size, style, position, scale} +
+  // translation pick let the operator decouple every visual axis
+  // of the broadcast deck from the in-room projector.
+  const ndiAspectRatio = useAppStore((s) => s.settings.ndiAspectRatio)
+  const ndiBibleColor = useAppStore((s) => s.settings.ndiBibleColor)
+  const ndiBibleLineHeight = useAppStore((s) => s.settings.ndiBibleLineHeight)
+  const ndiRefSize = useAppStore((s) => s.settings.ndiRefSize)
+  const ndiRefStyle = useAppStore((s) => s.settings.ndiRefStyle)
+  const ndiRefPosition = useAppStore((s) => s.settings.ndiRefPosition)
+  const ndiRefScale = useAppStore((s) => s.settings.ndiRefScale)
+  const ndiTranslation = useAppStore((s) => s.settings.ndiTranslation)
+  const liveTranslation = useAppStore((s) => s.selectedTranslation)
   const ndiHasOverrides =
     ndiFontFamily !== undefined ||
     ndiFontSize !== undefined ||
     ndiTextShadow !== undefined ||
-    ndiTextAlign !== undefined
+    ndiTextAlign !== undefined ||
+    ndiTextScale !== undefined ||
+    ndiAspectRatio !== undefined ||
+    ndiBibleColor !== undefined ||
+    ndiBibleLineHeight !== undefined ||
+    ndiRefSize !== undefined ||
+    ndiRefStyle !== undefined ||
+    ndiRefPosition !== undefined ||
+    ndiRefScale !== undefined ||
+    ndiTranslation !== undefined
 
   if (!desktop) {
     return (
@@ -139,6 +162,27 @@ export function NdiOutputPanel() {
       </CardHeader>
 
       <CardContent className="space-y-4">
+        {/* v0.5.57 — Live mini-preview that mirrors the EXACT NDI
+            renderer (?ndi=1 query → IS_NDI=true server-side). Any
+            change the operator makes below appears here within ~1
+            broadcast tick because the iframe shares the same SSE/
+            polling pipeline as the captured NDI window. The 16:9
+            aspect-ratio frame keeps the preview compact above the
+            controls; the iframe scales to fit. */}
+        <div className="rounded-md border border-border bg-black overflow-hidden">
+          <div className="flex items-center justify-between gap-2 px-2 py-1.5 border-b border-border bg-muted/30">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">NDI live preview</div>
+            <div className="text-[10px] text-muted-foreground/70">mirrors what vMix / OBS sees</div>
+          </div>
+          <div className="relative w-full" style={{ aspectRatio: '16 / 9' }}>
+            <iframe
+              src="/api/output/congregation?ndi=1"
+              title="NDI Live Preview"
+              className="absolute inset-0 w-full h-full border-0"
+            />
+          </div>
+        </div>
+
         {!ndiOk && (
           <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
@@ -285,6 +329,17 @@ export function NdiOutputPanel() {
                         ndiTextShadow: undefined,
                         ndiTextAlign: undefined,
                         ndiTextScale: undefined,
+                        // v0.5.57 — also clear the 8 new NDI-only fields
+                        // so "Reset all" really means "back to mirroring
+                        // Live Display in every respect".
+                        ndiAspectRatio: undefined,
+                        ndiBibleColor: undefined,
+                        ndiBibleLineHeight: undefined,
+                        ndiRefSize: undefined,
+                        ndiRefStyle: undefined,
+                        ndiRefPosition: undefined,
+                        ndiRefScale: undefined,
+                        ndiTranslation: undefined,
                       })
                     }
                     className="text-[10px] text-muted-foreground hover:text-foreground underline"
@@ -378,6 +433,203 @@ export function NdiOutputPanel() {
               <p className="text-[10px] text-muted-foreground leading-snug">
                 Changes apply instantly to the NDI capture window — your projector keeps its own look.
               </p>
+            </div>
+
+            {/* v0.5.57 — Layout & Bible body */}
+            <div className="border-t border-border/60 pt-3 space-y-2">
+              <div className="text-[11px] font-semibold text-foreground">NDI Layout & Bible Body</div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Aspect ratio</label>
+                  <select
+                    value={ndiAspectRatio ?? '__inherit__'}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      updateSettings({
+                        ndiAspectRatio: v === '__inherit__' ? undefined : (v as 'auto' | '16:9' | '4:3' | '21:9'),
+                      })
+                    }}
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <option value="__inherit__">Mirror Live</option>
+                    <option value="auto">Auto (fill)</option>
+                    <option value="16:9">16:9</option>
+                    <option value="4:3">4:3</option>
+                    <option value="21:9">21:9</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Bible color</label>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="color"
+                      value={ndiBibleColor ?? '#ffffff'}
+                      onChange={(e) => updateSettings({ ndiBibleColor: e.target.value })}
+                      className="h-8 w-10 rounded-md border border-border bg-background cursor-pointer"
+                    />
+                    <input
+                      type="text"
+                      value={ndiBibleColor ?? ''}
+                      placeholder="(mirror Live)"
+                      onChange={(e) => {
+                        const v = e.target.value.trim()
+                        updateSettings({ ndiBibleColor: v.length === 0 ? undefined : v })
+                      }}
+                      className="flex-1 h-8 rounded-md border border-border bg-background px-2 text-xs font-mono"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1 col-span-2">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+                    <span>Bible line-height ({ndiBibleLineHeight?.toFixed(2) ?? 'mirror Live'})</span>
+                    {ndiBibleLineHeight !== undefined && (
+                      <button
+                        onClick={() => updateSettings({ ndiBibleLineHeight: undefined })}
+                        className="text-[9px] text-muted-foreground hover:text-foreground underline"
+                      >
+                        clear
+                      </button>
+                    )}
+                  </label>
+                  <input
+                    type="range"
+                    min="0.9"
+                    max="2.5"
+                    step="0.05"
+                    value={ndiBibleLineHeight ?? 1.4}
+                    onChange={(e) => updateSettings({ ndiBibleLineHeight: parseFloat(e.target.value) })}
+                    className="w-full accent-emerald-500"
+                  />
+                </div>
+                <div className="space-y-1 col-span-2">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+                    <span>Bible text scale ({ndiTextScale?.toFixed(2) ?? 'mirror Live'})</span>
+                    {ndiTextScale !== undefined && (
+                      <button
+                        onClick={() => updateSettings({ ndiTextScale: undefined })}
+                        className="text-[9px] text-muted-foreground hover:text-foreground underline"
+                      >
+                        clear
+                      </button>
+                    )}
+                  </label>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="2"
+                    step="0.05"
+                    value={ndiTextScale ?? 1}
+                    onChange={(e) => updateSettings({ ndiTextScale: parseFloat(e.target.value) })}
+                    className="w-full accent-emerald-500"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* v0.5.57 — Reference typography (NDI only) */}
+            <div className="border-t border-border/60 pt-3 space-y-2">
+              <div className="text-[11px] font-semibold text-foreground">NDI Reference Label</div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Size</label>
+                  <select
+                    value={ndiRefSize ?? '__inherit__'}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      updateSettings({ ndiRefSize: v === '__inherit__' ? undefined : (v as 'sm' | 'md' | 'lg' | 'xl') })
+                    }}
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <option value="__inherit__">Mirror Live</option>
+                    <option value="sm">Small</option>
+                    <option value="md">Medium</option>
+                    <option value="lg">Large</option>
+                    <option value="xl">Extra Large</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Style</label>
+                  <select
+                    value={ndiRefStyle ?? '__inherit__'}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      updateSettings({ ndiRefStyle: v === '__inherit__' ? undefined : (v as 'normal' | 'italic') })
+                    }}
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <option value="__inherit__">Mirror Live</option>
+                    <option value="normal">Normal</option>
+                    <option value="italic">Italic</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Position</label>
+                  <select
+                    value={ndiRefPosition ?? '__inherit__'}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      updateSettings({
+                        ndiRefPosition: v === '__inherit__' ? undefined : (v as 'top' | 'bottom' | 'hidden'),
+                      })
+                    }}
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <option value="__inherit__">Mirror Live (top)</option>
+                    <option value="top">Top</option>
+                    <option value="bottom">Bottom</option>
+                    <option value="hidden">Hidden</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+                    <span>Scale ({ndiRefScale?.toFixed(2) ?? 'mirror'})</span>
+                    {ndiRefScale !== undefined && (
+                      <button
+                        onClick={() => updateSettings({ ndiRefScale: undefined })}
+                        className="text-[9px] text-muted-foreground hover:text-foreground underline"
+                      >
+                        clear
+                      </button>
+                    )}
+                  </label>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="2"
+                    step="0.05"
+                    value={ndiRefScale ?? 1}
+                    onChange={(e) => updateSettings({ ndiRefScale: parseFloat(e.target.value) })}
+                    className="w-full accent-emerald-500"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* v0.5.57 — Translation. Note: persisted only — the
+                runtime swap (re-fetch verses for the NDI surface in
+                a different translation) is a roadmap item for v0.6.
+                The picker is exposed now so operators can stage
+                their preferred broadcast translation in advance. */}
+            <div className="border-t border-border/60 pt-3 space-y-2">
+              <div className="text-[11px] font-semibold text-foreground">NDI Translation</div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Translation override</label>
+                <input
+                  type="text"
+                  value={ndiTranslation ?? ''}
+                  placeholder={`Mirror Live (${liveTranslation || 'KJV'})`}
+                  onChange={(e) => {
+                    const v = e.target.value.trim()
+                    updateSettings({ ndiTranslation: v.length === 0 ? undefined : v })
+                  }}
+                  className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs font-mono uppercase"
+                />
+                <p className="text-[10px] text-muted-foreground leading-snug">
+                  Leave blank to use the same translation the operator picked in the
+                  Bible search panel. (Runtime per-surface swap ships in v0.6 — for
+                  now this preference is saved alongside your NDI layout.)
+                </p>
+              </div>
             </div>
           </div>
         )}
