@@ -756,7 +756,7 @@ function render(s){
   // v0.5.57 — Reference position. 'top' (default) renders ref BEFORE
   // the verse body; 'bottom' flips the order so vMix-style chyron
   // setups can put the citation at the foot of the lower-third.
-  // 'hidden' was already handled by emptying `ref` above.
+  // 'hidden' was already handled by emptying ref above.
   var refOrderTop=(rfPosition!=='bottom');
   if(isLT){
     // FORCE_POS (?position=top|bottom) wins over the operator's
