@@ -105,8 +105,8 @@ export function LicenseTopBarButton({ variant = 'inline' }: Props) {
           position,
           'inline-flex items-center gap-1.5 rounded-md font-semibold uppercase tracking-wider',
           sizing,
-          'bg-emerald-600 hover:bg-emerald-500 text-white shadow shadow-emerald-900/40',
-          'border border-emerald-400/40',
+          'bg-sky-600 hover:bg-sky-500 text-white shadow shadow-sky-900/40',
+          'border border-sky-300/50',
           'transition-colors shrink-0',
         )}
         title={

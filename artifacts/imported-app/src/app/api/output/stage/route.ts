@@ -66,11 +66,6 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#0a0a0a;color:#fff
     <div class="text" id="next-text">No upcoming slide</div>
   </div>
 
-  <div class="panel notes">
-    <h2>Speaker Notes</h2>
-    <pre id="notes">—</pre>
-  </div>
-
   <div class="foot">
     <div><span class="dot" id="conn-dot"></span><span id="conn-label">Connecting…</span></div>
     <div id="meta">—</div>

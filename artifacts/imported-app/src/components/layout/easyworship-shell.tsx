@@ -241,7 +241,7 @@ function NdiToggleButton() {
       className={cn(
         'h-7 px-2.5 text-[11px] gap-1.5 border font-semibold transition-colors',
         isRunning
-          ? 'bg-red-600/20 text-red-200 border-red-600 hover:bg-red-600/30'
+          ? 'bg-amber-500/25 text-amber-200 border-amber-500 hover:bg-amber-500/35'
           : unavailable
             ? 'text-zinc-500 border-zinc-800 hover:bg-zinc-800'
             : 'text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white',
@@ -254,12 +254,12 @@ function NdiToggleButton() {
             : 'Click to broadcast the live output to vMix / OBS / Wirecast over NDI'
       }
     >
-      <Radio className={cn('h-3 w-3', isRunning && 'text-red-300')} />
+      <Radio className={cn('h-3 w-3', isRunning && 'text-amber-300')} />
       NDI
       {isRunning && (
         <span
-          className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse"
-          style={{ boxShadow: '0 0 8px 2px rgba(239,68,68,0.85), 0 0 16px 4px rgba(239,68,68,0.45)' }}
+          className="inline-block h-2 w-2 rounded-full bg-amber-400 animate-pulse"
+          style={{ boxShadow: '0 0 8px 2px rgba(251,191,36,0.85), 0 0 16px 4px rgba(251,191,36,0.45)' }}
         />
       )}
     </Button>
