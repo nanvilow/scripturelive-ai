@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { useAppStore, type DetectedVerse } from '@/lib/store'
 import { detectVersesInText, fetchBibleVerse } from '@/lib/bible-api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -22,6 +22,7 @@ import {
   Info,
   Zap,
   RotateCcw,
+  Sparkles,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -75,6 +76,116 @@ export function ScriptureDetectionView() {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const liveDisplayRef = useRef<HTMLDivElement>(null)
   const [manualInput, setManualInput] = useState('')
+
+  // v0.6.0 — AI semantic match feedback. When the operator says
+  // something that PARAPHRASES a popular verse without naming the
+  // reference (e.g. "the Lord is my shepherd I shall not want")
+  // we surface the top semantic candidate as a suggestion chip
+  // beneath the live transcript. They click to send it live —
+  // no more missing the verse just because the regex matcher needs
+  // a "Book chap:verse" token to trigger.
+  const [aiSuggestion, setAiSuggestion] = useState<{
+    reference: string
+    text: string
+    score: number
+    confidence: 'high' | 'medium' | 'low'
+  } | null>(null)
+  const aiBusyRef = useRef<boolean>(false)
+  const lastSemanticPhraseRef = useRef<string>('')
+  const semanticWarmedRef = useRef<boolean>(false)
+
+  // Warm the embedding cache the first time the operator hits the
+  // detection page WHILE listening — the cache lives in the Next.js
+  // worker so this is a one-time ~250 ms cost paid up front instead
+  // of stalling the operator's first transcript phrase by 250 ms.
+  useEffect(() => {
+    if (semanticWarmedRef.current) return
+    if (!isListening) return
+    semanticWarmedRef.current = true
+    fetch('/api/scripture/semantic-match', { method: 'GET' }).catch(() => {
+      // Silent — falls through to regex matcher when the API is unreachable.
+    })
+  }, [isListening])
+
+  // Watch the live transcript and run the AI semantic matcher on
+  // each new committed sentence. We debounce to ~600 ms after the
+  // last update so we don't fire one embedding per word.
+  useEffect(() => {
+    if (!isListening) return
+    if (!liveTranscript) return
+    // Take the LAST sentence (split on punctuation/newline).
+    const sentences = liveTranscript
+      .split(/(?<=[.!?])\s+|\n+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 12)
+    const phrase = sentences[sentences.length - 1] ?? ''
+    if (!phrase) return
+    if (phrase === lastSemanticPhraseRef.current) return
+    // If the regex matcher already finds a verse in this phrase,
+    // skip the embedding call — regex matches carry the operator's
+    // own translation pick and are strictly preferred.
+    if (detectVersesInText(phrase).length > 0) return
+    const handle = setTimeout(async () => {
+      if (aiBusyRef.current) return
+      aiBusyRef.current = true
+      lastSemanticPhraseRef.current = phrase
+      try {
+        const r = await fetch('/api/scripture/semantic-match', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: phrase, topK: 1 }),
+        })
+        if (!r.ok) return
+        const j = await r.json()
+        const top = (j.matches as Array<{
+          reference: string
+          text: string
+          score: number
+          confidence: 'high' | 'medium' | 'low'
+        }> | undefined)?.[0]
+        if (!top) {
+          setAiSuggestion(null)
+          return
+        }
+        setAiSuggestion(top)
+      } catch {
+        /* swallow — falls through to regex-only behaviour */
+      } finally {
+        aiBusyRef.current = false
+      }
+    }, 600)
+    return () => clearTimeout(handle)
+  }, [liveTranscript, isListening])
+
+  // Send an AI-suggested verse live. Re-fetches the verse in the
+  // operator's currently-selected translation so a paraphrased KJV
+  // match still respects their NIV/ESV/etc. preference.
+  const sendAiSuggestionLive = useCallback(async () => {
+    if (!aiSuggestion) return
+    try {
+      const fetched = await fetchBibleVerse(aiSuggestion.reference, selectedTranslation)
+      if (fetched) {
+        setLiveVerse(fetched)
+        addToVerseHistory(fetched)
+        toast.success(`AI sent ${aiSuggestion.reference} live`)
+      } else {
+        // Fall back to the KJV text the matcher returned so the
+        // operator never gets a dead click.
+        setLiveVerse({
+          reference: aiSuggestion.reference,
+          text: aiSuggestion.text,
+          translation: 'KJV',
+          book: '',
+          chapter: 0,
+          verseStart: 0,
+        })
+        toast.success(`AI sent ${aiSuggestion.reference} live (KJV fallback)`)
+      }
+      setAiSuggestion(null)
+    } catch {
+      toast.error('Failed to send AI suggestion')
+    }
+  }, [aiSuggestion, selectedTranslation, setLiveVerse, addToVerseHistory])
 
   // ── Go Live with a verse ─────────────────────────────────────────────
   const goLiveWithVerse = useCallback((
@@ -368,6 +479,50 @@ export function ScriptureDetectionView() {
                       : 'Listening… speak into your microphone'
                     : 'Transcript will appear here when you start listening'}
                 </p>
+              )}
+              {/* v0.6.0 — AI semantic-match suggestion chip. Renders
+                  only when the matcher returns a HIGH or MEDIUM
+                  confidence candidate that the regex matcher missed.
+                  Click to send live (auto re-fetches the verse in the
+                  operator's selected translation). */}
+              {aiSuggestion && (
+                <div className="mt-3 flex items-center gap-2 rounded-md border border-violet-500/30 bg-violet-500/5 px-3 py-2">
+                  <Sparkles className="h-3.5 w-3.5 text-violet-300 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <span className="text-[10px] uppercase tracking-wider text-violet-300/80 font-semibold">
+                        AI Match · {aiSuggestion.confidence === 'high' ? 'High' : 'Medium'} confidence
+                      </span>
+                      <span className="text-[10px] font-mono text-violet-300/60">
+                        ({aiSuggestion.score.toFixed(2)})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-violet-200 shrink-0">
+                        {aiSuggestion.reference}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground truncate italic">
+                        &ldquo;{aiSuggestion.text}&rdquo;
+                      </span>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={sendAiSuggestionLive}
+                    className="h-7 text-[10px] gap-1 bg-violet-600 hover:bg-violet-500 text-white shrink-0"
+                  >
+                    <Send className="h-3 w-3" />
+                    Send Live
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={() => setAiSuggestion(null)}
+                    title="Dismiss"
+                    className="text-violet-300/60 hover:text-violet-200 text-[14px] leading-none px-1"
+                  >
+                    ×
+                  </button>
+                </div>
               )}
             </div>
           </CardContent>

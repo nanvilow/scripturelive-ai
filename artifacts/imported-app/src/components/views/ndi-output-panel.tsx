@@ -1,56 +1,57 @@
 'use client'
 
+// v0.6.0 — NDI Output panel redesign.
+//
+// Operator feedback: in v0.5.x we hid the per-feed typography behind
+// an "Advanced" disclosure and stacked the live preview ABOVE the
+// controls. That meant every operator scrolled past a 16:9 thumbnail
+// to reach the buttons they actually use during a service, and the
+// real power of the panel (NDI-only typography, ref position, color)
+// was hidden behind a chevron that most operators never clicked.
+//
+// v0.6.0 layout:
+//   • Two columns on desktop. Left = ALL controls (always visible,
+//     no Advanced disclosure). Right = sticky live preview, shrunk
+//     to ~360px so the controls stay center-stage.
+//   • On narrow widths the columns collapse to a stack with the
+//     preview moved BELOW the controls (operator-first ordering).
+//   • Every change still pushes through the same SSE pipeline so
+//     the preview iframe updates on the next broadcast tick.
+
 import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Wifi, WifiOff, Radio, AlertTriangle, MonitorPlay, ChevronDown } from 'lucide-react'
+import { Wifi, WifiOff, Radio, AlertTriangle, MonitorPlay } from 'lucide-react'
 import { useNdi } from '@/lib/use-electron'
 import { StageDisplayControls } from '@/components/views/stage-display-controls'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/lib/store'
 
-/**
- * One-click NDI panel.
- *
- * Design philosophy: the desktop app auto-starts the NDI sender at launch
- * with sensible defaults (1080p / 30fps, source name "ScriptureLive AI"),
- * so by the time this panel renders, the source is usually already live
- * on the LAN and visible in vMix / Wirecast / OBS / NDI Studio Monitor.
- *
- * The panel surfaces a single big toggle to stop or restart the sender,
- * a status indicator, and a small "Advanced" disclosure for power users
- * who need to override the source name. Everything else (resolution,
- * frame rate, lower-third overlays) is gone — those choices belong in
- * the AV switcher, not in the slides app.
- */
 export function NdiOutputPanel() {
   const { desktop, status, available, unavailableReason } = useNdi()
   const [busy, setBusy] = useState(false)
-  const [showAdvanced, setShowAdvanced] = useState(false)
   const [sourceName, setSourceName] = useState('ScriptureLive AI')
-  // NDI-only display mode — independent from the secondary-screen
-  // `displayMode`. Lets the operator run the projector at Full Screen
-  // while feeding vMix/OBS a Lower Third (v0.5.5 spec).
+
   const ndiDisplayMode = useAppStore((s) => s.settings.ndiDisplayMode)
   const updateSettings = useAppStore((s) => s.updateSettings)
-  // v0.5.48 — NDI-only typography overrides. Each is independent of
-  // the Live Display setting; an undefined value means "mirror Live
-  // Display". The operator opts in by picking a value below.
+
+  // Live Display values that NDI controls fall back to when set to
+  // "mirror Live". Read once at render so the inheritance hint stays
+  // accurate as the operator tweaks Live in another tab.
   const liveFontFamily = useAppStore((s) => s.settings.fontFamily)
   const liveFontSize = useAppStore((s) => s.settings.fontSize)
   const liveTextShadow = useAppStore((s) => s.settings.textShadow)
   const liveTextAlign = useAppStore((s) => s.settings.textAlign)
+  const liveTranslation = useAppStore((s) => s.selectedTranslation)
+
+  // NDI-only overrides (undefined = mirror Live).
   const ndiFontFamily = useAppStore((s) => s.settings.ndiFontFamily)
   const ndiFontSize = useAppStore((s) => s.settings.ndiFontSize)
   const ndiTextShadow = useAppStore((s) => s.settings.ndiTextShadow)
   const ndiTextAlign = useAppStore((s) => s.settings.ndiTextAlign)
   const ndiTextScale = useAppStore((s) => s.settings.ndiTextScale)
-  // v0.5.57 — New NDI-only fields. Aspect ratio + bible color +
-  // line-height + reference {size, style, position, scale} +
-  // translation pick let the operator decouple every visual axis
-  // of the broadcast deck from the in-room projector.
   const ndiAspectRatio = useAppStore((s) => s.settings.ndiAspectRatio)
   const ndiBibleColor = useAppStore((s) => s.settings.ndiBibleColor)
   const ndiBibleLineHeight = useAppStore((s) => s.settings.ndiBibleLineHeight)
@@ -59,7 +60,7 @@ export function NdiOutputPanel() {
   const ndiRefPosition = useAppStore((s) => s.settings.ndiRefPosition)
   const ndiRefScale = useAppStore((s) => s.settings.ndiRefScale)
   const ndiTranslation = useAppStore((s) => s.settings.ndiTranslation)
-  const liveTranslation = useAppStore((s) => s.selectedTranslation)
+
   const ndiHasOverrides =
     ndiFontFamily !== undefined ||
     ndiFontSize !== undefined ||
@@ -111,10 +112,6 @@ export function NdiOutputPanel() {
         if (!res.ok) toast.error(res.error || 'Failed to stop NDI')
         else toast.success('NDI output stopped')
       } else {
-        // v0.5.50 — bumped capture rate from 30 → 60 fps so vMix /
-        // OBS receive a smoother feed (the previous 30 fps capture
-        // was the main source of operator complaints about the NDI
-        // looking less crisp than the in-app Live Display).
         const res = await desktop.ndi.start({
           name: sourceName.trim() || 'ScriptureLive AI',
           width: 1920,
@@ -132,6 +129,24 @@ export function NdiOutputPanel() {
   const handleOpenWindow = async () => {
     if (!desktop) return
     await desktop.output.openWindow()
+  }
+
+  const handleResetAllOverrides = () => {
+    updateSettings({
+      ndiFontFamily: undefined,
+      ndiFontSize: undefined,
+      ndiTextShadow: undefined,
+      ndiTextAlign: undefined,
+      ndiTextScale: undefined,
+      ndiAspectRatio: undefined,
+      ndiBibleColor: undefined,
+      ndiBibleLineHeight: undefined,
+      ndiRefSize: undefined,
+      ndiRefStyle: undefined,
+      ndiRefPosition: undefined,
+      ndiRefScale: undefined,
+      ndiTranslation: undefined,
+    })
   }
 
   return (
@@ -161,143 +176,81 @@ export function NdiOutputPanel() {
         </div>
       </CardHeader>
 
-      <CardContent className="space-y-4">
-        {/* v0.5.57 — Live mini-preview that mirrors the EXACT NDI
-            renderer (?ndi=1 query → IS_NDI=true server-side). Any
-            change the operator makes below appears here within ~1
-            broadcast tick because the iframe shares the same SSE/
-            polling pipeline as the captured NDI window. The 16:9
-            aspect-ratio frame keeps the preview compact above the
-            controls; the iframe scales to fit. */}
-        <div className="rounded-md border border-border bg-black overflow-hidden">
-          <div className="flex items-center justify-between gap-2 px-2 py-1.5 border-b border-border bg-muted/30">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">NDI live preview</div>
-            <div className="text-[10px] text-muted-foreground/70">mirrors what vMix / OBS sees</div>
-          </div>
-          <div className="relative w-full" style={{ aspectRatio: '16 / 9' }}>
-            <iframe
-              src="/api/output/congregation?ndi=1"
-              title="NDI Live Preview"
-              className="absolute inset-0 w-full h-full border-0"
-            />
-          </div>
-        </div>
-
-        {!ndiOk && (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex items-start gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-            <div className="text-xs text-amber-300/90 leading-relaxed">
-              <strong>NDI runtime not detected.</strong>{' '}
-              {unavailableReason ? <span className="opacity-80">({unavailableReason})</span> : null}
-              <br />
-              Install <a href="https://ndi.video/tools/" target="_blank" rel="noopener noreferrer" className="underline">NDI Tools</a> (free)
-              from the official site, then restart the desktop app. NDI Tools provides the runtime that lets vMix, Wirecast, and OBS see this source on the network.
-            </div>
-          </div>
-        )}
-
-        {/* The one button. */}
-        <Button
-          onClick={handleToggle}
-          disabled={busy || !ndiOk}
-          className={cn(
-            'w-full h-14 text-base font-semibold gap-3 transition-colors',
-            isRunning
-              ? 'bg-red-600 hover:bg-red-700 text-white'
-              : 'bg-emerald-600 hover:bg-emerald-700 text-white',
-          )}
-        >
-          {isRunning ? (
-            <><WifiOff className="h-5 w-5" /> Stop NDI Output</>
-          ) : (
-            <><Wifi className="h-5 w-5" /> Start NDI Output</>
-          )}
-        </Button>
-
-        {/* Status + frame counter */}
-        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground px-1">
-          <div className="flex items-center gap-2">
-            {isRunning ? (
-              <>
-                <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                Broadcasting · 1080p60 · {status?.frameCount.toLocaleString() || 0} frames sent
-              </>
-            ) : (
-              <>
-                <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground/50" />
-                Sender stopped
-              </>
+      <CardContent>
+        {/* v0.6.0 two-column layout. lg breakpoint = side-by-side;
+            below that the controls stack on top of a smaller preview. */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5">
+          {/* ── LEFT COLUMN — controls (always visible) ─────────────── */}
+          <div className="space-y-4">
+            {!ndiOk && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="text-xs text-amber-300/90 leading-relaxed">
+                  <strong>NDI runtime not detected.</strong>{' '}
+                  {unavailableReason ? <span className="opacity-80">({unavailableReason})</span> : null}
+                  <br />
+                  Install <a href="https://ndi.video/tools/" target="_blank" rel="noopener noreferrer" className="underline">NDI Tools</a> (free)
+                  from the official site, then restart the desktop app. NDI Tools provides the runtime that lets vMix, Wirecast, and OBS see this source on the network.
+                </div>
+              </div>
             )}
-          </div>
-          <Button onClick={handleOpenWindow} variant="ghost" size="sm" className="h-7 text-[11px] gap-1.5">
-            <MonitorPlay className="h-3.5 w-3.5" /> Open Congregation Window
-          </Button>
-        </div>
 
-        {status?.error && (
-          <div className="rounded-md border border-red-500/30 bg-red-500/5 p-2 text-xs text-red-300">
-            Error: {status.error}
-          </div>
-        )}
+            {/* The one button. */}
+            <Button
+              onClick={handleToggle}
+              disabled={busy || !ndiOk}
+              className={cn(
+                'w-full h-14 text-base font-semibold gap-3 transition-colors',
+                isRunning
+                  ? 'bg-red-600 hover:bg-red-700 text-white'
+                  : 'bg-emerald-600 hover:bg-emerald-700 text-white',
+              )}
+            >
+              {isRunning ? (
+                <><WifiOff className="h-5 w-5" /> Stop NDI Output</>
+              ) : (
+                <><Wifi className="h-5 w-5" /> Start NDI Output</>
+              )}
+            </Button>
 
-        {/* Audio guidance — pros mix audio in the AV switcher, not via NDI */}
-        <div className="rounded-md border border-border/60 bg-muted/20 p-3 text-[11px] text-muted-foreground leading-relaxed">
-          <strong className="text-foreground">Audio:</strong> NDI carries the
-          slide visuals only. Route your microphones, music, and video
-          playback audio through your existing AV mixer (vMix audio in,
-          Wirecast audio source, OBS audio bus) — that&apos;s what keeps
-          audio sync rock solid in a live service.
-        </div>
-
-        {/* NDI Display Mode — independent of the projector's displayMode */}
-        <div className="rounded-md border border-border/60 bg-muted/10 p-3 space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <div className="text-[11px] font-semibold text-foreground">NDI Display Mode</div>
-              <p className="text-[10px] text-muted-foreground leading-snug">
-                Affects the NDI feed only. Your secondary screen stays on its own mode.
-              </p>
-            </div>
-            <div className="flex gap-1 shrink-0">
-              <button
-                onClick={() => updateSettings({ ndiDisplayMode: 'full' })}
-                className={cn(
-                  'h-7 px-2.5 rounded-md border text-[10px] uppercase tracking-wider transition-colors',
-                  ndiDisplayMode === 'full'
-                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
-                    : 'border-border bg-background hover:bg-muted/40 text-muted-foreground',
+            {/* Status + open window */}
+            <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground px-1">
+              <div className="flex items-center gap-2">
+                {isRunning ? (
+                  <>
+                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Broadcasting · 1080p60 · {status?.frameCount.toLocaleString() || 0} frames sent
+                  </>
+                ) : (
+                  <>
+                    <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground/50" />
+                    Sender stopped
+                  </>
                 )}
-              >
-                Full Screen
-              </button>
-              <button
-                onClick={() => updateSettings({ ndiDisplayMode: 'lower-third' })}
-                className={cn(
-                  'h-7 px-2.5 rounded-md border text-[10px] uppercase tracking-wider transition-colors',
-                  ndiDisplayMode === 'lower-third'
-                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
-                    : 'border-border bg-background hover:bg-muted/40 text-muted-foreground',
-                )}
-              >
-                Lower Third
-              </button>
+              </div>
+              <Button onClick={handleOpenWindow} variant="ghost" size="sm" className="h-7 text-[11px] gap-1.5">
+                <MonitorPlay className="h-3.5 w-3.5" /> Open Congregation Window
+              </Button>
             </div>
-          </div>
-        </div>
 
-        {/* Advanced disclosure */}
-        <button
-          onClick={() => setShowAdvanced((v) => !v)}
-          className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showAdvanced && 'rotate-180')} />
-          Advanced
-        </button>
+            {status?.error && (
+              <div className="rounded-md border border-red-500/30 bg-red-500/5 p-2 text-xs text-red-300">
+                Error: {status.error}
+              </div>
+            )}
 
-        {showAdvanced && (
-          <div className="rounded-md border border-border bg-muted/10 p-3 space-y-3">
-            <div className="space-y-1.5">
-              <label className="text-[11px] text-muted-foreground">NDI source name</label>
+            {/* Audio guidance */}
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3 text-[11px] text-muted-foreground leading-relaxed">
+              <strong className="text-foreground">Audio:</strong> NDI carries the
+              slide visuals only. Route your microphones, music, and video
+              playback audio through your existing AV mixer (vMix audio in,
+              Wirecast audio source, OBS audio bus) — that&apos;s what keeps
+              audio sync rock solid in a live service.
+            </div>
+
+            {/* Source name */}
+            <div className="rounded-md border border-border bg-muted/10 p-3 space-y-1.5">
+              <label className="text-[11px] font-semibold text-foreground">NDI source name</label>
               <input
                 value={sourceName}
                 onChange={(e) => setSourceName(e.target.value.slice(0, 60))}
@@ -305,43 +258,60 @@ export function NdiOutputPanel() {
                 className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs disabled:opacity-50"
                 placeholder="ScriptureLive AI"
               />
-              <p className="text-[10px] text-muted-foreground">
+              <p className="text-[10px] text-muted-foreground leading-snug">
                 How the source appears in vMix / OBS / NDI Studio Monitor.
                 Stop and restart the sender to apply a name change.
               </p>
             </div>
 
-            {/* v0.5.48 — NDI-only typography overrides */}
-            <div className="border-t border-border/60 pt-3 space-y-2">
+            {/* NDI Display Mode */}
+            <div className="rounded-md border border-border/60 bg-muted/10 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-[11px] font-semibold text-foreground">NDI Display Mode</div>
+                  <p className="text-[10px] text-muted-foreground leading-snug">
+                    Affects the NDI feed only. Your secondary screen stays on its own mode.
+                  </p>
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <button
+                    onClick={() => updateSettings({ ndiDisplayMode: 'full' })}
+                    className={cn(
+                      'h-7 px-2.5 rounded-md border text-[10px] uppercase tracking-wider transition-colors',
+                      ndiDisplayMode === 'full'
+                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+                        : 'border-border bg-background hover:bg-muted/40 text-muted-foreground',
+                    )}
+                  >
+                    Full Screen
+                  </button>
+                  <button
+                    onClick={() => updateSettings({ ndiDisplayMode: 'lower-third' })}
+                    className={cn(
+                      'h-7 px-2.5 rounded-md border text-[10px] uppercase tracking-wider transition-colors',
+                      ndiDisplayMode === 'lower-third'
+                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+                        : 'border-border bg-background hover:bg-muted/40 text-muted-foreground',
+                    )}
+                  >
+                    Lower Third
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* NDI Typography (always visible — no more Advanced) */}
+            <div className="rounded-md border border-border bg-muted/10 p-3 space-y-3">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <div className="text-[11px] font-semibold text-foreground">NDI Typography</div>
                   <p className="text-[10px] text-muted-foreground leading-snug">
-                    Independent of Live Display. Leave a control unset to mirror Live Display.
+                    Independent of Live Display. Leave a control on &ldquo;Mirror Live&rdquo; to inherit.
                   </p>
                 </div>
                 {ndiHasOverrides && (
                   <button
-                    onClick={() =>
-                      updateSettings({
-                        ndiFontFamily: undefined,
-                        ndiFontSize: undefined,
-                        ndiTextShadow: undefined,
-                        ndiTextAlign: undefined,
-                        ndiTextScale: undefined,
-                        // v0.5.57 — also clear the 8 new NDI-only fields
-                        // so "Reset all" really means "back to mirroring
-                        // Live Display in every respect".
-                        ndiAspectRatio: undefined,
-                        ndiBibleColor: undefined,
-                        ndiBibleLineHeight: undefined,
-                        ndiRefSize: undefined,
-                        ndiRefStyle: undefined,
-                        ndiRefPosition: undefined,
-                        ndiRefScale: undefined,
-                        ndiTranslation: undefined,
-                      })
-                    }
+                    onClick={handleResetAllOverrides}
                     className="text-[10px] text-muted-foreground hover:text-foreground underline"
                   >
                     Reset all
@@ -350,7 +320,6 @@ export function NdiOutputPanel() {
               </div>
 
               <div className="grid grid-cols-2 gap-2">
-                {/* Font family */}
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Font</label>
                   <select
@@ -373,7 +342,6 @@ export function NdiOutputPanel() {
                     <option value="roboto">Roboto</option>
                   </select>
                 </div>
-                {/* Font size */}
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Size</label>
                   <select
@@ -391,7 +359,6 @@ export function NdiOutputPanel() {
                     <option value="xl">Extra Large</option>
                   </select>
                 </div>
-                {/* Drop shadow */}
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Drop shadow</label>
                   <select
@@ -409,7 +376,6 @@ export function NdiOutputPanel() {
                     <option value="off">Off</option>
                   </select>
                 </div>
-                {/* Alignment */}
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Align</label>
                   <select
@@ -430,14 +396,11 @@ export function NdiOutputPanel() {
                   </select>
                 </div>
               </div>
-              <p className="text-[10px] text-muted-foreground leading-snug">
-                Changes apply instantly to the NDI capture window — your projector keeps its own look.
-              </p>
             </div>
 
-            {/* v0.5.57 — Layout & Bible body */}
-            <div className="border-t border-border/60 pt-3 space-y-2">
-              <div className="text-[11px] font-semibold text-foreground">NDI Layout & Bible Body</div>
+            {/* NDI Layout & Bible Body */}
+            <div className="rounded-md border border-border bg-muted/10 p-3 space-y-3">
+              <div className="text-[11px] font-semibold text-foreground">NDI Layout &amp; Bible Body</div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Aspect ratio</label>
@@ -526,8 +489,8 @@ export function NdiOutputPanel() {
               </div>
             </div>
 
-            {/* v0.5.57 — Reference typography (NDI only) */}
-            <div className="border-t border-border/60 pt-3 space-y-2">
+            {/* NDI Reference Label */}
+            <div className="rounded-md border border-border bg-muted/10 p-3 space-y-3">
               <div className="text-[11px] font-semibold text-foreground">NDI Reference Label</div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
@@ -605,12 +568,8 @@ export function NdiOutputPanel() {
               </div>
             </div>
 
-            {/* v0.5.57 — Translation. Note: persisted only — the
-                runtime swap (re-fetch verses for the NDI surface in
-                a different translation) is a roadmap item for v0.6.
-                The picker is exposed now so operators can stage
-                their preferred broadcast translation in advance. */}
-            <div className="border-t border-border/60 pt-3 space-y-2">
+            {/* NDI Translation */}
+            <div className="rounded-md border border-border bg-muted/10 p-3 space-y-2">
               <div className="text-[11px] font-semibold text-foreground">NDI Translation</div>
               <div className="space-y-1">
                 <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Translation override</label>
@@ -625,16 +584,36 @@ export function NdiOutputPanel() {
                   className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs font-mono uppercase"
                 />
                 <p className="text-[10px] text-muted-foreground leading-snug">
-                  Leave blank to use the same translation the operator picked in the
-                  Bible search panel. (Runtime per-surface swap ships in v0.6 — for
-                  now this preference is saved alongside your NDI layout.)
+                  Leave blank to use the same translation the operator picked in
+                  the Bible search panel.
                 </p>
               </div>
             </div>
-          </div>
-        )}
 
-        <StageDisplayControls />
+            <StageDisplayControls />
+          </div>
+
+          {/* ── RIGHT COLUMN — sticky compact preview ──────────────── */}
+          <div className="lg:sticky lg:top-2 self-start order-first lg:order-last">
+            <div className="rounded-md border border-border bg-black overflow-hidden">
+              <div className="flex items-center justify-between gap-2 px-2 py-1.5 border-b border-border bg-muted/30">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">NDI live preview</div>
+                <div className="text-[10px] text-muted-foreground/70 hidden sm:block">vMix / OBS view</div>
+              </div>
+              <div className="relative w-full" style={{ aspectRatio: '16 / 9' }}>
+                <iframe
+                  src="/api/output/congregation?ndi=1"
+                  title="NDI Live Preview"
+                  className="absolute inset-0 w-full h-full border-0"
+                />
+              </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground/80 mt-1.5 px-1 leading-snug">
+              Mirrors what vMix / OBS sees. Every change in the controls
+              shows up here on the next broadcast tick.
+            </p>
+          </div>
+        </div>
       </CardContent>
     </Card>
   )

@@ -895,13 +895,18 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'scripturelive-settings',
-      // v0.5.34 — bump to v1 to migrate existing users whose
-      // persisted settings.autoGoLiveOnDetection is the old false
-      // default. We flip them to true so the new default reaches
-      // people who already shipped a previous version.
-      version: 1,
+      // v0.6.0 — bump to v2 to honour Case2 #6 (defaults must NOT
+      // overwrite an existing operator's saved preferences). The v2
+      // migration is intentionally a no-op preserve: we layer the
+      // CURRENT defaults UNDER the operator's persisted settings so
+      // any field the operator never touched picks up new defaults
+      // automatically, but every field they explicitly set survives.
+      // This stops the "I upgraded and my trial reset / my fonts
+      // changed / my mic gain went back to 1" complaints.
+      version: 2,
       migrate: (persistedState: unknown, version: number) => {
         const ps = (persistedState as { settings?: Partial<AppSettings> } | undefined) ?? {}
+        // v0.5.34 → v1: flip autoGoLiveOnDetection on for early adopters.
         if (version < 1) {
           return {
             ...ps,
@@ -909,6 +914,20 @@ export const useAppStore = create<AppState>()(
               ...defaultSettings,
               ...(ps.settings ?? {}),
               autoGoLiveOnDetection: true,
+            },
+          }
+        }
+        // v0.6.0 → v2: pure preserve. New defaults apply only to
+        // fields the operator never set; everything else passes
+        // through untouched. We DO NOT overwrite trial / activation
+        // state here because licensing lives in license.json on the
+        // main process, not in this client store.
+        if (version < 2) {
+          return {
+            ...ps,
+            settings: {
+              ...defaultSettings,
+              ...(ps.settings ?? {}),
             },
           }
         }

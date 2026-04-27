@@ -107,6 +107,13 @@ export function AdminModal() {
   // out-of-band payments (cash, bank transfer).
   const [genPlan, setGenPlan] = useState<string>('1M')
   const [genDays, setGenDays] = useState<string>('') // empty ⇒ use plan default
+  // v0.6.0 — sub-day granularity. Operators asked for hour + minute
+  // precision so they can mint short-lived demo / training codes
+  // ("Pastor John, here's a 4-hour code for tonight's rehearsal").
+  // The server adds (days + hours + minutes) into a total before
+  // computing expiresAt, so any combination works.
+  const [genHours, setGenHours] = useState<string>('')
+  const [genMinutes, setGenMinutes] = useState<string>('')
   const [genNote, setGenNote] = useState<string>('') // username / church / label
   const [genEmail, setGenEmail] = useState<string>('')
   const [genWhatsapp, setGenWhatsapp] = useState<string>('')
@@ -213,8 +220,19 @@ export function AdminModal() {
       setGenResult({ ok: false, msg: 'Days must be a whole number between 1 and 36500.' })
       return
     }
-    if (genPlan === 'CUSTOM' && daysNum == null) {
-      setGenResult({ ok: false, msg: 'CUSTOM plan requires a days value.' })
+    // v0.6.0 — validate hours / minutes ranges. Empty = 0.
+    const hoursNum = genHours.trim() === '' ? 0 : Math.floor(Number(genHours))
+    const minutesNum = genMinutes.trim() === '' ? 0 : Math.floor(Number(genMinutes))
+    if (!Number.isFinite(hoursNum) || hoursNum < 0 || hoursNum > 23) {
+      setGenResult({ ok: false, msg: 'Hours must be a whole number between 0 and 23.' })
+      return
+    }
+    if (!Number.isFinite(minutesNum) || minutesNum < 0 || minutesNum > 59) {
+      setGenResult({ ok: false, msg: 'Minutes must be a whole number between 0 and 59.' })
+      return
+    }
+    if (genPlan === 'CUSTOM' && daysNum == null && hoursNum === 0 && minutesNum === 0) {
+      setGenResult({ ok: false, msg: 'CUSTOM plan requires a days / hours / minutes value.' })
       return
     }
     setGenBusy(true)
@@ -225,6 +243,8 @@ export function AdminModal() {
         body: JSON.stringify({
           planCode: genPlan,
           days: daysNum,
+          hours: hoursNum || undefined,
+          minutes: minutesNum || undefined,
           note: genNote.trim() || undefined,
           email: genEmail.trim() || undefined,
           whatsapp: genWhatsapp.trim() || undefined,
@@ -241,7 +261,7 @@ export function AdminModal() {
           days: j.activation.days,
         })
         // Reset note + contact so the next code starts clean; keep
-        // plan + days so issuing 5 in a row is one click each.
+        // plan + days/hours/minutes so issuing 5 in a row is one click each.
         setGenNote('')
         setGenEmail('')
         setGenWhatsapp('')
@@ -570,6 +590,33 @@ export function AdminModal() {
                     placeholder={genPlan === 'CUSTOM' ? 'e.g. 30' : 'default'}
                     value={genDays}
                     onChange={(e) => setGenDays(e.target.value)}
+                    className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                  />
+                </div>
+                {/* v0.6.0 — Hours + minutes for sub-day precision codes.
+                    Empty = 0; the server treats (days + hours + minutes)
+                    as a single total. Use either alone or in combination. */}
+                <div className="sm:col-span-1 space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-zinc-500">Hrs</label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={23}
+                    placeholder="0"
+                    value={genHours}
+                    onChange={(e) => setGenHours(e.target.value)}
+                    className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                  />
+                </div>
+                <div className="sm:col-span-1 space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-zinc-500">Min</label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={59}
+                    placeholder="0"
+                    value={genMinutes}
+                    onChange={(e) => setGenMinutes(e.target.value)}
                     className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
                   />
                 </div>

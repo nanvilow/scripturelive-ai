@@ -80,12 +80,17 @@ export async function notifyEmail(args: {
   // Admin Settings; fall back to the compiled NOTIFICATION_EMAIL.
   const to = args.to ?? getEffectiveNotificationTargets().email ?? NOTIFICATION_EMAIL
   const sent = await sendEmailViaSmtp({ to, subject: args.subject, body: args.body })
+  // v0.6.0 — operator complaint #4: emails were getting stuck on
+  // 'pending' even when SMTP returned an error, hiding real failures.
+  // From v0.6.0 onward a real send error is recorded as 'failed' so
+  // the admin panel surfaces it visibly. 'pending' is reserved for
+  // channels that have no automated send path (WhatsApp click-to-send).
   return appendNotification({
     channel: 'email',
     to,
     subject: args.subject,
     body: args.body,
-    status: sent.ok ? 'sent' : 'pending',
+    status: sent.ok ? 'sent' : 'failed',
     error: sent.ok ? undefined : sent.error,
   })
 }
@@ -142,12 +147,15 @@ export async function notifySms(args: {
   body: string
 }): Promise<NotificationRecord> {
   const result = await sendArkeselSms({ to: args.to, message: args.body })
+  // v0.6.0 — operator complaint #4: SMS failures were silently sitting
+  // on 'pending'. Same fix as notifyEmail above — record real
+  // delivery failures as 'failed' so they show up in the admin panel.
   return appendNotification({
     channel: 'sms',
     to: args.to,
     subject: args.subject,
     body: args.body,
-    status: result.ok ? 'sent' : 'pending',
+    status: result.ok ? 'sent' : 'failed',
     error: result.ok ? undefined : result.error,
   })
 }

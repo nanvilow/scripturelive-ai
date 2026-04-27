@@ -57,6 +57,7 @@ import { MonitorPlay } from 'lucide-react'
 // v0.5.44 — Activate / Trial / Active pill, rendered inline next to
 // the logo in the TopToolbar.
 import { LicenseTopBarButton } from '@/components/license/license-button'
+import { ThemeToggle } from '@/components/theme-toggle'
 
 // ──────────────────────────────────────────────────────────────────────
 // Library tab definitions
@@ -588,6 +589,10 @@ export function TopToolbar({
             after the logo with a comfortable gap. Renders nothing
             when status is still loading. */}
         <LicenseTopBarButton />
+        {/* v0.6.0 — Light/Dark theme toggle. Sits next to the
+            license pill so it is always reachable from any view
+            without leaving the operator console. */}
+        <ThemeToggle />
       </div>
 
       <div className="flex items-center gap-2">

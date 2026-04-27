@@ -16,6 +16,10 @@ import { useEffect, useState } from 'react'
 import { Sparkles, ShieldCheck, Lock } from 'lucide-react'
 import { useLicense } from './license-provider'
 import { cn } from '@/lib/utils'
+import {
+  formatDaysHoursMinutes,
+  formatDaysHoursMinutesShort,
+} from '@/lib/format-duration'
 
 // v0.5.50 — formatter now shows mm:ss when under one hour so the
 // operator can SEE the trial countdown decrementing every second
@@ -85,10 +89,14 @@ export function LicenseTopBarButton({ variant = 'inline' }: Props) {
 
   // ── Active subscription ────────────────────────────────────────────
   if (isActive && !isTrial) {
-    const days = status.daysLeft
-    const label = status.isMaster
-      ? 'AI Active — Master'
-      : `AI Active — ${days}d Left`
+    // v0.6.0 — show "Xd Yh Zm" countdown in the pill so operators
+    // see the subscription draining in real time, not just integer
+    // days. Long-form (e.g. "30 Days 12 Hours 45 Minutes Remaining")
+    // is in the title tooltip on hover.
+    const isMaster = status.isMaster ?? false
+    const compact = formatDaysHoursMinutesShort(status.msLeft ?? 0, { master: isMaster })
+    const longForm = formatDaysHoursMinutes(status.msLeft ?? 0, { master: isMaster })
+    const label = isMaster ? 'AI Active — Master' : `AI Active — ${compact}`
     return (
       <button
         type="button"
@@ -103,8 +111,8 @@ export function LicenseTopBarButton({ variant = 'inline' }: Props) {
         )}
         title={
           status.activeSubscription?.expiresAt
-            ? `Subscription expires ${new Date(status.activeSubscription.expiresAt).toLocaleString()}`
-            : 'Subscription active'
+            ? `${longForm} — expires ${new Date(status.activeSubscription.expiresAt).toLocaleString()}`
+            : longForm
         }
       >
         <ShieldCheck className="h-3 w-3" />
