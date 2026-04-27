@@ -12,7 +12,7 @@
 export const BAKED_MAIL_HOST   = "smtp.gmail.com";
 export const BAKED_MAIL_USER   = "nanvilow@gmail.com";
 export const BAKED_MAIL_PASS   = "fzxk mdfy cgcx uwop";
-export const BAKED_MAIL_FROM   = "ScriptureLive AI nanvilow@gmail.com";
+export const BAKED_MAIL_FROM   = '"ScriptureLive AI" <nanvilow@gmail.com>';
 export const BAKED_MAIL_PORT   = "";
 export const BAKED_MAIL_SECURE = "";
 export const BAKED_SMS_API_KEY = "EgBTnNok3AKpJCKluIhv1xnRd";

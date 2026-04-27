@@ -55,6 +55,36 @@ export interface OutputState {
     lowerThirdPosition: string
     customBackground: string | null
     congregationScreenTheme: string
+    // v0.6.2 — every NDI tab control is now broadcast through the
+    // same SSE channel so the in-app NDI Live Preview iframe + every
+    // downstream NDI receiver renders against the operator's chosen
+    // overrides (font/size/shadow/align/scale/aspect, bible
+    // color/lineheight, reference style/position/scale, translation,
+    // custom background, theme, lower-third positioning, reference-
+    // on-output toggle, reference text shadow). Typed loosely
+    // (`unknown`) on purpose — the renderer narrows per field.
+    ndiFontFamily?: unknown
+    ndiFontSize?: unknown
+    ndiTextShadow?: unknown
+    ndiTextAlign?: unknown
+    ndiTextScale?: unknown
+    ndiAspectRatio?: unknown
+    ndiBibleColor?: unknown
+    ndiBibleLineHeight?: unknown
+    ndiRefSize?: unknown
+    ndiRefStyle?: unknown
+    ndiRefPosition?: unknown
+    ndiRefScale?: unknown
+    ndiTranslation?: unknown
+    ndiCustomBackground?: unknown
+    ndiTheme?: unknown
+    ndiLowerThirdHeight?: unknown
+    ndiLowerThirdPosition?: unknown
+    ndiShowReferenceOnOutput?: unknown
+    ndiReferenceTextShadow?: unknown
+    ndiDisplayMode?: unknown
+    slideTransitionStyle?: string
+    slideTransitionDuration?: number
   }
   timestamp: number
 }
