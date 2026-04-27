@@ -172,6 +172,13 @@ export function SubscriptionModal() {
     setError(null)
     const trimmed = (override ?? code).trim()
     if (!trimmed) { setError('Enter the activation code first.'); return }
+    // v0.6.1 — Remember which phase the operator was on BEFORE the
+    // 'activating' transition. Originally the catch branch always
+    // fell back to 'payment', which meant a failed activation from
+    // PHASE 1 (no plan picked) would leave the modal blank because
+    // PHASE 2's render is gated by `phase === 'payment' && selected`.
+    // Now we return to whichever phase the user actually came from.
+    const originPhase: Phase = selected ? 'payment' : 'plans'
     setBusy(true); setPhase('activating')
     try {
       const r = await fetch('/api/license/activate', {
@@ -186,7 +193,7 @@ export function SubscriptionModal() {
       await refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
-      setPhase('payment')
+      setPhase(originPhase)
     } finally { setBusy(false) }
   }
 
@@ -219,6 +226,12 @@ export function SubscriptionModal() {
         </DialogHeader>
 
         {/* ── PHASE 1 — PLAN SELECTION ──────────────────────────────────── */}
+        {/* v0.6.1 — STEP 3 (activation entry) was moved out of PHASE 2 and
+            into PHASE 1 per operator request: customers who already have
+            a code (renewal, master, generated) shouldn't have to pick a
+            plan first. The two activation slots now sit directly below
+            the plan grid so they fill the empty space next to the 1-Year
+            tile. */}
         {phase === 'plans' && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
@@ -242,9 +255,47 @@ export function SubscriptionModal() {
                 </button>
               ))}
             </div>
-            <p className="text-[10px] text-zinc-500 text-center">
-              Already have an activation code? Choose any plan above to enter it.
-            </p>
+
+            {/* v0.6.1 — relocated activation entry. Same two slots that
+                used to live in PHASE 2 (post-plan-pick): a customer
+                code slot (emerald Activate) and a master / generated
+                code slot (amber Activate). Either one bypasses the
+                payment flow entirely — the activation endpoint
+                returns the plan info embedded in the code itself. */}
+            <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3.5">
+              <div className="text-[11px] uppercase tracking-wider text-zinc-400">Step 3 — Enter activation code after payment</div>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="SL-1Y-XXXXXX"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  onContextMenu={(e) => { e.preventDefault(); pasteIntoInput(setCode) }}
+                  className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                />
+                <Button onClick={() => submitActivation(code)} disabled={busy} className="bg-emerald-600 hover:bg-emerald-500 text-white">
+                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate'}
+                </Button>
+              </div>
+              <p className="text-[10px] text-zinc-500">Right-click the box above to paste from clipboard.</p>
+
+              <div className="text-[11px] uppercase tracking-wider text-zinc-400 pt-2 border-t border-zinc-800">
+                Or — Enter your generated and master code in here
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="SL-MASTER-XXXXXX or generated code"
+                  value={masterCode}
+                  onChange={(e) => setMasterCode(e.target.value.toUpperCase())}
+                  onContextMenu={(e) => { e.preventDefault(); pasteIntoInput(setMasterCode) }}
+                  className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                />
+                <Button onClick={() => submitActivation(masterCode)} disabled={busy} className="bg-amber-600 hover:bg-amber-500 text-white">
+                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate'}
+                </Button>
+              </div>
+
+              {error && phase === 'plans' && <div className="text-[11px] text-rose-400 flex items-start gap-1.5"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />{error}</div>}
+            </div>
           </div>
         )}
 
@@ -330,45 +381,15 @@ export function SubscriptionModal() {
               </div>
             )}
 
-            {/* Activation entry — visible whether or not payment exists */}
-            <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3.5">
-              <div className="text-[11px] uppercase tracking-wider text-zinc-400">Step 3 — Enter activation code after payment</div>
-              <div className="flex gap-2">
-                <Input
-                  placeholder="SL-1Y-XXXXXX"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.toUpperCase())}
-                  onContextMenu={(e) => { e.preventDefault(); pasteIntoInput(setCode) }}
-                  className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
-                />
-                <Button onClick={() => submitActivation(code)} disabled={busy} className="bg-emerald-600 hover:bg-emerald-500 text-white">
-                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate'}
-                </Button>
-              </div>
-              <p className="text-[10px] text-zinc-500">Right-click the box above to paste from clipboard.</p>
+            {/* v0.6.1 — STEP 3 activation entry MOVED OUT of PHASE 2.
+                Customers who already have a code now use the panel
+                in PHASE 1 (plan picker). The "Change" pill above
+                returns them there if they need to enter one mid-pay. */}
+            <p className="text-[10px] text-zinc-500 text-center">
+              Once you receive your activation code by email or WhatsApp, click <span className="font-semibold">Change</span> above to return to the plan picker and enter it there.
+            </p>
 
-              {/* v0.5.53 — Second slot for an operator-issued
-                  generated/master code. Same endpoint, but kept on
-                  its own line so the operator can paste either kind
-                  without overwriting a half-typed customer code. */}
-              <div className="text-[11px] uppercase tracking-wider text-zinc-400 pt-2 border-t border-zinc-800">
-                Or — Enter your generated and master code in here
-              </div>
-              <div className="flex gap-2">
-                <Input
-                  placeholder="SL-MASTER-XXXXXX or generated code"
-                  value={masterCode}
-                  onChange={(e) => setMasterCode(e.target.value.toUpperCase())}
-                  onContextMenu={(e) => { e.preventDefault(); pasteIntoInput(setMasterCode) }}
-                  className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
-                />
-                <Button onClick={() => submitActivation(masterCode)} disabled={busy} className="bg-amber-600 hover:bg-amber-500 text-white">
-                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate'}
-                </Button>
-              </div>
-
-              {error && phase === 'payment' && <div className="text-[11px] text-rose-400 flex items-start gap-1.5"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />{error}</div>}
-            </div>
+            {error && phase === 'payment' && <div className="text-[11px] text-rose-400 flex items-start gap-1.5"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />{error}</div>}
           </div>
         )}
 

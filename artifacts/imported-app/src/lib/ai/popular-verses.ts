@@ -228,6 +228,262 @@ export const POPULAR_VERSES_KJV: readonly PopularVerse[] = [
   { reference: 'Revelation 3:20', book: 'Revelation', chapter: 3, verseStart: 20, text: 'Behold, I stand at the door, and knock: if any man hear my voice, and open the door, I will come in to him, and will sup with him, and he with me.' },
   { reference: 'Revelation 21:4', book: 'Revelation', chapter: 21, verseStart: 4, text: 'And God shall wipe away all tears from their eyes; and there shall be no more death, neither sorrow, nor crying, neither shall there be any more pain: for the former things are passed away.' },
   { reference: 'Revelation 22:13', book: 'Revelation', chapter: 22, verseStart: 13, text: 'I am Alpha and Omega, the beginning and the end, the first and the last.' },
+
+  // ════════════════════════════════════════════════════════════════════
+  // v0.6.1 EXPANSION — 175 ADDITIONAL POPULAR VERSES
+  // Operator requested 300+ seed verses (was 135) so we cover more of
+  // what preachers actually quote: deeper Psalms/Prophets, the rest of
+  // the Beatitudes, fuller Pauline corpus, Hebrews 11 hall-of-faith,
+  // Revelation closings, plus high-frequency Old-Testament narrative.
+  // ════════════════════════════════════════════════════════════════════
+
+  // ── Genesis (additions) ───────────────────────────────────────────
+  { reference: 'Genesis 1:3', book: 'Genesis', chapter: 1, verseStart: 3, text: 'And God said, Let there be light: and there was light.' },
+  { reference: 'Genesis 1:31', book: 'Genesis', chapter: 1, verseStart: 31, text: 'And God saw every thing that he had made, and, behold, it was very good.' },
+  { reference: 'Genesis 2:24', book: 'Genesis', chapter: 2, verseStart: 24, text: 'Therefore shall a man leave his father and his mother, and shall cleave unto his wife: and they shall be one flesh.' },
+  { reference: 'Genesis 12:2', book: 'Genesis', chapter: 12, verseStart: 2, text: 'And I will make of thee a great nation, and I will bless thee, and make thy name great; and thou shalt be a blessing.' },
+  { reference: 'Genesis 50:20', book: 'Genesis', chapter: 50, verseStart: 20, text: 'But as for you, ye thought evil against me; but God meant it unto good, to bring to pass, as it is this day, to save much people alive.' },
+
+  // ── Exodus / Leviticus / Numbers (additions) ──────────────────────
+  { reference: 'Exodus 3:14', book: 'Exodus', chapter: 3, verseStart: 14, text: 'And God said unto Moses, I AM THAT I AM: and he said, Thus shalt thou say unto the children of Israel, I AM hath sent me unto you.' },
+  { reference: 'Exodus 15:2', book: 'Exodus', chapter: 15, verseStart: 2, text: 'The LORD is my strength and song, and he is become my salvation: he is my God, and I will prepare him an habitation; my father\u2019s God, and I will exalt him.' },
+  { reference: 'Exodus 20:12', book: 'Exodus', chapter: 20, verseStart: 12, text: 'Honour thy father and thy mother: that thy days may be long upon the land which the LORD thy God giveth thee.' },
+  { reference: 'Leviticus 19:18', book: 'Leviticus', chapter: 19, verseStart: 18, text: 'Thou shalt not avenge, nor bear any grudge against the children of thy people, but thou shalt love thy neighbour as thyself: I am the LORD.' },
+  { reference: 'Numbers 6:24', book: 'Numbers', chapter: 6, verseStart: 24, text: 'The LORD bless thee, and keep thee.' },
+  { reference: 'Numbers 6:25', book: 'Numbers', chapter: 6, verseStart: 25, text: 'The LORD make his face shine upon thee, and be gracious unto thee.' },
+  { reference: 'Numbers 6:26', book: 'Numbers', chapter: 6, verseStart: 26, text: 'The LORD lift up his countenance upon thee, and give thee peace.' },
+  { reference: 'Numbers 23:19', book: 'Numbers', chapter: 23, verseStart: 19, text: 'God is not a man, that he should lie; neither the son of man, that he should repent: hath he said, and shall he not do it? or hath he spoken, and shall he not make it good?' },
+
+  // ── Deuteronomy (additions) ───────────────────────────────────────
+  { reference: 'Deuteronomy 6:4', book: 'Deuteronomy', chapter: 6, verseStart: 4, text: 'Hear, O Israel: The LORD our God is one LORD.' },
+  { reference: 'Deuteronomy 8:3', book: 'Deuteronomy', chapter: 8, verseStart: 3, text: 'Man doth not live by bread only, but by every word that proceedeth out of the mouth of the LORD doth man live.' },
+  { reference: 'Deuteronomy 28:1', book: 'Deuteronomy', chapter: 28, verseStart: 1, text: 'And it shall come to pass, if thou shalt hearken diligently unto the voice of the LORD thy God, that the LORD thy God will set thee on high above all nations of the earth.' },
+
+  // ── 1 Samuel / 2 Samuel / 1 Kings ────────────────────────────────
+  { reference: '1 Samuel 16:7', book: '1 Samuel', chapter: 16, verseStart: 7, text: 'For the LORD seeth not as man seeth; for man looketh on the outward appearance, but the LORD looketh on the heart.' },
+  { reference: '1 Samuel 17:47', book: '1 Samuel', chapter: 17, verseStart: 47, text: 'For the battle is the LORD\u2019s, and he will give you into our hands.' },
+  { reference: '2 Samuel 22:31', book: '2 Samuel', chapter: 22, verseStart: 31, text: 'As for God, his way is perfect; the word of the LORD is tried: he is a buckler to all them that trust in him.' },
+  { reference: '1 Kings 8:23', book: '1 Kings', chapter: 8, verseStart: 23, text: 'LORD God of Israel, there is no God like thee, in heaven above, or on earth beneath, who keepest covenant and mercy with thy servants.' },
+
+  // ── 1 Chronicles / 2 Chronicles / Nehemiah ────────────────────────
+  { reference: '1 Chronicles 16:11', book: '1 Chronicles', chapter: 16, verseStart: 11, text: 'Seek the LORD and his strength, seek his face continually.' },
+  { reference: '1 Chronicles 29:11', book: '1 Chronicles', chapter: 29, verseStart: 11, text: 'Thine, O LORD, is the greatness, and the power, and the glory, and the victory, and the majesty: for all that is in the heaven and in the earth is thine.' },
+  { reference: '2 Chronicles 7:14', book: '2 Chronicles', chapter: 7, verseStart: 14, text: 'If my people, which are called by my name, shall humble themselves, and pray, and seek my face, and turn from their wicked ways; then will I hear from heaven, and will forgive their sin, and will heal their land.' },
+  { reference: 'Nehemiah 8:10', book: 'Nehemiah', chapter: 8, verseStart: 10, text: 'For the joy of the LORD is your strength.' },
+
+  // ── Job (additions) ───────────────────────────────────────────────
+  { reference: 'Job 1:21', book: 'Job', chapter: 1, verseStart: 21, text: 'The LORD gave, and the LORD hath taken away; blessed be the name of the LORD.' },
+  { reference: 'Job 19:25', book: 'Job', chapter: 19, verseStart: 25, text: 'For I know that my redeemer liveth, and that he shall stand at the latter day upon the earth.' },
+  { reference: 'Job 23:10', book: 'Job', chapter: 23, verseStart: 10, text: 'But he knoweth the way that I take: when he hath tried me, I shall come forth as gold.' },
+
+  // ── Psalms (deep dive — sermon staples) ───────────────────────────
+  { reference: 'Psalms 8:3', book: 'Psalms', chapter: 8, verseStart: 3, text: 'When I consider thy heavens, the work of thy fingers, the moon and the stars, which thou hast ordained.' },
+  { reference: 'Psalms 16:11', book: 'Psalms', chapter: 16, verseStart: 11, text: 'Thou wilt shew me the path of life: in thy presence is fulness of joy; at thy right hand there are pleasures for evermore.' },
+  { reference: 'Psalms 18:2', book: 'Psalms', chapter: 18, verseStart: 2, text: 'The LORD is my rock, and my fortress, and my deliverer; my God, my strength, in whom I will trust.' },
+  { reference: 'Psalms 19:14', book: 'Psalms', chapter: 19, verseStart: 14, text: 'Let the words of my mouth, and the meditation of my heart, be acceptable in thy sight, O LORD, my strength, and my redeemer.' },
+  { reference: 'Psalms 23:2', book: 'Psalms', chapter: 23, verseStart: 2, text: 'He maketh me to lie down in green pastures: he leadeth me beside the still waters.' },
+  { reference: 'Psalms 23:3', book: 'Psalms', chapter: 23, verseStart: 3, text: 'He restoreth my soul: he leadeth me in the paths of righteousness for his name\u2019s sake.' },
+  { reference: 'Psalms 23:5', book: 'Psalms', chapter: 23, verseStart: 5, text: 'Thou preparest a table before me in the presence of mine enemies: thou anointest my head with oil; my cup runneth over.' },
+  { reference: 'Psalms 23:6', book: 'Psalms', chapter: 23, verseStart: 6, text: 'Surely goodness and mercy shall follow me all the days of my life: and I will dwell in the house of the LORD for ever.' },
+  { reference: 'Psalms 27:14', book: 'Psalms', chapter: 27, verseStart: 14, text: 'Wait on the LORD: be of good courage, and he shall strengthen thine heart: wait, I say, on the LORD.' },
+  { reference: 'Psalms 30:5', book: 'Psalms', chapter: 30, verseStart: 5, text: 'For his anger endureth but a moment; in his favour is life: weeping may endure for a night, but joy cometh in the morning.' },
+  { reference: 'Psalms 32:8', book: 'Psalms', chapter: 32, verseStart: 8, text: 'I will instruct thee and teach thee in the way which thou shalt go: I will guide thee with mine eye.' },
+  { reference: 'Psalms 34:18', book: 'Psalms', chapter: 34, verseStart: 18, text: 'The LORD is nigh unto them that are of a broken heart; and saveth such as be of a contrite spirit.' },
+  { reference: 'Psalms 37:23', book: 'Psalms', chapter: 37, verseStart: 23, text: 'The steps of a good man are ordered by the LORD: and he delighteth in his way.' },
+  { reference: 'Psalms 42:1', book: 'Psalms', chapter: 42, verseStart: 1, text: 'As the hart panteth after the water brooks, so panteth my soul after thee, O God.' },
+  { reference: 'Psalms 42:11', book: 'Psalms', chapter: 42, verseStart: 11, text: 'Why art thou cast down, O my soul? and why art thou disquieted within me? hope thou in God: for I shall yet praise him.' },
+  { reference: 'Psalms 55:22', book: 'Psalms', chapter: 55, verseStart: 22, text: 'Cast thy burden upon the LORD, and he shall sustain thee: he shall never suffer the righteous to be moved.' },
+  { reference: 'Psalms 56:3', book: 'Psalms', chapter: 56, verseStart: 3, text: 'What time I am afraid, I will trust in thee.' },
+  { reference: 'Psalms 62:1', book: 'Psalms', chapter: 62, verseStart: 1, text: 'Truly my soul waiteth upon God: from him cometh my salvation.' },
+  { reference: 'Psalms 73:26', book: 'Psalms', chapter: 73, verseStart: 26, text: 'My flesh and my heart faileth: but God is the strength of my heart, and my portion for ever.' },
+  { reference: 'Psalms 84:10', book: 'Psalms', chapter: 84, verseStart: 10, text: 'For a day in thy courts is better than a thousand. I had rather be a doorkeeper in the house of my God, than to dwell in the tents of wickedness.' },
+  { reference: 'Psalms 90:12', book: 'Psalms', chapter: 90, verseStart: 12, text: 'So teach us to number our days, that we may apply our hearts unto wisdom.' },
+  { reference: 'Psalms 91:11', book: 'Psalms', chapter: 91, verseStart: 11, text: 'For he shall give his angels charge over thee, to keep thee in all thy ways.' },
+  { reference: 'Psalms 100:3', book: 'Psalms', chapter: 100, verseStart: 3, text: 'Know ye that the LORD he is God: it is he that hath made us, and not we ourselves; we are his people, and the sheep of his pasture.' },
+  { reference: 'Psalms 103:1', book: 'Psalms', chapter: 103, verseStart: 1, text: 'Bless the LORD, O my soul: and all that is within me, bless his holy name.' },
+  { reference: 'Psalms 103:2', book: 'Psalms', chapter: 103, verseStart: 2, text: 'Bless the LORD, O my soul, and forget not all his benefits.' },
+  { reference: 'Psalms 103:8', book: 'Psalms', chapter: 103, verseStart: 8, text: 'The LORD is merciful and gracious, slow to anger, and plenteous in mercy.' },
+  { reference: 'Psalms 103:12', book: 'Psalms', chapter: 103, verseStart: 12, text: 'As far as the east is from the west, so far hath he removed our transgressions from us.' },
+  { reference: 'Psalms 118:24', book: 'Psalms', chapter: 118, verseStart: 24, text: 'This is the day which the LORD hath made; we will rejoice and be glad in it.' },
+  { reference: 'Psalms 119:11', book: 'Psalms', chapter: 119, verseStart: 11, text: 'Thy word have I hid in mine heart, that I might not sin against thee.' },
+  { reference: 'Psalms 127:1', book: 'Psalms', chapter: 127, verseStart: 1, text: 'Except the LORD build the house, they labour in vain that build it: except the LORD keep the city, the watchman waketh but in vain.' },
+  { reference: 'Psalms 133:1', book: 'Psalms', chapter: 133, verseStart: 1, text: 'Behold, how good and how pleasant it is for brethren to dwell together in unity!' },
+  { reference: 'Psalms 139:23', book: 'Psalms', chapter: 139, verseStart: 23, text: 'Search me, O God, and know my heart: try me, and know my thoughts.' },
+  { reference: 'Psalms 145:18', book: 'Psalms', chapter: 145, verseStart: 18, text: 'The LORD is nigh unto all them that call upon him, to all that call upon him in truth.' },
+  { reference: 'Psalms 147:3', book: 'Psalms', chapter: 147, verseStart: 3, text: 'He healeth the broken in heart, and bindeth up their wounds.' },
+
+  // ── Proverbs (additions) ──────────────────────────────────────────
+  { reference: 'Proverbs 1:7', book: 'Proverbs', chapter: 1, verseStart: 7, text: 'The fear of the LORD is the beginning of knowledge: but fools despise wisdom and instruction.' },
+  { reference: 'Proverbs 4:23', book: 'Proverbs', chapter: 4, verseStart: 23, text: 'Keep thy heart with all diligence; for out of it are the issues of life.' },
+  { reference: 'Proverbs 11:25', book: 'Proverbs', chapter: 11, verseStart: 25, text: 'The liberal soul shall be made fat: and he that watereth shall be watered also himself.' },
+  { reference: 'Proverbs 15:1', book: 'Proverbs', chapter: 15, verseStart: 1, text: 'A soft answer turneth away wrath: but grievous words stir up anger.' },
+  { reference: 'Proverbs 16:9', book: 'Proverbs', chapter: 16, verseStart: 9, text: 'A man\u2019s heart deviseth his way: but the LORD directeth his steps.' },
+  { reference: 'Proverbs 17:17', book: 'Proverbs', chapter: 17, verseStart: 17, text: 'A friend loveth at all times, and a brother is born for adversity.' },
+  { reference: 'Proverbs 18:21', book: 'Proverbs', chapter: 18, verseStart: 21, text: 'Death and life are in the power of the tongue: and they that love it shall eat the fruit thereof.' },
+  { reference: 'Proverbs 19:21', book: 'Proverbs', chapter: 19, verseStart: 21, text: 'There are many devices in a man\u2019s heart; nevertheless the counsel of the LORD, that shall stand.' },
+  { reference: 'Proverbs 27:17', book: 'Proverbs', chapter: 27, verseStart: 17, text: 'Iron sharpeneth iron; so a man sharpeneth the countenance of his friend.' },
+  { reference: 'Proverbs 31:30', book: 'Proverbs', chapter: 31, verseStart: 30, text: 'Favour is deceitful, and beauty is vain: but a woman that feareth the LORD, she shall be praised.' },
+
+  // ── Ecclesiastes / Song of Solomon ────────────────────────────────
+  { reference: 'Ecclesiastes 12:13', book: 'Ecclesiastes', chapter: 12, verseStart: 13, text: 'Let us hear the conclusion of the whole matter: Fear God, and keep his commandments: for this is the whole duty of man.' },
+  { reference: 'Song of Solomon 2:4', book: 'Song of Solomon', chapter: 2, verseStart: 4, text: 'He brought me to the banqueting house, and his banner over me was love.' },
+
+  // ── Isaiah (additions) ────────────────────────────────────────────
+  { reference: 'Isaiah 1:18', book: 'Isaiah', chapter: 1, verseStart: 18, text: 'Come now, and let us reason together, saith the LORD: though your sins be as scarlet, they shall be as white as snow.' },
+  { reference: 'Isaiah 6:8', book: 'Isaiah', chapter: 6, verseStart: 8, text: 'Also I heard the voice of the Lord, saying, Whom shall I send, and who will go for us? Then said I, Here am I; send me.' },
+  { reference: 'Isaiah 7:14', book: 'Isaiah', chapter: 7, verseStart: 14, text: 'Therefore the Lord himself shall give you a sign; Behold, a virgin shall conceive, and bear a son, and shall call his name Immanuel.' },
+  { reference: 'Isaiah 30:21', book: 'Isaiah', chapter: 30, verseStart: 21, text: 'And thine ears shall hear a word behind thee, saying, This is the way, walk ye in it, when ye turn to the right hand, and when ye turn to the left.' },
+  { reference: 'Isaiah 40:8', book: 'Isaiah', chapter: 40, verseStart: 8, text: 'The grass withereth, the flower fadeth: but the word of our God shall stand for ever.' },
+  { reference: 'Isaiah 43:2', book: 'Isaiah', chapter: 43, verseStart: 2, text: 'When thou passest through the waters, I will be with thee; and through the rivers, they shall not overflow thee.' },
+  { reference: 'Isaiah 53:6', book: 'Isaiah', chapter: 53, verseStart: 6, text: 'All we like sheep have gone astray; we have turned every one to his own way; and the LORD hath laid on him the iniquity of us all.' },
+  { reference: 'Isaiah 54:17', book: 'Isaiah', chapter: 54, verseStart: 17, text: 'No weapon that is formed against thee shall prosper; and every tongue that shall rise against thee in judgment thou shalt condemn.' },
+  { reference: 'Isaiah 55:11', book: 'Isaiah', chapter: 55, verseStart: 11, text: 'So shall my word be that goeth forth out of my mouth: it shall not return unto me void, but it shall accomplish that which I please.' },
+  { reference: 'Isaiah 61:1', book: 'Isaiah', chapter: 61, verseStart: 1, text: 'The Spirit of the Lord GOD is upon me; because the LORD hath anointed me to preach good tidings unto the meek; he hath sent me to bind up the brokenhearted.' },
+
+  // ── Jeremiah / Ezekiel / Daniel ───────────────────────────────────
+  { reference: 'Jeremiah 1:5', book: 'Jeremiah', chapter: 1, verseStart: 5, text: 'Before I formed thee in the belly I knew thee; and before thou camest forth out of the womb I sanctified thee.' },
+  { reference: 'Jeremiah 17:7', book: 'Jeremiah', chapter: 17, verseStart: 7, text: 'Blessed is the man that trusteth in the LORD, and whose hope the LORD is.' },
+  { reference: 'Ezekiel 36:26', book: 'Ezekiel', chapter: 36, verseStart: 26, text: 'A new heart also will I give you, and a new spirit will I put within you: and I will take away the stony heart out of your flesh, and I will give you an heart of flesh.' },
+  { reference: 'Daniel 3:17', book: 'Daniel', chapter: 3, verseStart: 17, text: 'If it be so, our God whom we serve is able to deliver us from the burning fiery furnace, and he will deliver us out of thine hand, O king.' },
+
+  // ── Joel / Habakkuk / Zechariah / Malachi ─────────────────────────
+  { reference: 'Joel 2:28', book: 'Joel', chapter: 2, verseStart: 28, text: 'And it shall come to pass afterward, that I will pour out my spirit upon all flesh; and your sons and your daughters shall prophesy.' },
+  { reference: 'Habakkuk 3:19', book: 'Habakkuk', chapter: 3, verseStart: 19, text: 'The LORD God is my strength, and he will make my feet like hinds\u2019 feet, and he will make me to walk upon mine high places.' },
+  { reference: 'Zechariah 4:6', book: 'Zechariah', chapter: 4, verseStart: 6, text: 'Not by might, nor by power, but by my spirit, saith the LORD of hosts.' },
+  { reference: 'Malachi 3:10', book: 'Malachi', chapter: 3, verseStart: 10, text: 'Bring ye all the tithes into the storehouse, that there may be meat in mine house, and prove me now herewith, saith the LORD of hosts.' },
+
+  // ── Matthew (additions) ───────────────────────────────────────────
+  { reference: 'Matthew 1:23', book: 'Matthew', chapter: 1, verseStart: 23, text: 'Behold, a virgin shall be with child, and shall bring forth a son, and they shall call his name Emmanuel, which being interpreted is, God with us.' },
+  { reference: 'Matthew 4:4', book: 'Matthew', chapter: 4, verseStart: 4, text: 'Man shall not live by bread alone, but by every word that proceedeth out of the mouth of God.' },
+  { reference: 'Matthew 4:19', book: 'Matthew', chapter: 4, verseStart: 19, text: 'Follow me, and I will make you fishers of men.' },
+  { reference: 'Matthew 5:5', book: 'Matthew', chapter: 5, verseStart: 5, text: 'Blessed are the meek: for they shall inherit the earth.' },
+  { reference: 'Matthew 5:7', book: 'Matthew', chapter: 5, verseStart: 7, text: 'Blessed are the merciful: for they shall obtain mercy.' },
+  { reference: 'Matthew 5:8', book: 'Matthew', chapter: 5, verseStart: 8, text: 'Blessed are the pure in heart: for they shall see God.' },
+  { reference: 'Matthew 5:10', book: 'Matthew', chapter: 5, verseStart: 10, text: 'Blessed are they which are persecuted for righteousness\u2019 sake: for theirs is the kingdom of heaven.' },
+  { reference: 'Matthew 5:44', book: 'Matthew', chapter: 5, verseStart: 44, text: 'Love your enemies, bless them that curse you, do good to them that hate you, and pray for them which despitefully use you, and persecute you.' },
+  { reference: 'Matthew 6:11', book: 'Matthew', chapter: 6, verseStart: 11, text: 'Give us this day our daily bread.' },
+  { reference: 'Matthew 6:12', book: 'Matthew', chapter: 6, verseStart: 12, text: 'And forgive us our debts, as we forgive our debtors.' },
+  { reference: 'Matthew 6:13', book: 'Matthew', chapter: 6, verseStart: 13, text: 'And lead us not into temptation, but deliver us from evil: For thine is the kingdom, and the power, and the glory, for ever. Amen.' },
+  { reference: 'Matthew 6:21', book: 'Matthew', chapter: 6, verseStart: 21, text: 'For where your treasure is, there will your heart be also.' },
+  { reference: 'Matthew 6:34', book: 'Matthew', chapter: 6, verseStart: 34, text: 'Take therefore no thought for the morrow: for the morrow shall take thought for the things of itself. Sufficient unto the day is the evil thereof.' },
+  { reference: 'Matthew 11:12', book: 'Matthew', chapter: 11, verseStart: 12, text: 'And from the days of John the Baptist until now the kingdom of heaven suffereth violence, and the violent take it by force.' },
+  { reference: 'Matthew 11:29', book: 'Matthew', chapter: 11, verseStart: 29, text: 'Take my yoke upon you, and learn of me; for I am meek and lowly in heart: and ye shall find rest unto your souls.' },
+  { reference: 'Matthew 16:18', book: 'Matthew', chapter: 16, verseStart: 18, text: 'And I say also unto thee, That thou art Peter, and upon this rock I will build my church; and the gates of hell shall not prevail against it.' },
+  { reference: 'Matthew 16:24', book: 'Matthew', chapter: 16, verseStart: 24, text: 'If any man will come after me, let him deny himself, and take up his cross, and follow me.' },
+  { reference: 'Matthew 18:20', book: 'Matthew', chapter: 18, verseStart: 20, text: 'For where two or three are gathered together in my name, there am I in the midst of them.' },
+  { reference: 'Matthew 19:26', book: 'Matthew', chapter: 19, verseStart: 26, text: 'But Jesus beheld them, and said unto them, With men this is impossible; but with God all things are possible.' },
+  { reference: 'Matthew 28:18', book: 'Matthew', chapter: 28, verseStart: 18, text: 'And Jesus came and spake unto them, saying, All power is given unto me in heaven and in earth.' },
+  { reference: 'Matthew 28:20', book: 'Matthew', chapter: 28, verseStart: 20, text: 'Teaching them to observe all things whatsoever I have commanded you: and, lo, I am with you alway, even unto the end of the world. Amen.' },
+
+  // ── Mark / Luke (additions) ───────────────────────────────────────
+  { reference: 'Mark 8:36', book: 'Mark', chapter: 8, verseStart: 36, text: 'For what shall it profit a man, if he shall gain the whole world, and lose his own soul?' },
+  { reference: 'Mark 9:23', book: 'Mark', chapter: 9, verseStart: 23, text: 'Jesus said unto him, If thou canst believe, all things are possible to him that believeth.' },
+  { reference: 'Mark 16:15', book: 'Mark', chapter: 16, verseStart: 15, text: 'And he said unto them, Go ye into all the world, and preach the gospel to every creature.' },
+  { reference: 'Luke 2:10', book: 'Luke', chapter: 2, verseStart: 10, text: 'And the angel said unto them, Fear not: for, behold, I bring you good tidings of great joy, which shall be to all people.' },
+  { reference: 'Luke 2:11', book: 'Luke', chapter: 2, verseStart: 11, text: 'For unto you is born this day in the city of David a Saviour, which is Christ the Lord.' },
+  { reference: 'Luke 2:14', book: 'Luke', chapter: 2, verseStart: 14, text: 'Glory to God in the highest, and on earth peace, good will toward men.' },
+  { reference: 'Luke 9:23', book: 'Luke', chapter: 9, verseStart: 23, text: 'And he said to them all, If any man will come after me, let him deny himself, and take up his cross daily, and follow me.' },
+  { reference: 'Luke 12:34', book: 'Luke', chapter: 12, verseStart: 34, text: 'For where your treasure is, there will your heart be also.' },
+  { reference: 'Luke 19:10', book: 'Luke', chapter: 19, verseStart: 10, text: 'For the Son of man is come to seek and to save that which was lost.' },
+
+  // ── John (additions) ──────────────────────────────────────────────
+  { reference: 'John 1:12', book: 'John', chapter: 1, verseStart: 12, text: 'But as many as received him, to them gave he power to become the sons of God, even to them that believe on his name.' },
+  { reference: 'John 1:29', book: 'John', chapter: 1, verseStart: 29, text: 'Behold the Lamb of God, which taketh away the sin of the world.' },
+  { reference: 'John 4:24', book: 'John', chapter: 4, verseStart: 24, text: 'God is a Spirit: and they that worship him must worship him in spirit and in truth.' },
+  { reference: 'John 6:35', book: 'John', chapter: 6, verseStart: 35, text: 'And Jesus said unto them, I am the bread of life: he that cometh to me shall never hunger; and he that believeth on me shall never thirst.' },
+  { reference: 'John 8:12', book: 'John', chapter: 8, verseStart: 12, text: 'I am the light of the world: he that followeth me shall not walk in darkness, but shall have the light of life.' },
+  { reference: 'John 11:25', book: 'John', chapter: 11, verseStart: 25, text: 'I am the resurrection, and the life: he that believeth in me, though he were dead, yet shall he live.' },
+  { reference: 'John 13:34', book: 'John', chapter: 13, verseStart: 34, text: 'A new commandment I give unto you, That ye love one another; as I have loved you, that ye also love one another.' },
+  { reference: 'John 14:2', book: 'John', chapter: 14, verseStart: 2, text: 'In my Father\u2019s house are many mansions: if it were not so, I would have told you. I go to prepare a place for you.' },
+  { reference: 'John 14:13', book: 'John', chapter: 14, verseStart: 13, text: 'And whatsoever ye shall ask in my name, that will I do, that the Father may be glorified in the Son.' },
+  { reference: 'John 14:26', book: 'John', chapter: 14, verseStart: 26, text: 'But the Comforter, which is the Holy Ghost, whom the Father will send in my name, he shall teach you all things.' },
+  { reference: 'John 15:7', book: 'John', chapter: 15, verseStart: 7, text: 'If ye abide in me, and my words abide in you, ye shall ask what ye will, and it shall be done unto you.' },
+  { reference: 'John 17:3', book: 'John', chapter: 17, verseStart: 3, text: 'And this is life eternal, that they might know thee the only true God, and Jesus Christ, whom thou hast sent.' },
+  { reference: 'John 20:29', book: 'John', chapter: 20, verseStart: 29, text: 'Jesus saith unto him, Thomas, because thou hast seen me, thou hast believed: blessed are they that have not seen, and yet have believed.' },
+
+  // ── Acts (additions) ──────────────────────────────────────────────
+  { reference: 'Acts 17:28', book: 'Acts', chapter: 17, verseStart: 28, text: 'For in him we live, and move, and have our being.' },
+  { reference: 'Acts 20:35', book: 'Acts', chapter: 20, verseStart: 35, text: 'Remember the words of the Lord Jesus, how he said, It is more blessed to give than to receive.' },
+
+  // ── Romans (additions) ────────────────────────────────────────────
+  { reference: 'Romans 5:1', book: 'Romans', chapter: 5, verseStart: 1, text: 'Therefore being justified by faith, we have peace with God through our Lord Jesus Christ.' },
+  { reference: 'Romans 8:18', book: 'Romans', chapter: 8, verseStart: 18, text: 'For I reckon that the sufferings of this present time are not worthy to be compared with the glory which shall be revealed in us.' },
+  { reference: 'Romans 8:39', book: 'Romans', chapter: 8, verseStart: 39, text: 'Nor height, nor depth, nor any other creature, shall be able to separate us from the love of God, which is in Christ Jesus our Lord.' },
+  { reference: 'Romans 10:13', book: 'Romans', chapter: 10, verseStart: 13, text: 'For whosoever shall call upon the name of the Lord shall be saved.' },
+  { reference: 'Romans 10:17', book: 'Romans', chapter: 10, verseStart: 17, text: 'So then faith cometh by hearing, and hearing by the word of God.' },
+  { reference: 'Romans 12:12', book: 'Romans', chapter: 12, verseStart: 12, text: 'Rejoicing in hope; patient in tribulation; continuing instant in prayer.' },
+  { reference: 'Romans 12:18', book: 'Romans', chapter: 12, verseStart: 18, text: 'If it be possible, as much as lieth in you, live peaceably with all men.' },
+  { reference: 'Romans 12:21', book: 'Romans', chapter: 12, verseStart: 21, text: 'Be not overcome of evil, but overcome evil with good.' },
+  { reference: 'Romans 14:8', book: 'Romans', chapter: 14, verseStart: 8, text: 'For whether we live, we live unto the Lord; and whether we die, we die unto the Lord: whether we live therefore, or die, we are the Lord\u2019s.' },
+  { reference: 'Romans 15:13', book: 'Romans', chapter: 15, verseStart: 13, text: 'Now the God of hope fill you with all joy and peace in believing, that ye may abound in hope, through the power of the Holy Ghost.' },
+
+  // ── 1 Corinthians (additions) ─────────────────────────────────────
+  { reference: '1 Corinthians 2:9', book: '1 Corinthians', chapter: 2, verseStart: 9, text: 'Eye hath not seen, nor ear heard, neither have entered into the heart of man, the things which God hath prepared for them that love him.' },
+  { reference: '1 Corinthians 6:19', book: '1 Corinthians', chapter: 6, verseStart: 19, text: 'What? know ye not that your body is the temple of the Holy Ghost which is in you, which ye have of God, and ye are not your own?' },
+  { reference: '1 Corinthians 13:7', book: '1 Corinthians', chapter: 13, verseStart: 7, text: 'Beareth all things, believeth all things, hopeth all things, endureth all things.' },
+  { reference: '1 Corinthians 13:8', book: '1 Corinthians', chapter: 13, verseStart: 8, text: 'Charity never faileth: but whether there be prophecies, they shall fail; whether there be tongues, they shall cease; whether there be knowledge, it shall vanish away.' },
+  { reference: '1 Corinthians 16:14', book: '1 Corinthians', chapter: 16, verseStart: 14, text: 'Let all your things be done with charity.' },
+
+  // ── 2 Corinthians / Galatians / Ephesians (additions) ────────────
+  { reference: '2 Corinthians 4:17', book: '2 Corinthians', chapter: 4, verseStart: 17, text: 'For our light affliction, which is but for a moment, worketh for us a far more exceeding and eternal weight of glory.' },
+  { reference: '2 Corinthians 5:7', book: '2 Corinthians', chapter: 5, verseStart: 7, text: 'For we walk by faith, not by sight.' },
+  { reference: '2 Corinthians 9:7', book: '2 Corinthians', chapter: 9, verseStart: 7, text: 'Every man according as he purposeth in his heart, so let him give; not grudgingly, or of necessity: for God loveth a cheerful giver.' },
+  { reference: 'Galatians 3:28', book: 'Galatians', chapter: 3, verseStart: 28, text: 'There is neither Jew nor Greek, there is neither bond nor free, there is neither male nor female: for ye are all one in Christ Jesus.' },
+  { reference: 'Galatians 5:13', book: 'Galatians', chapter: 5, verseStart: 13, text: 'For, brethren, ye have been called unto liberty; only use not liberty for an occasion to the flesh, but by love serve one another.' },
+  { reference: 'Galatians 5:23', book: 'Galatians', chapter: 5, verseStart: 23, text: 'Meekness, temperance: against such there is no law.' },
+  { reference: 'Ephesians 2:9', book: 'Ephesians', chapter: 2, verseStart: 9, text: 'Not of works, lest any man should boast.' },
+  { reference: 'Ephesians 3:20', book: 'Ephesians', chapter: 3, verseStart: 20, text: 'Now unto him that is able to do exceeding abundantly above all that we ask or think, according to the power that worketh in us.' },
+  { reference: 'Ephesians 4:2', book: 'Ephesians', chapter: 4, verseStart: 2, text: 'With all lowliness and meekness, with longsuffering, forbearing one another in love.' },
+  { reference: 'Ephesians 5:1', book: 'Ephesians', chapter: 5, verseStart: 1, text: 'Be ye therefore followers of God, as dear children.' },
+  { reference: 'Ephesians 5:25', book: 'Ephesians', chapter: 5, verseStart: 25, text: 'Husbands, love your wives, even as Christ also loved the church, and gave himself for it.' },
+
+  // ── Philippians / Colossians (additions) ──────────────────────────
+  { reference: 'Philippians 1:21', book: 'Philippians', chapter: 1, verseStart: 21, text: 'For to me to live is Christ, and to die is gain.' },
+  { reference: 'Philippians 2:3', book: 'Philippians', chapter: 2, verseStart: 3, text: 'Let nothing be done through strife or vainglory; but in lowliness of mind let each esteem other better than themselves.' },
+  { reference: 'Philippians 2:10', book: 'Philippians', chapter: 2, verseStart: 10, text: 'That at the name of Jesus every knee should bow, of things in heaven, and things in earth, and things under the earth.' },
+  { reference: 'Philippians 4:8', book: 'Philippians', chapter: 4, verseStart: 8, text: 'Whatsoever things are true, whatsoever things are honest, whatsoever things are just, whatsoever things are pure, whatsoever things are lovely, whatsoever things are of good report; if there be any virtue, and if there be any praise, think on these things.' },
+  { reference: 'Colossians 3:1', book: 'Colossians', chapter: 3, verseStart: 1, text: 'If ye then be risen with Christ, seek those things which are above, where Christ sitteth on the right hand of God.' },
+  { reference: 'Colossians 3:13', book: 'Colossians', chapter: 3, verseStart: 13, text: 'Forbearing one another, and forgiving one another, if any man have a quarrel against any: even as Christ forgave you, so also do ye.' },
+
+  // ── 1 Thess / 2 Thess / 1 Timothy / 2 Timothy / Titus ────────────
+  { reference: '1 Thessalonians 4:16', book: '1 Thessalonians', chapter: 4, verseStart: 16, text: 'For the Lord himself shall descend from heaven with a shout, with the voice of the archangel, and with the trump of God: and the dead in Christ shall rise first.' },
+  { reference: '2 Thessalonians 3:3', book: '2 Thessalonians', chapter: 3, verseStart: 3, text: 'But the Lord is faithful, who shall stablish you, and keep you from evil.' },
+  { reference: '1 Timothy 4:12', book: '1 Timothy', chapter: 4, verseStart: 12, text: 'Let no man despise thy youth; but be thou an example of the believers, in word, in conversation, in charity, in spirit, in faith, in purity.' },
+  { reference: '1 Timothy 6:6', book: '1 Timothy', chapter: 6, verseStart: 6, text: 'But godliness with contentment is great gain.' },
+  { reference: '1 Timothy 6:10', book: '1 Timothy', chapter: 6, verseStart: 10, text: 'For the love of money is the root of all evil: which while some coveted after, they have erred from the faith, and pierced themselves through with many sorrows.' },
+  { reference: '2 Timothy 2:15', book: '2 Timothy', chapter: 2, verseStart: 15, text: 'Study to shew thyself approved unto God, a workman that needeth not to be ashamed, rightly dividing the word of truth.' },
+  { reference: '2 Timothy 4:7', book: '2 Timothy', chapter: 4, verseStart: 7, text: 'I have fought a good fight, I have finished my course, I have kept the faith.' },
+  { reference: 'Titus 3:5', book: 'Titus', chapter: 3, verseStart: 5, text: 'Not by works of righteousness which we have done, but according to his mercy he saved us, by the washing of regeneration, and renewing of the Holy Ghost.' },
+
+  // ── Hebrews / James (additions) ───────────────────────────────────
+  { reference: 'Hebrews 1:3', book: 'Hebrews', chapter: 1, verseStart: 3, text: 'Who being the brightness of his glory, and the express image of his person, and upholding all things by the word of his power.' },
+  { reference: 'Hebrews 4:16', book: 'Hebrews', chapter: 4, verseStart: 16, text: 'Let us therefore come boldly unto the throne of grace, that we may obtain mercy, and find grace to help in time of need.' },
+  { reference: 'Hebrews 10:24', book: 'Hebrews', chapter: 10, verseStart: 24, text: 'And let us consider one another to provoke unto love and to good works.' },
+  { reference: 'Hebrews 10:25', book: 'Hebrews', chapter: 10, verseStart: 25, text: 'Not forsaking the assembling of ourselves together, as the manner of some is; but exhorting one another: and so much the more, as ye see the day approaching.' },
+  { reference: 'Hebrews 12:11', book: 'Hebrews', chapter: 12, verseStart: 11, text: 'Now no chastening for the present seemeth to be joyous, but grievous: nevertheless afterward it yieldeth the peaceable fruit of righteousness unto them which are exercised thereby.' },
+  { reference: 'James 1:12', book: 'James', chapter: 1, verseStart: 12, text: 'Blessed is the man that endureth temptation: for when he is tried, he shall receive the crown of life.' },
+  { reference: 'James 1:17', book: 'James', chapter: 1, verseStart: 17, text: 'Every good gift and every perfect gift is from above, and cometh down from the Father of lights, with whom is no variableness, neither shadow of turning.' },
+  { reference: 'James 1:22', book: 'James', chapter: 1, verseStart: 22, text: 'But be ye doers of the word, and not hearers only, deceiving your own selves.' },
+  { reference: 'James 2:17', book: 'James', chapter: 2, verseStart: 17, text: 'Even so faith, if it hath not works, is dead, being alone.' },
+
+  // ── 1 Peter / 2 Peter / 1-3 John / Jude ──────────────────────────
+  { reference: '1 Peter 1:3', book: '1 Peter', chapter: 1, verseStart: 3, text: 'Blessed be the God and Father of our Lord Jesus Christ, which according to his abundant mercy hath begotten us again unto a lively hope by the resurrection of Jesus Christ from the dead.' },
+  { reference: '1 Peter 3:15', book: '1 Peter', chapter: 3, verseStart: 15, text: 'But sanctify the Lord God in your hearts: and be ready always to give an answer to every man that asketh you a reason of the hope that is in you with meekness and fear.' },
+  { reference: '1 Peter 4:8', book: '1 Peter', chapter: 4, verseStart: 8, text: 'And above all things have fervent charity among yourselves: for charity shall cover the multitude of sins.' },
+  { reference: '1 Peter 5:8', book: '1 Peter', chapter: 5, verseStart: 8, text: 'Be sober, be vigilant; because your adversary the devil, as a roaring lion, walketh about, seeking whom he may devour.' },
+  { reference: '2 Peter 3:9', book: '2 Peter', chapter: 3, verseStart: 9, text: 'The Lord is not slack concerning his promise, as some men count slackness; but is longsuffering to us-ward, not willing that any should perish, but that all should come to repentance.' },
+  { reference: '1 John 3:1', book: '1 John', chapter: 3, verseStart: 1, text: 'Behold, what manner of love the Father hath bestowed upon us, that we should be called the sons of God.' },
+  { reference: '1 John 3:16', book: '1 John', chapter: 3, verseStart: 16, text: 'Hereby perceive we the love of God, because he laid down his life for us: and we ought to lay down our lives for the brethren.' },
+  { reference: '1 John 5:14', book: '1 John', chapter: 5, verseStart: 14, text: 'And this is the confidence that we have in him, that, if we ask any thing according to his will, he heareth us.' },
+  { reference: 'Jude 1:24', book: 'Jude', chapter: 1, verseStart: 24, text: 'Now unto him that is able to keep you from falling, and to present you faultless before the presence of his glory with exceeding joy.' },
+
+  // ── Revelation (additions) ────────────────────────────────────────
+  { reference: 'Revelation 1:8', book: 'Revelation', chapter: 1, verseStart: 8, text: 'I am Alpha and Omega, the beginning and the ending, saith the Lord, which is, and which was, and which is to come, the Almighty.' },
+  { reference: 'Revelation 4:11', book: 'Revelation', chapter: 4, verseStart: 11, text: 'Thou art worthy, O Lord, to receive glory and honour and power: for thou hast created all things, and for thy pleasure they are and were created.' },
+  { reference: 'Revelation 5:12', book: 'Revelation', chapter: 5, verseStart: 12, text: 'Worthy is the Lamb that was slain to receive power, and riches, and wisdom, and strength, and honour, and glory, and blessing.' },
+  { reference: 'Revelation 19:6', book: 'Revelation', chapter: 19, verseStart: 6, text: 'Alleluia: for the Lord God omnipotent reigneth.' },
+  { reference: 'Revelation 21:5', book: 'Revelation', chapter: 21, verseStart: 5, text: 'And he that sat upon the throne said, Behold, I make all things new.' },
+  { reference: 'Revelation 22:20', book: 'Revelation', chapter: 22, verseStart: 20, text: 'He which testifieth these things saith, Surely I come quickly. Amen. Even so, come, Lord Jesus.' },
 ] as const
 
 export const POPULAR_VERSES_COUNT = POPULAR_VERSES_KJV.length

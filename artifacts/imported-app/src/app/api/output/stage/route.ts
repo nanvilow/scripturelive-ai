@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server'
  * GET /api/output/stage
  *
  * Stage-display window for the speaker: shows the current slide, the
- * next slide, sermon notes, a wall clock and an optional countdown
+ * next slide, a wall clock and an optional countdown
  * timer. Subscribes to /api/output (SSE) so it updates live with the
  * congregation feed but renders a different layout that's optimized
  * for the speaker's awareness, not the audience's.
@@ -36,7 +36,6 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#0a0a0a;color:#fff
 .now .text{font-size:38px;line-height:1.3;font-weight:500;overflow:auto}
 .next .ref{font-size:12px;color:#8b8b8b;margin-bottom:6px}
 .next .text{font-size:18px;line-height:1.4;color:#cfcfcf;overflow:auto}
-.notes pre{white-space:pre-wrap;font-family:inherit;font-size:14px;line-height:1.5;color:#d4d4d4;overflow:auto}
 .foot{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#666}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#ef4444;margin-right:6px;animation:pulse 1.5s infinite}
 .dot.live{background:#22c55e;animation:none}
@@ -64,11 +63,6 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#0a0a0a;color:#fff
     <h2>Up Next</h2>
     <div class="ref" id="next-ref">—</div>
     <div class="text" id="next-text">No upcoming slide</div>
-  </div>
-
-  <div class="panel notes">
-    <h2>Speaker Notes</h2>
-    <pre id="notes">—</pre>
   </div>
 
   <div class="foot">
@@ -112,7 +106,6 @@ function render(state) {
   $('now-text').textContent = Array.isArray(slide.content) ? slide.content.join(' ') : (slide.content || '');
   $('next-ref').textContent = next.title || '—';
   $('next-text').textContent = Array.isArray(next.content) ? next.content.join(' ') : (next.content || 'No upcoming slide');
-  $('notes').textContent = slide.notes || state.sermonNotes || '—';
   $('meta').textContent = (state.slideIndex != null && state.slideTotal != null)
     ? 'Slide ' + (state.slideIndex + 1) + ' / ' + state.slideTotal
     : '';

@@ -24,7 +24,6 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Wifi, WifiOff, Radio, AlertTriangle, MonitorPlay } from 'lucide-react'
 import { useNdi } from '@/lib/use-electron'
-import { StageDisplayControls } from '@/components/views/stage-display-controls'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/lib/store'
@@ -590,7 +589,6 @@ export function NdiOutputPanel() {
               </div>
             </div>
 
-            <StageDisplayControls />
           </div>
 
           {/* ── RIGHT COLUMN — sticky compact preview ──────────────── */}
