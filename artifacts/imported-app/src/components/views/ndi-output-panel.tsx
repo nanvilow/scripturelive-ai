@@ -594,7 +594,7 @@ export function NdiOutputPanel() {
           </div>
 
           {/* ── RIGHT COLUMN — sticky compact preview ──────────────── */}
-          <div className="lg:sticky lg:top-2 self-start order-first lg:order-last">
+          <div className="lg:sticky lg:top-2 self-start lg:order-last">
             <div className="rounded-md border border-border bg-black overflow-hidden">
               <div className="flex items-center justify-between gap-2 px-2 py-1.5 border-b border-border bg-muted/30">
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">NDI live preview</div>

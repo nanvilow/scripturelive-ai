@@ -111,8 +111,14 @@ export function ScriptureDetectionView() {
   // each new committed sentence. We debounce to ~600 ms after the
   // last update so we don't fire one embedding per word.
   useEffect(() => {
-    if (!isListening) return
-    if (!liveTranscript) return
+    // Stop-listening or empty transcript: drop any stale AI chip so
+    // the operator never sees a dangling suggestion from a previous
+    // session / utterance.
+    if (!isListening || !liveTranscript) {
+      lastSemanticPhraseRef.current = ''
+      setAiSuggestion(null)
+      return
+    }
     // Take the LAST sentence (split on punctuation/newline).
     const sentences = liveTranscript
       .split(/(?<=[.!?])\s+|\n+/)
@@ -122,9 +128,14 @@ export function ScriptureDetectionView() {
     if (!phrase) return
     if (phrase === lastSemanticPhraseRef.current) return
     // If the regex matcher already finds a verse in this phrase,
-    // skip the embedding call — regex matches carry the operator's
-    // own translation pick and are strictly preferred.
-    if (detectVersesInText(phrase).length > 0) return
+    // skip the embedding call AND clear any stale AI chip — regex
+    // matches carry the operator's own translation pick and are
+    // strictly preferred, so the chip must yield to them.
+    if (detectVersesInText(phrase).length > 0) {
+      lastSemanticPhraseRef.current = phrase
+      setAiSuggestion(null)
+      return
+    }
     const handle = setTimeout(async () => {
       if (aiBusyRef.current) return
       aiBusyRef.current = true

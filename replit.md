@@ -26,6 +26,8 @@ Major minor-version bump (0.5.x → 0.6.0) reflecting the addition of the **AI s
 
 **Deferred to v0.6.1.** Items 3, 8, 9 in Case 2 — they reference Imgur album images that the operator could not attach during this session. Will reopen as soon as the operator pastes individual screenshots.
 
+**Architect-review fixes (folded into the same v0.6.0 tag).** Two issues were caught during the post-build code review and folded into the same v0.6.0 tag (re-tagged to commit it through the same cloud build). (a) `scripture-detection.tsx` — the AI suggestion chip was not cleared on regex hits / stop-listening / empty transcript, so a stale chip could linger after the regex matcher took over. The semantic-match `useEffect` now `setAiSuggestion(null)`s in three new code paths: when `!isListening`, when `!liveTranscript`, and when the regex matcher has a match for the current phrase. The phrase-de-dupe ref is reset alongside so the next phrase is not skipped. (b) `ndi-output-panel.tsx` — the right-column wrapper used `order-first lg:order-last`, which on narrow widths placed the preview ABOVE the controls (contradicting the operator-first ordering). Changed to `lg:order-last` so on narrow widths the preview falls back to natural document order BELOW the controls.
+
 ## v0.5.57 — Operator follow-up: NDI separation, paywall copy, mic UX, lockdown (Apr 2026)
 
 Seven operator items addressed in a single release. No new product surfaces — just polish, ergonomics, and one substantial separation of NDI from Live Display.
