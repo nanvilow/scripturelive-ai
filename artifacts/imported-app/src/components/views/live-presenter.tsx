@@ -38,9 +38,9 @@ const slideThemes: Record<string, { bg: string; accent: string; label: string }>
   easter: { bg: 'from-emerald-950 to-teal-950', accent: 'text-emerald-300', label: 'Easter' },
   christmas: { bg: 'from-red-950 to-rose-950', accent: 'text-rose-300', label: 'Christmas' },
   praise: { bg: 'from-yellow-950 to-amber-950', accent: 'text-yellow-300', label: 'Praise' },
-  minimal: { bg: 'from-zinc-950 to-neutral-950', accent: 'text-zinc-300', label: 'Minimal' },
+  minimal: { bg: 'from-zinc-950 to-neutral-950', accent: 'text-foreground', label: 'Minimal' },
 }
-const defaultTheme = { bg: 'from-zinc-950 to-neutral-950', accent: 'text-zinc-300', label: 'Minimal' }
+const defaultTheme = { bg: 'from-zinc-950 to-neutral-950', accent: 'text-foreground', label: 'Minimal' }
 const fontSizeMap = { sm: 'text-lg md:text-xl', md: 'text-xl md:text-2xl lg:text-3xl', lg: 'text-2xl md:text-3xl lg:text-4xl', xl: 'text-3xl md:text-4xl lg:text-5xl' }
 const fontFamilyMap = { sans: 'font-sans', serif: 'font-serif', mono: 'font-mono' }
 
@@ -618,7 +618,7 @@ export function LivePresenterView() {
                     )
                     : (
                       <div className="w-full h-full bg-black rounded-xl flex items-center justify-center">
-                        <div className="text-center space-y-2"><MonitorPlay className="h-8 w-8 text-zinc-600 mx-auto" /><p className="text-sm text-zinc-500">{isLive ? 'Output is black' : 'Nothing live yet'}</p></div>
+                        <div className="text-center space-y-2"><MonitorPlay className="h-8 w-8 text-muted-foreground mx-auto" /><p className="text-sm text-muted-foreground">{isLive ? 'Output is black' : 'Nothing live yet'}</p></div>
                       </div>
                     )
                   }

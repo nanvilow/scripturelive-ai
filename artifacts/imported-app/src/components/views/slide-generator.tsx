@@ -36,7 +36,7 @@ const slideThemes = [
   { id: 'easter', name: 'Easter', bg: 'from-emerald-950/80 to-teal-950/80', accent: 'text-emerald-300' },
   { id: 'christmas', name: 'Christmas', bg: 'from-red-950/80 to-rose-950/80', accent: 'text-rose-300' },
   { id: 'praise', name: 'Praise', bg: 'from-yellow-950/80 to-amber-950/80', accent: 'text-yellow-300' },
-  { id: 'minimal', name: 'Minimal', bg: 'from-zinc-950 to-neutral-950', accent: 'text-zinc-300' },
+  { id: 'minimal', name: 'Minimal', bg: 'from-zinc-950 to-neutral-950', accent: 'text-foreground' },
 ]
 
 export function SlideGeneratorView() {

@@ -33,11 +33,48 @@ import {
 import { sendArkeselSms } from './sms'
 
 // ─── Email ──────────────────────────────────────────────────────────
+
+/**
+ * v0.6.2 — RFC 2822 normalize a `from` value. Gmail (and most modern
+ * MTAs) require either a bare address `user@host` or the bracketed
+ * `"Display Name" <user@host>` form. A baked value like
+ * `"ScriptureLive AI nanvilow@gmail.com"` is malformed — Gmail
+ * silently drops the mail without surfacing an error, which is why
+ * test emails to the owner used to "appear" to work but customer
+ * emails stayed pending forever.
+ */
+function normalizeMailFrom(raw: string): string {
+  const s = (raw || '').trim()
+  if (!s) return ''
+  // Already bracketed → trust it.
+  if (/<[^>]+@[^>]+>/.test(s)) return s
+  // Pure bare email → fine on its own.
+  if (/^[^\s<>"']+@[^\s<>"']+$/.test(s)) return s
+  // Otherwise: pull the LAST email-shaped token, treat everything
+  // before it as the display name, wrap in quotes + angle brackets.
+  const m = s.match(/(.*?)([^\s<>"']+@[^\s<>"']+)\s*$/)
+  if (!m) return s // give up — let SMTP reject loudly
+  const name = m[1].replace(/["<>]/g, '').trim()
+  const addr = m[2].trim()
+  return name ? `"${name}" <${addr}>` : addr
+}
+
+interface SmtpSendResult {
+  ok: boolean
+  error?: string
+  /** Server response info — `accepted: ['x@y']`, `rejected: []`,
+   *  `messageId: '<...>'`, `response: '250 OK ...'`. Surfaced into
+   *  the admin notification record so a partial-failure (one
+   *  recipient bounced, others delivered) is visible without
+   *  reading the live log. */
+  meta?: Record<string, unknown>
+}
+
 async function sendEmailViaSmtp(args: {
   to: string
   subject: string
   body: string
-}): Promise<{ ok: true } | { ok: false; error: string }> {
+}): Promise<SmtpSendResult> {
   // v0.5.54 — env-var-or-baked. The packaged .exe has no env vars
   // set by default, so we fall back to the credentials baked at
   // build time. Operator can still override at runtime by setting
@@ -47,7 +84,9 @@ async function sendEmailViaSmtp(args: {
   const host = getMailHost()
   const user = getMailUser()
   const pass = getMailPass()
-  const from = getMailFrom() || user
+  // v0.6.2 — normalize MAIL_FROM so we never hand Gmail a malformed
+  // mailbox. Falls back to the SMTP user if MAIL_FROM is empty.
+  const from = normalizeMailFrom(getMailFrom() || user)
   if (!host || !user || !pass || !from) return { ok: false, error: 'SMTP not configured' }
   try {
     // nodemailer is a heavy import — only load when actually configured.
@@ -64,10 +103,43 @@ async function sendEmailViaSmtp(args: {
       secure: getMailSecure() === '1',
       auth: { user, pass },
     })
-    await tx.sendMail({ from, to: args.to, subject: args.subject, text: args.body })
-    return { ok: true }
+    // eslint-disable-next-line no-console
+    console.log('[smtp] sending', { host, port, from, to: args.to, subject: args.subject })
+    const info = await tx.sendMail({ from, to: args.to, subject: args.subject, text: args.body })
+    // v0.6.2 — nodemailer returns `accepted` and `rejected` arrays.
+    // A successful submission to Gmail still ends up in `rejected`
+    // when the recipient address is invalid, so we surface that as
+    // a failure even though the SMTP transaction itself returned 250.
+    const accepted = (info as { accepted?: string[] }).accepted ?? []
+    const rejected = (info as { rejected?: string[] }).rejected ?? []
+    const response = (info as { response?: string }).response
+    const messageId = (info as { messageId?: string }).messageId
+    // eslint-disable-next-line no-console
+    console.log('[smtp] result', { accepted, rejected, response, messageId })
+    if (rejected.length > 0 && accepted.length === 0) {
+      return {
+        ok: false,
+        error: `SMTP rejected recipient(s): ${rejected.join(', ')} — ${response || 'no server reason'}`,
+        meta: { accepted, rejected, response, messageId },
+      }
+    }
+    return { ok: true, meta: { accepted, rejected, response, messageId } }
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    // nodemailer errors carry useful fields beyond .message — code,
+    // response, responseCode. Stitch them together so the admin
+    // panel sees the actual SMTP reply (e.g. "550 5.7.1 ... blocked").
+    const err = e as { message?: string; code?: string; response?: string; responseCode?: number }
+    const detail = [
+      err.message || String(e),
+      err.responseCode ? `code=${err.responseCode}` : null,
+      err.code ? `nm=${err.code}` : null,
+      err.response ? `resp=${err.response}` : null,
+    ]
+      .filter(Boolean)
+      .join(' | ')
+    // eslint-disable-next-line no-console
+    console.error('[smtp] FAILED', { to: args.to, error: detail })
+    return { ok: false, error: detail }
   }
 }
 
@@ -85,13 +157,21 @@ export async function notifyEmail(args: {
   // From v0.6.0 onward a real send error is recorded as 'failed' so
   // the admin panel surfaces it visibly. 'pending' is reserved for
   // channels that have no automated send path (WhatsApp click-to-send).
+  // v0.6.2 — also surface the SMTP server response on success so the
+  // admin can confirm the message id / accepted recipients in the
+  // notifications log without scraping the server console.
+  const errorOrInfo = sent.ok
+    ? sent.meta
+      ? `SMTP OK · ${JSON.stringify(sent.meta)}`
+      : undefined
+    : sent.error
   return appendNotification({
     channel: 'email',
     to,
     subject: args.subject,
     body: args.body,
     status: sent.ok ? 'sent' : 'failed',
-    error: sent.ok ? undefined : sent.error,
+    error: errorOrInfo,
   })
 }
 
@@ -150,12 +230,24 @@ export async function notifySms(args: {
   // v0.6.0 — operator complaint #4: SMS failures were silently sitting
   // on 'pending'. Same fix as notifyEmail above — record real
   // delivery failures as 'failed' so they show up in the admin panel.
+  // v0.6.2 — embed the raw Arkesel response in the audit log too so
+  // the admin can see the gateway's actual error (e.g. "Sender ID
+  // not approved", "Insufficient balance") without grep'ing logs.
+  let errorOrInfo: string | undefined
+  if (!result.ok) {
+    errorOrInfo = result.error
+    if (result.raw && typeof result.raw === 'object') {
+      try { errorOrInfo = `${errorOrInfo} · raw=${JSON.stringify(result.raw)}` } catch { /* ignore */ }
+    }
+  } else if (result.raw && typeof result.raw === 'object') {
+    try { errorOrInfo = `Arkesel OK · ${JSON.stringify(result.raw)}` } catch { /* ignore */ }
+  }
   return appendNotification({
     channel: 'sms',
     to: args.to,
     subject: args.subject,
     body: args.body,
     status: result.ok ? 'sent' : 'failed',
-    error: result.ok ? undefined : result.error,
+    error: errorOrInfo,
   })
 }

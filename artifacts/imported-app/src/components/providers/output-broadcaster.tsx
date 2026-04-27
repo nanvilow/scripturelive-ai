@@ -69,6 +69,11 @@ export function OutputBroadcaster() {
         ? s.slides[s.liveSlideIndex + 1]
         : null
       const settings = s.settings
+      // v0.6.2 — index-signature view onto settings so we can read
+      // every NDI override (some are loosely typed in the store).
+      // TypeScript otherwise blocks `settings.ndiFontFamily` etc. on
+      // the strict AppSettings shape.
+      const sExt = settings as unknown as Record<string, unknown>
       const settingsBlock = {
         fontSize: settings.fontSize,
         fontFamily: settings.fontFamily,
@@ -86,6 +91,33 @@ export function OutputBroadcaster() {
         // sender's hidden window), so vMix/OBS can receive a Lower
         // Third even while the projector stays at Full Screen.
         ndiDisplayMode: settings.ndiDisplayMode,
+        // v0.6.2 — every NDI-only override now propagates through the
+        // SSE channel. v0.6.1 only forwarded ndiDisplayMode, which
+        // meant every other NDI-tab control (font, text size, shadow,
+        // alignment, scale, aspect ratio, bible color/lineheight,
+        // reference style/position/scale, translation) was effectively
+        // dead — the operator could click anything and the in-app
+        // NDI Live Preview iframe + downstream NDI receivers would
+        // both keep rendering against the Mirror-Live defaults.
+        ndiFontFamily: sExt.ndiFontFamily,
+        ndiFontSize: sExt.ndiFontSize,
+        ndiTextShadow: sExt.ndiTextShadow,
+        ndiTextAlign: sExt.ndiTextAlign,
+        ndiTextScale: sExt.ndiTextScale,
+        ndiAspectRatio: sExt.ndiAspectRatio,
+        ndiBibleColor: sExt.ndiBibleColor,
+        ndiBibleLineHeight: sExt.ndiBibleLineHeight,
+        ndiRefSize: sExt.ndiRefSize,
+        ndiRefStyle: sExt.ndiRefStyle,
+        ndiRefPosition: sExt.ndiRefPosition,
+        ndiRefScale: sExt.ndiRefScale,
+        ndiTranslation: sExt.ndiTranslation,
+        ndiCustomBackground: sExt.ndiCustomBackground,
+        ndiTheme: sExt.ndiTheme,
+        ndiLowerThirdHeight: sExt.ndiLowerThirdHeight,
+        ndiLowerThirdPosition: sExt.ndiLowerThirdPosition,
+        ndiShowReferenceOnOutput: sExt.ndiShowReferenceOnOutput,
+        ndiReferenceTextShadow: sExt.ndiReferenceTextShadow,
         // Slide transition: style picks Cut (instant swap) vs Fade
         // (crossfade), duration drives the fade length in ms. The
         // congregation route honours both on every slide change.

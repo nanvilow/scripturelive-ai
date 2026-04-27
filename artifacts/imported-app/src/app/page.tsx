@@ -40,27 +40,27 @@ function AppContent() {
         <LogosShell />
       </div>
       {settingsOpen && (
-        <div className="fixed inset-0 z-50 bg-zinc-950 flex flex-col">
-          <div className="flex items-center justify-between px-5 h-14 border-b border-zinc-800 bg-zinc-950/95 backdrop-blur shrink-0">
+        <div className="fixed inset-0 z-50 bg-background flex flex-col">
+          <div className="flex items-center justify-between px-5 h-14 border-b border-border bg-background/95 backdrop-blur shrink-0">
             <div className="flex items-center gap-3">
               <div className="h-8 w-8 rounded-full bg-white flex items-center justify-center overflow-hidden shrink-0">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src="/logo.png" alt="" className="h-full w-full object-contain" />
               </div>
               <div className="leading-tight">
-                <h2 className="text-sm font-semibold text-zinc-100">Settings</h2>
-                <p className="text-[10px] text-zinc-500">Configure ScriptureLive</p>
+                <h2 className="text-sm font-semibold text-foreground">Settings</h2>
+                <p className="text-[10px] text-muted-foreground">Configure ScriptureLive</p>
               </div>
             </div>
             <button
               onClick={() => setCurrentView('dashboard')}
-              className="inline-flex items-center gap-1.5 text-xs text-zinc-300 hover:text-white px-3 py-1.5 rounded-md border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-800 transition-colors"
+              className="inline-flex items-center gap-1.5 text-xs text-foreground hover:text-foreground px-3 py-1.5 rounded-md border border-border bg-card/60 hover:bg-muted transition-colors"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
               Back to Live Console
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto bg-zinc-950">
+          <div className="flex-1 overflow-y-auto bg-background">
             <SettingsView />
           </div>
         </div>

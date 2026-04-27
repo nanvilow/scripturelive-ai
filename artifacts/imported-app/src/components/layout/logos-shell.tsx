@@ -120,13 +120,13 @@ function Card({
         // fills its parent ResizablePanel and the row aligns perfectly
         // top and bottom (same applies to the bottom row: Chapter
         // Navigator, Detected Verses, Media all line up).
-        'flex flex-col h-full min-h-0 rounded-xl border border-zinc-800/70 bg-zinc-950/60 shadow-sm overflow-hidden',
+        'flex flex-col h-full min-h-0 rounded-xl border border-border/70 bg-background/60 shadow-sm overflow-hidden',
         className,
       )}
     >
-      <header className="flex items-center justify-between gap-2 px-3 h-9 border-b border-zinc-800/60 shrink-0 bg-zinc-900/30">
+      <header className="flex items-center justify-between gap-2 px-3 h-9 border-b border-border/60 shrink-0 bg-card/30">
         <div className="flex items-center gap-2 min-w-0">
-          <h3 className="text-[10px] uppercase tracking-[0.18em] font-semibold text-zinc-300 truncate">
+          <h3 className="text-[10px] uppercase tracking-[0.18em] font-semibold text-foreground truncate">
             {title}
           </h3>
           {badge}
@@ -189,7 +189,7 @@ function AudioMeter({
         ? 'from-amber-500 via-amber-400 to-yellow-300'
         : 'from-emerald-500 via-emerald-400 to-yellow-300'
   return (
-    <div className="relative h-full w-2 rounded-sm bg-zinc-900/80 border border-zinc-800 overflow-hidden">
+    <div className="relative h-full w-2 rounded-sm bg-card/80 border border-border overflow-hidden">
       <div
         className={cn('absolute bottom-0 left-0 right-0 bg-gradient-to-t transition-[height] duration-100 ease-out', grad)}
         style={{ height: `${Math.round(level * 100)}%`, opacity: active ? 1 : 0.25 }}
@@ -264,7 +264,7 @@ function Tab({
         'flex items-center gap-1.5 px-2 h-6 rounded text-[10px] uppercase tracking-wider font-semibold border transition-colors',
         active
           ? 'bg-sky-500/15 text-sky-300 border-sky-500/40'
-          : 'bg-transparent text-zinc-500 border-transparent hover:text-zinc-300',
+          : 'bg-transparent text-muted-foreground border-transparent hover:text-foreground',
       )}
     >
       <Icon className="h-3 w-3" />
@@ -433,7 +433,7 @@ function LiveTranscriptionCard() {
               title={engineTitle}
               className={cn(
                 'inline-flex items-center gap-1 h-5 px-1.5 rounded-md text-[9px] uppercase tracking-wider font-semibold border whitespace-nowrap',
-                'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-700',
+                'bg-card hover:bg-muted text-foreground border-border',
               )}
             >
               <span
@@ -461,7 +461,7 @@ function LiveTranscriptionCard() {
                   {preferredEngine === opt.v && <Check className="h-3 w-3 text-emerald-400" />}
                   {opt.label}
                 </span>
-                <span className="text-[10px] text-zinc-500 pl-5">{opt.sub}</span>
+                <span className="text-[10px] text-muted-foreground pl-5">{opt.sub}</span>
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
@@ -499,7 +499,7 @@ function LiveTranscriptionCard() {
               'h-6 px-1.5 text-[10px] uppercase tracking-wider gap-0.5 font-semibold border',
               bibleOnlyTranscription
                 ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
-                : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-700',
+                : 'bg-card hover:bg-muted text-foreground border-border',
               isLocked && 'opacity-50 cursor-not-allowed pointer-events-none',
             )}
           >
@@ -513,7 +513,7 @@ function LiveTranscriptionCard() {
             onClick={() => { if (isLocked) return; setSpeechCommand('reset') }}
             title={isLocked ? 'Activate a subscription to use Live Transcription controls.' : 'Clear transcription'}
             className={cn(
-              'h-6 px-1.5 text-[10px] uppercase tracking-wider gap-0.5 font-semibold bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700',
+              'h-6 px-1.5 text-[10px] uppercase tracking-wider gap-0.5 font-semibold bg-card hover:bg-muted text-foreground border border-border',
               isLocked && 'opacity-50 cursor-not-allowed pointer-events-none',
             )}
           >
@@ -535,7 +535,7 @@ function LiveTranscriptionCard() {
             className={cn(
               'h-6 px-1.5 text-[10px] uppercase tracking-wider gap-0.5 font-semibold',
               isLocked
-                ? 'bg-zinc-700 text-zinc-300'
+                ? 'bg-muted text-foreground'
                 : isListening
                 ? 'bg-rose-600 hover:bg-rose-700 text-white'
                 : 'bg-sky-600 hover:bg-sky-700 text-white',
@@ -574,7 +574,7 @@ function LiveTranscriptionCard() {
               'h-6 px-1.5 text-[10px] uppercase tracking-wider gap-0.5 font-semibold border',
               autoLive
                 ? 'bg-amber-500 hover:bg-amber-400 text-black border-amber-300 shadow-md shadow-amber-500/30'
-                : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-700',
+                : 'bg-card hover:bg-muted text-foreground border-border',
               isLocked && 'opacity-50 cursor-not-allowed pointer-events-none',
             )}
           >
@@ -604,7 +604,7 @@ function LiveTranscriptionCard() {
             </p>
           )}
           {paragraphs.length === 0 && !liveInterimTranscript && (
-            <div className="text-center py-6 text-[11px] text-zinc-600">
+            <div className="text-center py-6 text-[11px] text-muted-foreground">
               <Mic className="h-7 w-7 mx-auto opacity-40 mb-2" />
               Tap <span className="text-sky-300 font-semibold">Detect</span> to start
               transcribing the speaker. Detected scripture references will fill
@@ -616,14 +616,14 @@ function LiveTranscriptionCard() {
                   Previously this only showed in the rose error line
                   above; engine identity was buried in the Card BADGE
                   picker dot which operators didn't notice. */}
-              <div className="mt-3 text-[10px] text-zinc-500 space-y-0.5">
+              <div className="mt-3 text-[10px] text-muted-foreground space-y-0.5">
                 <div>
                   Engine:{' '}
-                  <span className="text-zinc-300 font-mono uppercase">
+                  <span className="text-foreground font-mono uppercase">
                     {activeEngineName ?? 'idle'}
                   </span>
                   {preferredEngine !== 'auto' && (
-                    <span className="text-zinc-600"> (pinned: {preferredEngine})</span>
+                    <span className="text-muted-foreground"> (pinned: {preferredEngine})</span>
                   )}
                 </div>
                 {isListening && (
@@ -639,16 +639,16 @@ function LiveTranscriptionCard() {
             <p
               key={i}
               className={cn(
-                'text-[12px] leading-relaxed text-zinc-200',
+                'text-[12px] leading-relaxed text-foreground',
                 // Add visible spacing between paragraphs
-                i > 0 && 'mt-3 pt-3 border-t border-zinc-800/40',
+                i > 0 && 'mt-3 pt-3 border-t border-border/40',
               )}
             >
               {normalizeTranscriptForDisplay(para)}
             </p>
           ))}
           {liveInterimTranscript && (
-            <p className="text-[12px] leading-relaxed text-zinc-500 italic">
+            <p className="text-[12px] leading-relaxed text-muted-foreground italic">
               {normalizeTranscriptForDisplay(liveInterimTranscript)}…
             </p>
           )}
@@ -736,7 +736,7 @@ function DisplayStage({
   const refMin = Math.max(6, 7 * scale)
   const refMax = Math.max(11, 20 * scale)
   return (
-    <div className="relative w-full aspect-video bg-black overflow-hidden ring-1 ring-zinc-800">
+    <div className="relative w-full aspect-video bg-black overflow-hidden ring-1 ring-border">
       {!isBlackBackdrop && settings.customBackground && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -882,7 +882,7 @@ function PreviewCard() {
       title="Preview"
       badge={
         previewSlide ? (
-          <span className="text-[10px] text-zinc-500 font-mono">
+          <span className="text-[10px] text-muted-foreground font-mono">
             {previewSlideIndex + 1} / {slides.length}
           </span>
         ) : null
@@ -892,7 +892,7 @@ function PreviewCard() {
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6 text-zinc-400 hover:text-white"
+            className="h-6 w-6 text-muted-foreground hover:text-foreground"
             onClick={() => void goChapter('prev')}
             disabled={navigating || !previewSlide}
             title="Previous chapter (live)"
@@ -902,7 +902,7 @@ function PreviewCard() {
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6 text-zinc-400 hover:text-white"
+            className="h-6 w-6 text-muted-foreground hover:text-foreground"
             onClick={() => void goChapter('next')}
             disabled={navigating || !previewSlide}
             title="Next chapter (live)"
@@ -929,7 +929,7 @@ function PreviewCard() {
               'h-6 w-6 rounded-md border flex items-center justify-center transition-colors shrink-0',
               previewAudio
                 ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
-                : 'bg-black/60 border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500',
+                : 'bg-black/60 border-border text-muted-foreground hover:text-foreground hover:border-border',
             )}
           >
             {previewAudio ? (
@@ -962,7 +962,7 @@ function PreviewCard() {
               />
             </StableStage>
           ) : (
-            <div className="text-center text-[11px] text-zinc-600">
+            <div className="text-center text-[11px] text-muted-foreground">
               <BookOpen className="h-8 w-8 mx-auto opacity-30 mb-2" />
               Nothing in preview yet
             </div>
@@ -981,7 +981,7 @@ function PreviewCard() {
           authoritative chapter nav already lives in the header — we
           just need the height. */}
       <div
-        className="border-t border-zinc-800/60 px-3 py-2 flex items-center justify-end gap-3 bg-zinc-900/30 shrink-0"
+        className="border-t border-border/60 px-3 py-2 flex items-center justify-end gap-3 bg-card/30 shrink-0"
         aria-hidden="true"
         role="presentation"
       >
@@ -1078,7 +1078,7 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
   }
 
   return (
-    <div className="flex items-center gap-2 border-t border-zinc-800/70 px-2 py-1.5 shrink-0">
+    <div className="flex items-center gap-2 border-t border-border/70 px-2 py-1.5 shrink-0">
       <Button
         size="sm"
         variant="secondary"
@@ -1088,7 +1088,7 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
       >
         {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
       </Button>
-      <span className="text-[10px] font-mono text-zinc-400 w-9 text-right tabular-nums">
+      <span className="text-[10px] font-mono text-muted-foreground w-9 text-right tabular-nums">
         {fmt(current)}
       </span>
       <input
@@ -1107,7 +1107,7 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
         title="Scrub"
         disabled={duration <= 0}
       />
-      <span className="text-[10px] font-mono text-zinc-500 w-9 tabular-nums">
+      <span className="text-[10px] font-mono text-muted-foreground w-9 tabular-nums">
         {fmt(duration)}
       </span>
     </div>
@@ -1195,7 +1195,7 @@ function LiveBottomAudioControls() {
                 ? 'bg-rose-500/20 text-rose-300 border-rose-500/50'
                 : micState === 'paused'
                   ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
-                  : 'bg-black/40 text-zinc-400 border-zinc-800 hover:text-white hover:border-zinc-600',
+                  : 'bg-black/40 text-muted-foreground border-border hover:text-foreground hover:border-border',
             )}
           >
             <MicIcon className="h-3 w-3" />
@@ -1208,10 +1208,10 @@ function LiveBottomAudioControls() {
         <PopoverContent
           align="end"
           side="top"
-          className="w-[260px] p-3 bg-zinc-950 border-zinc-800"
+          className="w-[260px] p-3 bg-background border-border"
         >
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
               Mic Control
             </span>
             <Badge
@@ -1221,7 +1221,7 @@ function LiveBottomAudioControls() {
                   ? 'bg-rose-500/15 text-rose-300 border-rose-500/40 animate-pulse'
                   : micState === 'paused'
                     ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
-                    : 'bg-zinc-800 text-zinc-400 border-zinc-700',
+                    : 'bg-muted text-muted-foreground border-border',
               )}
             >
               {micState === 'listening' ? '● Live' : micState === 'paused' ? 'Paused' : 'Off'}
@@ -1235,7 +1235,7 @@ function LiveBottomAudioControls() {
               className={cn(
                 'h-7 rounded text-[10px] uppercase tracking-wider font-semibold border inline-flex items-center justify-center gap-1',
                 isListening && !micPaused
-                  ? 'bg-zinc-900 text-zinc-600 border-zinc-800 cursor-not-allowed'
+                  ? 'bg-card text-muted-foreground border-border cursor-not-allowed'
                   : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30',
               )}
               title="Start microphone"
@@ -1249,7 +1249,7 @@ function LiveBottomAudioControls() {
               className={cn(
                 'h-7 rounded text-[10px] uppercase tracking-wider font-semibold border inline-flex items-center justify-center gap-1',
                 !isListening
-                  ? 'bg-zinc-900 text-zinc-600 border-zinc-800 cursor-not-allowed'
+                  ? 'bg-card text-muted-foreground border-border cursor-not-allowed'
                   : micPaused
                     ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
                     : 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30',
@@ -1265,7 +1265,7 @@ function LiveBottomAudioControls() {
               className={cn(
                 'h-7 rounded text-[10px] uppercase tracking-wider font-semibold border inline-flex items-center justify-center gap-1',
                 !isListening
-                  ? 'bg-zinc-900 text-zinc-600 border-zinc-800 cursor-not-allowed'
+                  ? 'bg-card text-muted-foreground border-border cursor-not-allowed'
                   : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30',
               )}
               title="Stop microphone (release the input device)"
@@ -1280,10 +1280,10 @@ function LiveBottomAudioControls() {
               recording stream changes loudness in real time without
               restarting the recorder. */}
           <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
               Mic Gain
             </span>
-            <span className="text-[10px] tabular-nums text-zinc-300 font-semibold">{micPct}%</span>
+            <span className="text-[10px] tabular-nums text-foreground font-semibold">{micPct}%</span>
           </div>
           <input
             type="range"
@@ -1294,19 +1294,19 @@ function LiveBottomAudioControls() {
             className="w-full accent-rose-500 mt-1"
             aria-label="Microphone gain"
           />
-          <div className="flex justify-between mt-1 text-[9px] text-zinc-500 tabular-nums">
+          <div className="flex justify-between mt-1 text-[9px] text-muted-foreground tabular-nums">
             <span>0</span>
             <button
               type="button"
               onClick={() => setMicGain(1)}
-              className="hover:text-zinc-300 underline-offset-2 hover:underline"
+              className="hover:text-foreground underline-offset-2 hover:underline"
               title="Reset mic gain to 100%"
             >
               100%
             </button>
             <span>200</span>
           </div>
-          <p className="mt-2 text-[9px] text-zinc-500 leading-snug">
+          <p className="mt-2 text-[9px] text-muted-foreground leading-snug">
             Pause keeps the mic open but stops sending audio for transcription.
             Stop releases the input entirely.
           </p>
@@ -1321,7 +1321,7 @@ function LiveBottomAudioControls() {
               'h-7 px-2 rounded-md border text-[10px] uppercase tracking-wider font-semibold flex items-center gap-1.5 transition-colors',
               effectivelyMuted
                 ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
-                : 'bg-black/40 text-zinc-300 border-zinc-800 hover:text-white hover:border-zinc-600',
+                : 'bg-black/40 text-foreground border-border hover:text-foreground hover:border-border',
             )}
           >
             {effectivelyMuted ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
@@ -1331,10 +1331,10 @@ function LiveBottomAudioControls() {
         <PopoverContent
           align="end"
           side="top"
-          className="w-[220px] p-3 bg-zinc-950 border-zinc-800"
+          className="w-[220px] p-3 bg-background border-border"
         >
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
               Master Volume
             </span>
             <button
@@ -1343,7 +1343,7 @@ function LiveBottomAudioControls() {
                 'inline-flex items-center gap-1 px-1.5 h-5 rounded text-[10px] font-semibold border',
                 globalMuted
                   ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-                  : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700',
+                  : 'bg-muted text-foreground border-border hover:bg-muted',
               )}
             >
               {globalMuted ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
@@ -1363,12 +1363,12 @@ function LiveBottomAudioControls() {
             className="w-full accent-sky-500"
             aria-label="Master volume"
           />
-          <div className="flex justify-between mt-1 text-[9px] text-zinc-500 tabular-nums">
+          <div className="flex justify-between mt-1 text-[9px] text-muted-foreground tabular-nums">
             <span>0</span>
             <span>{pct}%</span>
             <span>100</span>
           </div>
-          <p className="mt-2 text-[9px] text-zinc-500 leading-snug">
+          <p className="mt-2 text-[9px] text-muted-foreground leading-snug">
             Affects every video on Preview, Live and the second display.
           </p>
         </PopoverContent>
@@ -1449,7 +1449,7 @@ function LiveDisplayCard({
             ● Live
           </Badge>
         ) : (
-          <Badge className="h-4 px-1.5 text-[9px] uppercase tracking-wider font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700">
+          <Badge className="h-4 px-1.5 text-[9px] uppercase tracking-wider font-semibold bg-muted text-muted-foreground border border-border">
             Dark
           </Badge>
         )
@@ -1461,8 +1461,8 @@ function LiveDisplayCard({
             className={cn(
               'flex items-center gap-1 h-6 px-2 rounded text-[10px] uppercase tracking-wider font-semibold border transition-colors',
               hidden
-                ? 'bg-zinc-800 text-zinc-300 border-zinc-700'
-                : 'bg-transparent text-zinc-500 border-transparent hover:text-zinc-300',
+                ? 'bg-muted text-foreground border-border'
+                : 'bg-transparent text-muted-foreground border-transparent hover:text-foreground',
             )}
             title="Hide live slide on the secondary screen"
           >
@@ -1475,7 +1475,7 @@ function LiveDisplayCard({
               'h-6 px-2 rounded text-[10px] uppercase tracking-wider font-semibold border transition-colors',
               auto
                 ? 'bg-sky-500/15 text-sky-300 border-sky-500/40'
-                : 'bg-transparent text-zinc-500 border-transparent hover:text-zinc-300',
+                : 'bg-transparent text-muted-foreground border-transparent hover:text-foreground',
             )}
             title="Auto-advance preview to live as new verses are detected"
           >
@@ -1613,7 +1613,7 @@ function LiveDisplayCard({
                 </div>
               }
             >
-              <div className="relative w-full aspect-video bg-black overflow-hidden ring-1 ring-zinc-800">
+              <div className="relative w-full aspect-video bg-black overflow-hidden ring-1 ring-border">
                 {/* lower-third uses the themed/custom background as
                     backdrop; lower-third-black uses pure black so the
                     bar reads like a broadcast caption (matches the
@@ -1724,7 +1724,7 @@ function LiveDisplayCard({
           )
         })()}
         {hidden && (
-          <div className="text-center text-[11px] text-zinc-600">
+          <div className="text-center text-[11px] text-muted-foreground">
             <CircleSlash className="h-8 w-8 mx-auto opacity-30 mb-2" />
             Output is hidden
           </div>
@@ -1756,7 +1756,7 @@ function LiveDisplayCard({
               'h-6 w-6 rounded-md border flex items-center justify-center transition-colors shrink-0',
               liveBroadcastAudio
                 ? 'bg-rose-500/20 border-rose-500/50 text-rose-300'
-                : 'bg-black/60 border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500',
+                : 'bg-black/60 border-border text-muted-foreground hover:text-foreground hover:border-border',
             )}
           >
             {liveBroadcastAudio ? (
@@ -1777,7 +1777,7 @@ function LiveDisplayCard({
               'h-6 w-6 rounded-md border flex items-center justify-center transition-colors relative shrink-0',
               liveMonitorAudio
                 ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
-                : 'bg-black/60 border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500',
+                : 'bg-black/60 border-border text-muted-foreground hover:text-foreground hover:border-border',
             )}
           >
             <Headphones className="h-3 w-3" />
@@ -1788,7 +1788,7 @@ function LiveDisplayCard({
         </div>
       </div>
 
-      <div className="border-t border-zinc-800/60 px-3 py-2 flex items-center justify-end gap-3 bg-zinc-900/30 shrink-0">
+      <div className="border-t border-border/60 px-3 py-2 flex items-center justify-end gap-3 bg-card/30 shrink-0">
         {/* Mic toggle + master-volume control. Operators asked for
             these to live at the right-bottom of the Live Display so
             they're reachable without leaving the live pane. The mic
@@ -1797,7 +1797,7 @@ function LiveDisplayCard({
             global master volume the slide renderer already honours. */}
         <LiveBottomAudioControls />
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon" onClick={onPrev} className="h-7 w-7 text-zinc-300 hover:text-white border border-zinc-800">
+          <Button variant="ghost" size="icon" onClick={onPrev} className="h-7 w-7 text-foreground hover:text-foreground border border-border">
             <ChevronLeft className="h-3.5 w-3.5" />
           </Button>
           {/* GO LIVE / STOP LIVE — toggle. While LIVE the button
@@ -1810,14 +1810,14 @@ function LiveDisplayCard({
             className={cn(
               'h-7 px-3 text-[10px] uppercase tracking-wider font-semibold text-white gap-1.5 transition-colors',
               isLive
-                ? 'bg-zinc-700 hover:bg-zinc-600 border border-rose-500/60'
+                ? 'bg-muted hover:bg-muted-foreground/40 border border-rose-500/60'
                 : 'bg-rose-600 hover:bg-rose-700',
             )}
           >
             {isLive ? <Square className="h-3 w-3 fill-white" /> : <Send className="h-3 w-3" />}
             {isLive ? 'Stop Live' : 'Go Live'}
           </Button>
-          <Button variant="ghost" size="icon" onClick={onNext} className="h-7 w-7 text-zinc-300 hover:text-white border border-zinc-800">
+          <Button variant="ghost" size="icon" onClick={onNext} className="h-7 w-7 text-foreground hover:text-foreground border border-border">
             <ChevronRight className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -1827,7 +1827,7 @@ function LiveDisplayCard({
           interrupts the live feed from the same column they sent it
           from. Hidden for non-video slides. */}
       {liveIsMediaVideo && (
-        <div className="flex items-center justify-center gap-2 border-t border-zinc-800/70 px-2 py-1.5 shrink-0">
+        <div className="flex items-center justify-center gap-2 border-t border-border/70 px-2 py-1.5 shrink-0">
           {mediaPaused ? (
             <Button
               size="sm"
@@ -1919,7 +1919,7 @@ function ScriptureFeedCard() {
         <div className="p-2 space-y-1.5">
           {tab === 'history' ? (
             verseHistory.length === 0 ? (
-              <div className="text-center py-6 text-[11px] text-zinc-600">
+              <div className="text-center py-6 text-[11px] text-muted-foreground">
                 <History className="h-7 w-7 mx-auto opacity-40 mb-2" />
                 Verses you look up or detect will show here.
               </div>
@@ -1929,19 +1929,19 @@ function ScriptureFeedCard() {
                   key={`${v.reference}-${i}`}
                   onClick={() => sendVerseFromHistory(v, false)}
                   onDoubleClick={() => sendVerseFromHistory(v, true)}
-                  className="w-full text-left rounded border border-zinc-800/70 bg-zinc-900/40 hover:border-sky-500/40 hover:bg-zinc-900 px-2 py-1.5 transition-colors group select-none"
+                  className="w-full text-left rounded border border-border/70 bg-card/40 hover:border-sky-500/40 hover:bg-card px-2 py-1.5 transition-colors group select-none"
                   title="Click → Preview · Double-click → Go Live"
                 >
                   <div className="flex items-center justify-between gap-2 mb-0.5">
                     <span className="text-[10px] font-semibold text-sky-300 truncate">{v.reference}</span>
-                    <span className="text-[9px] text-zinc-500 uppercase">{v.translation}</span>
+                    <span className="text-[9px] text-muted-foreground uppercase">{v.translation}</span>
                   </div>
-                  <p className="text-[11px] text-zinc-300 line-clamp-2 leading-snug">{v.text}</p>
+                  <p className="text-[11px] text-foreground line-clamp-2 leading-snug">{v.text}</p>
                 </button>
               ))
             )
           ) : schedule.length === 0 ? (
-            <div className="text-center py-6 text-[11px] text-zinc-600">
+            <div className="text-center py-6 text-[11px] text-muted-foreground">
               <ListOrdered className="h-7 w-7 mx-auto opacity-40 mb-2" />
               Your service schedule is empty.
             </div>
@@ -1955,7 +1955,7 @@ function ScriptureFeedCard() {
                     'rounded border px-2 py-1.5 transition-colors flex items-center gap-2',
                     selected
                       ? 'border-amber-500/60 bg-amber-500/10'
-                      : 'border-zinc-800/70 bg-zinc-900/40 hover:border-zinc-700',
+                      : 'border-border/70 bg-card/40 hover:border-border',
                   )}
                 >
                   <button
@@ -1977,20 +1977,20 @@ function ScriptureFeedCard() {
                       <span
                         className={cn(
                           'inline-flex h-4 w-4 items-center justify-center rounded text-[9px] font-bold',
-                          selected ? 'bg-amber-500 text-black' : 'bg-zinc-800 text-zinc-400',
+                          selected ? 'bg-amber-500 text-black' : 'bg-muted text-muted-foreground',
                         )}
                       >
                         {i + 1}
                       </span>
-                      <span className="text-[10px] uppercase tracking-wider text-zinc-500">{item.type}</span>
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{item.type}</span>
                     </div>
-                    <p className={cn('text-[11px] truncate', selected ? 'text-white font-semibold' : 'text-zinc-200')}>
+                    <p className={cn('text-[11px] truncate', selected ? 'text-white font-semibold' : 'text-foreground')}>
                       {item.title}
                     </p>
                   </button>
                   <button
                     onClick={() => removeScheduleItem(item.id)}
-                    className="text-zinc-600 hover:text-rose-400 p-1"
+                    className="text-muted-foreground hover:text-rose-400 p-1"
                     title="Remove"
                   >
                     <Trash2 className="h-3 w-3" />
@@ -2014,7 +2014,7 @@ function ChapterNavigatorCard() {
       title="Chapter Navigator"
       actions={
         <div className="flex items-center gap-1">
-          <span className="text-[9px] uppercase tracking-widest text-zinc-500">Reference</span>
+          <span className="text-[9px] uppercase tracking-widest text-muted-foreground">Reference</span>
         </div>
       }
       bodyClassName="overflow-hidden"
@@ -2108,7 +2108,7 @@ function DetectedVersesCard() {
         detectedVerses.length > 0 ? (
           <button
             onClick={clearDetectedVerses}
-            className="text-[10px] text-zinc-500 hover:text-zinc-300 uppercase tracking-wider"
+            className="text-[10px] text-muted-foreground hover:text-foreground uppercase tracking-wider"
           >
             Clear
           </button>
@@ -2118,7 +2118,7 @@ function DetectedVersesCard() {
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="p-2 space-y-1.5">
           {detectedVerses.length === 0 ? (
-            <div className="text-center py-8 text-[11px] text-zinc-600">
+            <div className="text-center py-8 text-[11px] text-muted-foreground">
               <Mic className="h-7 w-7 mx-auto opacity-40 mb-2" />
               When the speaker quotes a passage we&apos;ll list it here. Start
               the live transcription on the left to begin.
@@ -2146,7 +2146,7 @@ function DetectedVersesCard() {
                     ? 'bg-yellow-400'
                     : tier === 'red'
                       ? 'bg-rose-500'
-                      : 'bg-zinc-600'
+                      : 'bg-muted-foreground/40'
               const labelColor =
                 tier === 'green'
                   ? 'text-emerald-300'
@@ -2154,7 +2154,7 @@ function DetectedVersesCard() {
                     ? 'text-yellow-300'
                     : tier === 'red'
                       ? 'text-rose-300'
-                      : 'text-zinc-500'
+                      : 'text-muted-foreground'
               return (
                 <div
                   key={`${v.reference}-${i}`}
@@ -2168,19 +2168,19 @@ function DetectedVersesCard() {
                     requestNavigatorRef(v.reference)
                   }}
                   onDoubleClick={() => sendDetected(v, true)}
-                  className="rounded border border-zinc-800/70 bg-zinc-900/40 hover:border-emerald-500/40 hover:bg-zinc-900 px-2 py-1.5 cursor-pointer transition-colors select-none"
+                  className="rounded border border-border/70 bg-card/40 hover:border-emerald-500/40 hover:bg-card px-2 py-1.5 cursor-pointer transition-colors select-none"
                   title={`Click → schedule + open in Chapter Navigator · Double-click → live · Detection accuracy: ${pct}%`}
                 >
                   <div className="flex items-center justify-between gap-2 mb-0.5">
                     <span className="text-[10px] font-semibold text-emerald-300">
                       {v.reference}
                     </span>
-                    <span className="text-[9px] text-zinc-500 uppercase">{v.translation}</span>
+                    <span className="text-[9px] text-muted-foreground uppercase">{v.translation}</span>
                   </div>
-                  <p className="text-[11px] text-zinc-300 line-clamp-2 leading-snug">{v.text}</p>
+                  <p className="text-[11px] text-foreground line-clamp-2 leading-snug">{v.text}</p>
                   {/* Accuracy bar */}
                   <div className="mt-1.5 flex items-center gap-1.5">
-                    <div className="flex-1 h-1 rounded-full bg-zinc-800/80 overflow-hidden">
+                    <div className="flex-1 h-1 rounded-full bg-muted/80 overflow-hidden">
                       <div
                         className={cn('h-full rounded-full transition-all duration-500 ease-out', barColor)}
                         style={{ width: `${Math.max(4, pct)}%` }}
@@ -2291,12 +2291,12 @@ function MediaItemsView({
               key={m.id}
               onClick={() => onItemClick(m)}
               className={cn(
-                'group relative rounded border bg-zinc-950 overflow-hidden cursor-pointer transition-colors',
+                'group relative rounded border bg-background overflow-hidden cursor-pointer transition-colors',
                 broken
                   ? 'border-rose-500/50 ring-1 ring-rose-500/30'
                   : active
                   ? 'border-fuchsia-500/60 ring-1 ring-fuchsia-500/40'
-                  : 'border-zinc-800 hover:border-zinc-700',
+                  : 'border-border hover:border-border',
               )}
               title={
                 broken
@@ -2338,7 +2338,7 @@ function MediaItemsView({
                 ) : (
                   <ImageIcon className="h-2.5 w-2.5 text-fuchsia-300 shrink-0" />
                 )}
-                <span className={cn('text-zinc-200 truncate', labelSize)}>
+                <span className={cn('text-foreground truncate', labelSize)}>
                   {m.name}
                 </span>
               </div>
@@ -2383,12 +2383,12 @@ function MediaItemsView({
               key={m.id}
               onClick={() => onItemClick(m)}
               className={cn(
-                'group relative flex items-center gap-2 rounded border bg-zinc-950 overflow-hidden cursor-pointer transition-colors p-1.5',
+                'group relative flex items-center gap-2 rounded border bg-background overflow-hidden cursor-pointer transition-colors p-1.5',
                 broken
                   ? 'border-rose-500/50 ring-1 ring-rose-500/30'
                   : active
                   ? 'border-fuchsia-500/60 ring-1 ring-fuchsia-500/40'
-                  : 'border-zinc-800 hover:border-zinc-700',
+                  : 'border-border hover:border-border',
               )}
             >
               <div className="w-12 h-12 shrink-0 bg-black flex items-center justify-center rounded overflow-hidden">
@@ -2415,10 +2415,10 @@ function MediaItemsView({
                 )}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="text-[10px] text-zinc-200 truncate font-medium">
+                <div className="text-[10px] text-foreground truncate font-medium">
                   {m.name}
                 </div>
-                <div className="text-[9px] text-zinc-500 flex items-center gap-1">
+                <div className="text-[9px] text-muted-foreground flex items-center gap-1">
                   {m.kind === 'video' ? (
                     <Film className="h-2.5 w-2.5 text-fuchsia-300" />
                   ) : (
@@ -2476,7 +2476,7 @@ function MediaItemsView({
                   ? 'bg-rose-500/10 text-rose-300'
                   : active
                   ? 'bg-fuchsia-500/15 text-fuchsia-200'
-                  : 'text-zinc-300 hover:bg-zinc-900',
+                  : 'text-foreground hover:bg-card',
               )}
             >
               {broken ? (
@@ -2514,7 +2514,7 @@ function MediaItemsView({
   // Table-style layout with Name / Type / Size columns.
   return (
     <div className="text-[10px]">
-      <div className="grid grid-cols-[1fr_5rem_4rem_2rem] gap-2 px-1.5 py-1 border-b border-zinc-800 text-zinc-500 uppercase tracking-wider text-[9px] font-semibold">
+      <div className="grid grid-cols-[1fr_5rem_4rem_2rem] gap-2 px-1.5 py-1 border-b border-border text-muted-foreground uppercase tracking-wider text-[9px] font-semibold">
         <span>Name</span>
         <span>Type</span>
         <span>Size</span>
@@ -2535,7 +2535,7 @@ function MediaItemsView({
                 ? 'bg-rose-500/10 text-rose-300'
                 : active
                 ? 'bg-fuchsia-500/15 text-fuchsia-200'
-                : 'text-zinc-300 hover:bg-zinc-900',
+                : 'text-foreground hover:bg-card',
             )}
           >
             <span className="flex items-center gap-1.5 truncate">
@@ -2557,10 +2557,10 @@ function MediaItemsView({
                 </span>
               )}
             </span>
-            <span className="text-zinc-400 truncate">
+            <span className="text-muted-foreground truncate">
               {m.kind === 'video' ? 'Video' : 'Image'}
             </span>
-            <span className="text-zinc-500 truncate">{formatSize(m.size)}</span>
+            <span className="text-muted-foreground truncate">{formatSize(m.size)}</span>
             <Trash2
               className="h-5 w-5 shrink-0 box-content p-0.5 rounded bg-rose-500/15 ring-1 ring-rose-700/50 text-rose-400 hover:bg-rose-500/30 hover:text-rose-200 transition-colors"
               onClick={(e) => {
@@ -2928,7 +2928,7 @@ function MediaCard() {
           if (fileRef.current) fileRef.current.value = ''
         }}
       />
-      <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-zinc-800/70 shrink-0">
+      <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border/70 shrink-0">
         <Button
           size="sm"
           variant="secondary"
@@ -2985,15 +2985,15 @@ function MediaCard() {
           operator preview/live renderer and the secondary-screen
           renderer in the congregation route. */}
       {selectedItem && (
-        <div className="grid grid-cols-2 gap-2 px-2 py-1.5 border-b border-zinc-800/70 shrink-0 text-[10px] text-zinc-300">
+        <div className="grid grid-cols-2 gap-2 px-2 py-1.5 border-b border-border/70 shrink-0 text-[10px] text-foreground">
           <label className="flex flex-col gap-1">
-            <span className="text-zinc-500 uppercase tracking-wider text-[9px] font-semibold">
+            <span className="text-muted-foreground uppercase tracking-wider text-[9px] font-semibold">
               Fit
             </span>
             <select
               value={fitById[selectedItem.id] || 'fit'}
               onChange={(e) => updateFit(selectedItem, e.target.value as MediaFit)}
-              className="h-6 rounded bg-zinc-900 border border-zinc-800 px-1.5 text-[10px] text-zinc-200 focus:outline-none focus:ring-1 focus:ring-fuchsia-500/50"
+              className="h-6 rounded bg-card border border-border px-1.5 text-[10px] text-foreground focus:outline-none focus:ring-1 focus:ring-fuchsia-500/50"
             >
               <option value="fit">Fit (original)</option>
               <option value="fill">Fill (cover)</option>
@@ -3001,7 +3001,7 @@ function MediaCard() {
             </select>
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-zinc-500 uppercase tracking-wider text-[9px] font-semibold">
+            <span className="text-muted-foreground uppercase tracking-wider text-[9px] font-semibold">
               Aspect Ratio
             </span>
             <select
@@ -3018,7 +3018,7 @@ function MediaCard() {
                   v === 'auto' ? 'fit' : (v as MediaFit)
                 )
               }}
-              className="h-6 rounded bg-zinc-900 border border-zinc-800 px-1.5 text-[10px] text-zinc-200 focus:outline-none focus:ring-1 focus:ring-fuchsia-500/50"
+              className="h-6 rounded bg-card border border-border px-1.5 text-[10px] text-foreground focus:outline-none focus:ring-1 focus:ring-fuchsia-500/50"
             >
               <option value="auto">Auto</option>
               <option value="16:9">16 : 9</option>
@@ -3031,7 +3031,7 @@ function MediaCard() {
       <div className="flex-1 min-h-0 overflow-auto p-2">
         {items.length === 0 ? (
           <div
-            className="flex flex-col items-center justify-center h-full text-center text-[10px] text-zinc-500 gap-2 border border-dashed border-zinc-800 rounded cursor-pointer hover:border-zinc-700 hover:text-zinc-400 transition-colors py-6"
+            className="flex flex-col items-center justify-center h-full text-center text-[10px] text-muted-foreground gap-2 border border-dashed border-border rounded cursor-pointer hover:border-border hover:text-muted-foreground transition-colors py-6"
             onClick={onPick}
           >
             <Upload className="h-5 w-5 opacity-60" />
@@ -3055,7 +3055,7 @@ function MediaCard() {
       </div>
 
       {selectedItem && (
-        <div className="border-t border-zinc-800/70 px-2 py-1.5 shrink-0">
+        <div className="border-t border-border/70 px-2 py-1.5 shrink-0">
           <Button
             size="sm"
             className="w-full h-7 text-[10px] gap-1 bg-fuchsia-600 hover:bg-fuchsia-500"
@@ -3322,7 +3322,7 @@ export function LogosShell() {
   const onSendLive = () => goLive()
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#0a0d14] text-zinc-100 dark">
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#0a0d14] text-foreground dark">
       <TopToolbar outputActive={outputActive} toggleOutput={toggleOutput} />
 
       {/* Main workspace — broadcast-style draggable dividers between every
@@ -3343,11 +3343,11 @@ export function LogosShell() {
               <ResizablePanel defaultSize={22} minSize={12} className="pr-1 pb-1">
                 <LiveTranscriptionCard />
               </ResizablePanel>
-              <ResizableHandle withHandle className="bg-transparent hover:bg-zinc-700/40 transition-colors" />
+              <ResizableHandle withHandle className="bg-transparent hover:bg-muted/40 transition-colors" />
               <ResizablePanel defaultSize={28} minSize={15} className="px-1 pb-1">
                 <PreviewCard />
               </ResizablePanel>
-              <ResizableHandle withHandle className="bg-transparent hover:bg-zinc-700/40 transition-colors" />
+              <ResizableHandle withHandle className="bg-transparent hover:bg-muted/40 transition-colors" />
               <ResizablePanel defaultSize={28} minSize={15} className="px-1 pb-1">
                 <LiveDisplayCard
                   size={displaySize}
@@ -3363,13 +3363,13 @@ export function LogosShell() {
                   onClearLive={clearLive}
                 />
               </ResizablePanel>
-              <ResizableHandle withHandle className="bg-transparent hover:bg-zinc-700/40 transition-colors" />
+              <ResizableHandle withHandle className="bg-transparent hover:bg-muted/40 transition-colors" />
               <ResizablePanel defaultSize={22} minSize={12} className="pl-1 pb-1">
                 <ScriptureFeedCard />
               </ResizablePanel>
             </ResizablePanelGroup>
           </ResizablePanel>
-          <ResizableHandle withHandle className="bg-transparent hover:bg-zinc-700/40 transition-colors" />
+          <ResizableHandle withHandle className="bg-transparent hover:bg-muted/40 transition-colors" />
           <ResizablePanel defaultSize={48} minSize={20}>
             <ResizablePanelGroup
               direction="horizontal"
@@ -3379,11 +3379,11 @@ export function LogosShell() {
               <ResizablePanel defaultSize={33} minSize={15} className="pr-1 pt-1">
                 <ChapterNavigatorCard />
               </ResizablePanel>
-              <ResizableHandle withHandle className="bg-transparent hover:bg-zinc-700/40 transition-colors" />
+              <ResizableHandle withHandle className="bg-transparent hover:bg-muted/40 transition-colors" />
               <ResizablePanel defaultSize={33} minSize={15} className="px-1 pt-1">
                 <DetectedVersesCard />
               </ResizablePanel>
-              <ResizableHandle withHandle className="bg-transparent hover:bg-zinc-700/40 transition-colors" />
+              <ResizableHandle withHandle className="bg-transparent hover:bg-muted/40 transition-colors" />
               <ResizablePanel defaultSize={34} minSize={15} className="pl-1 pt-1">
                 <MediaCard />
               </ResizablePanel>
@@ -3404,12 +3404,12 @@ export function LogosShell() {
       {/* App-wide branding strip — sits beneath the entire console so the
           attribution is always visible to the operator without crowding
           the workspace cards. */}
-      <footer className="flex h-7 items-center justify-center gap-2 border-t border-zinc-800 bg-zinc-950/80 shrink-0 select-none">
+      <footer className="flex h-7 items-center justify-center gap-2 border-t border-border bg-background/80 shrink-0 select-none">
         <div className="h-4 w-4 rounded-full bg-white flex items-center justify-center overflow-hidden shrink-0">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="" className="h-full w-full object-contain" />
         </div>
-        <span className="text-[10px] tracking-wide text-zinc-400">
+        <span className="text-[10px] tracking-wide text-muted-foreground">
           Powered by WassMedia (+233246798526)
         </span>
       </footer>

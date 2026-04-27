@@ -465,7 +465,7 @@ export function ScriptureDetectionView() {
                     'h-5 px-1.5 rounded text-[9px] uppercase tracking-wider font-semibold border inline-flex items-center gap-1 transition-colors',
                     bibleOnlyTranscription
                       ? 'bg-amber-500/15 text-amber-300 border-amber-500/40 hover:bg-amber-500/25'
-                      : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-zinc-200',
+                      : 'bg-muted text-muted-foreground border-border hover:text-foreground',
                   )}
                 >
                   <BookOpen className="h-2.5 w-2.5" />
