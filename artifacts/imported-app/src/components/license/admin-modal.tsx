@@ -259,6 +259,60 @@ export function AdminModal() {
     else toast.error('Failed to queue master code')
   }
 
+  // v0.5.57 — Test buttons in the Settings tab so the operator can
+  // verify SMTP / Arkesel without waiting for a real customer payment.
+  // Both endpoints already existed (/api/license/test-email, /test-sms);
+  // we just expose them in the UI alongside the Cloud Keys section so
+  // a key paste can be verified in the same panel.
+  const [testBusy, setTestBusy] = useState<{ email: boolean; sms: boolean }>({ email: false, sms: false })
+  const sendTestEmail = async () => {
+    setTestBusy((b) => ({ ...b, email: true }))
+    try {
+      const r = await fetch('/api/license/test-email', { method: 'POST' })
+      const j = (await r.json().catch(() => ({}))) as { ok?: boolean; status?: string; note?: { error?: string } }
+      if (j.ok) toast.success(`Test email sent (${j.status})`)
+      else toast.error(`Email failed: ${j.note?.error || j.status || `HTTP ${r.status}`}`)
+      await reload()
+    } catch (e) {
+      toast.error(`Email request failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setTestBusy((b) => ({ ...b, email: false }))
+    }
+  }
+  const sendTestSms = async () => {
+    setTestBusy((b) => ({ ...b, sms: true }))
+    try {
+      const r = await fetch('/api/license/test-sms', { method: 'POST' })
+      const j = (await r.json().catch(() => ({}))) as { ok?: boolean; status?: string; note?: { error?: string } }
+      if (j.ok) toast.success(`Test SMS sent (${j.status})`)
+      else toast.error(`SMS failed: ${j.note?.error || j.status || `HTTP ${r.status}`}`)
+      await reload()
+    } catch (e) {
+      toast.error(`SMS request failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setTestBusy((b) => ({ ...b, sms: false }))
+    }
+  }
+  // v0.5.57 — Per-row "Resend" for any pending/failed notification.
+  // POSTs the notification id to the new admin retry endpoint which
+  // dispatches a fresh attempt through the same notify* helper that
+  // produced the original row. The original row stays as history.
+  const resendNotification = async (id: string) => {
+    try {
+      const r = await fetch('/api/license/admin/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
+      const j = (await r.json().catch(() => ({}))) as { ok?: boolean; status?: string; note?: { error?: string } }
+      if (j.ok) toast.success(`Resent (${j.status})`)
+      else toast.error(`Resend failed: ${j.note?.error || j.status || `HTTP ${r.status}`}`)
+      await reload()
+    } catch (e) {
+      toast.error(`Resend failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
   // ─── Settings tab ──────────────────────────────────────────────────
   // Load owner config the first time the Settings tab opens (and every
   // time it's re-opened — config changes are owner-driven so this is
@@ -711,6 +765,20 @@ export function AdminModal() {
                           {n.channel === 'email' ? <Mail className="h-3 w-3 text-sky-400" /> : <Phone className="h-3 w-3 text-emerald-400" />}
                           <span className="font-semibold">{n.subject}</span>
                           <Badge className={cn('text-[9px] ml-auto', n.status === 'sent' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : n.status === 'pending' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-rose-500/20 text-rose-300 border-rose-500/40')}>{n.status}</Badge>
+                          {/* v0.5.57 — Resend a queued/failed delivery
+                              after the operator fixes credentials.
+                              Hidden for already-sent rows. */}
+                          {n.status !== 'sent' && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-5 px-1.5 text-[10px] text-sky-400 hover:text-sky-300 hover:bg-sky-950/40"
+                              title="Re-send this notification"
+                              onClick={() => resendNotification(n.id)}
+                            >
+                              Resend
+                            </Button>
+                          )}
                           {/* v0.5.53 — owner can dismiss a notification row */}
                           <Button
                             size="sm"
@@ -923,6 +991,44 @@ export function AdminModal() {
                         autoComplete="off"
                       />
                     </div>
+                  </div>
+
+                  {/* v0.5.57 — Test Email + Test SMS buttons. Both
+                      endpoints already existed but had no UI; with
+                      these the operator can verify SMTP / Arkesel
+                      delivery in seconds without faking a real
+                      payment. Result toast surfaces the underlying
+                      provider error (e.g. Arkesel 401) so a stale
+                      baked key is obvious. The Notifications log
+                      records every attempt as a row, with Resend
+                      one click away. */}
+                  <div className="pt-2 border-t border-zinc-800">
+                    <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Verify Delivery</div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={testBusy.email}
+                        onClick={sendTestEmail}
+                        className="border-zinc-700 text-zinc-200 hover:bg-zinc-800"
+                      >
+                        {testBusy.email ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Mail className="h-3 w-3 mr-1.5" />}
+                        Send test email
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={testBusy.sms}
+                        onClick={sendTestSms}
+                        className="border-zinc-700 text-zinc-200 hover:bg-zinc-800"
+                      >
+                        {testBusy.sms ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Phone className="h-3 w-3 mr-1.5" />}
+                        Send test SMS
+                      </Button>
+                    </div>
+                    <p className="text-[10px] text-zinc-500 mt-1.5">
+                      Sends to the configured Owner Email / Phone. Result is logged in the Notifications panel above.
+                    </p>
                   </div>
                 </section>
 

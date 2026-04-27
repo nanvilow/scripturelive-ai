@@ -40,9 +40,12 @@ export function LiveTranscriptionLockOverlay() {
   const title = expired
     ? 'Subscription Expired'
     : 'Free Trial Ended'
+  // v0.5.57 — operator wants the MoMo payment instructions visible
+  // directly in the paywall (no click needed) so customers can pay
+  // and message proof of payment without first opening the modal.
   const subtitle = expired
-    ? 'Your activation has expired. Re-activate to keep using AI Detection.'
-    : 'Your 1-hour free trial of Live Transcription has ended. Activate a subscription to continue.'
+    ? 'Your activation has expired. Send MoMo to Richard Kwesi Attieku · 0246798526, then tap Activate to enter your code.'
+    : 'Your 1-hour free trial has ended. Send MoMo to Richard Kwesi Attieku · 0246798526, then tap Activate to enter your code.'
 
   return (
     <div

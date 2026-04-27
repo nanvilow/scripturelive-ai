@@ -14,6 +14,7 @@
 // and a 30s interval is more than enough.
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { useAppStore } from '@/lib/store'
 
 export type LicenseState = 'active' | 'trial' | 'trial_expired' | 'expired' | 'never_activated' | 'unknown'
 
@@ -138,6 +139,16 @@ export function LicenseProvider({ children }: { children: React.ReactNode }) {
   const isActive = status.state === 'active' || status.state === 'trial'
   const isTrial = status.state === 'trial'
   const isLocked = !isActive && status.state !== 'unknown'
+
+  // v0.5.57 — Mirror isLocked into the Zustand store so providers
+  // mounted ABOVE this one (notably <SpeechProvider>) can react to
+  // a lockdown by tearing down their audio graph + recognizers.
+  // We can't useLicense() inside SpeechProvider because it would
+  // be a context-not-found error at render time.
+  const setLicenseLocked = useAppStore((s) => s.setLicenseLocked)
+  useEffect(() => {
+    setLicenseLocked(isLocked)
+  }, [isLocked, setLicenseLocked])
 
   const value: LicenseContextValue = {
     status,

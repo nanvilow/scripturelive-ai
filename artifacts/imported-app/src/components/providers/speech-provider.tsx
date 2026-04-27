@@ -243,6 +243,14 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   const setIsListening = useAppStore((s) => s.setIsListening)
   const speechCommand = useAppStore((s) => s.speechCommand)
   const setSpeechCommand = useAppStore((s) => s.setSpeechCommand)
+  // v0.5.57 — License lockdown signal mirrored from <LicenseProvider>.
+  // When this flips to true (trial expired / never_activated /
+  // expired) we forcibly tear down every engine so the OS mic
+  // indicator goes dark and no transcription bytes leave the
+  // machine. The lock-overlay UI already disables operator inputs;
+  // this effect shuts the door on any in-flight audio capture
+  // that started before the lock fired.
+  const licenseLocked = useAppStore((s) => s.licenseLocked)
 
   // ── Sync hook state → store (so any view can read it) ──────────────
   useEffect(() => {
@@ -1006,6 +1014,42 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     setLiveTranscript,
     setLiveInterimTranscript,
   ])
+
+  // ── v0.5.57 — License lockdown tear-down ───────────────────────────
+  // Watch the licenseLocked mirror written by <LicenseProvider>. The
+  // moment it flips to true (trial just expired, never_activated on
+  // first launch, expired subscription), forcibly stop BOTH engines,
+  // clear interim/final transcripts, drop any pending speechCommand,
+  // and zero the listening flag so every consumer (mic indicator,
+  // logos-shell action buttons, scripture-detection card) sees the
+  // mic as off within the same render.
+  //
+  // We cannot rely on the lock-overlay's disabled buttons alone — if
+  // the operator was already mid-session when the trial timer hit
+  // zero, the mic + WS to Deepgram are still hot until something
+  // calls stopListening(). This effect is that something.
+  //
+  // We stop BOTH engines (not just the active one) because a fallback
+  // chain step could leave one engine teardown half-done while the
+  // new engine is still spinning up — defensive teardown avoids a
+  // race where the OS mic indicator stays on for a few seconds.
+  useEffect(() => {
+    if (!licenseLocked) return
+    // eslint-disable-next-line no-console
+    console.warn('[SpeechProvider] licenseLocked=true — tearing down all engines')
+    try { dgEngine.stopListening() } catch { /* ignore */ }
+    try { wsEngine.stopListening() } catch { /* ignore */ }
+    // Wipe BOTH the engine's internal hook buffer (resetTranscript) AND
+    // the store mirror, plus any verse-break markers, so a re-activation
+    // mid-session can't ghost the pre-lock transcript back in via the
+    // hook -> setLiveTranscript bridging effect at line 257.
+    try { resetTranscript() } catch { /* ignore */ }
+    setLiveTranscript('')
+    setLiveInterimTranscript('')
+    try { useAppStore.getState().clearTranscriptBreaks() } catch { /* ignore */ }
+    setIsListening(false)
+    setSpeechCommand(null)
+  }, [licenseLocked, dgEngine, wsEngine, resetTranscript, setLiveTranscript, setLiveInterimTranscript, setIsListening, setSpeechCommand])
 
   // ── v0.5.52 — Speaker-Follow effect ────────────────────────────────
   // Watches the running transcript whenever a multi-verse passage is
