@@ -52,7 +52,7 @@ export function LiveTranscriptionLockOverlay() {
     <div
       className={cn(
         'absolute inset-0 z-20 flex flex-col items-center justify-center p-6 text-center',
-        'backdrop-blur-md bg-zinc-950/70 ring-1 ring-inset',
+        'backdrop-blur-md bg-background/70 ring-1 ring-inset',
         palette.ring,
       )}
       role="dialog"
@@ -61,8 +61,8 @@ export function LiveTranscriptionLockOverlay() {
       <span className={cn('inline-flex items-center justify-center h-14 w-14 rounded-full border', palette.badge)}>
         {palette.icon}
       </span>
-      <h3 className="mt-4 text-base font-semibold text-zinc-100">{title}</h3>
-      <p className="mt-1.5 max-w-sm text-[12px] text-zinc-300 leading-relaxed">{subtitle}</p>
+      <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
+      <p className="mt-1.5 max-w-sm text-[12px] text-foreground leading-relaxed">{subtitle}</p>
 
       <button
         type="button"
@@ -77,7 +77,7 @@ export function LiveTranscriptionLockOverlay() {
         Activate AI Detection Now
       </button>
 
-      <p className="mt-4 text-[10px] text-zinc-500">
+      <p className="mt-4 text-[10px] text-muted-foreground">
         ScriptureLive AI helps churches display scripture instantly without typing.<br />
         Activate today and transform your worship experience.
       </p>

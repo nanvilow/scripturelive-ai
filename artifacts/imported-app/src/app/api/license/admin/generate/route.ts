@@ -24,6 +24,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { findPlan } from '@/lib/licensing/plans'
 import { generateStandaloneActivation } from '@/lib/licensing/storage'
 import { partsToDays } from '@/lib/format-duration'
+import { notifyEmail, notifySms } from '@/lib/licensing/notifications'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -117,6 +118,61 @@ export async function POST(req: NextRequest) {
         return p ? { days: p.days } : null
       },
     )
+
+    // v0.6.2 — auto-deliver the freshly minted code to the customer
+    // when the operator filled in email and/or WhatsApp on the
+    // generate form. Previously the operator had to copy-paste the
+    // code into a separate channel by hand, which is error-prone
+    // ("did I send it to the right number?") and slow during a
+    // live event. Both deliveries are best-effort: failures are
+    // recorded in the audit log but never block the response.
+    let emailNote: { id: string; status: string; error?: string; to: string } | null = null
+    let smsNote: { id: string; status: string; error?: string; to: string } | null = null
+    const planLabel = findPlan(activation.planCode)?.label ?? activation.planCode
+
+    if (body.email && /@/.test(body.email)) {
+      try {
+        const subject = `Your ScriptureLive AI activation code (${planLabel})`
+        const text = [
+          'Hello,',
+          '',
+          'Your ScriptureLive AI activation code is ready:',
+          '',
+          `    ${activation.code}`,
+          '',
+          `Plan:        ${planLabel}`,
+          `Duration:    ${activation.days} day(s)`,
+          body.note ? `Issued for:  ${body.note}` : '',
+          '',
+          'Open ScriptureLive AI on your PC, paste this code into the activation prompt, and click Activate. The code is single-use and will bind to your install.',
+          '',
+          'Thank you for choosing ScriptureLive AI.',
+          '— WassMedia',
+        ].filter(Boolean).join('\n')
+        const e = await notifyEmail({ to: body.email.trim(), subject, body: text })
+        emailNote = { id: e.id, status: e.status, error: e.error, to: e.to }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[admin/generate] customer email failed:', err)
+      }
+    }
+
+    if (body.whatsapp && body.whatsapp.replace(/\D/g, '').length >= 9) {
+      try {
+        const sms = `ScriptureLive AI: Your activation code is ${activation.code}. ` +
+          `Enjoy ${activation.days} days of seamless live scripture display.`
+        const s = await notifySms({
+          to: body.whatsapp.trim(),
+          subject: `[ScriptureLive] Activation code for ${planLabel}`,
+          body: sms,
+        })
+        smsNote = { id: s.id, status: s.status, error: s.error, to: s.to }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[admin/generate] customer SMS failed:', err)
+      }
+    }
+
     return NextResponse.json(
       {
         ok: true,
@@ -127,6 +183,7 @@ export async function POST(req: NextRequest) {
           generatedAt: activation.generatedAt,
           generatedFor: activation.generatedFor,
         },
+        notifications: { email: emailNote, sms: smsNote },
       },
       { headers: { 'Cache-Control': 'no-store' } },
     )

@@ -429,21 +429,21 @@ export function BibleLookupCompact() {
   )
 
   return (
-    <div className="flex flex-col h-full text-zinc-200">
+    <div className="flex flex-col h-full text-foreground">
       {/* Search */}
-      <div className="p-2.5 border-b border-zinc-800 bg-zinc-950/40">
+      <div className="p-2.5 border-b border-border bg-background/40">
         <div className="relative">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-500 pointer-events-none" />
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
           <Input
             ref={inputRef}
             value={searchQuery}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder='"joh 3 16"'
-            className="pl-7 pr-2 h-8 text-xs bg-zinc-900 border-zinc-800 focus-visible:ring-amber-500/40"
+            className="pl-7 pr-2 h-8 text-xs bg-card border-border focus-visible:ring-amber-500/40"
           />
           {showSuggest && suggestions.length > 0 && (
-            <div className="absolute top-full left-0 right-0 z-30 mt-1 bg-zinc-950 border border-zinc-800 rounded shadow-xl overflow-hidden">
+            <div className="absolute top-full left-0 right-0 z-30 mt-1 bg-background border border-border rounded shadow-xl overflow-hidden">
               {suggestions.slice(0, 6).map((s, i) => (
                 <button
                   key={s.display}
@@ -454,10 +454,10 @@ export function BibleLookupCompact() {
                   }}
                   className={cn(
                     'w-full text-left px-2 py-1.5 text-[11px] flex items-center gap-1.5',
-                    i === highlight ? 'bg-amber-500/15 text-amber-300' : 'hover:bg-zinc-900 text-zinc-300',
+                    i === highlight ? 'bg-amber-500/15 text-amber-300' : 'hover:bg-card text-foreground',
                   )}
                 >
-                  <BookOpen className="h-3 w-3 text-zinc-500 shrink-0" />
+                  <BookOpen className="h-3 w-3 text-muted-foreground shrink-0" />
                   <span className="truncate">{s.display}</span>
                 </button>
               ))}
@@ -483,21 +483,21 @@ export function BibleLookupCompact() {
 
       {/* Chapter header with prev/next nav (EasyWorship style) */}
       {chapter && (
-        <div className="flex items-center gap-1 px-2 py-1.5 border-b border-zinc-800 bg-zinc-950/60">
+        <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border bg-background/60">
           <Button
             onClick={goPrev}
             size="sm"
             variant="ghost"
-            className="h-6 w-6 p-0 text-zinc-400 hover:text-amber-300 hover:bg-zinc-800"
+            className="h-6 w-6 p-0 text-muted-foreground hover:text-amber-300 hover:bg-muted"
             title="Previous verse"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
           </Button>
           <div className="flex-1 text-center">
-            <div className="text-[12px] font-semibold text-zinc-100 leading-tight">
+            <div className="text-[12px] font-semibold text-foreground leading-tight">
               {chapter.book} {chapter.chapter}
             </div>
-            <div className="text-[9px] text-zinc-500 leading-tight">
+            <div className="text-[9px] text-muted-foreground leading-tight">
               {chapter.translation} · {chapter.verses.length} verses
             </div>
           </div>
@@ -505,7 +505,7 @@ export function BibleLookupCompact() {
             onClick={goNext}
             size="sm"
             variant="ghost"
-            className="h-6 w-6 p-0 text-zinc-400 hover:text-amber-300 hover:bg-zinc-800"
+            className="h-6 w-6 p-0 text-muted-foreground hover:text-amber-300 hover:bg-muted"
             title="Next verse"
           >
             <ChevronRight className="h-3.5 w-3.5" />
@@ -546,19 +546,19 @@ export function BibleLookupCompact() {
                       'group rounded border px-2 py-1.5 cursor-pointer transition-colors select-none',
                       active
                         ? 'border-amber-500/60 bg-amber-500/10'
-                        : 'border-zinc-800 bg-zinc-900/40 hover:border-zinc-700 hover:bg-zinc-900',
+                        : 'border-border bg-card/40 hover:border-border hover:bg-card',
                     )}
                   >
                     <div className="flex gap-1.5">
                       <span
                         className={cn(
                           'text-[10px] font-mono shrink-0 mt-[1px]',
-                          active ? 'text-amber-300' : 'text-zinc-500',
+                          active ? 'text-amber-300' : 'text-muted-foreground',
                         )}
                       >
                         {v.verse}
                       </span>
-                      <p className="text-[11.5px] leading-snug text-zinc-200 flex-1">{v.text}</p>
+                      <p className="text-[11.5px] leading-snug text-foreground flex-1">{v.text}</p>
                     </div>
                   </div>
                 )
@@ -568,8 +568,8 @@ export function BibleLookupCompact() {
             <div className="text-center py-6 text-[11px] text-amber-400/80">{error}</div>
           ) : (
             <div className="text-center py-4 space-y-2">
-              <BookOpen className="h-7 w-7 text-zinc-700 mx-auto" />
-              <p className="text-[11px] text-zinc-500">Search any verse to load the whole chapter.</p>
+              <BookOpen className="h-7 w-7 text-muted-foreground/60 mx-auto" />
+              <p className="text-[11px] text-muted-foreground">Search any verse to load the whole chapter.</p>
               <div className="flex flex-wrap gap-1 justify-center">
                 {['John 3:16', 'Psalms 23', 'Romans 8:28'].map((r) => (
                   <button
@@ -578,7 +578,7 @@ export function BibleLookupCompact() {
                       setSearchQuery(r)
                       lookup(r)
                     }}
-                    className="text-[10px] px-2 py-0.5 rounded border border-zinc-800 hover:border-amber-500/40 hover:text-amber-300 text-zinc-400"
+                    className="text-[10px] px-2 py-0.5 rounded border border-border hover:border-amber-500/40 hover:text-amber-300 text-muted-foreground"
                   >
                     {r}
                   </button>
@@ -694,9 +694,9 @@ export function ScriptureDetectionCompact() {
   }
 
   return (
-    <div className="flex flex-col h-full text-zinc-200">
+    <div className="flex flex-col h-full text-foreground">
       {/* Mic + auto live */}
-      <div className="p-3 border-b border-zinc-800 bg-zinc-950/40 space-y-2.5">
+      <div className="p-3 border-b border-border bg-background/40 space-y-2.5">
         <div className="flex items-center gap-2">
           <button
             onClick={toggleListen}
@@ -728,7 +728,7 @@ export function ScriptureDetectionCompact() {
                 'mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium border',
                 settings.autoGoLiveOnDetection
                   ? 'bg-emerald-500/15 text-emerald-300 border-emerald-700/40'
-                  : 'bg-zinc-900 text-zinc-400 border-zinc-700',
+                  : 'bg-card text-muted-foreground border-border',
               )}
             >
               <Sparkles className="h-2.5 w-2.5" />
@@ -738,11 +738,11 @@ export function ScriptureDetectionCompact() {
         </div>
 
         {(liveTranscript || liveInterimTranscript) && (
-          <div className="rounded bg-zinc-900/60 border border-zinc-800 p-1.5 max-h-20 overflow-y-auto">
-            <p className="text-[10px] text-zinc-300 leading-relaxed whitespace-pre-wrap">
+          <div className="rounded bg-card/60 border border-border p-1.5 max-h-20 overflow-y-auto">
+            <p className="text-[10px] text-foreground leading-relaxed whitespace-pre-wrap">
               {liveTranscript}
               {liveInterimTranscript && (
-                <span className="text-zinc-500 italic"> {liveInterimTranscript}</span>
+                <span className="text-muted-foreground italic"> {liveInterimTranscript}</span>
               )}
             </p>
           </div>
@@ -761,7 +761,7 @@ export function ScriptureDetectionCompact() {
             onChange={(e) => setManualInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleManual()}
             placeholder="Paste sermon text…"
-            className="h-7 text-[11px] bg-zinc-900 border-zinc-800"
+            className="h-7 text-[11px] bg-card border-border"
           />
           <Button
             onClick={handleManual}
@@ -775,14 +775,14 @@ export function ScriptureDetectionCompact() {
       </div>
 
       {/* Detected list */}
-      <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-zinc-800 bg-zinc-950/20">
-        <span className="text-[9px] uppercase tracking-widest text-zinc-500 font-semibold">
+      <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-border bg-background/20">
+        <span className="text-[9px] uppercase tracking-widest text-muted-foreground font-semibold">
           Detected ({detectedVerses.length})
         </span>
         {detectedVerses.length > 0 && (
           <button
             onClick={clearDetectedVerses}
-            className="text-[10px] text-zinc-500 hover:text-red-400 flex items-center gap-1"
+            className="text-[10px] text-muted-foreground hover:text-red-400 flex items-center gap-1"
           >
             <Trash2 className="h-2.5 w-2.5" /> Clear
           </button>
@@ -791,8 +791,8 @@ export function ScriptureDetectionCompact() {
       <div className="flex-1 min-h-0 overflow-y-auto">
         {detectedVerses.length === 0 ? (
           <div className="text-center py-6 px-3">
-            <BookOpen className="h-6 w-6 text-zinc-700 mx-auto mb-1.5" />
-            <p className="text-[10px] text-zinc-500">
+            <BookOpen className="h-6 w-6 text-muted-foreground/60 mx-auto mb-1.5" />
+            <p className="text-[10px] text-muted-foreground">
               Detected verses appear here and (with Auto Live) automatically go to the schedule.
             </p>
           </div>
@@ -804,15 +804,15 @@ export function ScriptureDetectionCompact() {
               .map((v) => (
                 <li
                   key={v.id}
-                  className="rounded border border-zinc-800 bg-zinc-900/40 p-2 hover:border-amber-500/40 transition-colors"
+                  className="rounded border border-border bg-card/40 p-2 hover:border-amber-500/40 transition-colors"
                 >
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-[11px] font-semibold text-amber-300">{v.reference}</span>
-                    <span className="text-[9px] text-zinc-500">
+                    <span className="text-[9px] text-muted-foreground">
                       {v.detectedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </span>
                   </div>
-                  <p className="text-[10px] text-zinc-400 line-clamp-2 leading-snug">{v.text}</p>
+                  <p className="text-[10px] text-muted-foreground line-clamp-2 leading-snug">{v.text}</p>
                   <Button
                     onClick={() => sendDetectedToSchedule(v, true)}
                     size="sm"
@@ -928,9 +928,9 @@ export function SlideGeneratorCompact() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="p-3 space-y-3 text-zinc-200">
+      <div className="p-3 space-y-3 text-foreground">
         <div className="space-y-1.5">
-          <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+          <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
             From Verse
           </label>
           <Input
@@ -938,7 +938,7 @@ export function SlideGeneratorCompact() {
             onChange={(e) => setVerseRef(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && generateFromVerse()}
             placeholder="John 3:16-17"
-            className="h-7 text-xs bg-zinc-900 border-zinc-800"
+            className="h-7 text-xs bg-card border-border"
           />
           <Button
             onClick={generateFromVerse}
@@ -950,8 +950,8 @@ export function SlideGeneratorCompact() {
           </Button>
         </div>
 
-        <div className="border-t border-zinc-800 pt-3 space-y-1.5">
-          <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+        <div className="border-t border-border pt-3 space-y-1.5">
+          <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
             From Topic (AI)
           </label>
           <Textarea
@@ -959,7 +959,7 @@ export function SlideGeneratorCompact() {
             onChange={(e) => setTopic(e.target.value)}
             placeholder='"Hope in difficult times"'
             rows={3}
-            className="text-xs bg-zinc-900 border-zinc-800 resize-none"
+            className="text-xs bg-card border-border resize-none"
           />
           <Button
             onClick={generateAI}
@@ -1010,20 +1010,20 @@ export function SermonNotesCompact() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="p-3 space-y-2.5 text-zinc-200">
+      <div className="p-3 space-y-2.5 text-foreground">
         <div>
-          <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+          <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
             Sermon Title
           </label>
           <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Sunday Sermon"
-            className="h-7 mt-1 text-xs bg-zinc-900 border-zinc-800"
+            className="h-7 mt-1 text-xs bg-card border-border"
           />
         </div>
         <div>
-          <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+          <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
             Notes (split by blank lines)
           </label>
           <Textarea
@@ -1031,7 +1031,7 @@ export function SermonNotesCompact() {
             onChange={(e) => setText(e.target.value)}
             placeholder={'Point one — God is love\n\nPoint two — His grace is sufficient\n\nPoint three — Walk in faith'}
             rows={10}
-            className="mt-1 text-xs bg-zinc-900 border-zinc-800 resize-none font-mono leading-relaxed"
+            className="mt-1 text-xs bg-card border-border resize-none font-mono leading-relaxed"
           />
         </div>
         <Button
@@ -1083,20 +1083,20 @@ export function WorshipLyricsCompact() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="p-3 space-y-2.5 text-zinc-200">
+      <div className="p-3 space-y-2.5 text-foreground">
         <div>
-          <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+          <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
             Song Title
           </label>
           <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Amazing Grace"
-            className="h-7 mt-1 text-xs bg-zinc-900 border-zinc-800"
+            className="h-7 mt-1 text-xs bg-card border-border"
           />
         </div>
         <div>
-          <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+          <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
             Lyrics
           </label>
           <Textarea
@@ -1104,9 +1104,9 @@ export function WorshipLyricsCompact() {
             onChange={(e) => setLyrics(e.target.value)}
             placeholder={'[Verse 1]\nAmazing grace, how sweet the sound\nThat saved a wretch like me\n\n[Chorus]\n…'}
             rows={12}
-            className="mt-1 text-xs bg-zinc-900 border-zinc-800 resize-none font-mono leading-relaxed"
+            className="mt-1 text-xs bg-card border-border resize-none font-mono leading-relaxed"
           />
-          <p className="text-[9px] text-zinc-500 mt-1">
+          <p className="text-[9px] text-muted-foreground mt-1">
             Use blank lines to separate verses. <code className="text-amber-300/80">[Chorus]</code> labels become slide titles.
           </p>
         </div>
@@ -1244,8 +1244,8 @@ export function MediaLibraryCompact() {
   }
 
   return (
-    <div className="flex flex-col h-full text-zinc-200">
-      <div className="p-2.5 border-b border-zinc-800 bg-zinc-950/40 space-y-2">
+    <div className="flex flex-col h-full text-foreground">
+      <div className="p-2.5 border-b border-border bg-background/40 space-y-2">
         <Button
           onClick={() => fileInputRef.current?.click()}
           size="sm"
@@ -1264,11 +1264,11 @@ export function MediaLibraryCompact() {
             if (fileInputRef.current) fileInputRef.current.value = ''
           }}
         />
-        <p className="text-[9px] text-zinc-500 leading-snug">
+        <p className="text-[9px] text-muted-foreground leading-snug">
           Upload images or short video clips. Drag onto slides to use as backgrounds, or send straight to the schedule.
         </p>
         {settings.customBackground && (
-          <div className="flex items-center gap-1.5 rounded border border-zinc-800 bg-zinc-900/40 p-1">
+          <div className="flex items-center gap-1.5 rounded border border-border bg-card/40 p-1">
             <Image
               src={settings.customBackground}
               alt="Current bg"
@@ -1278,10 +1278,10 @@ export function MediaLibraryCompact() {
               style={{ height: 'auto' }}
               unoptimized
             />
-            <span className="text-[9px] text-zinc-400 flex-1 truncate">Current background</span>
+            <span className="text-[9px] text-muted-foreground flex-1 truncate">Current background</span>
             <button
               onClick={() => updateSettings({ customBackground: null })}
-              className="text-[10px] text-zinc-500 hover:text-red-400"
+              className="text-[10px] text-muted-foreground hover:text-red-400"
               aria-label="Clear background"
             >
               <Trash2 className="h-3 w-3" />
@@ -1293,13 +1293,13 @@ export function MediaLibraryCompact() {
       <div className="flex-1 min-h-0 overflow-y-auto">
         {items.length === 0 ? (
           <div className="text-center py-6 px-3">
-            <ImageIcon className="h-7 w-7 text-zinc-700 mx-auto mb-1.5" />
-            <p className="text-[10px] text-zinc-500">No media yet. Upload images or video clips from your computer.</p>
+            <ImageIcon className="h-7 w-7 text-muted-foreground/60 mx-auto mb-1.5" />
+            <p className="text-[10px] text-muted-foreground">No media yet. Upload images or video clips from your computer.</p>
           </div>
         ) : (
           <div className="p-2 grid grid-cols-2 gap-1.5">
             {items.map((m) => (
-              <div key={m.id} className="group relative rounded overflow-hidden border border-zinc-800 bg-black">
+              <div key={m.id} className="group relative rounded overflow-hidden border border-border bg-black">
                 {m.kind === 'image' ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={m.dataUrl} alt={m.name} className="w-full aspect-video object-cover" />
@@ -1326,14 +1326,14 @@ export function MediaLibraryCompact() {
                     {m.kind === 'image' && (
                       <button
                         onClick={() => useAsBackground(m)}
-                        className="text-[9px] py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
+                        className="text-[9px] py-0.5 rounded bg-muted hover:bg-muted text-foreground"
                       >
                         Set BG
                       </button>
                     )}
                   </div>
                 </div>
-                <p className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[8px] text-zinc-300 bg-black/60 truncate">
+                <p className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[8px] text-foreground bg-black/60 truncate">
                   {m.name}
                 </p>
               </div>

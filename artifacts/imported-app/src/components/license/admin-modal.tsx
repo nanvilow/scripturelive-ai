@@ -114,6 +114,12 @@ export function AdminModal() {
   // computing expiresAt, so any combination works.
   const [genHours, setGenHours] = useState<string>('')
   const [genMinutes, setGenMinutes] = useState<string>('')
+  // v0.6.2 — Months input. Operator complaint: "I want to be able to
+  // mint anything from a 1-minute test code up to N months without
+  // multiplying by 30 in my head." We expose Months as a first-class
+  // field that the client converts to days (×30) and folds into the
+  // existing days payload — no backend change needed.
+  const [genMonths, setGenMonths] = useState<string>('')
   const [genNote, setGenNote] = useState<string>('') // username / church / label
   const [genEmail, setGenEmail] = useState<string>('')
   const [genWhatsapp, setGenWhatsapp] = useState<string>('')
@@ -231,8 +237,19 @@ export function AdminModal() {
       setGenResult({ ok: false, msg: 'Minutes must be a whole number between 0 and 59.' })
       return
     }
-    if (genPlan === 'CUSTOM' && daysNum == null && hoursNum === 0 && minutesNum === 0) {
-      setGenResult({ ok: false, msg: 'CUSTOM plan requires a days / hours / minutes value.' })
+    // v0.6.2 — Months is converted to days client-side at 30 d/mo.
+    // Empty = 0. Combined with explicit days / hours / minutes the
+    // server still computes one final integer day count, so e.g.
+    // "Months 6, Days 5" = 185 days, "Months 0, Hours 4" = 1 day.
+    const monthsNum = genMonths.trim() === '' ? 0 : Math.floor(Number(genMonths))
+    if (!Number.isFinite(monthsNum) || monthsNum < 0 || monthsNum > 1200) {
+      setGenResult({ ok: false, msg: 'Months must be a whole number between 0 and 1200.' })
+      return
+    }
+    const combinedDays = (daysNum ?? 0) + monthsNum * 30
+    const finalDays = combinedDays > 0 ? combinedDays : undefined
+    if (genPlan === 'CUSTOM' && finalDays == null && hoursNum === 0 && minutesNum === 0) {
+      setGenResult({ ok: false, msg: 'CUSTOM plan requires a duration (Minutes, Hours, Days, or Months).' })
       return
     }
     setGenBusy(true)
@@ -242,7 +259,7 @@ export function AdminModal() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           planCode: genPlan,
-          days: daysNum,
+          days: finalDays,
           hours: hoursNum || undefined,
           minutes: minutesNum || undefined,
           note: genNote.trim() || undefined,
@@ -440,13 +457,13 @@ export function AdminModal() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="sm:max-w-[820px] max-h-[90vh] overflow-y-auto bg-zinc-950 border-zinc-800 text-zinc-100">
+      <DialogContent className="sm:max-w-[820px] max-h-[90vh] overflow-y-auto bg-background border-border text-foreground">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ShieldCheck className="h-4 w-4 text-emerald-400" />
             ScriptureLive AI — Admin Panel
           </DialogTitle>
-          <DialogDescription className="text-zinc-400 text-xs">
+          <DialogDescription className="text-muted-foreground text-xs">
             Owner-only. Confirm MoMo payments, generate activation codes, monitor subscription state.
           </DialogDescription>
         </DialogHeader>
@@ -454,7 +471,7 @@ export function AdminModal() {
         {/* Tab bar (v0.5.48). Overview keeps the existing payment +
             activation + notifications view; Settings shows the
             owner-tunable runtime config. */}
-        <div className="flex gap-1 border-b border-zinc-800 -mt-1 mb-1">
+        <div className="flex gap-1 border-b border-border -mt-1 mb-1">
           <button
             type="button"
             onClick={() => setTab('overview')}
@@ -462,7 +479,7 @@ export function AdminModal() {
               'px-3 py-1.5 text-[11px] uppercase tracking-wider border-b-2 -mb-px transition-colors',
               tab === 'overview'
                 ? 'border-emerald-400 text-emerald-300'
-                : 'border-transparent text-zinc-500 hover:text-zinc-300',
+                : 'border-transparent text-muted-foreground hover:text-foreground',
             )}
           >Overview</button>
           <button
@@ -472,13 +489,13 @@ export function AdminModal() {
               'px-3 py-1.5 text-[11px] uppercase tracking-wider border-b-2 -mb-px transition-colors flex items-center gap-1.5',
               tab === 'settings'
                 ? 'border-emerald-400 text-emerald-300'
-                : 'border-transparent text-zinc-500 hover:text-zinc-300',
+                : 'border-transparent text-muted-foreground hover:text-foreground',
             )}
           ><SettingsIcon className="h-3 w-3" /> Settings</button>
         </div>
 
         {!data && tab === 'overview' && (
-          <div className="py-12 text-center text-zinc-400 text-sm">
+          <div className="py-12 text-center text-muted-foreground text-sm">
             <Loader2 className="h-6 w-6 mx-auto animate-spin mb-2" /> Loading…
           </div>
         )}
@@ -486,31 +503,31 @@ export function AdminModal() {
         {data && tab === 'overview' && (
           <div className="space-y-5">
             {/* ── Install + Master ──────────────────────────────────────── */}
-            <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3.5 space-y-2">
+            <section className="rounded-lg border border-border bg-card/40 p-3.5 space-y-2">
               <div className="flex items-center justify-between">
-                <div className="text-[11px] uppercase tracking-wider text-zinc-400 flex items-center gap-1.5"><KeyRound className="h-3.5 w-3.5" /> Install + Master</div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground flex items-center gap-1.5"><KeyRound className="h-3.5 w-3.5" /> Install + Master</div>
                 <Badge className={cn('text-[9px]', data.status.state === 'active' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40' : data.status.state === 'trial' ? 'bg-amber-500/15 text-amber-300 border-amber-500/40' : 'bg-rose-500/15 text-rose-300 border-rose-500/40')}>
                   {data.status.state.toUpperCase()} · {data.status.daysLeft}d
                 </Badge>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
                 <div>
-                  <div className="text-zinc-500 uppercase tracking-wider text-[9px]">Install ID</div>
+                  <div className="text-muted-foreground uppercase tracking-wider text-[9px]">Install ID</div>
                   <div className="font-mono break-all">{data.installId}</div>
                 </div>
                 <div>
-                  <div className="text-zinc-500 uppercase tracking-wider text-[9px]">First launch</div>
+                  <div className="text-muted-foreground uppercase tracking-wider text-[9px]">First launch</div>
                   <div className="font-mono">{new Date(data.firstLaunchAt).toLocaleString()}</div>
                 </div>
                 <div className="sm:col-span-2">
-                  <div className="text-zinc-500 uppercase tracking-wider text-[9px] flex items-center justify-between">
+                  <div className="text-muted-foreground uppercase tracking-wider text-[9px] flex items-center justify-between">
                     Master code (never expires)
                     {data.masterCodeEmailedAt && <span className="text-emerald-400">Emailed {new Date(data.masterCodeEmailedAt).toLocaleDateString()}</span>}
                   </div>
                   <div className="flex items-center gap-2 mt-1">
-                    <code className="font-mono bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 flex-1 break-all">{data.masterCode}</code>
+                    <code className="font-mono bg-background border border-border rounded px-2 py-1.5 flex-1 break-all">{data.masterCode}</code>
                     <Button size="sm" variant="ghost" onClick={() => copy(data.masterCode)}><Copy className="h-3 w-3" /></Button>
-                    <Button size="sm" variant="outline" onClick={emailMaster} className="border-zinc-700 text-zinc-200"><Mail className="h-3 w-3 mr-1.5" /> Email</Button>
+                    <Button size="sm" variant="outline" onClick={emailMaster} className="border-border text-foreground"><Mail className="h-3 w-3 mr-1.5" /> Email</Button>
                   </div>
                 </div>
               </div>
@@ -524,7 +541,7 @@ export function AdminModal() {
                   placeholder="3-digit reference code (e.g. 472)"
                   value={confirmRef}
                   onChange={(e) => setConfirmRef(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                  className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                  className="bg-background border-border text-foreground font-mono"
                 />
                 <Button onClick={() => confirm(confirmRef)} disabled={confirmBusy || !confirmRef} className="bg-emerald-600 hover:bg-emerald-500">
                   {confirmBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> Confirm Payment</>}
@@ -537,7 +554,7 @@ export function AdminModal() {
                     <div>{confirmResult.msg}</div>
                     {confirmResult.code && (
                       <div className="mt-1 flex items-center gap-2">
-                        <code className="font-mono bg-zinc-950 border border-zinc-800 rounded px-2 py-1">{confirmResult.code}</code>
+                        <code className="font-mono bg-background border border-border rounded px-2 py-1">{confirmResult.code}</code>
                         <Button size="sm" variant="ghost" onClick={() => copy(confirmResult.code!)}><Copy className="h-3 w-3" /></Button>
                       </div>
                     )}
@@ -557,17 +574,20 @@ export function AdminModal() {
                 <Sparkles className="h-3.5 w-3.5" /> Generate Activation Code (no payment required)
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
-                <div className="sm:col-span-3 space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-zinc-500">Plan</label>
+                <div className="sm:col-span-4 space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Plan</label>
                   <select
                     value={genPlan}
                     onChange={(e) => {
                       setGenPlan(e.target.value)
-                      // Switching to a fixed plan clears the days
-                      // override so the canonical duration applies.
-                      if (e.target.value !== 'CUSTOM') setGenDays('')
+                      // Switching to a fixed plan clears the duration
+                      // overrides so the canonical plan length applies.
+                      if (e.target.value !== 'CUSTOM') {
+                        setGenDays('')
+                        setGenMonths('')
+                      }
                     }}
-                    className="w-full bg-zinc-950 border border-zinc-800 text-zinc-100 rounded-md px-2 py-1.5 text-xs h-9"
+                    className="w-full bg-background border border-border text-foreground rounded-md px-2 py-1.5 text-xs h-9"
                   >
                     <option value="1M">1 Month (31 d)</option>
                     <option value="2M">2 Months (62 d)</option>
@@ -576,28 +596,45 @@ export function AdminModal() {
                     <option value="5M">5 Months (155 d)</option>
                     <option value="6M">6 Months (186 d)</option>
                     <option value="1Y">1 Year (365 d)</option>
-                    <option value="CUSTOM">Custom (any days)</option>
+                    <option value="CUSTOM">Custom (any duration)</option>
                   </select>
                 </div>
+                {/* v0.6.2 — four equal duration inputs. Operator can
+                    fill any single one or combine them; the client
+                    folds Months × 30 into Days before posting and the
+                    server adds days + hours + minutes into a final
+                    integer day count. So "1 minute" = (0/0/0/1),
+                    "6 months" = (6/0/0/0), "1 year" = (12/0/0/0). */}
                 <div className="sm:col-span-2 space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-zinc-500">
-                    Days {genPlan !== 'CUSTOM' && <span className="text-zinc-600">(opt)</span>}
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Months {genPlan !== 'CUSTOM' && <span className="text-muted-foreground">(opt)</span>}
                   </label>
                   <Input
                     type="number"
-                    min={1}
-                    max={36500}
-                    placeholder={genPlan === 'CUSTOM' ? 'e.g. 30' : 'default'}
-                    value={genDays}
-                    onChange={(e) => setGenDays(e.target.value)}
-                    className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                    min={0}
+                    max={1200}
+                    placeholder="0"
+                    value={genMonths}
+                    onChange={(e) => setGenMonths(e.target.value)}
+                    className="bg-background border-border text-foreground font-mono"
                   />
                 </div>
-                {/* v0.6.0 — Hours + minutes for sub-day precision codes.
-                    Empty = 0; the server treats (days + hours + minutes)
-                    as a single total. Use either alone or in combination. */}
-                <div className="sm:col-span-1 space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-zinc-500">Hrs</label>
+                <div className="sm:col-span-2 space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Days {genPlan !== 'CUSTOM' && <span className="text-muted-foreground">(opt)</span>}
+                  </label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={36500}
+                    placeholder="0"
+                    value={genDays}
+                    onChange={(e) => setGenDays(e.target.value)}
+                    className="bg-background border-border text-foreground font-mono"
+                  />
+                </div>
+                <div className="sm:col-span-2 space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Hours</label>
                   <Input
                     type="number"
                     min={0}
@@ -605,11 +642,11 @@ export function AdminModal() {
                     placeholder="0"
                     value={genHours}
                     onChange={(e) => setGenHours(e.target.value)}
-                    className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                    className="bg-background border-border text-foreground font-mono"
                   />
                 </div>
-                <div className="sm:col-span-1 space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-zinc-500">Min</label>
+                <div className="sm:col-span-2 space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Minutes</label>
                   <Input
                     type="number"
                     min={0}
@@ -617,41 +654,41 @@ export function AdminModal() {
                     placeholder="0"
                     value={genMinutes}
                     onChange={(e) => setGenMinutes(e.target.value)}
-                    className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                    className="bg-background border-border text-foreground font-mono"
                   />
                 </div>
-                <div className="sm:col-span-7 space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-zinc-500">Username / label</label>
+                <div className="sm:col-span-12 space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Username / label</label>
                   <Input
                     placeholder="e.g. Pastor John — Cathedral Lagos"
                     value={genNote}
                     onChange={(e) => setGenNote(e.target.value)}
-                    className="bg-zinc-950 border-zinc-800 text-zinc-100"
+                    className="bg-background border-border text-foreground"
                   />
                 </div>
                 <div className="sm:col-span-6 space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-zinc-500">Email (optional)</label>
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Email (optional)</label>
                   <Input
                     type="email"
                     placeholder="customer@example.com"
                     value={genEmail}
                     onChange={(e) => setGenEmail(e.target.value)}
-                    className="bg-zinc-950 border-zinc-800 text-zinc-100"
+                    className="bg-background border-border text-foreground"
                   />
                 </div>
                 <div className="sm:col-span-6 space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-zinc-500">WhatsApp (optional)</label>
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">WhatsApp (optional)</label>
                   <Input
                     placeholder="0246798526"
                     value={genWhatsapp}
                     onChange={(e) => setGenWhatsapp(e.target.value)}
-                    className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                    className="bg-background border-border text-foreground font-mono"
                   />
                 </div>
               </div>
               <div className="flex items-center justify-between gap-3">
-                <p className="text-[10px] text-zinc-500">
-                  Pick a plan (or CUSTOM with explicit days), add the customer's name in the label field, then click Generate. The code appears below — copy it and send it to the customer on WhatsApp / email.
+                <p className="text-[10px] text-muted-foreground">
+                  Pick a plan, or CUSTOM and fill any combo of Minutes / Hours / Days / Months, then click Generate. The code appears below — copy it and send it to the customer.
                 </p>
                 <Button
                   onClick={generateCode}
@@ -668,7 +705,7 @@ export function AdminModal() {
                     <div>{genResult.msg}</div>
                     {genResult.code && (
                       <div className="mt-1 flex items-center gap-2">
-                        <code className="font-mono bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-emerald-300 font-bold flex-1 break-all">{genResult.code}</code>
+                        <code className="font-mono bg-background border border-border rounded px-2 py-1 text-emerald-300 font-bold flex-1 break-all">{genResult.code}</code>
                         <Button size="sm" variant="ghost" onClick={() => copy(genResult.code!)}><Copy className="h-3 w-3" /></Button>
                       </div>
                     )}
@@ -680,25 +717,25 @@ export function AdminModal() {
             {/* ── Pending + recent payments ────────────────────────────── */}
             <section>
               <div className="flex items-center justify-between mb-1.5">
-                <div className="text-[11px] uppercase tracking-wider text-zinc-400">Recent Payments ({data.paymentCodes.length})</div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Recent Payments ({data.paymentCodes.length})</div>
                 <Button size="sm" variant="ghost" onClick={reload} disabled={loading}><RefreshCw className={cn('h-3 w-3', loading && 'animate-spin')} /></Button>
               </div>
-              <div className="rounded-lg border border-zinc-800 overflow-hidden">
+              <div className="rounded-lg border border-border overflow-hidden">
                 {data.paymentCodes.length === 0 ? (
-                  <div className="p-4 text-center text-[11px] text-zinc-500">No payments yet.</div>
+                  <div className="p-4 text-center text-[11px] text-muted-foreground">No payments yet.</div>
                 ) : (
                   <table className="w-full text-[11px]">
-                    <thead className="bg-zinc-900/60 text-zinc-400 uppercase tracking-wider text-[9px]">
+                    <thead className="bg-card/60 text-muted-foreground uppercase tracking-wider text-[9px]">
                       <tr><th className="text-left px-2 py-1.5">Ref</th><th className="text-left px-2 py-1.5">Plan</th><th className="text-left px-2 py-1.5">Amount</th><th className="text-left px-2 py-1.5">Customer</th><th className="text-left px-2 py-1.5">Status</th><th className="text-right px-2 py-1.5">Action</th></tr>
                     </thead>
                     <tbody>
                       {data.paymentCodes.map((p) => (
-                        <tr key={p.ref + p.createdAt} className="border-t border-zinc-800 hover:bg-zinc-900/40">
+                        <tr key={p.ref + p.createdAt} className="border-t border-border hover:bg-card/40">
                           <td className="px-2 py-1.5 font-mono font-bold text-emerald-300">{p.ref}</td>
                           <td className="px-2 py-1.5">{p.planCode}</td>
                           <td className="px-2 py-1.5 font-mono">GHS {p.amountGhs}</td>
-                          <td className="px-2 py-1.5"><div className="truncate max-w-[160px]">{p.email}</div><div className="text-zinc-500 font-mono text-[10px]">{p.whatsapp}</div></td>
-                          <td className="px-2 py-1.5"><Badge className={cn('text-[9px]', p.status === 'WAITING_PAYMENT' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : p.status === 'PAID' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : p.status === 'CONSUMED' ? 'bg-sky-500/20 text-sky-300 border-sky-500/40' : 'bg-zinc-700 text-zinc-300 border-zinc-600')}>{p.status}</Badge></td>
+                          <td className="px-2 py-1.5"><div className="truncate max-w-[160px]">{p.email}</div><div className="text-muted-foreground font-mono text-[10px]">{p.whatsapp}</div></td>
+                          <td className="px-2 py-1.5"><Badge className={cn('text-[9px]', p.status === 'WAITING_PAYMENT' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : p.status === 'PAID' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : p.status === 'CONSUMED' ? 'bg-sky-500/20 text-sky-300 border-sky-500/40' : 'bg-muted text-foreground border-border')}>{p.status}</Badge></td>
                           <td className="px-2 py-1.5 text-right">
                             <div className="inline-flex items-center gap-1">
                               {p.status === 'WAITING_PAYMENT' && (
@@ -733,13 +770,13 @@ export function AdminModal() {
 
             {/* ── Recent activations ────────────────────────────────────── */}
             <section>
-              <div className="text-[11px] uppercase tracking-wider text-zinc-400 mb-1.5">Recent Activations ({data.activationCodes.length})</div>
-              <div className="rounded-lg border border-zinc-800 overflow-hidden">
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Recent Activations ({data.activationCodes.length})</div>
+              <div className="rounded-lg border border-border overflow-hidden">
                 {data.activationCodes.length === 0 ? (
-                  <div className="p-4 text-center text-[11px] text-zinc-500">No activations yet.</div>
+                  <div className="p-4 text-center text-[11px] text-muted-foreground">No activations yet.</div>
                 ) : (
                   <table className="w-full text-[11px]">
-                    <thead className="bg-zinc-900/60 text-zinc-400 uppercase tracking-wider text-[9px]">
+                    <thead className="bg-card/60 text-muted-foreground uppercase tracking-wider text-[9px]">
                       <tr>
                         <th className="text-left px-2 py-1.5">Code</th>
                         <th className="text-left px-2 py-1.5">Plan</th>
@@ -761,13 +798,13 @@ export function AdminModal() {
                             ?? a.generatedFor?.whatsapp
                             ?? (a.generatedFor?.paymentRef ? `ref ${a.generatedFor.paymentRef}` : '—')
                         return (
-                          <tr key={a.code} className="border-t border-zinc-800 hover:bg-zinc-900/40">
+                          <tr key={a.code} className="border-t border-border hover:bg-card/40">
                             <td className="px-2 py-1.5 font-mono">{a.code}</td>
                             <td className="px-2 py-1.5">{a.planCode}</td>
                             <td className="px-2 py-1.5">{a.days}</td>
                             <td className="px-2 py-1.5 max-w-[200px]"><div className="truncate" title={forLabel}>{forLabel}</div></td>
                             <td className="px-2 py-1.5">{a.isUsed ? <span className="text-emerald-400">Yes</span> : <span className="text-amber-400">No</span>}</td>
-                            <td className="px-2 py-1.5 font-mono text-[10px] text-zinc-400">{a.subscriptionExpiresAt ? new Date(a.subscriptionExpiresAt).toLocaleDateString() : '—'}</td>
+                            <td className="px-2 py-1.5 font-mono text-[10px] text-muted-foreground">{a.subscriptionExpiresAt ? new Date(a.subscriptionExpiresAt).toLocaleDateString() : '—'}</td>
                             <td className="px-2 py-1.5 text-right">
                               <div className="inline-flex items-center gap-1">
                                 <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => copy(a.code)}>
@@ -800,12 +837,12 @@ export function AdminModal() {
 
             {/* ── Notification audit log ───────────────────────────────── */}
             <section>
-              <div className="text-[11px] uppercase tracking-wider text-zinc-400 mb-1.5">Notifications ({data.notifications.length})</div>
-              <div className="rounded-lg border border-zinc-800 max-h-[200px] overflow-y-auto">
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Notifications ({data.notifications.length})</div>
+              <div className="rounded-lg border border-border max-h-[200px] overflow-y-auto">
                 {data.notifications.length === 0 ? (
-                  <div className="p-4 text-center text-[11px] text-zinc-500">No notifications yet.</div>
+                  <div className="p-4 text-center text-[11px] text-muted-foreground">No notifications yet.</div>
                 ) : (
-                  <ul className="divide-y divide-zinc-800">
+                  <ul className="divide-y divide-border">
                     {data.notifications.map((n) => (
                       <li key={n.id} className="p-2.5 text-[11px]">
                         <div className="flex items-center gap-2 mb-1">
@@ -841,11 +878,11 @@ export function AdminModal() {
                             <Trash2 className="h-3 w-3" />
                           </Button>
                         </div>
-                        <div className="text-zinc-500 text-[10px]">to {n.to} · {new Date(n.ts).toLocaleString()}</div>
+                        <div className="text-muted-foreground text-[10px]">to {n.to} · {new Date(n.ts).toLocaleString()}</div>
                         {n.status !== 'sent' && (
                           <details className="mt-1">
-                            <summary className="cursor-pointer text-zinc-400 text-[10px] hover:text-zinc-200">Show body & copy</summary>
-                            <pre className="mt-1 whitespace-pre-wrap break-all bg-zinc-950 border border-zinc-800 rounded p-2 text-[10px] text-zinc-300">{n.body}</pre>
+                            <summary className="cursor-pointer text-muted-foreground text-[10px] hover:text-foreground">Show body & copy</summary>
+                            <pre className="mt-1 whitespace-pre-wrap break-all bg-background border border-border rounded p-2 text-[10px] text-foreground">{n.body}</pre>
                             <Button size="sm" variant="ghost" className="mt-1 h-6 text-[10px]" onClick={() => copy(n.body)}><Copy className="h-3 w-3 mr-1" /> Copy</Button>
                           </details>
                         )}
@@ -905,29 +942,29 @@ export function AdminModal() {
         {tab === 'settings' && (
           <div className="space-y-5">
             {cfgLoading && !cfg && (
-              <div className="py-12 text-center text-zinc-400 text-sm">
+              <div className="py-12 text-center text-muted-foreground text-sm">
                 <Loader2 className="h-6 w-6 mx-auto animate-spin mb-2" /> Loading settings…
               </div>
             )}
             {cfg && (
               <>
-                <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3.5 space-y-3">
-                  <div className="text-[11px] uppercase tracking-wider text-zinc-400">Access &amp; Trial</div>
+                <section className="rounded-lg border border-border bg-card/40 p-3.5 space-y-3">
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Access &amp; Trial</div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase tracking-wider text-zinc-500">Admin password</label>
+                      <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Admin password</label>
                       <Input
                         type="password"
                         placeholder="(leave blank for default)"
                         value={fAdminPwd}
                         onChange={(e) => setFAdminPwd(e.target.value)}
-                        className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                        className="bg-background border-border text-foreground font-mono"
                         autoComplete="new-password"
                       />
-                      <p className="text-[10px] text-zinc-500">Stored locally. Leave blank to disable owner gate.</p>
+                      <p className="text-[10px] text-muted-foreground">Stored locally. Leave blank to disable owner gate.</p>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase tracking-wider text-zinc-500">Trial length (minutes)</label>
+                      <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Trial length (minutes)</label>
                       <Input
                         type="number"
                         min={1}
@@ -935,57 +972,57 @@ export function AdminModal() {
                         placeholder={String(cfg.defaults.trialMinutes)}
                         value={fTrialMin}
                         onChange={(e) => setFTrialMin(e.target.value)}
-                        className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                        className="bg-background border-border text-foreground font-mono"
                       />
-                      <p className="text-[10px] text-zinc-500">Default {cfg.defaults.trialMinutes} min. Range 1–1440. Applies to new installs; existing trial windows keep their original end-time.</p>
+                      <p className="text-[10px] text-muted-foreground">Default {cfg.defaults.trialMinutes} min. Range 1–1440. Applies to new installs; existing trial windows keep their original end-time.</p>
                     </div>
                   </div>
                 </section>
 
-                <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3.5 space-y-3">
-                  <div className="text-[11px] uppercase tracking-wider text-zinc-400">MoMo Recipient (paid into)</div>
+                <section className="rounded-lg border border-border bg-card/40 p-3.5 space-y-3">
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">MoMo Recipient (paid into)</div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase tracking-wider text-zinc-500">Recipient name</label>
+                      <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Recipient name</label>
                       <Input
                         placeholder={cfg.defaults.momoName}
                         value={fMomoName}
                         onChange={(e) => setFMomoName(e.target.value)}
-                        className="bg-zinc-950 border-zinc-800 text-zinc-100"
+                        className="bg-background border-border text-foreground"
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase tracking-wider text-zinc-500">MoMo phone number</label>
+                      <label className="text-[10px] uppercase tracking-wider text-muted-foreground">MoMo phone number</label>
                       <Input
                         placeholder={cfg.defaults.momoNumber}
                         value={fMomoNum}
                         onChange={(e) => setFMomoNum(e.target.value)}
-                        className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                        className="bg-background border-border text-foreground font-mono"
                       />
                     </div>
                   </div>
                 </section>
 
-                <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3.5 space-y-3">
-                  <div className="text-[11px] uppercase tracking-wider text-zinc-400">Notification Targets</div>
+                <section className="rounded-lg border border-border bg-card/40 p-3.5 space-y-3">
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Notification Targets</div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase tracking-wider text-zinc-500">Notify email</label>
+                      <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Notify email</label>
                       <Input
                         type="email"
                         placeholder={cfg.defaults.notifyEmail}
                         value={fNotifyEmail}
                         onChange={(e) => setFNotifyEmail(e.target.value)}
-                        className="bg-zinc-950 border-zinc-800 text-zinc-100"
+                        className="bg-background border-border text-foreground"
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase tracking-wider text-zinc-500">Notify WhatsApp</label>
+                      <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Notify WhatsApp</label>
                       <Input
                         placeholder={cfg.defaults.whatsappNumber}
                         value={fWhatsapp}
                         onChange={(e) => setFWhatsapp(e.target.value)}
-                        className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                        className="bg-background border-border text-foreground font-mono"
                       />
                     </div>
                   </div>
@@ -996,20 +1033,20 @@ export function AdminModal() {
                     different key per install (useful when the baked one hits a
                     quota or you want to rotate without a redeploy). Empty input =
                     keep current; type "CLEAR" = revert to baked default. */}
-                <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3.5 space-y-3">
-                  <div className="text-[11px] uppercase tracking-wider text-zinc-400 flex items-center gap-2">
+                <section className="rounded-lg border border-border bg-card/40 p-3.5 space-y-3">
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground flex items-center gap-2">
                     Cloud Keys (override baked-in)
-                    <Badge className="bg-zinc-800 text-zinc-400 border-zinc-700 text-[9px]">v0.5.52</Badge>
+                    <Badge className="bg-muted text-muted-foreground border-border text-[9px]">v0.5.52</Badge>
                   </div>
-                  <p className="text-[10px] text-zinc-500 -mt-1">
+                  <p className="text-[10px] text-muted-foreground -mt-1">
                     Both keys are baked into the installer. Paste a key here to override on this install only.
-                    Type <span className="font-mono text-zinc-300">CLEAR</span> to revert to the baked default. Leave blank to keep current.
+                    Type <span className="font-mono text-foreground">CLEAR</span> to revert to the baked default. Leave blank to keep current.
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase tracking-wider text-zinc-500 flex items-center justify-between">
+                      <label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center justify-between">
                         <span>OpenAI Whisper key</span>
-                        <span className={cn('text-[9px]', keyStatus.openai ? 'text-emerald-400' : 'text-zinc-600')}>
+                        <span className={cn('text-[9px]', keyStatus.openai ? 'text-emerald-400' : 'text-muted-foreground')}>
                           {keyStatus.openai ? 'override active' : 'using baked default'}
                         </span>
                       </label>
@@ -1018,14 +1055,14 @@ export function AdminModal() {
                         placeholder={keyStatus.openai ? '(override saved — paste to replace)' : 'sk-...'}
                         value={fOpenAIKey}
                         onChange={(e) => setFOpenAIKey(e.target.value)}
-                        className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                        className="bg-background border-border text-foreground font-mono"
                         autoComplete="off"
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase tracking-wider text-zinc-500 flex items-center justify-between">
+                      <label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center justify-between">
                         <span>Deepgram key</span>
-                        <span className={cn('text-[9px]', keyStatus.deepgram ? 'text-emerald-400' : 'text-zinc-600')}>
+                        <span className={cn('text-[9px]', keyStatus.deepgram ? 'text-emerald-400' : 'text-muted-foreground')}>
                           {keyStatus.deepgram ? 'override active' : 'using baked default'}
                         </span>
                       </label>
@@ -1034,7 +1071,7 @@ export function AdminModal() {
                         placeholder={keyStatus.deepgram ? '(override saved — paste to replace)' : 'paste Deepgram key'}
                         value={fDeepgramKey}
                         onChange={(e) => setFDeepgramKey(e.target.value)}
-                        className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                        className="bg-background border-border text-foreground font-mono"
                         autoComplete="off"
                       />
                     </div>
@@ -1049,15 +1086,15 @@ export function AdminModal() {
                       baked key is obvious. The Notifications log
                       records every attempt as a row, with Resend
                       one click away. */}
-                  <div className="pt-2 border-t border-zinc-800">
-                    <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Verify Delivery</div>
+                  <div className="pt-2 border-t border-border">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Verify Delivery</div>
                     <div className="flex flex-wrap gap-2">
                       <Button
                         size="sm"
                         variant="outline"
                         disabled={testBusy.email}
                         onClick={sendTestEmail}
-                        className="border-zinc-700 text-zinc-200 hover:bg-zinc-800"
+                        className="border-border text-foreground hover:bg-muted"
                       >
                         {testBusy.email ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Mail className="h-3 w-3 mr-1.5" />}
                         Send test email
@@ -1067,27 +1104,27 @@ export function AdminModal() {
                         variant="outline"
                         disabled={testBusy.sms}
                         onClick={sendTestSms}
-                        className="border-zinc-700 text-zinc-200 hover:bg-zinc-800"
+                        className="border-border text-foreground hover:bg-muted"
                       >
                         {testBusy.sms ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Phone className="h-3 w-3 mr-1.5" />}
                         Send test SMS
                       </Button>
                     </div>
-                    <p className="text-[10px] text-zinc-500 mt-1.5">
+                    <p className="text-[10px] text-muted-foreground mt-1.5">
                       Sends to the configured Owner Email / Phone. Result is logged in the Notifications panel above.
                     </p>
                   </div>
                 </section>
 
-                <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3.5 space-y-3">
-                  <div className="text-[11px] uppercase tracking-wider text-zinc-400">Plan Prices (GHS)</div>
-                  <p className="text-[10px] text-zinc-500 -mt-1">Leave a field blank to use the default. New prices apply immediately to all customers without a redeploy.</p>
+                <section className="rounded-lg border border-border bg-card/40 p-3.5 space-y-3">
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Plan Prices (GHS)</div>
+                  <p className="text-[10px] text-muted-foreground -mt-1">Leave a field blank to use the default. New prices apply immediately to all customers without a redeploy.</p>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {Object.entries(cfg.defaults.planPrices).map(([code, def]) => (
                       <div key={code} className="space-y-1">
-                        <label className="text-[10px] uppercase tracking-wider text-zinc-500 flex items-center justify-between">
+                        <label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center justify-between">
                           <span>{code}</span>
-                          <span className="text-zinc-600">def {def}</span>
+                          <span className="text-muted-foreground">def {def}</span>
                         </label>
                         <Input
                           type="number"
@@ -1095,7 +1132,7 @@ export function AdminModal() {
                           placeholder={String(def)}
                           value={fPrices[code] ?? ''}
                           onChange={(e) => setFPrices((p) => ({ ...p, [code]: e.target.value }))}
-                          className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                          className="bg-background border-border text-foreground font-mono"
                         />
                       </div>
                     ))}
@@ -1103,7 +1140,7 @@ export function AdminModal() {
                 </section>
 
                 <div className="flex items-center justify-between">
-                  <div className="text-[10px] text-zinc-500">
+                  <div className="text-[10px] text-muted-foreground">
                     {cfg.config.updatedAt
                       ? <>Last saved {new Date(cfg.config.updatedAt).toLocaleString()}</>
                       : <>No owner overrides saved yet.</>}

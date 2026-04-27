@@ -207,12 +207,11 @@ export function SettingsView() {
 
   return (
     // v0.6.0 — Two-column layout on xl screens. Operator request:
-    // surface secondary settings without endless scrolling. The
-    // arbitrary `[&>:first-child]:xl:col-span-2` selector keeps the
-    // License/Subscription card full-width at the top (it carries
-    // primary "what's my plan" info that has to stay above the
-    // fold), while every subsequent card flows into the 2-col grid.
-    <div className="p-4 md:p-6 lg:p-8 max-w-7xl mx-auto grid grid-cols-1 xl:grid-cols-2 gap-6 items-start [&>:first-child]:xl:col-span-2">
+    // v0.6.2 — operator wanted Settings back to a single readable
+    // column (not the wide 2-col split). Cards now flow top-to-bottom
+    // in one stack with a comfortable max-width so paragraphs / labels
+    // never stretch into hard-to-scan long lines.
+    <div className="p-4 md:p-6 lg:p-8 max-w-4xl mx-auto grid grid-cols-1 gap-6 items-start">
       {/* Modernised header — gradient hero card with logo + reset action,
           matching the polished look of the rest of the live console. */}
       <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-primary/10 via-background to-violet-500/10 px-5 py-5 md:px-7 md:py-6">
@@ -270,7 +269,7 @@ export function SettingsView() {
                 status.state === 'active' && 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40',
                 status.state === 'trial' && 'bg-amber-500/15 text-amber-300 border-amber-500/40',
                 (status.state === 'trial_expired' || status.state === 'expired' || status.state === 'never_activated') && 'bg-rose-500/15 text-rose-300 border-rose-500/40',
-                status.state === 'unknown' && 'bg-zinc-700 text-zinc-300 border-zinc-600',
+                status.state === 'unknown' && 'bg-muted text-foreground border-border',
               )}
             >
               {status.state.replace('_', ' ').toUpperCase()}

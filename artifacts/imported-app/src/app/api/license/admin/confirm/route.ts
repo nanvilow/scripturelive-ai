@@ -51,6 +51,11 @@ export async function POST(req: NextRequest) {
   let emailNote: { id: string; status: string; error?: string } | null = null
   let waNote: { id: string; waLink: string } | null = null
   let smsNote: { id: string; status: string; error?: string; to: string } | null = null
+  // v0.6.2 — customer email is now first-class. Operator complaint:
+  // "test email works but the customer never gets an email." Reason:
+  // admin/confirm only ever sent the OWNER an email + the customer
+  // an SMS — there was no customer email path at all. Fixed below.
+  let customerEmailNote: { id: string; status: string; error?: string; to: string } | null = null
   try {
     if (newlyGenerated) {
       // ── Customer activation SMS via Arkesel ──────────────────────
@@ -73,6 +78,42 @@ export async function POST(req: NextRequest) {
         // notifySms swallows internally, but belt-and-braces.
         // eslint-disable-next-line no-console
         console.error('[admin/confirm] customer SMS failed:', e)
+      }
+
+      // v0.6.2 — Customer activation email. Mirrors the SMS body so
+      // the customer has a written copy of the code in their inbox
+      // (SMS can be lost or garbled by carrier, especially across
+      // borders). Only fires when the customer supplied an email at
+      // payment time — silently skipped otherwise.
+      if (payment.email && /@/.test(payment.email)) {
+        try {
+          const customerSubject = `Your ScriptureLive AI activation code (${planLabel})`
+          const customerBody = [
+            'Hello,',
+            '',
+            'Your ScriptureLive AI payment has been confirmed. Your activation code is:',
+            '',
+            `    ${activation.code}`,
+            '',
+            `Plan:        ${planLabel}`,
+            `Duration:    ${activation.days} day(s)`,
+            `Reference:   ${payment.ref}`,
+            '',
+            'Open ScriptureLive AI on your PC, paste this code into the activation prompt, and click Activate. The code is single-use and will bind to your install.',
+            '',
+            'Thank you for choosing ScriptureLive AI.',
+            '— WassMedia',
+          ].join('\n')
+          const ce = await notifyEmail({
+            to: payment.email,
+            subject: customerSubject,
+            body: customerBody,
+          })
+          customerEmailNote = { id: ce.id, status: ce.status, error: ce.error, to: ce.to }
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.error('[admin/confirm] customer email failed:', e)
+        }
       }
 
       const ownerSubject = `[ScriptureLive] Payment confirmed — ${planLabel} (${payment.email})`
@@ -117,6 +158,11 @@ export async function POST(req: NextRequest) {
       generatedAt: activation.generatedAt,
     },
     newlyGenerated,
-    notifications: { email: emailNote, whatsapp: waNote, sms: smsNote },
+    notifications: {
+      email: emailNote,
+      whatsapp: waNote,
+      sms: smsNote,
+      customerEmail: customerEmailNote,
+    },
   })
 }

@@ -213,13 +213,13 @@ export function SubscriptionModal() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="sm:max-w-[680px] max-h-[88vh] overflow-y-auto bg-zinc-950 border-zinc-800 text-zinc-100">
+      <DialogContent className="sm:max-w-[680px] max-h-[88vh] overflow-y-auto bg-background border-border text-foreground">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <ShieldCheck className="h-4 w-4 text-emerald-400" />
             Activate AI Detection
           </DialogTitle>
-          <DialogDescription className="text-zinc-400 text-xs">
+          <DialogDescription className="text-muted-foreground text-xs">
             ScriptureLive AI helps churches display scripture instantly — no manual typing,
             no delays, just smooth, accurate, powerful live Bible detection.
           </DialogDescription>
@@ -241,17 +241,17 @@ export function SubscriptionModal() {
                   type="button"
                   onClick={() => { setSelected(p); setPhase('payment') }}
                   className={cn(
-                    'group relative text-left rounded-lg border bg-zinc-900/50 hover:bg-zinc-800/60',
-                    'border-zinc-800 hover:border-emerald-500/50 transition p-3',
+                    'group relative text-left rounded-lg border bg-card/50 hover:bg-muted/60',
+                    'border-border hover:border-emerald-500/50 transition p-3',
                     selected?.code === p.code && 'border-emerald-500 bg-emerald-950/30',
                   )}
                 >
                   {p.discountLabel && (
                     <Badge className="absolute -top-2 -right-2 bg-amber-500 text-amber-950 border-amber-300 text-[9px] uppercase">{p.discountLabel}</Badge>
                   )}
-                  <div className="text-[11px] uppercase tracking-wider text-zinc-400">{p.label}</div>
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{p.label}</div>
                   <div className="text-xl font-bold text-emerald-300 mt-1">GHS {p.amountGhs.toLocaleString()}</div>
-                  <div className="text-[10px] text-zinc-500 mt-0.5">{p.days} days</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">{p.days} days</div>
                 </button>
               ))}
             </div>
@@ -262,23 +262,23 @@ export function SubscriptionModal() {
                 code slot (amber Activate). Either one bypasses the
                 payment flow entirely — the activation endpoint
                 returns the plan info embedded in the code itself. */}
-            <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3.5">
-              <div className="text-[11px] uppercase tracking-wider text-zinc-400">Step 3 — Enter activation code after payment</div>
+            <div className="space-y-2 rounded-lg border border-border bg-card/40 p-3.5">
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Step 3 — Enter activation code after payment</div>
               <div className="flex gap-2">
                 <Input
                   placeholder="SL-1Y-XXXXXX"
                   value={code}
                   onChange={(e) => setCode(e.target.value.toUpperCase())}
                   onContextMenu={(e) => { e.preventDefault(); pasteIntoInput(setCode) }}
-                  className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                  className="bg-background border-border text-foreground font-mono"
                 />
                 <Button onClick={() => submitActivation(code)} disabled={busy} className="bg-emerald-600 hover:bg-emerald-500 text-white">
                   {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate'}
                 </Button>
               </div>
-              <p className="text-[10px] text-zinc-500">Right-click the box above to paste from clipboard.</p>
+              <p className="text-[10px] text-muted-foreground">Right-click the box above to paste from clipboard.</p>
 
-              <div className="text-[11px] uppercase tracking-wider text-zinc-400 pt-2 border-t border-zinc-800">
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground pt-2 border-t border-border">
                 Or — Enter your generated and master code in here
               </div>
               <div className="flex gap-2">
@@ -287,7 +287,7 @@ export function SubscriptionModal() {
                   value={masterCode}
                   onChange={(e) => setMasterCode(e.target.value.toUpperCase())}
                   onContextMenu={(e) => { e.preventDefault(); pasteIntoInput(setMasterCode) }}
-                  className="bg-zinc-950 border-zinc-800 text-zinc-100 font-mono"
+                  className="bg-background border-border text-foreground font-mono"
                 />
                 <Button onClick={() => submitActivation(masterCode)} disabled={busy} className="bg-amber-600 hover:bg-amber-500 text-white">
                   {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate'}
@@ -303,25 +303,25 @@ export function SubscriptionModal() {
         {phase === 'payment' && selected && (
           <div className="space-y-4">
             {/* Selected plan summary */}
-            <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2.5">
+            <div className="flex items-center justify-between rounded-lg border border-border bg-card/40 px-3 py-2.5">
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-zinc-500">Selected Plan</div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Selected Plan</div>
                 <div className="text-sm font-semibold">{selected.label} — <span className="text-emerald-300">GHS {selected.amountGhs.toLocaleString()}</span></div>
               </div>
-              <Button variant="ghost" size="sm" className="text-[10px] text-zinc-400" onClick={() => { setPhase('plans'); setPayment(null) }}>Change</Button>
+              <Button variant="ghost" size="sm" className="text-[10px] text-muted-foreground" onClick={() => { setPhase('plans'); setPayment(null) }}>Change</Button>
             </div>
 
             {!payment && (
-              <div className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3.5">
-                <div className="text-[11px] uppercase tracking-wider text-zinc-400">Step 1 — Get your payment code</div>
+              <div className="space-y-3 rounded-lg border border-border bg-card/40 p-3.5">
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Step 1 — Get your payment code</div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <Label htmlFor="lic-email" className="text-[10px] uppercase tracking-wider text-zinc-400">Email Address</Label>
-                    <Input id="lic-email" type="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} className="bg-zinc-950 border-zinc-800 text-zinc-100" />
+                    <Label htmlFor="lic-email" className="text-[10px] uppercase tracking-wider text-muted-foreground">Email Address</Label>
+                    <Input id="lic-email" type="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} className="bg-background border-border text-foreground" />
                   </div>
                   <div className="space-y-1">
-                    <Label htmlFor="lic-wa" className="text-[10px] uppercase tracking-wider text-zinc-400">WhatsApp Number</Label>
-                    <Input id="lic-wa" type="tel" placeholder="0244 123 456" value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} className="bg-zinc-950 border-zinc-800 text-zinc-100" />
+                    <Label htmlFor="lic-wa" className="text-[10px] uppercase tracking-wider text-muted-foreground">WhatsApp Number</Label>
+                    <Input id="lic-wa" type="tel" placeholder="0244 123 456" value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} className="bg-background border-border text-foreground" />
                   </div>
                 </div>
                 {error && <div className="text-[11px] text-rose-400 flex items-start gap-1.5"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />{error}</div>}
@@ -336,28 +336,28 @@ export function SubscriptionModal() {
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-[10px] uppercase tracking-wider text-amber-300">Step 2 — Send MoMo Now</div>
-                    <div className="text-[10px] text-zinc-500 mt-0.5">Use the code below as your MoMo reference</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">Use the code below as your MoMo reference</div>
                   </div>
                   <Badge className={cn('font-mono text-xs', expired ? 'bg-rose-500/20 text-rose-300 border-rose-500/40' : 'bg-amber-500/20 text-amber-200 border-amber-500/40')}>
                     {expired ? 'EXPIRED' : `Expires in ${fmtCountdown(msLeft)}`}
                   </Badge>
                 </div>
 
-                <div className="rounded-md bg-zinc-950 border border-zinc-800 p-4 text-center">
-                  <div className="text-[10px] uppercase tracking-widest text-zinc-500">Your Payment Code</div>
+                <div className="rounded-md bg-background border border-border p-4 text-center">
+                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Your Payment Code</div>
                   <div className="mt-1 flex items-center justify-center gap-2">
                     <div className="text-5xl font-bold font-mono tracking-[0.3em] text-emerald-300">{payment.ref}</div>
                     <Button size="icon" variant="ghost" onClick={() => copy(payment.ref)} className="h-9 w-9"><Copy className="h-3.5 w-3.5" /></Button>
                   </div>
-                  <div className="text-[10px] text-zinc-500 mt-2">{payment.planLabel} · GHS {payment.amountGhs.toLocaleString()}</div>
+                  <div className="text-[10px] text-muted-foreground mt-2">{payment.planLabel} · GHS {payment.amountGhs.toLocaleString()}</div>
                 </div>
 
-                <div className="space-y-1.5 text-[12px] text-zinc-200">
-                  <div className="flex items-center gap-2"><Phone className="h-3.5 w-3.5 text-emerald-300" /> <span className="text-zinc-400">Send MoMo to</span></div>
-                  <div className="rounded-md bg-zinc-950 border border-zinc-800 px-3 py-2 flex items-center justify-between">
+                <div className="space-y-1.5 text-[12px] text-foreground">
+                  <div className="flex items-center gap-2"><Phone className="h-3.5 w-3.5 text-emerald-300" /> <span className="text-muted-foreground">Send MoMo to</span></div>
+                  <div className="rounded-md bg-background border border-border px-3 py-2 flex items-center justify-between">
                     <div>
                       <div className="font-semibold">{payment.momoRecipient.name}</div>
-                      <div className="font-mono text-zinc-300">{payment.momoRecipient.number}</div>
+                      <div className="font-mono text-foreground">{payment.momoRecipient.number}</div>
                     </div>
                     <Button size="sm" variant="ghost" onClick={() => copy(payment.momoRecipient.number)}><Copy className="h-3.5 w-3.5" /></Button>
                   </div>
@@ -385,7 +385,7 @@ export function SubscriptionModal() {
                 Customers who already have a code now use the panel
                 in PHASE 1 (plan picker). The "Change" pill above
                 returns them there if they need to enter one mid-pay. */}
-            <p className="text-[10px] text-zinc-500 text-center">
+            <p className="text-[10px] text-muted-foreground text-center">
               Once you receive your activation code by email or WhatsApp, click <span className="font-semibold">Change</span> above to return to the plan picker and enter it there.
             </p>
 
@@ -397,7 +397,7 @@ export function SubscriptionModal() {
         {phase === 'activating' && (
           <div className="py-12 text-center">
             <Loader2 className="h-10 w-10 mx-auto text-emerald-400 animate-spin" />
-            <div className="mt-4 text-sm text-zinc-300">Activating your subscription…</div>
+            <div className="mt-4 text-sm text-foreground">Activating your subscription…</div>
           </div>
         )}
 
@@ -409,14 +409,14 @@ export function SubscriptionModal() {
             </div>
             <div>
               <h3 className="text-lg font-semibold">AI Detection Active</h3>
-              <p className="text-[12px] text-zinc-400 mt-0.5">{receipt.activated.planLabel} · {receipt.activated.days} days</p>
+              <p className="text-[12px] text-muted-foreground mt-0.5">{receipt.activated.planLabel} · {receipt.activated.days} days</p>
             </div>
             <div className="rounded-lg border border-emerald-500/40 bg-emerald-950/20 p-3 text-left text-[11px] font-mono text-emerald-200 whitespace-pre-line">{receipt.receipt.text}</div>
             <div className="flex flex-wrap gap-2 justify-center">
-              <Button size="sm" variant="outline" onClick={() => copy(receipt.receipt.text)} className="border-zinc-700 text-zinc-200"><Copy className="h-3 w-3 mr-1.5" /> Copy receipt</Button>
+              <Button size="sm" variant="outline" onClick={() => copy(receipt.receipt.text)} className="border-border text-foreground"><Copy className="h-3 w-3 mr-1.5" /> Copy receipt</Button>
               {receipt.receipt.whatsappLink && (
                 <a href={receipt.receipt.whatsappLink} target="_blank" rel="noreferrer">
-                  <Button size="sm" variant="outline" className="border-zinc-700 text-zinc-200"><Phone className="h-3 w-3 mr-1.5" /> Send via WhatsApp</Button>
+                  <Button size="sm" variant="outline" className="border-border text-foreground"><Phone className="h-3 w-3 mr-1.5" /> Send via WhatsApp</Button>
                 </a>
               )}
             </div>

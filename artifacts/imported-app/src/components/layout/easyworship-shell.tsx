@@ -125,7 +125,7 @@ function GlobalVolumeControl() {
             'h-7 px-2 text-[11px] gap-1.5 border',
             effectivelyMuted
               ? 'bg-rose-500/15 text-rose-300 border-rose-700 hover:bg-rose-500/25'
-              : 'text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white',
+              : 'text-foreground border-border hover:bg-muted hover:text-foreground',
           )}
           title="Master volume — affects every video on Preview, Live and the second display."
         >
@@ -133,9 +133,9 @@ function GlobalVolumeControl() {
           <span className="tabular-nums">{effectivelyMuted ? 'Muted' : `${pct}%`}</span>
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-[240px] p-3 bg-zinc-950 border-zinc-800">
+      <PopoverContent align="end" className="w-[240px] p-3 bg-background border-border">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+          <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
             Master Volume
           </span>
           <button
@@ -144,7 +144,7 @@ function GlobalVolumeControl() {
               'inline-flex items-center gap-1 px-1.5 h-5 rounded text-[10px] font-semibold',
               globalMuted
                 ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                : 'bg-zinc-800 text-zinc-300 border border-zinc-700 hover:bg-zinc-700',
+                : 'bg-muted text-foreground border border-border hover:bg-muted',
             )}
           >
             {globalMuted ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
@@ -164,12 +164,12 @@ function GlobalVolumeControl() {
           className="w-full accent-sky-500"
           aria-label="Master volume"
         />
-        <div className="flex justify-between mt-1 text-[9px] text-zinc-500 tabular-nums">
+        <div className="flex justify-between mt-1 text-[9px] text-muted-foreground tabular-nums">
           <span>0</span>
           <span>{pct}%</span>
           <span>100</span>
         </div>
-        <p className="mt-2 text-[9px] text-zinc-500 leading-snug">
+        <p className="mt-2 text-[9px] text-muted-foreground leading-snug">
           Controls Preview, Live Display, second display and any media clip.
         </p>
       </PopoverContent>
@@ -243,8 +243,8 @@ function NdiToggleButton() {
         isRunning
           ? 'bg-amber-500/25 text-amber-200 border-amber-500 hover:bg-amber-500/35'
           : unavailable
-            ? 'text-zinc-500 border-zinc-800 hover:bg-zinc-800'
-            : 'text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white',
+            ? 'text-muted-foreground border-border hover:bg-muted'
+            : 'text-foreground border-border hover:bg-muted hover:text-foreground',
       )}
       title={
         isRunning
@@ -574,15 +574,15 @@ export function TopToolbar({
   }, [pushCurrentSlide, desktop])
 
   return (
-    <header className="flex h-12 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-3 shrink-0">
+    <header className="flex h-12 items-center justify-between border-b border-border bg-background px-3 shrink-0">
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
           <div className="h-7 w-7 rounded-full bg-white flex items-center justify-center overflow-hidden shrink-0">
             <Image src="/logo.png" alt="ScriptureLive" width={28} height={28} className="object-contain" style={{ height: 'auto', width: 'auto', maxWidth: 28, maxHeight: 28 }} />
           </div>
           <div className="leading-tight">
-            <h1 className="text-xs font-bold text-zinc-100 tracking-tight">ScriptureLive AI</h1>
-            <p className="text-[9px] text-zinc-500 tracking-wide">Powered by WassMedia (+233246798526)</p>
+            <h1 className="text-xs font-bold text-foreground tracking-tight">ScriptureLive AI</h1>
+            <p className="text-[9px] text-muted-foreground tracking-wide">Powered by WassMedia (+233246798526)</p>
           </div>
         </div>
         {/* v0.5.44 — Activate / Trial / Active pill lives here, just
@@ -620,7 +620,7 @@ export function TopToolbar({
         )}
 
         <Select value={selectedTranslation} onValueChange={(v) => setSelectedTranslation(v)}>
-          <SelectTrigger className="w-[100px] h-7 text-[11px] bg-zinc-900 border-zinc-800 text-zinc-200">
+          <SelectTrigger className="w-[100px] h-7 text-[11px] bg-card border-border text-foreground">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -641,13 +641,13 @@ export function TopToolbar({
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 px-2 text-[11px] gap-1.5 border text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white max-w-[160px]"
+              className="h-7 px-2 text-[11px] gap-1.5 border text-foreground border-border hover:bg-muted hover:text-foreground max-w-[160px]"
               title="Choose which connected microphone to use for live transcription."
             >
               <Mic
                 className={cn(
                   'h-3 w-3 shrink-0 transition-colors',
-                  micLevel > 0.04 ? 'text-emerald-400' : 'text-zinc-400',
+                  micLevel > 0.04 ? 'text-emerald-400' : 'text-muted-foreground',
                 )}
               />
               <span className="truncate">
@@ -694,14 +694,14 @@ export function TopToolbar({
               <ChevronDown className="h-3 w-3 opacity-60 shrink-0" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent align="end" className="w-[280px] p-1 bg-zinc-950 border-zinc-800">
+          <PopoverContent align="end" className="w-[280px] p-1 bg-background border-border">
             <div className="flex items-center justify-between px-2 py-1.5">
-              <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+              <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
                 Microphone
               </span>
               <button
                 onClick={refreshMicrophones}
-                className="text-zinc-500 hover:text-zinc-200 p-0.5"
+                className="text-muted-foreground hover:text-foreground p-0.5"
                 title="Refresh microphone list"
               >
                 <RefreshCw className="h-3 w-3" />
@@ -726,14 +726,14 @@ export function TopToolbar({
               }}
               className={cn(
                 'w-full text-left px-2 py-1.5 text-xs rounded flex items-center gap-2',
-                selectedMicrophoneId === null ? 'bg-sky-500/15 text-sky-200' : 'text-zinc-200 hover:bg-zinc-800',
+                selectedMicrophoneId === null ? 'bg-sky-500/15 text-sky-200' : 'text-foreground hover:bg-muted',
               )}
             >
-              <Mic className="h-3.5 w-3.5 text-zinc-500" />
+              <Mic className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="flex-1 truncate">System default</span>
             </button>
             {microphones.length === 0 ? (
-              <div className="px-2 py-2 text-[10px] text-zinc-500">
+              <div className="px-2 py-2 text-[10px] text-muted-foreground">
                 No microphones detected.
               </div>
             ) : (
@@ -749,10 +749,10 @@ export function TopToolbar({
                     'w-full text-left px-2 py-1.5 text-xs rounded flex items-center gap-2',
                     selectedMicrophoneId === d.deviceId
                       ? 'bg-sky-500/15 text-sky-200'
-                      : 'text-zinc-200 hover:bg-zinc-800',
+                      : 'text-foreground hover:bg-muted',
                   )}
                 >
-                  <Mic className="h-3.5 w-3.5 text-zinc-500" />
+                  <Mic className="h-3.5 w-3.5 text-muted-foreground" />
                   <span className="flex-1 truncate">{d.label || `Microphone ${i + 1}`}</span>
                 </button>
               ))
@@ -784,7 +784,7 @@ export function TopToolbar({
                 'h-7 px-2 text-[11px] gap-1.5 border',
                 outputActive
                   ? 'bg-emerald-600/20 text-emerald-300 border-emerald-700 hover:bg-emerald-600/30'
-                  : 'text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white',
+                  : 'text-foreground border-border hover:bg-muted hover:text-foreground',
               )}
               title="Pick which monitor / TV to send the live output to."
             >
@@ -793,7 +793,7 @@ export function TopToolbar({
               <ChevronDown className="h-3 w-3 opacity-60" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent align="end" className="w-[320px] p-1 bg-zinc-950 border-zinc-800">
+          <PopoverContent align="end" className="w-[320px] p-1 bg-background border-border">
             {/* Disconnect: instantly blanks the secondary screen and
                 stops broadcasting until the operator re-enables output.
                 Operators asked for a one-click "kill the second screen"
@@ -812,7 +812,7 @@ export function TopToolbar({
               </button>
             )}
             <div className="flex items-center justify-between px-2 py-1.5">
-              <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+              <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
                 Choose output screen
               </span>
               {desktop?.output?.listDisplays && (
@@ -848,16 +848,16 @@ export function TopToolbar({
                   openOnScreen({ displayId: d.id })
                   setOutputMenuOpen(false)
                 }}
-                className="w-full text-left px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 rounded flex items-center gap-2"
+                className="w-full text-left px-2 py-1.5 text-xs text-foreground hover:bg-muted rounded flex items-center gap-2"
               >
-                <MonitorPlay className="h-3.5 w-3.5 text-zinc-500" />
+                <MonitorPlay className="h-3.5 w-3.5 text-muted-foreground" />
                 <span className="flex-1 truncate">{d.label}</span>
                 {d.primary && (
-                  <Badge className="h-4 px-1 text-[8px] bg-zinc-800 text-zinc-400 border-0">
+                  <Badge className="h-4 px-1 text-[8px] bg-muted text-muted-foreground border-0">
                     MAIN
                   </Badge>
                 )}
-                <span className="text-[9px] text-zinc-500 tabular-nums">{d.width}×{d.height}</span>
+                <span className="text-[9px] text-muted-foreground tabular-nums">{d.width}×{d.height}</span>
               </button>
             ))}
 
@@ -869,21 +869,21 @@ export function TopToolbar({
                   openOnScreen({ browserScreen: s })
                   setOutputMenuOpen(false)
                 }}
-                className="w-full text-left px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 rounded flex items-center gap-2"
+                className="w-full text-left px-2 py-1.5 text-xs text-foreground hover:bg-muted rounded flex items-center gap-2"
               >
-                <MonitorPlay className="h-3.5 w-3.5 text-zinc-500" />
+                <MonitorPlay className="h-3.5 w-3.5 text-muted-foreground" />
                 <span className="flex-1 truncate">{s.label}</span>
                 {s.primary && (
-                  <Badge className="h-4 px-1 text-[8px] bg-zinc-800 text-zinc-400 border-0">
+                  <Badge className="h-4 px-1 text-[8px] bg-muted text-muted-foreground border-0">
                     MAIN
                   </Badge>
                 )}
-                <span className="text-[9px] text-zinc-500 tabular-nums">{s.width}×{s.height}</span>
+                <span className="text-[9px] text-muted-foreground tabular-nums">{s.width}×{s.height}</span>
               </button>
             ))}
 
             {displays.length === 0 && browserScreens.length === 0 && screenPermission === 'granted' && (
-              <div className="px-2 py-2 mb-1 rounded bg-zinc-900/60 border border-zinc-800 text-[10px] text-zinc-400">
+              <div className="px-2 py-2 mb-1 rounded bg-card/60 border border-border text-[10px] text-muted-foreground">
                 Only one monitor detected. Connect a second display via
                 HDMI / DisplayPort and it will appear here automatically.
               </div>
@@ -906,13 +906,13 @@ export function TopToolbar({
               </div>
             )}
 
-            <div className="border-t border-zinc-800 mt-1 pt-1">
+            <div className="border-t border-border mt-1 pt-1">
               <button
                 onClick={() => {
                   openOnScreen()
                   setOutputMenuOpen(false)
                 }}
-                className="w-full text-left px-2 py-1.5 text-[10px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 rounded flex items-center gap-2"
+                className="w-full text-left px-2 py-1.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground rounded flex items-center gap-2"
                 title="Manual fallback: open the output as a draggable window."
               >
                 <ExternalLink className="h-3 w-3" />
@@ -936,7 +936,7 @@ export function TopToolbar({
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 px-2 text-[11px] gap-1.5 border text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white"
+              className="h-7 px-2 text-[11px] gap-1.5 border text-foreground border-border hover:bg-muted hover:text-foreground"
               title="Switch the live output between Full Screen and Lower Third overlay. Applies to both the secondary screen and NDI."
             >
               <MonitorPlay className="h-3 w-3" />
@@ -948,8 +948,8 @@ export function TopToolbar({
               <ChevronDown className="h-3 w-3 opacity-60" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent align="end" className="w-[260px] p-1 bg-zinc-950 border-zinc-800">
-            <div className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">
+          <PopoverContent align="end" className="w-[260px] p-1 bg-background border-border">
+            <div className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
               Output Display Mode
             </div>
             {[
@@ -969,18 +969,18 @@ export function TopToolbar({
                     'w-full text-left px-2 py-1.5 rounded text-[11px] flex items-start gap-2 transition-colors',
                     active
                       ? 'bg-sky-500/15 text-sky-200 ring-1 ring-sky-500/40'
-                      : 'text-zinc-300 hover:bg-zinc-800',
+                      : 'text-foreground hover:bg-muted',
                   )}
                 >
                   <span
                     className={cn(
                       'mt-0.5 inline-block h-1.5 w-1.5 rounded-full',
-                      active ? 'bg-sky-400' : 'bg-zinc-600',
+                      active ? 'bg-sky-400' : 'bg-muted-foreground/40',
                     )}
                   />
                   <span className="flex-1">
                     <span className="block font-medium">{opt.label}</span>
-                    <span className="block text-[10px] text-zinc-500">{opt.sub}</span>
+                    <span className="block text-[10px] text-muted-foreground">{opt.sub}</span>
                   </span>
                 </button>
               )
@@ -1003,7 +1003,7 @@ export function TopToolbar({
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 px-2 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-white gap-1"
+          className="h-7 px-2 text-[11px] text-foreground hover:bg-muted hover:text-foreground gap-1"
           onClick={() => setCurrentView('settings')}
         >
           <SettingsIcon className="h-3 w-3" />
@@ -1021,9 +1021,9 @@ function LibraryPanel() {
   const { activeLibraryTab, setActiveLibraryTab } = useAppStore()
 
   return (
-    <aside className="w-[320px] shrink-0 border-r border-zinc-800 bg-zinc-950 flex flex-col">
-      <div className="px-2 pt-2 pb-1 border-b border-zinc-800">
-        <p className="text-[9px] uppercase tracking-widest text-zinc-500 px-1.5 pb-1.5">Library</p>
+    <aside className="w-[320px] shrink-0 border-r border-border bg-background flex flex-col">
+      <div className="px-2 pt-2 pb-1 border-b border-border">
+        <p className="text-[9px] uppercase tracking-widest text-muted-foreground px-1.5 pb-1.5">Library</p>
         <div className="grid grid-cols-3 gap-1">
           {LIBRARY_TABS.map((tab) => {
             const Icon = tab.icon
@@ -1036,7 +1036,7 @@ function LibraryPanel() {
                   'flex flex-col items-center justify-center gap-0.5 rounded px-1 py-2 text-[10px] font-medium transition-colors',
                   active
                     ? 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30'
-                    : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200',
+                    : 'text-muted-foreground hover:bg-card hover:text-foreground',
                 )}
               >
                 <Icon className="h-3.5 w-3.5" />
@@ -1046,7 +1046,7 @@ function LibraryPanel() {
           })}
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto bg-zinc-900/30">
+      <div className="flex-1 overflow-y-auto bg-card/30">
         <LibraryPanelContent tab={activeLibraryTab} />
       </div>
     </aside>
@@ -1081,23 +1081,23 @@ function SchedulePanel() {
       case 'song': return 'bg-purple-500/15 text-purple-300 border-purple-700/40'
       case 'sermon': return 'bg-amber-500/15 text-amber-300 border-amber-700/40'
       case 'announcement': return 'bg-pink-500/15 text-pink-300 border-pink-700/40'
-      default: return 'bg-zinc-700/30 text-zinc-300 border-zinc-700'
+      default: return 'bg-muted/30 text-foreground border-border'
     }
   }
 
   return (
-    <div className="flex flex-col h-full bg-zinc-900/40 border-r border-zinc-800">
-      <div className="flex items-center justify-between px-3 h-9 border-b border-zinc-800 shrink-0 bg-zinc-950/50">
+    <div className="flex flex-col h-full bg-card/40 border-r border-border">
+      <div className="flex items-center justify-between px-3 h-9 border-b border-border shrink-0 bg-background/50">
         <div className="flex items-center gap-1.5">
-          <span className="text-[9px] uppercase tracking-widest text-zinc-500 font-semibold">Schedule</span>
-          <Badge variant="outline" className="text-[9px] h-4 px-1 border-zinc-700 text-zinc-400">
+          <span className="text-[9px] uppercase tracking-widest text-muted-foreground font-semibold">Schedule</span>
+          <Badge variant="outline" className="text-[9px] h-4 px-1 border-border text-muted-foreground">
             {schedule.length}
           </Badge>
         </div>
         <Button
           variant="ghost"
           size="sm"
-          className="h-6 px-1.5 text-[10px] text-zinc-400 hover:text-white hover:bg-zinc-800 gap-1"
+          className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted gap-1"
           onClick={() => setActiveLibraryTab('bible')}
         >
           <Plus className="h-3 w-3" /> Add from Library
@@ -1108,9 +1108,9 @@ function SchedulePanel() {
         {schedule.length === 0 ? (
           <div className="p-6 text-center">
             <div className="text-3xl mb-2 opacity-30">▶</div>
-            <h3 className="text-xs font-semibold text-zinc-300 mb-1">Schedule is empty</h3>
-            <p className="text-[10px] text-zinc-500 max-w-[200px] mx-auto leading-relaxed">
-              Use the <strong className="text-zinc-300">Library</strong> on the left to look up scriptures, add songs,
+            <h3 className="text-xs font-semibold text-foreground mb-1">Schedule is empty</h3>
+            <p className="text-[10px] text-muted-foreground max-w-[200px] mx-auto leading-relaxed">
+              Use the <strong className="text-foreground">Library</strong> on the left to look up scriptures, add songs,
               or generate slides. Then send them to the schedule.
             </p>
           </div>
@@ -1125,7 +1125,7 @@ function SchedulePanel() {
                     'group flex items-stretch rounded border transition-colors',
                     selected
                       ? 'bg-amber-500/10 border-amber-500/40'
-                      : 'bg-zinc-900/60 border-zinc-800 hover:bg-zinc-800/60 hover:border-zinc-700',
+                      : 'bg-card/60 border-border hover:bg-muted/60 hover:border-border',
                   )}
                 >
                   <button
@@ -1145,11 +1145,11 @@ function SchedulePanel() {
                     }}
                     className="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 text-left"
                   >
-                    <GripVertical className="h-3 w-3 text-zinc-600 shrink-0" />
+                    <GripVertical className="h-3 w-3 text-muted-foreground shrink-0" />
                     <div
                       className={cn(
                         'flex h-6 w-6 shrink-0 items-center justify-center rounded text-[10px] font-bold',
-                        selected ? 'bg-amber-500 text-black' : 'bg-zinc-800 text-zinc-400',
+                        selected ? 'bg-amber-500 text-black' : 'bg-muted text-muted-foreground',
                       )}
                     >
                       {i + 1}
@@ -1164,21 +1164,21 @@ function SchedulePanel() {
                         >
                           {itemTypeLabel(item.type)}
                         </Badge>
-                        <span className="text-[10px] text-zinc-500">{item.slides.length} slides</span>
+                        <span className="text-[10px] text-muted-foreground">{item.slides.length} slides</span>
                       </div>
-                      <p className={cn('text-xs truncate mt-0.5', selected ? 'text-white font-semibold' : 'text-zinc-200')}>
+                      <p className={cn('text-xs truncate mt-0.5', selected ? 'text-white font-semibold' : 'text-foreground')}>
                         {item.title}
                       </p>
                       {item.subtitle && (
-                        <p className="text-[10px] text-zinc-500 truncate">{item.subtitle}</p>
+                        <p className="text-[10px] text-muted-foreground truncate">{item.subtitle}</p>
                       )}
                     </div>
                   </button>
-                  <div className="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity border-l border-zinc-800">
+                  <div className="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity border-l border-border">
                     <button
                       onClick={() => moveScheduleItem(item.id, 'up')}
                       disabled={i === 0}
-                      className="flex-1 px-1 hover:bg-zinc-800 text-zinc-400 hover:text-white disabled:opacity-30"
+                      className="flex-1 px-1 hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-30"
                       aria-label="Move up"
                     >
                       <ChevronUp className="h-2.5 w-2.5" />
@@ -1186,7 +1186,7 @@ function SchedulePanel() {
                     <button
                       onClick={() => moveScheduleItem(item.id, 'down')}
                       disabled={i === schedule.length - 1}
-                      className="flex-1 px-1 hover:bg-zinc-800 text-zinc-400 hover:text-white disabled:opacity-30"
+                      className="flex-1 px-1 hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-30"
                       aria-label="Move down"
                     >
                       <ChevronDown className="h-2.5 w-2.5" />
@@ -1194,7 +1194,7 @@ function SchedulePanel() {
                   </div>
                   <button
                     onClick={() => removeScheduleItem(item.id)}
-                    className="px-1.5 opacity-0 group-hover:opacity-100 hover:bg-red-600/20 text-zinc-500 hover:text-red-400 border-l border-zinc-800 transition-opacity"
+                    className="px-1.5 opacity-0 group-hover:opacity-100 hover:bg-red-600/20 text-muted-foreground hover:text-red-400 border-l border-border transition-opacity"
                     aria-label="Remove"
                   >
                     <X className="h-3 w-3" />
@@ -1226,16 +1226,16 @@ function SlidesPanel() {
   const currentItem = schedule.find((s) => s.id === selectedScheduleItemId)
 
   return (
-    <div className="flex flex-col h-full bg-zinc-950 border-r border-zinc-800">
-      <div className="flex items-center justify-between px-3 h-9 border-b border-zinc-800 shrink-0 bg-zinc-950/50">
+    <div className="flex flex-col h-full bg-background border-r border-border">
+      <div className="flex items-center justify-between px-3 h-9 border-b border-border shrink-0 bg-background/50">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-[9px] uppercase tracking-widest text-zinc-500 font-semibold">Slides</span>
+          <span className="text-[9px] uppercase tracking-widest text-muted-foreground font-semibold">Slides</span>
           {currentItem && (
-            <span className="text-xs text-zinc-300 truncate">· {currentItem.title}</span>
+            <span className="text-xs text-foreground truncate">· {currentItem.title}</span>
           )}
         </div>
         {slides.length > 0 && (
-          <Badge variant="outline" className="text-[9px] h-4 px-1 border-zinc-700 text-zinc-400">
+          <Badge variant="outline" className="text-[9px] h-4 px-1 border-border text-muted-foreground">
             {slides.length}
           </Badge>
         )}
@@ -1246,10 +1246,10 @@ function SlidesPanel() {
           <div className="p-6 text-center">
             <div className="grid grid-cols-2 gap-2 max-w-[140px] mx-auto opacity-20 mb-3">
               {[0, 1, 2, 3].map((i) => (
-                <div key={i} className="aspect-video bg-zinc-700 rounded" />
+                <div key={i} className="aspect-video bg-muted rounded" />
               ))}
             </div>
-            <p className="text-[10px] text-zinc-500 max-w-[220px] mx-auto leading-relaxed">
+            <p className="text-[10px] text-muted-foreground max-w-[220px] mx-auto leading-relaxed">
               Select a schedule item to see its slides — or add something from the Library to get started.
             </p>
           </div>
@@ -1284,12 +1284,12 @@ function SlidesPanel() {
                         ? 'text-red-400 font-bold'
                         : previewSlideIndex === i
                           ? 'text-amber-400 font-bold'
-                          : 'text-zinc-500',
+                          : 'text-muted-foreground',
                     )}
                   >
                     {String(i + 1).padStart(2, '0')}
                   </span>
-                  <span className="text-[9px] text-zinc-600 truncate flex-1 text-right">
+                  <span className="text-[9px] text-muted-foreground truncate flex-1 text-right">
                     {slide.type}
                   </span>
                 </div>
@@ -1318,15 +1318,15 @@ function OutputPanel() {
   const liveSlide = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
 
   return (
-    <aside className="w-[400px] shrink-0 bg-zinc-950 flex flex-col">
+    <aside className="w-[400px] shrink-0 bg-background flex flex-col">
       {/* Preview window */}
-      <div className="flex flex-col flex-1 min-h-0 border-b border-zinc-800">
-        <div className="flex items-center justify-between px-3 h-9 border-b border-zinc-800 shrink-0 bg-zinc-950/50">
+      <div className="flex flex-col flex-1 min-h-0 border-b border-border">
+        <div className="flex items-center justify-between px-3 h-9 border-b border-border shrink-0 bg-background/50">
           <div className="flex items-center gap-2">
             <div className="h-2 w-2 rounded-full bg-amber-500" />
             <span className="text-[10px] uppercase tracking-widest text-amber-400 font-bold">Preview</span>
             {previewSlide && (
-              <span className="text-[10px] text-zinc-500">
+              <span className="text-[10px] text-muted-foreground">
                 {previewSlideIndex + 1} / {slides.length}
               </span>
             )}
@@ -1335,7 +1335,7 @@ function OutputPanel() {
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6 text-zinc-400 hover:text-white hover:bg-zinc-800"
+              className="h-6 w-6 text-muted-foreground hover:text-foreground hover:bg-muted"
               onClick={() => setPreviewSlideIndex(Math.max(0, previewSlideIndex - 1))}
               disabled={!slides.length || previewSlideIndex === 0}
             >
@@ -1344,7 +1344,7 @@ function OutputPanel() {
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6 text-zinc-400 hover:text-white hover:bg-zinc-800"
+              className="h-6 w-6 text-muted-foreground hover:text-foreground hover:bg-muted"
               onClick={() => setPreviewSlideIndex(Math.min(slides.length - 1, previewSlideIndex + 1))}
               disabled={!slides.length || previewSlideIndex >= slides.length - 1}
             >
@@ -1363,21 +1363,21 @@ function OutputPanel() {
               />
             </div>
           ) : (
-            <p className="text-[11px] text-zinc-600">No preview slide</p>
+            <p className="text-[11px] text-muted-foreground">No preview slide</p>
           )}
         </div>
       </div>
 
       {/* Live window */}
       <div className="flex flex-col flex-1 min-h-0">
-        <div className="flex items-center justify-between px-3 h-9 border-b border-zinc-800 shrink-0 bg-zinc-950/50">
+        <div className="flex items-center justify-between px-3 h-9 border-b border-border shrink-0 bg-background/50">
           <div className="flex items-center gap-2">
-            <div className={cn('h-2 w-2 rounded-full', liveSlide ? 'bg-red-500 animate-pulse' : 'bg-zinc-700')} />
-            <span className={cn('text-[10px] uppercase tracking-widest font-bold', liveSlide ? 'text-red-500' : 'text-zinc-500')}>
+            <div className={cn('h-2 w-2 rounded-full', liveSlide ? 'bg-red-500 animate-pulse' : 'bg-muted')} />
+            <span className={cn('text-[10px] uppercase tracking-widest font-bold', liveSlide ? 'text-red-500' : 'text-muted-foreground')}>
               Live Output
             </span>
             {liveSlide && (
-              <span className="text-[10px] text-zinc-500">
+              <span className="text-[10px] text-muted-foreground">
                 {liveSlideIndex + 1} / {slides.length}
               </span>
             )}
@@ -1400,8 +1400,8 @@ function OutputPanel() {
             </div>
           ) : (
             <div className="text-center">
-              <CircleSlash className="h-8 w-8 text-zinc-700 mx-auto mb-1" />
-              <p className="text-[11px] text-zinc-600">Output is dark</p>
+              <CircleSlash className="h-8 w-8 text-muted-foreground/60 mx-auto mb-1" />
+              <p className="text-[11px] text-muted-foreground">Output is dark</p>
             </div>
           )}
         </div>
@@ -1440,7 +1440,7 @@ export function TransportBar({
   }
 
   return (
-    <div className="flex items-center justify-between gap-3 px-3 h-14 border-t border-zinc-800 bg-zinc-950 shrink-0">
+    <div className="flex items-center justify-between gap-3 px-3 h-14 border-t border-border bg-background shrink-0">
       <div className="flex items-center gap-1.5">
         <Button
           onClick={onGoLiveToggle}
@@ -1464,7 +1464,7 @@ export function TransportBar({
           onClick={onClearLive}
           disabled={liveSlideIndex < 0 && !isLive}
           variant="ghost"
-          className="h-10 px-3 text-xs uppercase tracking-wider gap-1.5 text-zinc-300 hover:bg-zinc-800 hover:text-white border border-zinc-800"
+          className="h-10 px-3 text-xs uppercase tracking-wider gap-1.5 text-foreground hover:bg-muted hover:text-foreground border border-border"
         >
           <Square className="h-3.5 w-3.5" />
           Clear
@@ -1473,7 +1473,7 @@ export function TransportBar({
         <Button
           onClick={onBlack}
           variant="ghost"
-          className="h-10 px-3 text-xs uppercase tracking-wider gap-1.5 text-zinc-300 hover:bg-zinc-800 hover:text-white border border-zinc-800"
+          className="h-10 px-3 text-xs uppercase tracking-wider gap-1.5 text-foreground hover:bg-muted hover:text-foreground border border-border"
         >
           <CircleSlash className="h-3.5 w-3.5" />
           Black
@@ -1482,7 +1482,7 @@ export function TransportBar({
         <Button
           onClick={onLogo}
           variant="ghost"
-          className="h-10 px-3 text-xs uppercase tracking-wider gap-1.5 text-zinc-300 hover:bg-zinc-800 hover:text-white border border-zinc-800"
+          className="h-10 px-3 text-xs uppercase tracking-wider gap-1.5 text-foreground hover:bg-muted hover:text-foreground border border-border"
         >
           <LogoIcon className="h-3.5 w-3.5" />
           Logo
@@ -1490,28 +1490,28 @@ export function TransportBar({
       </div>
 
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-1.5 text-zinc-400">
+        <div className="flex items-center gap-1.5 text-muted-foreground">
           <Clock className="h-3 w-3" />
           <span className="text-xs font-mono tabular-nums">{formatTime(elapsedTime)}</span>
         </div>
 
-        <div className="h-6 w-px bg-zinc-800" />
+        <div className="h-6 w-px bg-muted" />
 
         <div className="flex items-center gap-1.5">
           <Radio
             className={cn(
               'h-3 w-3',
-              outputActive ? 'text-emerald-400' : 'text-zinc-600',
+              outputActive ? 'text-emerald-400' : 'text-muted-foreground',
             )}
           />
-          <span className={cn('text-[10px] uppercase font-bold tracking-wider', outputActive ? 'text-emerald-400' : 'text-zinc-600')}>
+          <span className={cn('text-[10px] uppercase font-bold tracking-wider', outputActive ? 'text-emerald-400' : 'text-muted-foreground')}>
             {outputActive ? 'NDI / Output Active' : 'Output Idle'}
           </span>
         </div>
 
-        <div className="h-6 w-px bg-zinc-800" />
+        <div className="h-6 w-px bg-muted" />
 
-        <span className="text-[10px] text-zinc-500 uppercase tracking-wider">
+        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
           {settings.displayMode === 'full' ? 'Full Screen' : 'Lower Third'}
         </span>
       </div>
@@ -1686,7 +1686,7 @@ export function EasyWorshipShell() {
   }, [previewSlideIndex, slides.length, goLive, clearLive, goBlack, setPreviewSlideIndex])
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-black text-zinc-100 dark">
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-black text-foreground dark">
       <TopToolbar outputActive={outputActive} toggleOutput={toggleOutput} />
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <LibraryPanel />
