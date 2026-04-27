@@ -172,6 +172,13 @@ export function SubscriptionModal() {
     setError(null)
     const trimmed = (override ?? code).trim()
     if (!trimmed) { setError('Enter the activation code first.'); return }
+    // v0.6.1 — Remember which phase the operator was on BEFORE the
+    // 'activating' transition. Originally the catch branch always
+    // fell back to 'payment', which meant a failed activation from
+    // PHASE 1 (no plan picked) would leave the modal blank because
+    // PHASE 2's render is gated by `phase === 'payment' && selected`.
+    // Now we return to whichever phase the user actually came from.
+    const originPhase: Phase = selected ? 'payment' : 'plans'
     setBusy(true); setPhase('activating')
     try {
       const r = await fetch('/api/license/activate', {
@@ -186,7 +193,7 @@ export function SubscriptionModal() {
       await refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
-      setPhase('payment')
+      setPhase(originPhase)
     } finally { setBusy(false) }
   }
 
