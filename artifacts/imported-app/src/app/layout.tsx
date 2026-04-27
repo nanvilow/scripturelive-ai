@@ -3,6 +3,7 @@ import "./globals.css";
 import { PathAwareToaster } from "@/components/ui/path-aware-toaster";
 import { GoogleFontsLink } from "@/components/google-fonts-link";
 import { UpdateBanner } from "@/components/update-banner";
+import { ThemeProvider } from "@/components/providers/theme-provider";
 
 // NOTE: We intentionally do NOT use next/font/google here. The Electron
 // desktop build runs `next build` on the operator's machine which often
@@ -45,7 +46,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
+    // v0.6.0 — `dark` class is no longer hard-coded. The ThemeProvider
+    // (next-themes) injects it on the <html> element after hydration
+    // based on the operator's saved preference (default: dark, so
+    // long-time users see no change on first install).
+    <html lang="en" suppressHydrationWarning>
       <head>
         {/* Preconnect hints are static so they're safe in SSR head.
             The actual Google Fonts <link> is added client-side by
@@ -57,13 +62,15 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
-        <GoogleFontsLink />
-        {children}
-        <UpdateBanner />
-        {/* Toasts are suppressed on /congregation, /presenter, and the
-            NDI fan-out so display/output actions never appear on the
-            audience screen. The operator console still sees toasts. */}
-        <PathAwareToaster />
+        <ThemeProvider>
+          <GoogleFontsLink />
+          {children}
+          <UpdateBanner />
+          {/* Toasts are suppressed on /congregation, /presenter, and the
+              NDI fan-out so display/output actions never appear on the
+              audience screen. The operator console still sees toasts. */}
+          <PathAwareToaster />
+        </ThemeProvider>
       </body>
     </html>
   );

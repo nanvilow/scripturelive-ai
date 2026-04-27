@@ -310,12 +310,16 @@ export function SubscriptionModal() {
                     </div>
                     <Button size="sm" variant="ghost" onClick={() => copy(payment.momoRecipient.number)}><Copy className="h-3.5 w-3.5" /></Button>
                   </div>
-                  {/* v0.5.53 — Operator-requested NOTE under the MoMo number. */}
+                  {/* v0.6.0 — Operator updated the NOTE wording: now
+                      includes a WhatsApp escalation channel and an
+                      explicit instruction to send a payment-proof
+                      screenshot for verification. */}
                   <div className="rounded-md border border-emerald-500/30 bg-emerald-950/20 px-3 py-2 text-[11px] text-emerald-200/90 leading-relaxed">
                     <span className="font-semibold uppercase tracking-wider text-[10px] text-emerald-300">NOTE:</span>{' '}
                     Make sure the recipient name shows as <span className="font-semibold">{payment.momoRecipient.name}</span> before
-                    you confirm the MoMo transaction. If the name is different, STOP and contact support — your funds may be
-                    sent to the wrong account.
+                    you confirm the MoMo transaction. If the name is different, STOP and contact support on
+                    {' '}<span className="font-semibold">WhatsApp (0246798526)</span> — your funds may be sent to the wrong account.{' '}
+                    <span className="font-semibold uppercase tracking-wider text-[10px] text-emerald-300">SEND A SCREENSHOT TO &quot;0246798526&quot; on WhatsApp for payment proof.</span>
                   </div>
                 </div>
 

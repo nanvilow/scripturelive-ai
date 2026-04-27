@@ -23,6 +23,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { findPlan } from '@/lib/licensing/plans'
 import { generateStandaloneActivation } from '@/lib/licensing/storage'
+import { partsToDays } from '@/lib/format-duration'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -30,6 +31,13 @@ export const dynamic = 'force-dynamic'
 interface Body {
   planCode?: string
   days?: number
+  // v0.6.0 — optional sub-day granularity. Server adds these into the
+  // days field via partsToDays() (rounds UP so a "1 hour" code still
+  // gets a full day on the integer-days storage path). The activation
+  // record still records the rounded days for backwards compatibility
+  // with admin lists / CSV exports built before v0.6.
+  hours?: number
+  minutes?: number
   note?: string
   email?: string
   whatsapp?: string
@@ -49,19 +57,50 @@ export async function POST(req: NextRequest) {
     return bad(`Unknown planCode "${planCode}". Use one of the published plans or 'CUSTOM'.`)
   }
 
-  // Days validation. CUSTOM requires explicit days; standard plans
-  // accept an optional override (e.g. give a 1M plan 45 days as a
-  // goodwill bump).
+  // Days validation. CUSTOM requires explicit duration; standard
+  // plans accept an optional override (e.g. give a 1M plan 45 days
+  // as a goodwill bump).
   let days: number | undefined
   if (body.days != null) {
     const n = Math.floor(Number(body.days))
-    if (!Number.isFinite(n) || n < 1 || n > 36500) {
-      return bad('days must be an integer between 1 and 36500')
+    if (!Number.isFinite(n) || n < 0 || n > 36500) {
+      return bad('days must be an integer between 0 and 36500')
     }
-    days = n
+    if (n > 0) days = n
+  }
+
+  // v0.6.0 — fold optional hours / minutes into the days total. The
+  // operator can pass any combo (3 days + 4 hours + 30 min, or just
+  // 6 hours, etc). partsToDays rounds UP to satisfy the integer-day
+  // contract on the existing storage path.
+  let hours = 0
+  let minutes = 0
+  if (body.hours != null) {
+    const n = Math.floor(Number(body.hours))
+    if (!Number.isFinite(n) || n < 0 || n > 23) {
+      return bad('hours must be an integer between 0 and 23')
+    }
+    hours = n
+  }
+  if (body.minutes != null) {
+    const n = Math.floor(Number(body.minutes))
+    if (!Number.isFinite(n) || n < 0 || n > 59) {
+      return bad('minutes must be an integer between 0 and 59')
+    }
+    minutes = n
+  }
+  if (hours > 0 || minutes > 0) {
+    // Combine ALL three parts into a single total day count so a
+    // request like {days:0, hours:6} becomes 1 day (rounded up) and
+    // {days:3, hours:4, minutes:30} becomes 4 days. We never
+    // *shrink* a value the operator typed.
+    days = partsToDays(days ?? 0, hours, minutes)
+  }
+  if (days != null && (days < 1 || days > 36500)) {
+    return bad('total duration must round to between 1 and 36500 days')
   }
   if (isCustom && days == null) {
-    return bad("CUSTOM plan requires explicit 'days' (1–36500)")
+    return bad("CUSTOM plan requires explicit duration (days / hours / minutes)")
   }
 
   try {

@@ -45,41 +45,46 @@
   --color-gold-foreground: var(--gold-foreground);
 }
 
+/* v0.6.0 — :root now defines the LIGHT theme. Dark theme is in
+   .dark below and gets activated by next-themes flipping the html
+   element's `class`. We keep the brand gold/blue accent steady
+   across both themes (just darkened slightly in light mode for
+   contrast against the white surfaces). */
 :root {
   --radius: 0.625rem;
-  --background: oklch(0.12 0.005 260);
-  --foreground: oklch(0.95 0 0);
-  --card: oklch(0.16 0.005 260);
-  --card-foreground: oklch(0.95 0 0);
-  --popover: oklch(0.18 0.005 260);
-  --popover-foreground: oklch(0.95 0 0);
-  --primary: oklch(0.75 0.15 75);
-  --primary-foreground: oklch(0.12 0.005 260);
-  --secondary: oklch(0.22 0.008 260);
-  --secondary-foreground: oklch(0.90 0 0);
-  --muted: oklch(0.22 0.008 260);
-  --muted-foreground: oklch(0.65 0.01 260);
-  --accent: oklch(0.25 0.01 75);
-  --accent-foreground: oklch(0.95 0 0);
-  --destructive: oklch(0.65 0.2 25);
-  --border: oklch(1 0 0 / 8%);
-  --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.75 0.15 75);
-  --chart-1: oklch(0.75 0.15 75);
-  --chart-2: oklch(0.65 0.12 160);
-  --chart-3: oklch(0.70 0.14 45);
-  --chart-4: oklch(0.60 0.18 280);
-  --chart-5: oklch(0.72 0.16 340);
-  --sidebar: oklch(0.10 0.005 260);
-  --sidebar-foreground: oklch(0.95 0 0);
-  --sidebar-primary: oklch(0.75 0.15 75);
-  --sidebar-primary-foreground: oklch(0.12 0.005 260);
-  --sidebar-accent: oklch(0.20 0.01 260);
-  --sidebar-accent-foreground: oklch(0.95 0 0);
-  --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.75 0.15 75);
-  --gold: oklch(0.78 0.14 80);
-  --gold-foreground: oklch(0.15 0.03 80);
+  --background: oklch(0.99 0 0);
+  --foreground: oklch(0.18 0.01 260);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0.01 260);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0.01 260);
+  --primary: oklch(0.62 0.15 75);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.95 0.005 260);
+  --secondary-foreground: oklch(0.22 0.01 260);
+  --muted: oklch(0.95 0.005 260);
+  --muted-foreground: oklch(0.45 0.01 260);
+  --accent: oklch(0.95 0.02 75);
+  --accent-foreground: oklch(0.22 0.01 260);
+  --destructive: oklch(0.58 0.22 25);
+  --border: oklch(0 0 0 / 10%);
+  --input: oklch(0 0 0 / 14%);
+  --ring: oklch(0.62 0.15 75);
+  --chart-1: oklch(0.62 0.15 75);
+  --chart-2: oklch(0.55 0.15 160);
+  --chart-3: oklch(0.60 0.16 45);
+  --chart-4: oklch(0.50 0.20 280);
+  --chart-5: oklch(0.62 0.18 340);
+  --sidebar: oklch(0.97 0.005 260);
+  --sidebar-foreground: oklch(0.20 0.01 260);
+  --sidebar-primary: oklch(0.62 0.15 75);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.93 0.005 260);
+  --sidebar-accent-foreground: oklch(0.22 0.01 260);
+  --sidebar-border: oklch(0 0 0 / 10%);
+  --sidebar-ring: oklch(0.62 0.15 75);
+  --gold: oklch(0.65 0.16 80);
+  --gold-foreground: oklch(0.99 0 0);
 }
 
 .dark {
@@ -127,7 +132,8 @@
   }
 }
 
-/* Custom scrollbar */
+/* Custom scrollbar — themed via CSS vars so light mode gets a darker
+   thumb against the white track without needing a separate selector. */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -138,12 +144,12 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: oklch(0.35 0.01 260);
+  background: oklch(0.55 0.01 260 / 40%);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.45 0.01 260);
+  background: oklch(0.55 0.01 260 / 60%);
 }
 
 /* Projection display styles */
@@ -160,7 +166,6 @@
   margin-top: 1rem;
 }
 
-/* Verse highlight animation */
 @keyframes verse-glow {
   0%, 100% { text-shadow: 0 0 8px rgba(232, 184, 73, 0.3); }
   50% { text-shadow: 0 0 20px rgba(232, 184, 73, 0.6); }
@@ -170,7 +175,6 @@
   animation: verse-glow 2s ease-in-out infinite;
 }
 
-/* Slide transition */
 @keyframes slide-in {
   from { opacity: 0; transform: translateY(20px); }
   to { opacity: 1; transform: translateY(0); }
@@ -180,7 +184,6 @@
   animation: slide-in 0.5s ease-out;
 }
 
-/* Pulse indicator for live mode */
 @keyframes live-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
@@ -190,7 +193,6 @@
   animation: live-pulse 1.5s ease-in-out infinite;
 }
 
-/* Indeterminate progress bar: a short segment slides across the track. */
 @keyframes indeterminate-progress {
   0%   { transform: translateX(-100%); }
   100% { transform: translateX(400%); }

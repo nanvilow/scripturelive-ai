@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useAppStore, type AppSettings, type BibleTranslation, type DisplayMode, type OutputDestination } from '@/lib/store'
 import { BibleOfflineDownloads } from '@/components/settings/bible-downloads'
 import { TRANSLATIONS_INFO } from '@/lib/bible-api'
+import { formatDaysHoursMinutes } from '@/lib/format-duration'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -205,7 +206,13 @@ export function SettingsView() {
   }
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-4xl space-y-6">
+    // v0.6.0 — Two-column layout on xl screens. Operator request:
+    // surface secondary settings without endless scrolling. The
+    // arbitrary `[&>:first-child]:xl:col-span-2` selector keeps the
+    // License/Subscription card full-width at the top (it carries
+    // primary "what's my plan" info that has to stay above the
+    // fold), while every subsequent card flows into the 2-col grid.
+    <div className="p-4 md:p-6 lg:p-8 max-w-7xl mx-auto grid grid-cols-1 xl:grid-cols-2 gap-6 items-start [&>:first-child]:xl:col-span-2">
       {/* Modernised header — gradient hero card with logo + reset action,
           matching the polished look of the rest of the live console. */}
       <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-primary/10 via-background to-violet-500/10 px-5 py-5 md:px-7 md:py-6">
@@ -300,17 +307,21 @@ export function SettingsView() {
                 </div>
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    {status.subscription.isMaster ? 'Days remaining' : 'Days left'}
+                    {status.subscription.isMaster ? 'Type' : 'Time remaining'}
                   </div>
+                  {/* v0.6.0 — replaced the bare integer days with a
+                      precise "X Days Y Hours Z Minutes Remaining"
+                      readout so the operator can see their
+                      subscription drain in real time. */}
                   <div className={cn(
-                    'font-bold mt-0.5',
+                    'font-bold mt-0.5 text-sm',
                     status.subscription.isMaster
                       ? 'text-violet-400'
                       : status.subscription.daysLeft <= 7
                         ? 'text-amber-400'
                         : 'text-emerald-400',
                   )}>
-                    {status.subscription.isMaster ? '∞' : status.subscription.daysLeft}
+                    {formatDaysHoursMinutes(status.msLeft ?? 0, { master: status.subscription.isMaster })}
                   </div>
                 </div>
               </div>
