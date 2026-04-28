@@ -2,6 +2,40 @@
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It supports live congregation output, NDI broadcasting, and advanced speech recognition. The system targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service.
 
+## v0.6.7 — HOTFIX: v0.6.6 Settings page crash (Apr 2026)
+
+**Critical regression in v0.6.6.** Operator reported that opening Settings
+showed Chromium's "This page couldn't load — Reload to try again, or go
+back" page, with no in-app chrome — the entire BrowserWindow had crashed.
+Settings (`src/app/page.tsx` line 64) renders `<SettingsView />`
+(`src/components/views/settings.tsx`), which at line 733 mounts
+`<NdiOutputPanel />`. The v0.6.6 patch to that panel added a `useRef` and
+two new `useEffect` calls but placed them AFTER the existing
+`if (!desktop) return <Card>...` early return at line 89. In Electron
+the `desktop` bridge is undefined for the very first render (preload IPC
+hasn't landed yet) and becomes defined a tick later — so the hook count
+jumped from 0 → 3 between two renders, React aborted with
+"Rendered more hooks than during the previous render", and the renderer
+process crashed. Chromium's default error page took over the whole
+window, which is what the operator saw the first time they tried to
+open Settings on v0.6.6.
+
+**Fix:** moved the `useRef` + both `useEffect` blocks to BEFORE the
+`if (!desktop)` early return so they run unconditionally on every render.
+The effect bodies still guard with `if (!isRunningForEffect || !desktop)
+return` so the restart-on-toggle behaviour only fires when NDI is
+actually broadcasting in Electron — exactly the same runtime semantics
+as v0.6.6, just without the hook-order violation. `isRunningForEffect`
+(computed from `status?.running`) is now declared above the early
+return; the original `isRunning` and `ndiOk` locals below the early
+return alias to it so the rest of the file is unchanged.
+
+**Files**
+- `replit.md`                                                                  (this changelog)
+- `artifacts/imported-app/package.json`                                         (0.6.6 → 0.6.7)
+- `artifacts/imported-app/BUILD.bat`                                            (banner)
+- `artifacts/imported-app/src/components/views/ndi-output-panel.tsx`            (hooks moved before early return)
+
 ## v0.6.6 — NDI transparency root-cause + admin SMS + uninstall-first prompt (Apr 2026)
 
 **T601 — Update dialog: release notes filter + uninstall-first prompt.** `update-dialog.tsx` `summariseReleaseNotes()` now drops lines whose first word is `ADMIN:` (or `[admin]` / `internal:`) so customers don't see internal changelog items. Below the notes block the dialog renders a red "Important — uninstall first" banner explaining that installing on top of the existing version may fail, plus an "Open Windows Apps page (uninstall first)" button. The button calls a new `desktop.app.openUninstall()` preload bridge, which fires an `app:open-uninstall` IPC handler in `electron/main.ts` that runs `shell.openExternal('ms-settings:appsfeatures')` on Windows (no-op on other OSes). Activation, library, and admin-config files in `%USERPROFILE%\.scripturelive\` are preserved across reinstalls so the operator's MoMo configuration survives the round-trip. The auto-uninstall NSIS-hook approach the operator originally requested was rejected because uninstalling the running .exe would trash a freshly-generated MoMo payment ref; manual prompt + one-click Settings open is the safer flow.
