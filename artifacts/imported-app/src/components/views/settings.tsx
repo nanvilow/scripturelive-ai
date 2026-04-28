@@ -1937,6 +1937,16 @@ function VoiceControlCard() {
         <CardDescription>
           Spoken commands and live verse tracking. Both default OFF — turn them on per-service as needed.
         </CardDescription>
+        {/* v0.6.5 — Operators were flipping these toggles ON and not
+            seeing any effect because nothing was being said into a
+            running mic. Both features observe the live transcript;
+            with the mic stopped the transcript is empty so neither
+            ever fires. Banner makes the dependency explicit. */}
+        <p className="text-[11px] text-amber-300/80 italic mt-1.5">
+          Both features only act while the microphone is running. Start the mic on the Live tab
+          (Start Listening) — the toggles below flip the behaviour, but the mic must be on for
+          either to do anything.
+        </p>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center justify-between gap-4">

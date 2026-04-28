@@ -75,6 +75,16 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    upper area outside it stays transparent (#000) so any background
    change applies only to this rounded box, per spec. */
 .lt-box{position:relative;width:100%;max-width:68rem;padding:3% 5%;display:flex;flex-direction:column;justify-content:center;overflow:hidden;height:100%;box-sizing:border-box;border-radius:1.25rem;box-shadow:0 8px 28px rgba(0,0,0,.45);background:linear-gradient(135deg,#0a0a0a,#171717)}
+/* v0.6.5 — NDI lower-third full-width override. Operator's vMix/OBS
+   feed had black bands either side of the centered ≤68rem card
+   (image 3 "frame A"). Removing the cap on the NDI surface lets the
+   band span the full frame ("frame N") so the verse text reads at
+   broadcast distance. In-room projector + operator preview keep the
+   centered card by NOT receiving the .ndi-full class. Lower-third
+   gutter also tightens from 6% → 2% so the band is genuinely full
+   width and not just a slightly wider centered card. */
+.lower-third.ndi-full{padding:0 2%}
+.lt-box.ndi-full{max-width:none;border-radius:.75rem}
 .lt-box.theme-worship{background:linear-gradient(135deg,#1e0a3c,#1e1b4b)}
 .lt-box.theme-sermon{background:linear-gradient(135deg,#3c1a0a,#451a03)}
 .lt-box.theme-easter{background:linear-gradient(135deg,#0a3c2a,#042f2e)}
@@ -834,8 +844,27 @@ function render(s){
     // rules so it beats the per-theme background overrides.
     var ltTransparent=IS_NDI && (FORCE_TRANSPARENT || st.ndiLowerThirdTransparent===true);
     var ltTransparentClass=ltTransparent?' transparent':'';
+    // v0.6.5 — Apply the .ndi-full width override on the NDI surface
+    // only. In-room projector + operator preview keep the centered
+    // ≤68rem card; vMix/OBS NDI receivers get the full-width band so
+    // the verse fills the broadcast frame edge-to-edge ("frame N").
+    var ndiFullClass=IS_NDI?' ndi-full':'';
+    // v0.6.5 — When transparent matte is on, ALSO drop the body /
+    // stage / output backgrounds (the lt-box.transparent rule already
+    // drops the card itself, but those four ancestors stay solid #000
+    // by default — leaving the in-app NDI preview AND any opaque NDI
+    // receiver with a black bar where the matte should be alpha). We
+    // restore them to #000 when transparent goes back off so toggling
+    // doesn't permanently bleach the surface.
+    try{
+      var __bg=ltTransparent?'transparent':'#000';
+      document.documentElement.style.background=__bg;
+      document.body.style.background=__bg;
+      var __st2=document.getElementById('stage');if(__st2)__st2.style.background=__bg;
+      var __op2=document.getElementById('output');if(__op2)__op2.style.background=__bg;
+    }catch(e){}
     var ltOrdered=refOrderTop?(ref+ltTxt):(ltTxt+ref);
-    $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:transparent;'+fontStyle+'"><div class="lower-third '+pos+'" style="'+ltStyle+'"><div class="lt-box '+boxThemeClass+ltTransparentClass+' '+alignClass+'" style="'+boxStyleExtra+fontStyle+'">'+ltInnerBg+'<div class="lt-content '+alignClass+'">'+ltOrdered+'</div></div></div></div>';
+    $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:transparent;'+fontStyle+'"><div class="lower-third '+pos+ndiFullClass+'" style="'+ltStyle+'"><div class="lt-box '+boxThemeClass+ltTransparentClass+ndiFullClass+' '+alignClass+'" style="'+boxStyleExtra+fontStyle+'">'+ltInnerBg+'<div class="lt-content '+alignClass+'">'+ltOrdered+'</div></div></div></div>';
   }else{
     var ta=st.textAlign||'center';
     var jc=ta==='left'?'flex-start':ta==='right'?'flex-end':'center';

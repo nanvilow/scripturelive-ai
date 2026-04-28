@@ -715,7 +715,7 @@ export function AdminModal() {
                   <label htmlFor="gen-whatsapp" className="block text-[10px] uppercase tracking-wider text-muted-foreground cursor-pointer">WhatsApp (optional)</label>
                   <Input
                     id="gen-whatsapp"
-                    placeholder="0246798526"
+                    placeholder="0530686367"
                     value={genWhatsapp}
                     onChange={(e) => setGenWhatsapp(e.target.value)}
                     className="bg-background border-border text-foreground font-mono cursor-text"

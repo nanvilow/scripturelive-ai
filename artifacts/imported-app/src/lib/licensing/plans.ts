@@ -44,14 +44,19 @@ export function isPlanCode(s: unknown): s is PlanCode {
 // 0530... wallet to the 0246798526 wallet so the same number that
 // appears on customer receipts (NOTIFICATION_WHATSAPP) is the one
 // they pay into. The recipient name stays the same.
+// v0.6.5 — operator switched the receiving MoMo line back to a 0530
+// wallet (0530686367). All three downstream surfaces (display number,
+// WhatsApp escalation in the NOTE block, screenshot-proof line) now
+// pull from this single constant via payment.momoRecipient.number,
+// so future swaps land on every visible field at once.
 export const MOMO_RECIPIENT = {
   name: 'Richard Kwesi Attieku',
-  number: '0246798526',
+  number: '0530686367',
 } as const
 
 // Where receipts and notifications are sent (defaults; overridable).
 export const NOTIFICATION_EMAIL = 'nanvilow@gmail.com'
-export const NOTIFICATION_WHATSAPP = '0246798526'
+export const NOTIFICATION_WHATSAPP = '0530686367'
 
 // ─── Runtime resolution helpers (v0.5.48) ────────────────────────────
 // All three of these consult the owner-saved RuntimeConfig (Admin
