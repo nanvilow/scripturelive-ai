@@ -121,6 +121,41 @@ function plainTextToHtml(text: string): string {
   ].join('')
 }
 
+/**
+ * v0.7.0 — Detect transient SMTP errors that warrant a retry. Operator
+ * complaint: "Email not working again? Error message: Unexpected socket
+ * close." Gmail (and most cloud SMTP providers) routinely drop idle
+ * sockets and reset connections during peak hours. Pre-v0.7.0 a single
+ * connection blip turned every customer activation into a "failed"
+ * notification with no automatic recovery — admin had to retry by hand.
+ *
+ * We classify these node + nodemailer error shapes as TRANSIENT (worth
+ * a retry):
+ *   • "Unexpected socket close" — server closed mid-handshake
+ *   • ECONNRESET / EPIPE / ETIMEDOUT / ESOCKET — TCP layer dropped
+ *   • EAI_AGAIN — temporary DNS failure
+ *   • ETLS — TLS negotiation glitched
+ *   • EDNS / ENETUNREACH — flaky network at the venue
+ *   • response codes 421 / 4xx — server says "try again later"
+ *
+ * Permanent errors (550 user not found, 535 bad auth, etc.) do NOT
+ * retry — those won't get better on attempt 2.
+ */
+function isTransientSmtpError(err: { message?: string; code?: string; responseCode?: number }): boolean {
+  const msg = String(err?.message || '').toLowerCase()
+  if (msg.includes('socket close') || msg.includes('socket hang up')) return true
+  if (msg.includes('connection closed') || msg.includes('connection timeout')) return true
+  if (msg.includes('greeting timeout') || msg.includes('connection lost')) return true
+  const code = String(err?.code || '').toUpperCase()
+  if (['ECONNRESET', 'ETIMEDOUT', 'ESOCKET', 'EPIPE', 'EAI_AGAIN', 'ETLS', 'EDNS', 'ENETUNREACH', 'ECONNECTION'].includes(code)) return true
+  const rc = Number(err?.responseCode)
+  if (Number.isFinite(rc) && rc >= 400 && rc < 500) return true
+  return false
+}
+
+const SMTP_MAX_ATTEMPTS = 3
+const SMTP_BACKOFF_MS = [1000, 2500, 5000] as const
+
 async function sendEmailViaSmtp(args: {
   to: string
   subject: string
@@ -139,7 +174,15 @@ async function sendEmailViaSmtp(args: {
   // mailbox. Falls back to the SMTP user if MAIL_FROM is empty.
   const from = normalizeMailFrom(getMailFrom() || user)
   if (!host || !user || !pass || !from) return { ok: false, error: 'SMTP not configured' }
-  try {
+
+  // v0.7.0 — Single attempt body extracted into closure so the outer
+  // retry loop can re-invoke it cleanly. Each attempt creates a FRESH
+  // transport because nodemailer's transport carries the dead socket
+  // state across calls — reusing one would just hit the same closed
+  // pipe again. Returns the same SmtpSendResult shape; the outer loop
+  // inspects the embedded transient flag (we tag it via attemptMeta).
+  type AttemptResult = SmtpSendResult & { transient?: boolean }
+  const attempt = async (attemptNum: number): Promise<AttemptResult> => {
     // nodemailer is a heavy import — only load when actually configured.
     const nm = await import('nodemailer')
     // v0.5.54 — defensively coerce port: invalid/NaN/0 -> 587. The
@@ -148,12 +191,21 @@ async function sendEmailViaSmtp(args: {
     // could still be garbage, so guard at use-site too.
     const portRaw = Number(getMailPort())
     const port = Number.isFinite(portRaw) && portRaw > 0 && portRaw < 65536 ? portRaw : 587
+    // v0.7.0 — Tighter timeouts so a flaky upstream can't lock the
+    // admin UI for 60+ seconds while nodemailer waits for its own
+    // defaults (which are 2 minutes for connection, 10 for greeting,
+    // unlimited for socket). With these caps a hung Gmail handshake
+    // surfaces as a transient error inside ~25s and we hit retry #2.
     const tx = nm.createTransport({
       host,
       port,
       secure: getMailSecure() === '1',
       auth: { user, pass },
+      connectionTimeout: 15000,
+      greetingTimeout: 10000,
+      socketTimeout: 25000,
     })
+    try {
     // eslint-disable-next-line no-console
     console.log('[smtp] sending', { host, port, from, to: args.to, subject: args.subject })
     // v0.6.3 — Email deliverability hardening:
@@ -215,23 +267,51 @@ async function sendEmailViaSmtp(args: {
       }
     }
     return { ok: true, meta: { accepted, rejected, response, messageId, refId }, queueId }
-  } catch (e) {
-    // nodemailer errors carry useful fields beyond .message — code,
-    // response, responseCode. Stitch them together so the admin
-    // panel sees the actual SMTP reply (e.g. "550 5.7.1 ... blocked").
-    const err = e as { message?: string; code?: string; response?: string; responseCode?: number }
-    const detail = [
-      err.message || String(e),
-      err.responseCode ? `code=${err.responseCode}` : null,
-      err.code ? `nm=${err.code}` : null,
-      err.response ? `resp=${err.response}` : null,
-    ]
-      .filter(Boolean)
-      .join(' | ')
-    // eslint-disable-next-line no-console
-    console.error('[smtp] FAILED', { to: args.to, error: detail })
-    return { ok: false, error: detail }
+    } catch (e) {
+      // nodemailer errors carry useful fields beyond .message — code,
+      // response, responseCode. Stitch them together so the admin
+      // panel sees the actual SMTP reply (e.g. "550 5.7.1 ... blocked").
+      const err = e as { message?: string; code?: string; response?: string; responseCode?: number }
+      const transient = isTransientSmtpError(err)
+      const detail = [
+        err.message || String(e),
+        err.responseCode ? `code=${err.responseCode}` : null,
+        err.code ? `nm=${err.code}` : null,
+        err.response ? `resp=${err.response}` : null,
+        `attempt=${attemptNum}/${SMTP_MAX_ATTEMPTS}`,
+      ]
+        .filter(Boolean)
+        .join(' | ')
+      // eslint-disable-next-line no-console
+      console.error('[smtp] attempt failed', { to: args.to, transient, attempt: attemptNum, error: detail })
+      // v0.7.0 — Best-effort socket cleanup so the next attempt's
+      // fresh transport doesn't trip over stale FDs (Gmail occasionally
+      // refuses a new connection from the same port for ~10s if the
+      // previous socket wasn't closed cleanly).
+      try { tx.close() } catch { /* ignore */ }
+      return { ok: false, error: detail, transient }
+    }
   }
+
+  // v0.7.0 — Retry-with-backoff loop. Up to SMTP_MAX_ATTEMPTS attempts;
+  // backoff = SMTP_BACKOFF_MS[attempt-1] (1s, 2.5s, 5s). Permanent
+  // failures (recipient rejected, auth failure) short-circuit out of
+  // the loop on the first attempt. Audit string surfaces the attempt
+  // count so the admin panel shows "ECONNRESET … attempts=3/3" instead
+  // of just the bare nodemailer message.
+  let last: AttemptResult = { ok: false, error: 'no SMTP attempt made' }
+  for (let i = 1; i <= SMTP_MAX_ATTEMPTS; i++) {
+    last = await attempt(i)
+    if (last.ok) return last
+    if (!last.transient) return last  // permanent error — don't waste retries
+    if (i < SMTP_MAX_ATTEMPTS) {
+      const wait = SMTP_BACKOFF_MS[i - 1] ?? 5000
+      // eslint-disable-next-line no-console
+      console.log(`[smtp] transient error, retrying in ${wait}ms (attempt ${i + 1}/${SMTP_MAX_ATTEMPTS})`)
+      await new Promise((res) => setTimeout(res, wait))
+    }
+  }
+  return last
 }
 
 export async function notifyEmail(args: {

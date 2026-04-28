@@ -18,6 +18,7 @@ import { activateCode, peekActivationSource } from '@/lib/licensing/storage'
 import { findPlan } from '@/lib/licensing/plans'
 import { isMasterCode } from '@/lib/licensing/codes'
 import { notifyEmail, whatsappLink } from '@/lib/licensing/notifications'
+import { captureGeoFromRequest } from '@/lib/licensing/geoip'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -68,8 +69,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // v0.7.0 — Capture client IP + free geo lookup so the admin
+  // dashboard can show where each code was activated from. Best-
+  // effort; if the lookup fails we still record the IP.
+  const geoCtx = await captureGeoFromRequest(req).catch(() => ({}))
+
   let result
-  try { result = activateCode(code) }
+  try { result = activateCode(code, geoCtx) }
   catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 }) }
 
   const { status, activated } = result

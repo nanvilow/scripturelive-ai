@@ -65,6 +65,42 @@ export interface ActivationCodeRecord {
   subscriptionExpiresAt?: string
   /** master codes never expire and may be re-used (isUsed stays false) */
   isMaster?: boolean
+
+  // ─── v0.7.0 — Activation-code admin dashboard ────────────────────
+  // Operator request: a single place to keep records of every code,
+  // see who's using it from where, cancel/renew at will, and restore
+  // accidental deletions for up to a week. Each new field is OPTIONAL
+  // so the upgrade is safe — older records load and display fine.
+  /** Buyer's phone number (ITU-formatted, no +). Mirrors
+   *  generatedFor.whatsapp when present, but kept distinct so the
+   *  admin panel can show a guaranteed phone column even when
+   *  generatedFor was never populated (legacy paid codes). */
+  buyerPhone?: string
+  /** Set when admin cancels the code from the dashboard. A cancelled
+   *  code can no longer activate AND any active subscription using
+   *  it is terminated. */
+  cancelledAt?: string
+  /** Free-text reason captured at cancel time so the audit trail is
+   *  meaningful (e.g. "chargeback", "test code", "duplicate sale"). */
+  cancelReason?: string
+  /** Last time we observed this code's installation pinging the
+   *  license server (license/status, license/activate, NDI heartbeat).
+   *  Refreshed on every status check so admin can see liveness. */
+  lastSeenAt?: string
+  /** Public IP we observed the install from. Stored so admin can
+   *  cross-check geo lookups and follow-up on disputed regions. */
+  lastSeenIp?: string
+  /** Coarse geolocation derived from lastSeenIp via the free
+   *  ip-api.com endpoint (no key required for non-commercial use,
+   *  45 req/min limit). Format: "City, RegionName, Country (CC)".
+   *  Empty string when geo lookup failed; absent on never-used codes. */
+  lastSeenLocation?: string
+  /** Soft-delete timestamp. The dashboard's "delete" button sets this
+   *  instead of removing the record. The bin retains the row for
+   *  exactly 7 days; on the next storage read after that window
+   *  passes the row is purged. Operator can Restore at any time
+   *  before the purge. */
+  softDeletedAt?: string
 }
 
 export interface NotificationRecord {
@@ -549,7 +585,7 @@ export interface ActivateResult {
   activated: ActivationCodeRecord
 }
 
-export function activateCode(rawCode: string): ActivateResult {
+export function activateCode(rawCode: string, ctx?: { ip?: string; location?: string }): ActivateResult {
   const f = load()
   const code = rawCode.trim().toUpperCase()
 
@@ -582,6 +618,16 @@ export function activateCode(rawCode: string): ActivateResult {
   const activation = f.activationCodes.find((a) => a.code === code)
   if (!activation) throw new Error('Activation code not recognised. Please check and re-enter.')
   if (activation.isUsed) throw new Error('This activation code has already been used.')
+  // v0.7.0 — admin can cancel a code from the dashboard. Cancelled
+  // codes refuse to activate even if they were never used. The error
+  // string mirrors the bin so customers calling support hear the
+  // same wording the admin sees.
+  if (activation.cancelledAt) {
+    throw new Error('This activation code has been cancelled by the operator. Please contact support.')
+  }
+  if (activation.softDeletedAt) {
+    throw new Error('This activation code is no longer valid. Please contact support.')
+  }
 
   const now = new Date()
   // v0.6.3 — prefer the exact ms duration (set by the admin generate
@@ -614,8 +660,250 @@ export function activateCode(rawCode: string): ActivateResult {
     expiresAt: expires.toISOString(),
     isMaster: false,
   }
+  // v0.7.0 — capture geo on activation so the admin dashboard can
+  // show "where this code is being used from" right away. The IP
+  // and human-readable location come in via ctx (set by the activate
+  // route from x-forwarded-for + ip-api.com lookup). Best-effort:
+  // we don't fail activation just because geo lookup fizzled.
+  if (ctx?.ip) activation.lastSeenIp = ctx.ip
+  if (ctx?.location) activation.lastSeenLocation = ctx.location
+  activation.lastSeenAt = now.toISOString()
+  // v0.7.0 — also mirror generatedFor.whatsapp into buyerPhone so the
+  // dashboard's Buyer column is populated for every paid code without
+  // having to hunt through the nested generatedFor blob.
+  if (!activation.buyerPhone && activation.generatedFor?.whatsapp) {
+    activation.buyerPhone = activation.generatedFor.whatsapp
+  }
   persist(f)
   return { status: computeStatus(), activated: activation }
+}
+
+// ─── v0.7.0 — Activation-code admin dashboard helpers ───────────────
+// Operator request: see all codes with their status, location, buyer
+// phone; cancel/renew without leaving the panel; soft-delete to a 7-day
+// bin instead of hard-delete. These helpers back the new
+// /api/license/admin/codes + /cancel + /renew + /restore routes.
+
+/** v0.7.0 — Soft-delete window. Bin retains rows for 7 days; on the
+ *  next read after that window passes the row is purged automatically. */
+const BIN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+
+/** Periodic sweep — purges any soft-deleted activation codes whose
+ *  softDeletedAt is older than BIN_RETENTION_MS. Called from
+ *  computeActivationStatus + the codes-list endpoint so the bin
+ *  cleans itself without a cron. Returns the number of rows purged. */
+export function purgeExpiredBin(now = Date.now()): number {
+  const f = load()
+  const cutoff = now - BIN_RETENTION_MS
+  const before = f.activationCodes.length
+  f.activationCodes = f.activationCodes.filter((a) => {
+    if (!a.softDeletedAt) return true
+    const ts = Date.parse(a.softDeletedAt)
+    if (!Number.isFinite(ts)) return true  // bad date → keep, surface for manual review
+    return ts >= cutoff
+  })
+  const removed = before - f.activationCodes.length
+  if (removed > 0) persist(f)
+  return removed
+}
+
+export type CodeStatus =
+  | 'never-used'
+  | 'active'
+  | 'expired'
+  | 'used'
+  | 'cancelled'
+  | 'deleted'
+  | 'master'
+
+/** v0.7.0 — Computed lifecycle status for a single activation code.
+ *  Order of precedence matters: deleted/cancelled wins over expired
+ *  wins over active so a cancelled-then-also-expired code reads as
+ *  CANCELLED in the dashboard (the cancel was the operator's
+ *  intent). */
+export function computeCodeStatus(a: ActivationCodeRecord, now = Date.now()): CodeStatus {
+  if (a.softDeletedAt) return 'deleted'
+  if (a.cancelledAt) return 'cancelled'
+  if (a.isMaster) return 'master'
+  if (!a.isUsed) return 'never-used'
+  // Used codes — check expiry against subscriptionExpiresAt.
+  if (a.subscriptionExpiresAt) {
+    const exp = Date.parse(a.subscriptionExpiresAt)
+    if (Number.isFinite(exp)) {
+      return exp > now ? 'active' : 'expired'
+    }
+  }
+  return 'used'
+}
+
+/** Snapshot of the activation list enriched with computed status,
+ *  days remaining, and a stable buyerPhone field. Used by the
+ *  /api/license/admin/codes endpoint to power the dashboard. */
+export interface AdminCodeRow {
+  code: string
+  planCode: string
+  days: number
+  durationMs?: number
+  generatedAt: string
+  generatedFor?: ActivationCodeRecord['generatedFor']
+  buyerPhone?: string
+  isMaster: boolean
+  isUsed: boolean
+  usedAt?: string
+  subscriptionExpiresAt?: string
+  cancelledAt?: string
+  cancelReason?: string
+  lastSeenAt?: string
+  lastSeenIp?: string
+  lastSeenLocation?: string
+  softDeletedAt?: string
+  // computed
+  status: CodeStatus
+  /** Days remaining (active codes) or days since expiry (negative).
+   *  Null for never-used / cancelled / deleted codes. */
+  daysRemaining: number | null
+  /** Milliseconds remaining until purge from bin (deleted only). */
+  binMsRemaining: number | null
+}
+
+export function listAdminCodes(opts: { includeDeleted?: boolean } = {}): AdminCodeRow[] {
+  purgeExpiredBin()  // self-cleaning
+  const f = load()
+  const now = Date.now()
+  return [...f.activationCodes]
+    .filter((a) => opts.includeDeleted || !a.softDeletedAt)
+    .sort((a, b) => (b.generatedAt || '').localeCompare(a.generatedAt || ''))
+    .map((a) => {
+      const status = computeCodeStatus(a, now)
+      let daysRemaining: number | null = null
+      if (status === 'active' && a.subscriptionExpiresAt) {
+        const exp = Date.parse(a.subscriptionExpiresAt)
+        if (Number.isFinite(exp)) daysRemaining = Math.max(0, Math.round((exp - now) / 86400000))
+      } else if (status === 'expired' && a.subscriptionExpiresAt) {
+        const exp = Date.parse(a.subscriptionExpiresAt)
+        if (Number.isFinite(exp)) daysRemaining = Math.round((exp - now) / 86400000)
+      }
+      let binMsRemaining: number | null = null
+      if (a.softDeletedAt) {
+        const ts = Date.parse(a.softDeletedAt)
+        if (Number.isFinite(ts)) binMsRemaining = Math.max(0, ts + BIN_RETENTION_MS - now)
+      }
+      const buyerPhone = a.buyerPhone || a.generatedFor?.whatsapp
+      return {
+        code: a.code,
+        planCode: a.planCode,
+        days: a.days,
+        durationMs: a.durationMs,
+        generatedAt: a.generatedAt,
+        generatedFor: a.generatedFor,
+        buyerPhone,
+        isMaster: !!a.isMaster,
+        isUsed: a.isUsed,
+        usedAt: a.usedAt,
+        subscriptionExpiresAt: a.subscriptionExpiresAt,
+        cancelledAt: a.cancelledAt,
+        cancelReason: a.cancelReason,
+        lastSeenAt: a.lastSeenAt,
+        lastSeenIp: a.lastSeenIp,
+        lastSeenLocation: a.lastSeenLocation,
+        softDeletedAt: a.softDeletedAt,
+        status,
+        daysRemaining,
+        binMsRemaining,
+      }
+    })
+}
+
+/** Cancel an activation code. If it's currently the active
+ *  subscription on this device, also clear the active subscription
+ *  so the user immediately drops back to the trial / no-license
+ *  state. Returns the updated record, or null if not found. */
+export function cancelActivationByCode(code: string, reason?: string): ActivationCodeRecord | null {
+  const f = load()
+  const a = f.activationCodes.find((r) => r.code === code)
+  if (!a) return null
+  a.cancelledAt = new Date().toISOString()
+  if (reason) a.cancelReason = reason
+  // If this code is the active subscription, kill that too.
+  if (f.activeSubscription?.activationCode === code) {
+    f.activeSubscription = null
+  }
+  persist(f)
+  return a
+}
+
+/** Renew an activation code by adding `addDays` to its existing
+ *  expiry (or, for never-used codes, increasing the granted days
+ *  count so it'll start with the larger window when activated).
+ *  Returns the updated record, or null if not found. Lifts a
+ *  cancellation if one was set — the operator clearly wants the code
+ *  active again. */
+export function renewActivationByCode(code: string, addDays: number): ActivationCodeRecord | null {
+  const f = load()
+  const a = f.activationCodes.find((r) => r.code === code)
+  if (!a) return null
+  const ms = Math.max(0, Math.floor(addDays * 86400000))
+  if (a.isUsed && a.subscriptionExpiresAt) {
+    const cur = Date.parse(a.subscriptionExpiresAt)
+    const base = Number.isFinite(cur) && cur > Date.now() ? cur : Date.now()
+    a.subscriptionExpiresAt = new Date(base + ms).toISOString()
+    // Mirror to active subscription if this code is the active one.
+    if (f.activeSubscription?.activationCode === code) {
+      f.activeSubscription.expiresAt = a.subscriptionExpiresAt
+    }
+  } else {
+    // Never-used code: extend the GRANTED days so the bigger window
+    // applies on first activation.
+    a.days = a.days + Math.max(0, Math.round(addDays))
+    if (typeof a.durationMs === 'number') a.durationMs = a.durationMs + ms
+  }
+  // Renewal lifts any cancel/soft-delete so the code is usable again.
+  delete a.cancelledAt
+  delete a.cancelReason
+  delete a.softDeletedAt
+  persist(f)
+  return a
+}
+
+/** Move a code into the soft-delete bin (7-day retention). The code
+ *  refuses activation while in the bin and is auto-purged after the
+ *  retention window. Returns true if the code was found. */
+export function softDeleteActivationByCode(code: string): boolean {
+  const f = load()
+  const a = f.activationCodes.find((r) => r.code === code)
+  if (!a) return false
+  a.softDeletedAt = new Date().toISOString()
+  if (f.activeSubscription?.activationCode === code) {
+    f.activeSubscription = null
+  }
+  persist(f)
+  return true
+}
+
+/** Restore a soft-deleted code from the bin. Returns true if found
+ *  and was in the bin. */
+export function restoreActivationByCode(code: string): boolean {
+  const f = load()
+  const a = f.activationCodes.find((r) => r.code === code)
+  if (!a || !a.softDeletedAt) return false
+  delete a.softDeletedAt
+  persist(f)
+  return true
+}
+
+/** Record a heartbeat (last-seen IP + location + timestamp) for a
+ *  code without changing its activation/expiry state. Called from
+ *  /api/license/status so admin can see liveness in real time. */
+export function recordCodeHeartbeat(code: string, ctx: { ip?: string; location?: string }): boolean {
+  const f = load()
+  const a = f.activationCodes.find((r) => r.code === code)
+  if (!a) return false
+  a.lastSeenAt = new Date().toISOString()
+  if (ctx.ip) a.lastSeenIp = ctx.ip
+  if (ctx.location) a.lastSeenLocation = ctx.location
+  if (!a.buyerPhone && a.generatedFor?.whatsapp) a.buyerPhone = a.generatedFor.whatsapp
+  persist(f)
+  return true
 }
 
 // ─── Notifications: append to log + return for sending ──────────────
