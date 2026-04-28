@@ -2,6 +2,52 @@
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It supports live congregation output, NDI broadcasting, and advanced speech recognition. The system targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service.
 
+## v0.7.1 — Server-side admin auth gate (Apr 2026)
+
+Critical security hotfix. v0.7.0 shipped the new activation-code
+dashboard (with buyers' phone numbers, emails, and approximate
+location), but the admin endpoints had been wide open since the
+beginning of the licensing system — the only "gate" was the
+Ctrl+Shift+P UI shortcut and a password field in Settings that was
+never actually checked. Anyone who could reach the app's port could
+GET `/api/license/admin/list` or `/codes` and pull the entire
+customer roster.
+
+This release adds a real server-side auth layer:
+
+- New `lib/licensing/admin-auth.ts` — in-memory session store
+  (12-hour sliding TTL, 64-byte URL-safe random tokens) +
+  constant-time password comparison + HttpOnly `SameSite=Strict`
+  cookie helpers.
+- New endpoints: `POST /api/license/admin/login`,
+  `POST /api/license/admin/logout`, `GET /api/license/admin/whoami`.
+- All 14 existing admin routes (cancel, codes, config, confirm,
+  delete-activation, delete-notification, delete-payment, generate,
+  keys, list, renew, restore, retry — plus the new login/logout/
+  whoami) now call `requireAdmin(req)` at the top and return
+  401 `{ error, code: 'ADMIN_AUTH_REQUIRED' }` when the cookie is
+  missing or expired.
+- Password resolution priority: operator-set value in
+  Settings → Admin Password (highest), then
+  `SCRIPTURELIVE_ADMIN_PASSWORD` env var, then a baked default of
+  `admin` (with a one-time console warning so it's noticed).
+- Admin modal (`admin-modal.tsx`) probes `/whoami` on every open;
+  if 401, shows a password prompt before the tabs render. The
+  existing reload-list / reload-codes / load-settings polling
+  effects are now gated on `authed === true` so they don't 401-spam
+  the server / pollute the audit log before the operator unlocks.
+- Cookies are auto-sent on same-origin fetches, so no other admin
+  fetch in the modal needed any change.
+
+**Files changed:**
+- NEW: `artifacts/imported-app/src/lib/licensing/admin-auth.ts`
+- NEW: `artifacts/imported-app/src/app/api/license/admin/login/route.ts`
+- NEW: `artifacts/imported-app/src/app/api/license/admin/logout/route.ts`
+- NEW: `artifacts/imported-app/src/app/api/license/admin/whoami/route.ts`
+- 13 existing `/api/license/admin/*/route.ts` files (added import + guard)
+- `artifacts/imported-app/src/components/license/admin-modal.tsx` (auth probe + password gate)
+- `artifacts/imported-app/package.json` (0.7.0 → 0.7.1)
+
 ## v0.7.0 — NDI default 2.0× lower-third + box auto-fit + email retry + activation-code admin dashboard (Apr 2026)
 
 Five operator-urgent issues bundled into one minor release because

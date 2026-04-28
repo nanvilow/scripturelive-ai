@@ -10,8 +10,9 @@
 //
 // No mutation; safe to poll.
 
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getFile, computeStatus } from '@/lib/licensing/storage'
+import { requireAdmin } from '@/lib/licensing/admin-auth'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -37,7 +38,9 @@ export const dynamic = 'force-dynamic'
 // being the canonical example, where MAIL_USER doubles as From).
 import { detectNotificationDelivery } from '@/lib/baked-credentials'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const guard = requireAdmin(req)
+  if (guard) return guard
   const f = getFile()
   const status = computeStatus()
   const recent = <T extends { createdAt?: string; generatedAt?: string; ts?: string }>(arr: T[], n: number) =>

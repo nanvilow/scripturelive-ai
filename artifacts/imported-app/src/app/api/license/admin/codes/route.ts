@@ -15,12 +15,15 @@
 // Resp: { codes: AdminCodeRow[], bin: AdminCodeRow[], stats: {...} }
 
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/licensing/admin-auth'
 import { listAdminCodes } from '@/lib/licensing/storage'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
+  const guard = requireAdmin(req)
+  if (guard) return guard
   const url = new URL(req.url)
   const includeDeleted = url.searchParams.get('includeDeleted') === '1'
   const all = listAdminCodes({ includeDeleted: true })

@@ -12,13 +12,16 @@
 // /api/license/admin/config (extended in v0.5.52 to accept
 // adminOpenAIKey / adminDeepgramKey).
 
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getConfig } from '@/lib/licensing/storage'
+import { requireAdmin } from '@/lib/licensing/admin-auth'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const guard = requireAdmin(req)
+  if (guard) return guard
   const cfg = getConfig() ?? {}
   return NextResponse.json(
     {

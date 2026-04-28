@@ -14,11 +14,14 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { deleteActivationByCode, softDeleteActivationByCode } from '@/lib/licensing/storage'
+import { requireAdmin } from '@/lib/licensing/admin-auth'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
+  const guard = requireAdmin(req)
+  if (guard) return guard
   let body: unknown
   try { body = await req.json() } catch {
     return NextResponse.json({ error: 'Body must be JSON' }, { status: 400 })

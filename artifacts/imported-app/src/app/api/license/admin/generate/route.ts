@@ -25,6 +25,7 @@ import { findPlan } from '@/lib/licensing/plans'
 import { generateStandaloneActivation } from '@/lib/licensing/storage'
 import { partsToDays } from '@/lib/format-duration'
 import { notifyEmail, notifySms } from '@/lib/licensing/notifications'
+import { requireAdmin } from '@/lib/licensing/admin-auth'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -50,6 +51,8 @@ interface Body {
 }
 
 export async function POST(req: NextRequest) {
+  const guard = requireAdmin(req)
+  if (guard) return guard
   let body: Body
   try { body = (await req.json()) as Body } catch { return bad('Body must be JSON') }
 
