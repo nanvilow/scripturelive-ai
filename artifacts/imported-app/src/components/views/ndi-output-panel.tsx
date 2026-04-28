@@ -60,6 +60,11 @@ export function NdiOutputPanel() {
   const ndiRefScale = useAppStore((s) => s.settings.ndiRefScale)
   const ndiTranslation = useAppStore((s) => s.settings.ndiTranslation)
   const ndiLowerThirdTransparent = useAppStore((s) => s.settings.ndiLowerThirdTransparent)
+  // v0.6.4 — operator-tunable size multiplier for the NDI lower-third
+  // bar. Scales font sizes + box width on the NDI surface only so the
+  // broadcast feed can be tuned (smaller for vMix overlays, bigger for
+  // full-screen NDI) without disturbing the in-room projection.
+  const ndiLowerThirdScale = useAppStore((s) => s.settings.ndiLowerThirdScale)
 
   const ndiHasOverrides =
     ndiFontFamily !== undefined ||
@@ -333,6 +338,59 @@ export function NdiOutputPanel() {
                       )}
                     />
                   </button>
+                </div>
+              )}
+
+              {/* v0.6.4 — Lower-third SIZE multiplier for the NDI feed.
+                  The in-room projector and Live Display preview ignore
+                  this — only the NDI surface (vMix/OBS) honours it.
+                  Lets operators shrink the bar to a thin caption for
+                  vMix overlay work, or balloon it for full-screen NDI
+                  receivers, without touching the in-room look. */}
+              {ndiDisplayMode === 'lower-third' && (
+                <div className="mt-2 pt-2 border-t border-border/40 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label htmlFor="ndi-lt-scale" className="text-[11px] font-semibold text-foreground cursor-pointer">
+                      Lower-third size
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono text-muted-foreground tabular-nums">
+                        {(typeof ndiLowerThirdScale === 'number' ? ndiLowerThirdScale : 1).toFixed(2)}×
+                      </span>
+                      {typeof ndiLowerThirdScale === 'number' && ndiLowerThirdScale !== 1 && (
+                        <button
+                          type="button"
+                          onClick={() => updateSettings({ ndiLowerThirdScale: undefined })}
+                          className="text-[10px] text-muted-foreground hover:text-foreground underline"
+                          title="Reset to 1.00× (no scaling)"
+                        >
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <input
+                    id="ndi-lt-scale"
+                    type="range"
+                    min={0.5}
+                    max={2}
+                    step={0.05}
+                    value={typeof ndiLowerThirdScale === 'number' ? ndiLowerThirdScale : 1}
+                    onChange={(e) => {
+                      const v = Number(e.target.value)
+                      // 1.00 ± epsilon ⇒ store undefined so existing operator
+                      // setups stay in their "no scaling" branch.
+                      if (Math.abs(v - 1) < 0.025) {
+                        updateSettings({ ndiLowerThirdScale: undefined })
+                      } else {
+                        updateSettings({ ndiLowerThirdScale: v })
+                      }
+                    }}
+                    className="w-full h-1.5 cursor-pointer accent-emerald-500"
+                  />
+                  <p className="text-[10px] text-muted-foreground leading-snug">
+                    Drag to scale the lower-third frame and text on the NDI feed (0.5× thinnest, 2.0× largest). Live preview below updates immediately.
+                  </p>
                 </div>
               )}
             </div>

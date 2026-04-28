@@ -3321,8 +3321,15 @@ export function LogosShell() {
   }, [slides.length, liveSlideIndex, previewSlideIndex, setLiveSlideIndex, setPreviewSlideIndex, setIsLive])
   const onSendLive = () => goLive()
 
+  // v0.6.4 — drop the hardcoded `dark` class and the literal
+  // `bg-[#0a0d14]` color from the root shell div. They were
+  // force-pinning the entire console to dark mode regardless of the
+  // operator's theme preference (the Settings overlay flipped because
+  // it lives outside this tree, but the live console stayed dark).
+  // Use the semantic `bg-background` / `text-foreground` tokens so the
+  // next-themes class on <html> cascades correctly into both themes.
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#0a0d14] text-foreground dark">
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-background text-foreground">
       <TopToolbar outputActive={outputActive} toggleOutput={toggleOutput} />
 
       {/* Main workspace — broadcast-style draggable dividers between every

@@ -120,6 +120,10 @@ export function OutputBroadcaster() {
         // congregation renderer can drop the lt-box gradient when the
         // operator flips it on the NDI tab.
         ndiLowerThirdTransparent: sExt.ndiLowerThirdTransparent,
+        // v0.6.4 — operator's NDI lower-third size multiplier so the
+        // congregation renderer + every downstream NDI receiver picks
+        // up the new scale on the next broadcast tick.
+        ndiLowerThirdScale: sExt.ndiLowerThirdScale,
         ndiShowReferenceOnOutput: sExt.ndiShowReferenceOnOutput,
         ndiReferenceTextShadow: sExt.ndiReferenceTextShadow,
         // Slide transition: style picks Cut (instant swap) vs Fade
