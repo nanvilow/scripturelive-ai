@@ -86,6 +86,59 @@ export function NdiOutputPanel() {
     ndiRefScale !== undefined ||
     ndiTranslation !== undefined
 
+  // v0.6.6.1 — CRITICAL ORDERING. These hooks (useRef + 2 useEffect)
+  // MUST run unconditionally on every render, BEFORE the
+  // `if (!desktop) return` early return below. v0.6.6 placed them
+  // after the early return, which crashed the renderer the moment
+  // `desktop` flipped from undefined → defined (Electron preload
+  // landing): hook count jumped from 0 → 3 between two renders and
+  // React aborted with "Rendered more hooks than during the previous
+  // render" → the entire BrowserWindow showed Chromium's "This page
+  // couldn't load" page, and the operator could not open Settings
+  // (which renders this component) at all.
+  //
+  // The Restart-on-Toggle behaviour itself is unchanged: when the
+  // operator flips the Transparent switch or moves the lower-third
+  // top/bottom while NDI is broadcasting, we re-issue ndi.start with
+  // the new flags so main.ts (whose short-circuit equality check was
+  // extended in v0.6.6 to include layout/transparent/lowerThird) tears
+  // down the opaque BrowserWindow and rebuilds a transparent one. The
+  // ref guard prevents a self-induced loop from the resulting
+  // ndi:status push.
+  const restartGuardRef = useRef<string>('')
+  const isRunningForEffect = !!status?.running
+  useEffect(() => {
+    if (!isRunningForEffect || !desktop) return
+    const want = `${ndiLowerThirdTransparent ? 1 : 0}:${lowerThirdPosition}`
+    if (restartGuardRef.current === want) return
+    if (restartGuardRef.current === '') {
+      // First settle — record what's already on the wire so the next
+      // operator change is what triggers a restart, not the initial
+      // mount after they hit Start.
+      restartGuardRef.current = want
+      return
+    }
+    restartGuardRef.current = want
+    void desktop.ndi.start({
+      name: sourceName.trim() || 'ScriptureLive AI',
+      width: 1920,
+      height: 1080,
+      fps: 60,
+      layout: 'ndi',
+      transparent: ndiLowerThirdTransparent === true,
+      lowerThird: {
+        enabled: true,
+        position: lowerThirdPosition === 'top' ? 'top' : 'bottom',
+      },
+    }).catch(() => { /* surfaced by the ndi:status broadcast */ })
+  }, [isRunningForEffect, desktop, ndiLowerThirdTransparent, lowerThirdPosition, sourceName])
+
+  // Reset the guard when NDI stops so the first toggle after the next
+  // Start does the right thing (record-then-skip).
+  useEffect(() => {
+    if (!isRunningForEffect) restartGuardRef.current = ''
+  }, [isRunningForEffect])
+
   if (!desktop) {
     return (
       <Card className="bg-card border-border">
@@ -110,51 +163,8 @@ export function NdiOutputPanel() {
     )
   }
 
-  const isRunning = !!status?.running
+  const isRunning = isRunningForEffect
   const ndiOk = available !== false
-
-  // v0.6.6 — Restart NDI when the operator flips the Transparent toggle
-  // or moves the lower-third top/bottom WHILE NDI is broadcasting.
-  // The store update alone won't take effect because NDI runs in its
-  // own offscreen Electron BrowserWindow whose `transparent:true` and
-  // backgroundColor flags are baked in at window creation time —
-  // changing them needs a full BrowserWindow rebuild via ndi:start.
-  // The main.ts short-circuit equality check (extended in v0.6.6 to
-  // include layout/transparent/lowerThird) lets the rebuild actually
-  // fire. We use a ref to hold the last-applied flags so this effect
-  // doesn't loop on its own restart-induced status push.
-  const restartGuardRef = useRef<string>('')
-  useEffect(() => {
-    if (!isRunning || !desktop) return
-    const want = `${ndiLowerThirdTransparent ? 1 : 0}:${lowerThirdPosition}`
-    if (restartGuardRef.current === want) return
-    if (restartGuardRef.current === '') {
-      // First settle — record what's already on the wire so the next
-      // operator change is what triggers a restart, not the initial
-      // mount after they hit Start.
-      restartGuardRef.current = want
-      return
-    }
-    restartGuardRef.current = want
-    void desktop.ndi.start({
-      name: sourceName.trim() || 'ScriptureLive AI',
-      width: 1920,
-      height: 1080,
-      fps: 60,
-      layout: 'ndi',
-      transparent: ndiLowerThirdTransparent === true,
-      lowerThird: {
-        enabled: true,
-        position: lowerThirdPosition === 'top' ? 'top' : 'bottom',
-      },
-    }).catch(() => { /* surfaced by the ndi:status broadcast */ })
-  }, [isRunning, desktop, ndiLowerThirdTransparent, lowerThirdPosition, sourceName])
-
-  // Reset the guard when NDI stops so the first toggle after the next
-  // Start does the right thing (record-then-skip).
-  useEffect(() => {
-    if (!isRunning) restartGuardRef.current = ''
-  }, [isRunning])
 
   const handleToggle = async () => {
     if (!desktop) return
