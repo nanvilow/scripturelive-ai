@@ -509,6 +509,36 @@ export function generateStandaloneActivation(
   return activation
 }
 
+// ─── v0.6.5 — Code-class peek (no mutation) ─────────────────────────
+// Lets the activate route reject codes pasted into the WRONG box
+// before activateCode() consumes them. Operator's two-box UX (Step 3
+// "Enter activation code after payment" + the bottom "Generated &
+// Master Code" box) had no enforcement: a master code pasted into
+// the paid box would silently activate, and a paid activation
+// pasted into the master box looked like a "code not recognised"
+// error to non-admins. Returns:
+//   'master'      — exactly matches f.masterCode OR is recorded with
+//                   isMaster=true (legacy admin-emitted masters).
+//   'paid'        — recorded activation with generatedFor.paymentRef
+//                   set (came out of confirmPayment + customer paid).
+//   'standalone'  — recorded activation with no paymentRef (came out
+//                   of generateStandaloneActivation, i.e. admin gave
+//                   it for free / on credit / for testing).
+//   'unknown'     — code is not in the ledger at all (typo / forged).
+//                   Caller falls back to activateCode() which raises
+//                   the existing "not recognised" error.
+export type ActivationSource = 'master' | 'paid' | 'standalone' | 'unknown'
+export function peekActivationSource(rawCode: string): ActivationSource {
+  const code = rawCode.trim().toUpperCase()
+  const f = load()
+  if (code === f.masterCode) return 'master'
+  const a = f.activationCodes.find((x) => x.code === code)
+  if (!a) return 'unknown'
+  if (a.isMaster) return 'master'
+  if (a.generatedFor?.paymentRef) return 'paid'
+  return 'standalone'
+}
+
 // ─── User: activate a code ───────────────────────────────────────────
 export interface ActivateResult {
   status: SubscriptionStatus

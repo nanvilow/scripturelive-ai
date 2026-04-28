@@ -14,8 +14,9 @@
 //   5. fire a customer-receipt notification (email + wa.me link)
 
 import { NextRequest, NextResponse } from 'next/server'
-import { activateCode } from '@/lib/licensing/storage'
+import { activateCode, peekActivationSource } from '@/lib/licensing/storage'
 import { findPlan } from '@/lib/licensing/plans'
+import { isMasterCode } from '@/lib/licensing/codes'
 import { notifyEmail, whatsappLink } from '@/lib/licensing/notifications'
 
 export const runtime = 'nodejs'
@@ -26,6 +27,46 @@ export async function POST(req: NextRequest) {
   try { body = await req.json() } catch { return NextResponse.json({ error: 'Body must be JSON' }, { status: 400 }) }
   const code = String((body as Record<string, unknown>)?.code ?? '').trim().toUpperCase()
   if (!code) return NextResponse.json({ error: 'Activation code required' }, { status: 400 })
+
+  // v0.6.5 — Code-class cross-rejection. The subscription modal has
+  // two activation entry boxes (Step 3 = paid activation, Bottom =
+  // generated/master). Pre-v0.6.5 either box accepted any valid
+  // code, so customers routinely pasted the wrong one and got
+  // confusing "code not recognised" errors. Frontend now passes
+  // `expectedType` ('activation' | 'master') and we reject up front
+  // with a precise, copy-paste-able message that names the OTHER box.
+  // Note: we do BOTH a format-prefix check (catches SL-MASTER-* even
+  // before storage lookup) AND a storage classify (paid vs standalone)
+  // so a typed-but-unsaved code still gets the right verdict.
+  const expectedRaw = String((body as Record<string, unknown>)?.expectedType ?? '').toLowerCase()
+  if (expectedRaw === 'activation' || expectedRaw === 'master') {
+    if (isMasterCode(code) && expectedRaw !== 'master') {
+      return NextResponse.json({
+        error: 'This is a master/generated code. Use the bottom box ("Enter your generated and master code") to activate it.',
+      }, { status: 400 })
+    }
+    if (!isMasterCode(code)) {
+      const src = peekActivationSource(code)
+      if (src === 'master' && expectedRaw !== 'master') {
+        return NextResponse.json({
+          error: 'This is a master/generated code. Use the bottom box ("Enter your generated and master code") to activate it.',
+        }, { status: 400 })
+      }
+      if (src === 'paid' && expectedRaw === 'master') {
+        return NextResponse.json({
+          error: 'This is a paid activation code. Use the top box ("Enter activation code after payment") to activate it.',
+        }, { status: 400 })
+      }
+      if (src === 'standalone' && expectedRaw === 'activation') {
+        return NextResponse.json({
+          error: 'This is a generated (admin-issued) code, not a paid activation code. Use the bottom box ("Enter your generated and master code") to activate it.',
+        }, { status: 400 })
+      }
+      // src === 'unknown' falls through — activateCode() raises the
+      // standard "code not recognised" error so typos look the same
+      // regardless of which box they land in.
+    }
+  }
 
   let result
   try { result = activateCode(code) }

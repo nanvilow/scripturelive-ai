@@ -168,7 +168,7 @@ export function SubscriptionModal() {
     } finally { setBusy(false) }
   }
 
-  const submitActivation = async (override?: string) => {
+  const submitActivation = async (override?: string, expectedType?: 'activation' | 'master') => {
     setError(null)
     const trimmed = (override ?? code).trim()
     if (!trimmed) { setError('Enter the activation code first.'); return }
@@ -181,10 +181,13 @@ export function SubscriptionModal() {
     const originPhase: Phase = selected ? 'payment' : 'plans'
     setBusy(true); setPhase('activating')
     try {
+      // v0.6.5 — pass which BOX the customer typed into so the route
+      // can cross-reject (paid activation code in master box, master
+      // code in activation box, etc.) with a precise error.
       const r = await fetch('/api/license/activate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: trimmed }),
+        body: JSON.stringify({ code: trimmed, expectedType }),
       })
       const j = await r.json()
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
@@ -272,7 +275,7 @@ export function SubscriptionModal() {
                   onContextMenu={(e) => { e.preventDefault(); pasteIntoInput(setCode) }}
                   className="bg-background border-border text-foreground font-mono"
                 />
-                <Button onClick={() => submitActivation(code)} disabled={busy} className="bg-emerald-600 hover:bg-emerald-500 text-white">
+                <Button onClick={() => submitActivation(code, 'activation')} disabled={busy} className="bg-emerald-600 hover:bg-emerald-500 text-white">
                   {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate'}
                 </Button>
               </div>
@@ -289,7 +292,7 @@ export function SubscriptionModal() {
                   onContextMenu={(e) => { e.preventDefault(); pasteIntoInput(setMasterCode) }}
                   className="bg-background border-border text-foreground font-mono"
                 />
-                <Button onClick={() => submitActivation(masterCode)} disabled={busy} className="bg-amber-600 hover:bg-amber-500 text-white">
+                <Button onClick={() => submitActivation(masterCode, 'master')} disabled={busy} className="bg-amber-600 hover:bg-amber-500 text-white">
                   {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate'}
                 </Button>
               </div>
@@ -364,19 +367,33 @@ export function SubscriptionModal() {
                   {/* v0.6.0 — Operator updated the NOTE wording: now
                       includes a WhatsApp escalation channel and an
                       explicit instruction to send a payment-proof
-                      screenshot for verification. */}
-                  <div className="rounded-md border border-emerald-500/30 bg-emerald-950/20 px-3 py-2 text-[11px] text-emerald-200/90 leading-relaxed">
-                    <span className="font-semibold uppercase tracking-wider text-[10px] text-emerald-300">NOTE:</span>{' '}
+                      screenshot for verification.
+                      v0.6.5 — NOTE re-themed RED (was emerald) for higher
+                      visual urgency. The two embedded WhatsApp numbers
+                      switched from hard-coded "0246798526" to
+                      {payment.momoRecipient.number} so admin edits to
+                      the MoMo number propagate to ALL three places
+                      (display, escalation, screenshot proof) instead of
+                      just the display row. */}
+                  <div className="rounded-md border border-red-500/40 bg-red-950/30 px-3 py-2 text-[11px] text-red-100 leading-relaxed">
+                    <span className="font-semibold uppercase tracking-wider text-[10px] text-red-300">NOTE:</span>{' '}
                     Make sure the recipient name shows as <span className="font-semibold">{payment.momoRecipient.name}</span> before
                     you confirm the MoMo transaction. If the name is different, STOP and contact support on
-                    {' '}<span className="font-semibold">WhatsApp (0246798526)</span> — your funds may be sent to the wrong account.{' '}
-                    <span className="font-semibold uppercase tracking-wider text-[10px] text-emerald-300">SEND A SCREENSHOT TO &quot;0246798526&quot; on WhatsApp for payment proof.</span>
+                    {' '}<span className="font-semibold">WhatsApp ({payment.momoRecipient.number})</span> — your funds may be sent to the wrong account.{' '}
+                    <span className="font-semibold uppercase tracking-wider text-[10px] text-red-300">SEND A SCREENSHOT TO &quot;{payment.momoRecipient.number}&quot; on WhatsApp for payment proof.</span>
                   </div>
                 </div>
 
-                <div className="text-[10px] text-amber-300/90 leading-relaxed flex items-start gap-1.5">
-                  <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                  Use the generated payment code <span className="font-mono">{payment.ref}</span> as your MoMo reference. Failure to use it may result in loss of funds.
+                {/* v0.6.5 — Failure-to-use warning was a tiny amber line
+                    that got lost in the modal. Promoted to a red ring
+                    container with bold text so customers cannot miss
+                    it; losing funds because they typed a different MoMo
+                    reference was a recurring support ticket. */}
+                <div className="rounded-md border border-red-500/50 bg-red-950/30 px-3 py-2.5 text-[12px] text-red-100 leading-relaxed flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-red-300" />
+                  <strong className="font-bold">
+                    Use the generated payment code <span className="font-mono text-red-200">{payment.ref}</span> as your MoMo reference. Failure to use it may result in loss of funds.
+                  </strong>
                 </div>
               </div>
             )}
