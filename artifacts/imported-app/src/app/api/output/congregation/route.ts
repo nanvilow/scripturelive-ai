@@ -814,8 +814,8 @@ function render(s){
     // capture flag is set), the rounded card drops its gradient + drop
     // shadow so vMix/OBS receive a clean alpha matte. We only do this
     // on the NDI surface (IS_NDI) so the in-room projector keeps its
-    // branded card. The CSS class `transparent` is gated by
-    // `!important` rules so it beats the per-theme background overrides.
+    // branded card. The CSS class .transparent is gated by !important
+    // rules so it beats the per-theme background overrides.
     var ltTransparent=IS_NDI && (FORCE_TRANSPARENT || st.ndiLowerThirdTransparent===true);
     var ltTransparentClass=ltTransparent?' transparent':'';
     var ltOrdered=refOrderTop?(ref+ltTxt):(ltTxt+ref);
