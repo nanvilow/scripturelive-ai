@@ -85,8 +85,8 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    "Transparent lower-third" on the NDI tab, the rounded card drops
    its gradient + drop-shadow so vMix / OBS receive a clean alpha
    matte (text only, zero fill). The text itself stays opaque so it
-   survives keying. The `!important` is intentional — it must beat the
-   per-theme background overrides above. */
+   survives keying. The !important flag is intentional — it must beat
+   the per-theme background overrides above. */
 .lt-box.transparent{background:transparent !important;box-shadow:none !important}
 .lt-box.transparent .lt-bg,.lt-box.transparent .lt-bg-overlay{display:none !important}
 /* Custom background image — clipped to the rounded box only. */
