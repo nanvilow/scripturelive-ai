@@ -101,6 +101,19 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
 const ndi = new NdiService()
 let frameCapture: FrameCapture | null = null
+// v0.6.6 — Tracks the layout/transparent/lowerThird flags the current
+// FrameCapture window was started with. We store them at module scope
+// (rather than exposing getters on FrameCapture) so the ndi:start
+// short-circuit can detect operator-toggled changes (e.g. "Transparent
+// ON → OFF while broadcasting") and rebuild the BrowserWindow with
+// the new flags. Pre-v0.6.6 only source/geometry/fps were tracked, so
+// transparent-toggle changes were silently ignored.
+let frameCaptureFlags: {
+  layout: 'mirror' | 'ndi'
+  transparent: boolean
+  lowerThird: boolean
+  lowerThirdPosition: 'top' | 'bottom'
+} | null = null
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let nextProcess: ChildProcess | null = null
@@ -1400,14 +1413,31 @@ function setupIpc() {
         // playing <video>, makes vMix / OBS lose the source for a
         // beat, and re-acquire — the very flicker we are trying to
         // fix. Short-circuit when nothing has changed.
+        // v0.6.6 — extend equality to include layout/transparent/lowerThird.
+        // Pre-v0.6.6 the short-circuit only checked source+geometry+fps,
+        // so flipping the Transparent toggle WHILE NDI was running would
+        // call ndi:start with the same {name,width,height,fps}, hit this
+        // branch, and bail out without rebuilding the BrowserWindow with
+        // the new transparent flag. Operator's complaint that the toggle
+        // "did nothing while broadcasting" was this short-circuit.
         const cur = ndi.getStatus()
+        const wantLayout = opts.layout === 'ndi' ? 'ndi' : 'mirror'
+        const wantTransparent = wantLayout === 'ndi' && opts.transparent !== false
+        const wantLT = wantLayout === 'ndi' && Boolean(opts.lowerThird?.enabled)
+        const wantLTPos: 'top' | 'bottom' =
+          opts.lowerThird?.position === 'top' ? 'top' : 'bottom'
         if (
           cur.running &&
           frameCapture &&
+          frameCaptureFlags &&
           cur.source === (opts.name || 'ScriptureLive AI') &&
           cur.width === opts.width &&
           cur.height === opts.height &&
-          cur.fps === opts.fps
+          cur.fps === opts.fps &&
+          frameCaptureFlags.layout === wantLayout &&
+          frameCaptureFlags.transparent === wantTransparent &&
+          frameCaptureFlags.lowerThird === wantLT &&
+          (!wantLT || frameCaptureFlags.lowerThirdPosition === wantLTPos)
         ) {
           broadcastNdiStatus(cur)
           return { ok: true, status: cur }
@@ -1452,11 +1482,22 @@ function setupIpc() {
           path: capturePath,
           transparent,
         })
+        // v0.6.6 — Record what flags this FrameCapture was started
+        // with so the next ndi:start can detect operator-toggled
+        // changes (transparent ON/OFF, lower-third position swap)
+        // and trigger a true rebuild instead of short-circuiting.
+        frameCaptureFlags = {
+          layout,
+          transparent,
+          lowerThird: layout === 'ndi' && Boolean(opts.lowerThird?.enabled),
+          lowerThirdPosition: opts.lowerThird?.position === 'top' ? 'top' : 'bottom',
+        }
         broadcastNdiStatus(ndi.getStatus())
         return { ok: true, status: ndi.getStatus() }
       } catch (err) {
         try { if (frameCapture) await frameCapture.stop() } catch { /* ignore */ }
         frameCapture = null
+        frameCaptureFlags = null
         try { await ndi.stop() } catch { /* ignore */ }
         const message = err instanceof Error ? err.message : String(err)
         broadcastNdiStatus({ ...ndi.getStatus(), error: message })
@@ -1469,6 +1510,7 @@ function setupIpc() {
     serializeNdi(async () => {
       try {
         if (frameCapture) { await frameCapture.stop(); frameCapture = null }
+        frameCaptureFlags = null
         await ndi.stop()
         broadcastNdiStatus(ndi.getStatus())
         return { ok: true }
@@ -1477,6 +1519,27 @@ function setupIpc() {
       }
     })
   )
+
+  // v0.6.6 — Open Windows "Apps & features" so operators can uninstall
+  // the previous ScriptureLive build before installing the new one.
+  // Surfaced from the update dialog's "Uninstall first" red banner.
+  // shell.openExternal accepts the ms-settings: scheme on Windows 10/11;
+  // on Linux/macOS we no-op gracefully so the React handler doesn't
+  // throw when the operator clicks the button on a non-Windows host.
+  ipcMain.handle('app:open-uninstall', async () => {
+    try {
+      if (process.platform !== 'win32') {
+        return { ok: false, error: 'Uninstall page is Windows-only' }
+      }
+      await shell.openExternal('ms-settings:appsfeatures')
+      return { ok: true }
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      }
+    }
+  })
 
   // List physical displays so the renderer can show a "send to which screen?" picker
   ipcMain.handle('output:list-displays', () => {

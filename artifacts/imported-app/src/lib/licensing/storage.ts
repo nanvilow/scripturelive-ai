@@ -114,6 +114,10 @@ export interface RuntimeConfig {
   whatsappNumber?: string
   /** Override the email address that admin notifications go to */
   notifyEmail?: string
+  /** v0.6.6 — Admin's PERSONAL phone for receiving payment-code SMS
+   *  alerts. Distinct from momoNumber/whatsappNumber. Defaults to the
+   *  compiled-in ADMIN_NOTIFICATION_PHONE if unset. */
+  adminPhone?: string
   /** Per-plan price override map: { '1M': 250, '6M': 1100, ... } */
   planPriceOverrides?: Partial<Record<string, number>>
   /** v0.5.52 — Override the BAKED OpenAI Whisper key. When empty,

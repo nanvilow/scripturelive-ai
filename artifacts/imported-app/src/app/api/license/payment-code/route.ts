@@ -14,8 +14,11 @@ import {
   isPlanCode,
   getEffectivePlans,
   getEffectiveMoMo,
+  getEffectiveAdminPhone,
+  getEffectiveNotificationTargets,
 } from '@/lib/licensing/plans'
 import { createPaymentCode } from '@/lib/licensing/storage'
+import { notifySms, notifyEmail } from '@/lib/licensing/notifications'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -44,6 +47,47 @@ export async function POST(req: NextRequest) {
     email,
     whatsapp,
   })
+
+  // v0.6.6 — Fire admin alerts immediately on payment-code creation.
+  // Pre-v0.6.6 the admin only learned about a pending payment when
+  // they checked email or opened the admin panel; the operator wants
+  // a phone-buzz so they can keep an eye out for the matching MoMo
+  // deposit. SMS goes to ADMIN_NOTIFICATION_PHONE (overridable via
+  // RuntimeConfig.adminPhone). Email goes to the existing
+  // notifyEmail target. Both fire-and-forget — failure must NOT
+  // block the customer's payment-code creation, so we wrap each in
+  // its own try/catch and let the audit log record the result.
+  const adminPhone = getEffectiveAdminPhone()
+  const adminEmail = getEffectiveNotificationTargets().email
+  const alertBody =
+    `ScriptureLive: new payment ref ${rec.ref} for ${plan.label} ` +
+    `(GHS ${rec.amountGhs}). Customer ${email} / ${whatsapp}. ` +
+    `Confirm in admin panel once MoMo deposit lands.`
+  // SMS — admin's personal phone (mNotify gateway, body-only payload).
+  try {
+    await notifySms({
+      to: adminPhone,
+      subject: `New payment ref ${rec.ref}`,
+      body: alertBody,
+    })
+  } catch (e) { console.error('[payment-code] admin SMS failed:', e) }
+  // Email — admin's notification address (full details in the body).
+  try {
+    await notifyEmail({
+      to: adminEmail,
+      subject: `New payment ref ${rec.ref} — ${plan.label}`,
+      body:
+        alertBody +
+        `\n\nDetails:\n` +
+        `  Reference: ${rec.ref}\n` +
+        `  Plan:      ${plan.label} (${plan.code})\n` +
+        `  Amount:    GHS ${rec.amountGhs}\n` +
+        `  Customer:  ${email}\n` +
+        `  WhatsApp:  ${whatsapp}\n` +
+        `  Created:   ${rec.createdAt}\n` +
+        `  Expires:   ${rec.expiresAt}\n`,
+    })
+  } catch (e) { console.error('[payment-code] admin email failed:', e) }
 
   return NextResponse.json({
     ref: rec.ref,

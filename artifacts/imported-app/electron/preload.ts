@@ -65,6 +65,19 @@ const api = {
   isDesktop: true as const,
   getInfo: (): Promise<AppInfo> => ipcRenderer.invoke('app:info'),
   /**
+   * v0.6.6 — Open the Windows "Apps & features" Settings page so the
+   * operator can uninstall the previous ScriptureLive build before
+   * installing a new one. The update dialog surfaces a button that
+   * calls this. We deliberately do NOT auto-uninstall via NSIS hook:
+   * uninstalling the running app would tear down its own activation
+   * data and the operator might have just generated a new MoMo
+   * payment ref. Manual prompt + open-Settings is the safer flow.
+   */
+  app: {
+    openUninstall: (): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('app:open-uninstall'),
+  },
+  /**
    * Launch-at-login (a.k.a. "start with Windows"). The renderer-side
    * Settings toggle in src/components/views/settings.tsx calls these.
    * Both reads and writes go through Electron's
