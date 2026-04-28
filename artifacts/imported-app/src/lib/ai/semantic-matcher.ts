@@ -41,7 +41,12 @@ const EMBEDDING_DIM = 1536
 /** Confidence buckets per the v0.6.0 spec. */
 export type ConfidenceLevel = 'high' | 'medium' | 'low'
 export const CONFIDENCE_HIGH_THRESHOLD = 0.75
-export const CONFIDENCE_MEDIUM_THRESHOLD = 0.55
+// v0.6.4 — Lowered from 0.55 to 0.50. Operator feedback: more
+// paraphrased verses should at least surface as a SUGGESTION chip
+// (medium) so the operator can one-click confirm; HIGH stays at 0.75
+// so auto-display only fires on near-verbatim matches. The matcher
+// still hides anything below this threshold from the response.
+export const CONFIDENCE_MEDIUM_THRESHOLD = 0.50
 
 export interface SemanticMatch {
   /** Canonical KJV reference, e.g. "John 3:16" — re-fetch in any translation. */

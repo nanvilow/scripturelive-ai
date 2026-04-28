@@ -84,6 +84,11 @@ export interface OutputState {
      *  third. Renderer reads this and adds the `transparent` class to
      *  `.lt-box` so vMix/OBS receive a clean alpha matte. */
     ndiLowerThirdTransparent?: unknown
+    /** v0.6.4 — Operator-tunable size multiplier for the NDI lower
+     *  third. Multiplies font sizes + box width on the NDI surface
+     *  only. Honoured server-side when IS_NDI=true; the in-room
+     *  projector and live preview ignore it. */
+    ndiLowerThirdScale?: unknown
     ndiShowReferenceOnOutput?: unknown
     ndiReferenceTextShadow?: unknown
     ndiDisplayMode?: unknown

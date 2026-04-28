@@ -287,6 +287,11 @@ function settingsRenderKey(st){
     ndRfPos: st.ndiRefPosition,
     ndRfTs: st.ndiRefScale,
     ndTr: st.ndiTranslation,
+    // v0.6.4 — operator's NDI lower-third size multiplier. Re-render
+    // the captured NDI window when the operator drags the slider so
+    // vMix/OBS see the new bar height + text scale on the next tick.
+    ndLtSc: st.ndiLowerThirdScale,
+    ndLtTr: st.ndiLowerThirdTransparent,
   });
 }
 
@@ -802,6 +807,17 @@ function render(s){
     ltBand=ltBand*scale;
     var ltCap=Math.max(1.4,2*scale);
     var ltMin=Math.max(.4,.6*scale);
+    /* v0.6.4 — Apply the operator's NDI lower-third size multiplier
+       on the NDI surface only. Stays at 1× for the in-room projector
+       and the operator preview, so the broadcast feed can be tuned
+       (smaller for vMix overlays, bigger for full-screen NDI) without
+       disturbing what the audience sees in the room. Clamp 0.5 .. 2.0. */
+    var ndiLtScale = (IS_NDI && (typeof st.ndiLowerThirdScale === 'number'))
+      ? Math.min(2, Math.max(0.5, st.ndiLowerThirdScale))
+      : 1;
+    ltBand = ltBand * ndiLtScale;
+    ltCap  = ltCap  * ndiLtScale;
+    ltMin  = ltMin  * ndiLtScale;
     var ltFs='clamp('+ltMin+'rem,min('+(ltBand*0.55)+'cqw,'+ltBand+'cqh),'+ltCap+'rem)';
     var ltTxt=txt.replace(/font-size:[^;"]+;?/g,'font-size:'+ltFs+';');
     // lower-third-black forces the bar's background to solid black so

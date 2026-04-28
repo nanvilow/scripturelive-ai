@@ -103,6 +103,12 @@ export interface AppSettings {
   speechLanguage: string
   autoGoLiveOnDetection: boolean
   autoGoLiveOnLookup: boolean
+  /** v0.6.4 — When true (and Auto Go-Live is on), HIGH-confidence
+   *  AI semantic matches are pushed to Live automatically without
+   *  requiring the operator to click the suggestion chip. Default
+   *  true so the smart-match path "just works" for new operators;
+   *  sermon-prep users can flip it off in Settings. */
+  aiAutoSendOnHigh: boolean
   // ── Secondary screen layout. `displayRatio` controls how the slide
   // canvas is fitted into the operator's secondary screen window:
   //   'fill'   – stretch to the full window (recommended for projectors)
@@ -181,6 +187,15 @@ export interface AppSettings {
    *  matte (text-only). Off by default so existing operator setups
    *  keep their familiar "branded card" look on NDI. */
   ndiLowerThirdTransparent?: boolean
+
+  /** v0.6.4 — Operator-tunable size multiplier for the NDI lower-third
+   *  bar. Multiplies the verse + reference font sizes (and the box
+   *  band that drives them). 1 = stock; 0.5 = half; 2 = double. The
+   *  in-room projector and live preview ignore this, so operators can
+   *  tune their broadcast feed for vMix/OBS without disturbing what
+   *  the audience sees in the room. Default `undefined` ⇒ no scale
+   *  applied (effective 1.0) so existing operator setups don't shift. */
+  ndiLowerThirdScale?: number
 
   // Item #15 follow-up — when the SSE link to the secondary screen
   // drops, the page used to slam a full-screen "Reconnecting…"
@@ -578,6 +593,7 @@ const defaultSettings: AppSettings = {
   // toggle in Scripture Detection still lets them turn it off.
   autoGoLiveOnDetection: true,
   autoGoLiveOnLookup: false,
+  aiAutoSendOnHigh: true,
   ndiDisplayMode: 'full',
   // NDI typography overrides (v0.5.48): leave undefined so the NDI
   // feed mirrors Live Display by default. The operator opts in via
@@ -592,6 +608,7 @@ const defaultSettings: AppSettings = {
   ndiAspectRatio: undefined,
   ndiBibleColor: undefined,
   ndiLowerThirdTransparent: false,
+  ndiLowerThirdScale: undefined,
   ndiBibleLineHeight: undefined,
   ndiRefSize: undefined,
   ndiRefStyle: undefined,

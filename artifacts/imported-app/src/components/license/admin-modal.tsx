@@ -569,14 +569,39 @@ export function AdminModal() {
                 recipient still types the code into the activation
                 modal on their PC — that's what binds it to a
                 specific install. */}
-            <section className="rounded-lg border border-violet-500/40 bg-violet-950/10 p-3.5 space-y-3">
+            {/* v0.6.4 — Wrap the Generate Activation Code section in a
+                <form> so:
+                  • the browser pairs labels (htmlFor) with inputs
+                    correctly (clicking a label focuses the field —
+                    fixes the "cursor not working" complaint where
+                    operators clicked the small label text instead of
+                    the field itself), and
+                  • Enter inside any input submits the form via
+                    onSubmit ⇒ generateCode(), instead of bubbling out
+                    of the Dialog and triggering an accidental close.
+                Also explicitly set pointerEvents:auto on the section
+                so any inherited pointer-events:none from a Radix
+                portal layer can never silently swallow clicks. */}
+            <section
+              className="rounded-lg border border-violet-500/40 bg-violet-950/10 p-3.5 space-y-3"
+              style={{ pointerEvents: 'auto' }}
+            >
               <div className="text-[11px] uppercase tracking-wider text-violet-300 flex items-center gap-1.5">
                 <Sparkles className="h-3.5 w-3.5" /> Generate Activation Code (no payment required)
               </div>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  if (!genBusy) generateCode()
+                }}
+                autoComplete="off"
+                className="space-y-3"
+              >
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
                 <div className="sm:col-span-4 space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Plan</label>
+                  <label htmlFor="gen-plan" className="block text-[10px] uppercase tracking-wider text-muted-foreground cursor-pointer">Plan</label>
                   <select
+                    id="gen-plan"
                     value={genPlan}
                     onChange={(e) => {
                       setGenPlan(e.target.value)
@@ -587,7 +612,7 @@ export function AdminModal() {
                         setGenMonths('')
                       }
                     }}
-                    className="w-full bg-background border border-border text-foreground rounded-md px-2 py-1.5 text-xs h-9"
+                    className="w-full bg-background border border-border text-foreground rounded-md px-2 py-1.5 text-xs h-9 cursor-pointer"
                   >
                     <option value="1M">1 Month (31 d)</option>
                     <option value="2M">2 Months (62 d)</option>
@@ -606,83 +631,94 @@ export function AdminModal() {
                     integer day count. So "1 minute" = (0/0/0/1),
                     "6 months" = (6/0/0/0), "1 year" = (12/0/0/0). */}
                 <div className="sm:col-span-2 space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  <label htmlFor="gen-months" className="block text-[10px] uppercase tracking-wider text-muted-foreground cursor-pointer">
                     Months {genPlan !== 'CUSTOM' && <span className="text-muted-foreground">(opt)</span>}
                   </label>
                   <Input
+                    id="gen-months"
                     type="number"
+                    inputMode="numeric"
                     min={0}
                     max={1200}
                     placeholder="0"
                     value={genMonths}
                     onChange={(e) => setGenMonths(e.target.value)}
-                    className="bg-background border-border text-foreground font-mono"
+                    className="bg-background border-border text-foreground font-mono cursor-text"
                   />
                 </div>
                 <div className="sm:col-span-2 space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  <label htmlFor="gen-days" className="block text-[10px] uppercase tracking-wider text-muted-foreground cursor-pointer">
                     Days {genPlan !== 'CUSTOM' && <span className="text-muted-foreground">(opt)</span>}
                   </label>
                   <Input
+                    id="gen-days"
                     type="number"
+                    inputMode="numeric"
                     min={0}
                     max={36500}
                     placeholder="0"
                     value={genDays}
                     onChange={(e) => setGenDays(e.target.value)}
-                    className="bg-background border-border text-foreground font-mono"
+                    className="bg-background border-border text-foreground font-mono cursor-text"
                   />
                 </div>
                 <div className="sm:col-span-2 space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Hours</label>
+                  <label htmlFor="gen-hours" className="block text-[10px] uppercase tracking-wider text-muted-foreground cursor-pointer">Hours</label>
                   <Input
+                    id="gen-hours"
                     type="number"
+                    inputMode="numeric"
                     min={0}
                     max={23}
                     placeholder="0"
                     value={genHours}
                     onChange={(e) => setGenHours(e.target.value)}
-                    className="bg-background border-border text-foreground font-mono"
+                    className="bg-background border-border text-foreground font-mono cursor-text"
                   />
                 </div>
                 <div className="sm:col-span-2 space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Minutes</label>
+                  <label htmlFor="gen-minutes" className="block text-[10px] uppercase tracking-wider text-muted-foreground cursor-pointer">Minutes</label>
                   <Input
+                    id="gen-minutes"
                     type="number"
+                    inputMode="numeric"
                     min={0}
                     max={59}
                     placeholder="0"
                     value={genMinutes}
                     onChange={(e) => setGenMinutes(e.target.value)}
-                    className="bg-background border-border text-foreground font-mono"
+                    className="bg-background border-border text-foreground font-mono cursor-text"
                   />
                 </div>
                 <div className="sm:col-span-12 space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Username / label</label>
+                  <label htmlFor="gen-note" className="block text-[10px] uppercase tracking-wider text-muted-foreground cursor-pointer">Username / label</label>
                   <Input
+                    id="gen-note"
                     placeholder="e.g. Pastor John — Cathedral Lagos"
                     value={genNote}
                     onChange={(e) => setGenNote(e.target.value)}
-                    className="bg-background border-border text-foreground"
+                    className="bg-background border-border text-foreground cursor-text"
                   />
                 </div>
                 <div className="sm:col-span-6 space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Email (optional)</label>
+                  <label htmlFor="gen-email" className="block text-[10px] uppercase tracking-wider text-muted-foreground cursor-pointer">Email (optional)</label>
                   <Input
+                    id="gen-email"
                     type="email"
                     placeholder="customer@example.com"
                     value={genEmail}
                     onChange={(e) => setGenEmail(e.target.value)}
-                    className="bg-background border-border text-foreground"
+                    className="bg-background border-border text-foreground cursor-text"
                   />
                 </div>
                 <div className="sm:col-span-6 space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">WhatsApp (optional)</label>
+                  <label htmlFor="gen-whatsapp" className="block text-[10px] uppercase tracking-wider text-muted-foreground cursor-pointer">WhatsApp (optional)</label>
                   <Input
+                    id="gen-whatsapp"
                     placeholder="0246798526"
                     value={genWhatsapp}
                     onChange={(e) => setGenWhatsapp(e.target.value)}
-                    className="bg-background border-border text-foreground font-mono"
+                    className="bg-background border-border text-foreground font-mono cursor-text"
                   />
                 </div>
               </div>
@@ -691,7 +727,7 @@ export function AdminModal() {
                   Pick a plan, or CUSTOM and fill any combo of Minutes / Hours / Days / Months, then click Generate. The code appears below — copy it and send it to the customer.
                 </p>
                 <Button
-                  onClick={generateCode}
+                  type="submit"
                   disabled={genBusy}
                   className="bg-violet-600 hover:bg-violet-500 shrink-0"
                 >
@@ -712,6 +748,7 @@ export function AdminModal() {
                   </div>
                 </div>
               )}
+              </form>
             </section>
 
             {/* ── Pending + recent payments ────────────────────────────── */}
@@ -886,7 +923,32 @@ export function AdminModal() {
                             <Button size="sm" variant="ghost" className="mt-1 h-6 text-[10px]" onClick={() => copy(n.body)}><Copy className="h-3 w-3 mr-1" /> Copy</Button>
                           </details>
                         )}
-                        {n.error && <div className="text-[10px] text-rose-400 mt-0.5">Error: {n.error}</div>}
+                        {/* v0.6.4 — `n.error` is overloaded: the backend stores
+                            success-info there too (queue ids, "mNotify OK · …",
+                            "SMTP OK · …"). Inspect `n.status` so a successful
+                            send is labeled "Info" in emerald and only an
+                            actual failure shows the red "Error". */}
+                        {/* v0.6.4 review fix — three-way branch on n.status:
+                            sent ⇒ green "Info:" (success audit string),
+                            pending ⇒ amber "Info:" (queued, not failed yet),
+                            failed ⇒ red "Error:". The pending branch was
+                            previously falling through to the rose default
+                            and mis-labelled the operator's queued sends. */}
+                        {n.error && (
+                          <div
+                            className={cn(
+                              'text-[10px] mt-0.5',
+                              n.status === 'sent'
+                                ? 'text-emerald-400'
+                                : n.status === 'pending'
+                                  ? 'text-amber-300'
+                                  : 'text-rose-400',
+                            )}
+                          >
+                            {n.status === 'failed' ? 'Error: ' : 'Info: '}
+                            {n.error}
+                          </div>
+                        )}
                       </li>
                     ))}
                   </ul>

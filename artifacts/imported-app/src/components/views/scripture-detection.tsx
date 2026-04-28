@@ -171,6 +171,14 @@ export function ScriptureDetectionView() {
   // Send an AI-suggested verse live. Re-fetches the verse in the
   // operator's currently-selected translation so a paraphrased KJV
   // match still respects their NIV/ESV/etc. preference.
+  // v0.6.4 — Track which AI suggestion reference we've already
+  // auto-fired in this session so the auto-send effect doesn't loop
+  // (sendAiSuggestionLive nulls aiSuggestion, but a new transcript
+  // tick could resurface the same match before the operator speaks
+  // anything new). We reset this ref whenever the operator stops
+  // listening so a new sermon starts with a clean slate.
+  const lastAutoSentRef = useRef<string | null>(null)
+
   const sendAiSuggestionLive = useCallback(async () => {
     if (!aiSuggestion) return
     try {
@@ -197,6 +205,32 @@ export function ScriptureDetectionView() {
       toast.error('Failed to send AI suggestion')
     }
   }, [aiSuggestion, selectedTranslation, setLiveVerse, addToVerseHistory])
+
+  // v0.6.4 — Auto-fire HIGH-confidence semantic matches the moment
+  // they land, IF the operator has both Auto Go-Live and AI Auto-Send
+  // enabled. This is the missing piece operators reported as "smart
+  // detection not working" in v0.6.3 — the matcher already returned
+  // 0.81 for the failing example, but the suggestion chip just sat
+  // there waiting for a click. Now it pushes live with the same one-
+  // shot guard the regex path already uses (lastAutoSentRef).
+  useEffect(() => {
+    if (!aiSuggestion) return
+    if (aiSuggestion.confidence !== 'high') return
+    if (!settings.autoGoLiveOnDetection) return
+    if (!settings.aiAutoSendOnHigh) return
+    // De-dupe: don't auto-fire the same reference twice in a row even
+    // if the matcher resurfaces it on the next transcript tick.
+    if (lastAutoSentRef.current === aiSuggestion.reference) return
+    lastAutoSentRef.current = aiSuggestion.reference
+    sendAiSuggestionLive()
+  }, [aiSuggestion, settings.autoGoLiveOnDetection, settings.aiAutoSendOnHigh, sendAiSuggestionLive])
+
+  // Reset the AI auto-send dedupe ring whenever the operator stops
+  // listening so the next sermon starts with a clean slate (otherwise
+  // the same verse spoken twice across services wouldn't auto-fire).
+  useEffect(() => {
+    if (!isListening) lastAutoSentRef.current = null
+  }, [isListening])
 
   // ── Go Live with a verse ─────────────────────────────────────────────
   const goLiveWithVerse = useCallback((
@@ -329,6 +363,28 @@ export function ScriptureDetectionView() {
               <Zap className={cn('h-3.5 w-3.5', settings.autoGoLiveOnDetection && 'text-emerald-400')} />
               Auto Go-Live
             </button>
+            {/* v0.6.4 — AI Auto-Send. Only shown when Auto Go-Live is
+                on (it's a child option). When ON, HIGH-confidence
+                semantic matches push live without an operator click. */}
+            {settings.autoGoLiveOnDetection && (
+              <button
+                onClick={() => updateSettings({ aiAutoSendOnHigh: !settings.aiAutoSendOnHigh })}
+                title={
+                  settings.aiAutoSendOnHigh
+                    ? 'AI auto-send: HIGH-confidence semantic matches push live automatically'
+                    : 'AI auto-send disabled — high-confidence matches still surface as a suggestion chip'
+                }
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border',
+                  settings.aiAutoSendOnHigh
+                    ? 'bg-violet-500/15 border-violet-500/30 text-violet-300'
+                    : 'bg-muted border-border text-muted-foreground hover:bg-muted/80',
+                )}
+              >
+                <Sparkles className={cn('h-3.5 w-3.5', settings.aiAutoSendOnHigh && 'text-violet-300')} />
+                AI Auto-Send
+              </button>
+            )}
             {liveTranscript && (
               <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={handleReset}>
                 <RotateCcw className="h-3 w-3" />
