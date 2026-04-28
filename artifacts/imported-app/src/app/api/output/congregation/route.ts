@@ -302,6 +302,11 @@ function settingsRenderKey(st){
     // vMix/OBS see the new bar height + text scale on the next tick.
     ndLtSc: st.ndiLowerThirdScale,
     ndLtTr: st.ndiLowerThirdTransparent,
+    // v0.6.9 — operator-controlled Bible line-height that applies to
+    // both the secondary screen AND the NDI feed (when no NDI-only
+    // override is set). Re-render when the operator drags the new
+    // slider in the Typography panel.
+    blh: st.bibleLineHeight,
   });
 }
 
@@ -603,9 +608,16 @@ function render(s){
   // pure CSS overrides applied to the .slide-text node only when
   // IS_NDI is true; the secondary screen keeps the theme defaults.
   var T_COLOR=(IS_NDI && st.ndiBibleColor) ? st.ndiBibleColor : '';
+  // v0.6.9 — Bible line-height now has a Live Display source too.
+  // NDI override > Live Display setting > 0 (no override). Previously
+  // this only honoured the NDI value, so the new operator-facing
+  // bibleLineHeight slider in the Typography panel had no effect
+  // on the secondary screen.
   var T_LH=(IS_NDI && typeof st.ndiBibleLineHeight==='number')
     ? Math.min(2.5, Math.max(0.9, st.ndiBibleLineHeight))
-    : 0;
+    : (typeof st.bibleLineHeight==='number'
+      ? Math.min(2.5, Math.max(0.9, st.bibleLineHeight))
+      : 0);
   var bibleExtra=(T_COLOR?'color:'+T_COLOR+';':'')+(T_LH?'line-height:'+T_LH+';':'');
   var sh=T_SH_BOOL?'text-shadow:0 2px 12px rgba(0,0,0,.4);':'';
   var bg=st.customBackground?'<img class="bg-image" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>':'';
@@ -868,7 +880,7 @@ function render(s){
     // restore them to #000 when transparent goes back off so toggling
     // doesn't permanently bleach the surface.
     //
-    // v0.6.8.1 — CRITICAL FIX. The v0.6.8 decoupling of `ltTransparent`
+    // v0.6.8.1 — CRITICAL FIX. The v0.6.8 decoupling of ltTransparent
     // from FORCE_TRANSPARENT meant this background-paint condition only
     // checked the operator's per-box toggle. With the toggle defaulting
     // OFF (and hidden in non-lower-third mode), the surrounding ancestors
@@ -877,7 +889,7 @@ function render(s){
     // BrowserWindow itself was transparent and ?transparent=1 was on the
     // URL. Re-OR FORCE_TRANSPARENT here so the surrounding-area paint
     // honours the URL flag (always-on for v0.6.8 NDI) while the BOX class
-    // (`ltTransparentClass`) continues to honour only the operator's
+    // (ltTransparentClass class on lt-box) continues to honour only the operator's
     // toggle. Two settings, two effects, no cross-contamination.
     try{
       var __bg=(FORCE_TRANSPARENT||ltTransparent)?'transparent':'#000';
@@ -891,12 +903,23 @@ function render(s){
   }else{
     var ta=st.textAlign||'center';
     var jc=ta==='left'?'flex-start':ta==='right'?'flex-end':'center';
-    // Transparent NDI overlay surface: skip the themed gradient class
-    // and the custom background image so vMix/OBS still receives a
-    // clean alpha matte even if the operator runs the legacy "NDI as
-    // overlay" capture in full-screen mode (i.e. without lowerThird=1).
-    var fsTheme=FORCE_TRANSPARENT?'':tc;
-    var fsBg=FORCE_TRANSPARENT?'':bg;
+    // v0.6.9 — REVERT v0.6.8 background-stripping in full-screen NDI.
+    // Operator video showed full-screen NDI broadcasting the verse on
+    // a WHITE / alpha frame because v0.6.8 made FORCE_TRANSPARENT
+    // always-on for NDI and the previous code blanked fsTheme + fsBg
+    // any time FORCE_TRANSPARENT was set. The intent of that strip
+    // was the legacy "NDI as overlay" capture (vMix would composite
+    // it over a camera feed), but operators on the new build want
+    // full-screen NDI to render IDENTICALLY to the secondary screen
+    // — themed gradient + custom background visible — so the NDI
+    // feed can act as a complete program output, not a key-fill alpha
+    // matte. Lower-third NDI keeps its surrounding-area transparency
+    // (handled in the isLT branch above with the v0.6.8.1 fix); only
+    // the FULL-SCREEN branch was over-zealously stripping. The legacy
+    // overlay use case is still served by lower-third mode + the
+    // operator's per-box ndiLowerThirdTransparent toggle.
+    var fsTheme=tc;
+    var fsBg=bg;
     var fsOrdered=refOrderTop?(ref+txt):(txt+ref);
     $('output').innerHTML='<div class="'+fsTheme+'" style="width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';'+fontStyle+'">'+fsBg+'<div class="slide-content" style="text-align:'+ta+';'+fontStyle+'">'+fsOrdered+'</div></div>';
   }

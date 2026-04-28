@@ -2,6 +2,66 @@
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It supports live congregation output, NDI broadcasting, and advanced speech recognition. The system targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service.
 
+## v0.6.9 — Typography sync to Output Display + Bible line-height + revert full-screen NDI background-strip (Apr 2026)
+
+Three operator-reported issues from the v0.6.8.1 follow-up video,
+plus a new feature request:
+
+**1. Reference typography never reached the secondary screen / NDI feed (root cause)**
+
+The Typography panel's reference-only controls (Reference Font Size,
+Reference Font Family, Reference Text Shadow, Reference Text Scale,
+Reference Text Alignment) were stored correctly in the operator's
+settings, AND the renderer in `route.ts` explicitly read them on every
+broadcast tick — but the SSE `settingsBlock` in
+`output-broadcaster.tsx` (lines 77-134) never forwarded them.
+Consequence: the secondary-screen renderer always saw
+`st.referenceFontSize === undefined`, fell through to its body-text
+fallback chain, and silently rendered the reference at the operator's
+old body settings every time. Operator's verdict: "scripture text and
+reference size on second screen display doesn't match the Live display
+settings at all — they are not sync." Fix: forward all five reference
+fields in the settings broadcast and add them to the
+`OutputState.settings` type.
+
+**2. Full-screen NDI lost the themed gradient + custom background**
+
+v0.6.8 made `FORCE_TRANSPARENT` always-on for the NDI feed (so
+lower-third NDI could render on a clean alpha matte for vMix/OBS
+compositing). But the full-screen NDI branch in `route.ts:912` ALSO
+honoured `FORCE_TRANSPARENT` and stripped the theme class + custom
+background image, so operators on full-screen NDI saw the verse
+floating on a white / alpha frame. Reverted: full-screen NDI now
+always paints the theme gradient + custom background, identical to the
+secondary screen, so the NDI feed acts as a complete program output.
+Lower-third NDI keeps its v0.6.8.1 surrounding-area transparency
+(handled in the `isLT` branch — the surrounding ancestors and the box
+backdrop class still honour `FORCE_TRANSPARENT` and the operator's
+per-box toggle). Operators who specifically want full-screen NDI as
+an alpha matte can switch to lower-third mode + flip the per-box
+transparent toggle.
+
+**3. New: Bible body line-height in the main Typography panel**
+
+Mirrors the existing NDI panel's "Bible line-height" slider — range
+0.9 .. 2.5, default 1.4. New `bibleLineHeight` field on `AppSettings`,
+broadcast through the SSE channel, and read by the renderer for BOTH
+the secondary screen AND the NDI feed (the NDI-only override
+`ndiBibleLineHeight` still wins on the broadcast feed when set). UI is
+a slider with Tight / Default / Airy preset buttons + a clarifying
+caption. Existing global "Text Scale" slider already covers the
+"Bible text scale" half of the operator's request.
+
+**Files**
+- `replit.md`                                                                          (this changelog)
+- `artifacts/imported-app/package.json`                                                 (0.6.8.1 → 0.6.9)
+- `artifacts/imported-app/BUILD.bat`                                                    (banner)
+- `artifacts/imported-app/src/app/api/output/congregation/route.ts`                     (revert full-screen fsTheme/fsBg strip; T_LH falls back to st.bibleLineHeight; settingsRenderKey adds blh)
+- `artifacts/imported-app/src/components/providers/output-broadcaster.tsx`              (forward referenceFontSize/FontFamily/TextShadow/TextScale/TextAlign + bibleLineHeight)
+- `artifacts/imported-app/src/lib/output-broadcast.ts`                                  (OutputState type adds reference* + bibleLineHeight)
+- `artifacts/imported-app/src/lib/store.ts`                                             (AppSettings adds bibleLineHeight; defaultSettings seed 1.4)
+- `artifacts/imported-app/src/components/views/settings.tsx`                            (Bible Line-Height slider in the Typography card)
+
 ## v0.6.8.1 — HOTFIX: lower-third surrounding-area still opaque (Apr 2026)
 
 Code review of v0.6.8 caught a high-severity miss: the v0.6.5
