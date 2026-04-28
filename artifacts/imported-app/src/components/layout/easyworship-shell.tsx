@@ -218,9 +218,23 @@ function NdiToggleButton() {
           toast.success('NDI output stopped')
         }
       } else {
+        // v0.6.6 — pass layout/transparent/lowerThird so the Header
+        // toggle path mirrors the NDI Output panel path. Pre-v0.6.6
+        // either entry point dropped the BrowserWindow into opaque
+        // 'mirror' layout regardless of the operator's transparent
+        // toggle. We read live store state at click time.
+        const settings = useAppStore.getState().settings
         const r = await desktop.ndi.start({
           name: 'ScriptureLive AI',
           width: 1920, height: 1080, fps: 30,
+          layout: 'ndi',
+          transparent: settings.ndiLowerThirdTransparent === true,
+          lowerThird: {
+            enabled: true,
+            // The projector's lowerThirdPosition is shared with NDI;
+            // there is no separate ndiLowerThirdPosition in the store.
+            position: settings.lowerThirdPosition === 'top' ? 'top' : 'bottom',
+          },
         })
         if (!r.ok) toast.error(r.error || 'Failed to start NDI')
         else toast.success('Broadcasting on the LAN as "ScriptureLive AI"')

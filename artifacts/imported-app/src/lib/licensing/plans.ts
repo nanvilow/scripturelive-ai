@@ -58,6 +58,27 @@ export const MOMO_RECIPIENT = {
 export const NOTIFICATION_EMAIL = 'nanvilow@gmail.com'
 export const NOTIFICATION_WHATSAPP = '0530686367'
 
+// v0.6.6 — Admin's PERSONAL phone for receiving payment-code-generated
+// SMS alerts. Distinct from MOMO_RECIPIENT.number (the customer-facing
+// payment receiver) and NOTIFICATION_WHATSAPP (the public escalation
+// line). When a customer hits "Generate payment code", an SMS goes
+// here so the admin knows to look out for the matching MoMo deposit
+// without checking email. Overridable via RuntimeConfig.adminPhone in
+// the admin settings tab; defaults below if unset.
+export const ADMIN_NOTIFICATION_PHONE = '0246798526'
+
+/** Effective admin notification phone (config override applied). */
+export function getEffectiveAdminPhone(): string {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getConfig } = require('./storage') as typeof import('./storage')
+    const c = getConfig()
+    return c?.adminPhone?.trim() || ADMIN_NOTIFICATION_PHONE
+  } catch {
+    return ADMIN_NOTIFICATION_PHONE
+  }
+}
+
 // ─── Runtime resolution helpers (v0.5.48) ────────────────────────────
 // All three of these consult the owner-saved RuntimeConfig (Admin
 // Settings tab) before falling back to the compiled-in defaults

@@ -69,6 +69,10 @@ type ScriptureLiveBridge = {
     download?: () => Promise<{ ok: boolean; error?: string; alreadyInProgress?: boolean }>
     onState?: (cb: (s: UpdaterState) => void) => () => void
   }
+  // v0.6.6 — exposed by preload.ts; opens Windows "Apps & features".
+  app?: {
+    openUninstall?: () => Promise<{ ok: boolean; error?: string }>
+  }
 }
 
 // Render release notes inline as a few short paragraphs. We deliberately
@@ -76,16 +80,36 @@ type ScriptureLiveBridge = {
 // release notes fit in a paragraph or three of stripped text. We keep
 // the first ~600 characters so the operator gets the gist without the
 // dialog growing into a wall of text.
+//
+// v0.6.6 — Strip ADMIN-only items so customers don't see internal
+// changelog lines. Any line whose first word is "ADMIN:" (or that
+// starts with "[admin]") is dropped. Lines beginning with our task
+// codes (T6xx-) are kept; the operator wants those visible so they
+// can cross-reference what changed.
 function summariseReleaseNotes(raw: string | undefined): string | null {
   if (!raw) return null
-  const cleaned = cleanReleaseNotes(raw)
+  const stripped = cleanReleaseNotes(raw)
     .replace(/<[^>]+>/g, ' ')
     .replace(/[#*_`>~\[\]()]/g, '')
+  // v0.6.6 — line-level admin filter applied AFTER markdown strip so
+  // bullets like "* ADMIN: rotated key" become "ADMIN: rotated key"
+  // first and the prefix match catches them.
+  const filtered = stripped
+    .split('\n')
+    .filter((line) => {
+      const t = line.trim()
+      if (!t) return true
+      if (/^admin:\s/i.test(t)) return false
+      if (/^\[admin\]/i.test(t)) return false
+      if (/^internal:\s/i.test(t)) return false
+      return true
+    })
+    .join('\n')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
-  if (!cleaned) return null
-  return cleaned.length > 600 ? cleaned.slice(0, 597) + '…' : cleaned
+  if (!filtered) return null
+  return filtered.length > 600 ? filtered.slice(0, 597) + '…' : filtered
 }
 
 export function UpdateAvailableDialog() {
@@ -178,6 +202,36 @@ export function UpdateAvailableDialog() {
                   {notes}
                 </div>
               ) : null}
+              {/* v0.6.6 — Uninstall-first prompt. The operator confirmed
+                  installing on top of the existing copy can fail (NSIS
+                  refuses when the running .exe holds locks on
+                  resources/app.asar). The safest flow is: stop the app
+                  → uninstall the old version from Windows Settings →
+                  install v{x.y.z}. The button below opens the Settings
+                  Apps page directly via ms-settings:appsfeatures so the
+                  operator doesn't have to hunt through the Start menu. */}
+              <div className="rounded-md border border-red-500/50 bg-red-950/40 px-3 py-2 text-xs text-red-100 space-y-2">
+                <p className="font-semibold text-red-50">
+                  Important — uninstall first
+                </p>
+                <p>
+                  Please uninstall the current ScriptureLive AI version
+                  from Windows Settings → Apps before installing this
+                  update. Installing on top of the existing version may
+                  fail. Your activation, library and admin settings are
+                  preserved across reinstalls.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const bridge = bridgeRef.current
+                    void bridge?.app?.openUninstall?.()
+                  }}
+                  className="inline-flex items-center justify-center rounded border border-red-400/70 bg-red-900/60 px-2.5 py-1 text-[11px] font-semibold text-red-50 hover:bg-red-900/80 hover:border-red-300 transition-colors"
+                >
+                  Open Windows Apps page (uninstall first)
+                </button>
+              </div>
               <p className="text-xs text-muted-foreground">
                 After the download finishes, the installer is also
                 copied to your Desktop so you have a backup copy you
