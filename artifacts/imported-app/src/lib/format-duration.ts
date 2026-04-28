@@ -57,26 +57,40 @@ export function formatTotalAsDhmString(msLeft: number): string {
 }
 
 /** Convert {days, hours, minutes} from the admin form into a fractional days
- *  number suitable for the existing days-based licensing storage. */
+ *  number suitable for the existing days-based licensing storage.
+ *
+ *  v0.6.3 — removed the 23/59 clamps on hours/minutes. The admin
+ *  generate route now accepts overflow values (e.g. "30 hours" or
+ *  "240 minutes") and folds them into the days bucket via this
+ *  helper. Clamping was rejecting that path silently — a "30 hour"
+ *  entry was being treated as 23 hours, so the legacy `days`
+ *  display column read "1 day" instead of "2 days". The activation
+ *  engine itself uses durationMs (computed in the route) so this
+ *  was always cosmetic, but operators saw mismatched info in the
+ *  admin list. Now the math respects the operator's exact intent.
+ */
 export function partsToDays(days: number, hours: number, minutes: number): number {
   const d = Math.max(0, Math.floor(days || 0))
-  const h = Math.max(0, Math.min(23, Math.floor(hours || 0)))
-  const m = Math.max(0, Math.min(59, Math.floor(minutes || 0)))
-  // Total fractional days (5 decimal places — a minute is ~0.000694 days).
+  const h = Math.max(0, Math.floor(hours || 0))
+  const m = Math.max(0, Math.floor(minutes || 0))
+  // Total fractional days (a minute is ~0.000694 days).
   const total = d + h / 24 + m / 1440
   // Server validates as integer days for backwards compat. Round UP so
   // an operator who picks "0 days 1 hour" still gets at least 1 day on
-  // the legacy storage path; the precise expiresAt is computed from
-  // the same fractional days field via Date math below.
+  // the legacy display path; the precise expiresAt is computed from
+  // durationMs in the new v0.6.3 storage path.
   return Math.max(1, Math.ceil(total))
 }
 
 /** Convert {days, hours, minutes} into total milliseconds — used by the
  *  admin endpoint to compute a fractional expiresAt without losing the
- *  hour/minute precision the operator picked. */
+ *  hour/minute precision the operator picked.
+ *
+ *  v0.6.3 — removed the 23/59 clamps for the same reason as
+ *  partsToDays above. */
 export function partsToMs(days: number, hours: number, minutes: number): number {
   const d = Math.max(0, Math.floor(days || 0))
-  const h = Math.max(0, Math.min(23, Math.floor(hours || 0)))
-  const m = Math.max(0, Math.min(59, Math.floor(minutes || 0)))
+  const h = Math.max(0, Math.floor(hours || 0))
+  const m = Math.max(0, Math.floor(minutes || 0))
   return d * 86_400_000 + h * 3_600_000 + m * 60_000
 }

@@ -44,6 +44,14 @@ export interface ActivationCodeRecord {
   code: string
   planCode: string
   days: number
+  /** v0.6.3 — exact duration in milliseconds. When present, the
+   *  activation engine uses THIS for expiry math instead of
+   *  `days * 86400000`, preserving sub-day granularity (a 20-minute
+   *  code expires 20 minutes after activation, not 1 day later).
+   *  Older records minted before v0.6.3 don't carry this field — the
+   *  activation engine falls back to `days * 86400000` for them so
+   *  no operator history breaks. */
+  durationMs?: number
   generatedAt: string   // ISO
   /** v0.5.48 — `note` is a free-text label entered by the owner when
    *  generating a code by hand from the Admin → Generate panel
@@ -75,6 +83,11 @@ export interface ActiveSubscription {
   activationCode: string
   planCode: string
   days: number
+  /** v0.6.3 — exact duration in milliseconds copied from the
+   *  activation record. Kept alongside `days` so older code paths
+   *  that still read `days` for display rounding keep working, while
+   *  new precision-sensitive paths (msLeft, expiresAt) use this. */
+  durationMs?: number
   activatedAt: string
   expiresAt: string
   isMaster: boolean
@@ -426,6 +439,15 @@ export interface GenerateActivationArgs {
   planCode: string
   /** Optional override; defaults to the plan's canonical days. */
   days?: number
+  /** v0.6.3 — exact duration in milliseconds. When supplied, the
+   *  activation engine uses THIS for expiry math instead of `days`,
+   *  so the operator can mint sub-day codes (20-minute test codes,
+   *  4-hour Sunday-service codes, 30-minute conference codes) without
+   *  the legacy day-rounding inflating them to 1 day. `days` is still
+   *  required (used as the rounded-up display value in admin lists,
+   *  CSV exports, and notification emails) but `durationMs` wins
+   *  whenever it's set on the activation record. */
+  durationMs?: number
   /** Owner-supplied label (e.g. customer name + church). */
   note?: string
   /** Optional contact email/WhatsApp for record-keeping. */
@@ -452,6 +474,18 @@ export function generateStandaloneActivation(
     throw new Error(`Unknown planCode "${planCode}" and no custom days supplied`)
   }
 
+  // v0.6.3 — the admin generate route now also passes a precise
+  // millisecond duration computed from {months, days, hours, minutes}.
+  // We keep `days` (rounded UP for legacy display columns) AND store
+  // the exact ms so activateCode() can compute a minute-accurate
+  // expiry. When durationMs is omitted the activation falls back to
+  // days*86400000 — preserving v0.6.2 behaviour.
+  let durationMs: number | undefined
+  if (typeof args.durationMs === 'number' && Number.isFinite(args.durationMs) && args.durationMs > 0) {
+    // 1 minute floor, ~100-year ceiling — same bounds as days
+    durationMs = Math.max(60_000, Math.min(36500 * 86400000, Math.floor(args.durationMs)))
+  }
+
   const f = load()
   const taken = new Set(f.activationCodes.map((a) => a.code))
   const code = generateActivationCode(planCode, (c) => taken.has(c))
@@ -465,6 +499,7 @@ export function generateStandaloneActivation(
     code,
     planCode,
     days,
+    durationMs,
     generatedAt: new Date().toISOString(),
     generatedFor: Object.keys(generatedFor).length ? generatedFor : undefined,
     isUsed: false,
@@ -515,7 +550,15 @@ export function activateCode(rawCode: string): ActivateResult {
   if (activation.isUsed) throw new Error('This activation code has already been used.')
 
   const now = new Date()
-  const expires = new Date(now.getTime() + activation.days * 86400000)
+  // v0.6.3 — prefer the exact ms duration (set by the admin generate
+  // route from {months,days,hours,minutes}) so a 20-minute code expires
+  // in 20 minutes, not 24 hours. Pre-v0.6.3 records have no durationMs
+  // → fall back to the legacy day-precision arithmetic so historical
+  // codes activate identically.
+  const durationMs = (typeof activation.durationMs === 'number' && activation.durationMs > 0)
+    ? activation.durationMs
+    : activation.days * 86400000
+  const expires = new Date(now.getTime() + durationMs)
   activation.isUsed = true
   activation.usedAt = now.toISOString()
   activation.subscriptionExpiresAt = expires.toISOString()
@@ -530,6 +573,9 @@ export function activateCode(rawCode: string): ActivateResult {
     activationCode: code,
     planCode: activation.planCode,
     days: activation.days,
+    // v0.6.3 — carry the exact ms duration onto the active subscription
+    // so countdown math anywhere downstream stays minute-accurate.
+    durationMs: typeof activation.durationMs === 'number' ? activation.durationMs : undefined,
     activatedAt: now.toISOString(),
     expiresAt: expires.toISOString(),
     isMaster: false,

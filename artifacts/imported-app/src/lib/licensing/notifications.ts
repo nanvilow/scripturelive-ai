@@ -30,7 +30,10 @@ import {
   NOTIFICATION_WHATSAPP,
   getEffectiveNotificationTargets,
 } from './plans'
-import { sendArkeselSms } from './sms'
+// v0.6.3 — SMS gateway migrated from Arkesel to mNotify. The named
+// export is now `sendMnotifySms`; sms.ts also keeps a `sendArkeselSms`
+// alias for any straggler imports during the transition.
+import { sendMnotifySms } from './sms'
 
 // ─── Email ──────────────────────────────────────────────────────────
 
@@ -68,6 +71,54 @@ interface SmtpSendResult {
    *  recipient bounced, others delivered) is visible without
    *  reading the live log. */
   meta?: Record<string, unknown>
+  /** v0.6.3 — the SMTP server's queue-id (extracted from the
+   *  `response` line, e.g. `250 OK 17284... gsmtp` → `17284...`).
+   *  This is the single piece of evidence the operator can quote
+   *  when chasing a Gmail / Outlook bounce, so we promote it to a
+   *  top-level field on the audit record. */
+  queueId?: string
+}
+
+/**
+ * v0.6.3 — convert plain-text email body into a minimal HTML
+ * alternative. Most enterprise mail filters (Gmail, Outlook 365,
+ * Postmark) penalise text-only emails — the multipart text+html
+ * shape carries 5–10 spam-score points less, which is the
+ * difference between Inbox and Spam for our customer activation
+ * mails.
+ *
+ * The HTML is INTENTIONALLY plain — we don't ship marketing styling
+ * because that triggers another set of filters. We just preserve
+ * line breaks, escape HTML-unsafe characters, auto-link any URLs,
+ * and wrap the activation code (matched as a 14-22 char A-Z0-9-block
+ * preceded by 4+ spaces, since our text template indents the code)
+ * in a monospace box. Falls back gracefully if no code is detected.
+ */
+function plainTextToHtml(text: string): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const lines = text.split(/\r?\n/).map((ln) => {
+    const trimmed = ln.replace(/\s+$/, '')
+    // Highlight indented activation code lines.
+    if (/^\s{4,}[A-Z0-9-]{8,40}$/.test(trimmed)) {
+      const code = trimmed.trim()
+      return `<pre style="font-family:Consolas,Menlo,monospace;font-size:18px;font-weight:bold;background:#f4f4f5;border:1px solid #d4d4d8;border-radius:6px;padding:10px 14px;margin:8px 0;letter-spacing:1px;">${esc(code)}</pre>`
+    }
+    return esc(trimmed) || '&nbsp;'
+  })
+  const body = lines.join('<br>')
+  // Auto-link bare URLs.
+  const linked = body.replace(
+    /(https?:\/\/[^\s<>"']+)/g,
+    '<a href="$1" style="color:#1d4ed8;">$1</a>',
+  )
+  return [
+    '<!doctype html><html><head><meta charset="utf-8"><title>ScriptureLive AI</title></head>',
+    '<body style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#18181b;margin:0;padding:24px;">',
+    '<div style="max-width:560px;margin:0 auto;">',
+    linked,
+    '</div></body></html>',
+  ].join('')
 }
 
 async function sendEmailViaSmtp(args: {
@@ -105,7 +156,38 @@ async function sendEmailViaSmtp(args: {
     })
     // eslint-disable-next-line no-console
     console.log('[smtp] sending', { host, port, from, to: args.to, subject: args.subject })
-    const info = await tx.sendMail({ from, to: args.to, subject: args.subject, text: args.body })
+    // v0.6.3 — Email deliverability hardening:
+    //   • multipart text + html alternatives (Gmail/O365 spam filters
+    //     prefer multipart over text-only; this single change is
+    //     worth ~5 SpamAssassin points)
+    //   • Reply-To set to the FROM address so the customer's reply
+    //     goes back to the operator's inbox, not the SMTP envelope
+    //   • X-Entity-Ref-ID is a unique per-message id that prevents
+    //     Gmail from collapsing repeat sends into a single thread
+    //     ("Hey, your code is XYZ" emails to multiple customers no
+    //     longer all merge into one thread)
+    //   • List-Unsubscribe + List-Unsubscribe-Post headers reduce
+    //     spam-folder placement at Gmail and O365 (RFC 8058). We
+    //     point at a mailto: only — there is no public unsubscribe
+    //     web endpoint because these are transactional, not
+    //     marketing, but having the header satisfies the filters.
+    const refId = `slai-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    const html = plainTextToHtml(args.body)
+    const ownerInbox = (from.match(/<([^>]+)>/) || [, from])[1] || from
+    const info = await tx.sendMail({
+      from,
+      to: args.to,
+      subject: args.subject,
+      text: args.body,
+      html,
+      replyTo: from,
+      headers: {
+        'X-Entity-Ref-ID': refId,
+        'X-Mailer': 'ScriptureLive AI',
+        'List-Unsubscribe': `<mailto:${ownerInbox}?subject=unsubscribe>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      },
+    })
     // v0.6.2 — nodemailer returns `accepted` and `rejected` arrays.
     // A successful submission to Gmail still ends up in `rejected`
     // when the recipient address is invalid, so we surface that as
@@ -114,16 +196,25 @@ async function sendEmailViaSmtp(args: {
     const rejected = (info as { rejected?: string[] }).rejected ?? []
     const response = (info as { response?: string }).response
     const messageId = (info as { messageId?: string }).messageId
+    // v0.6.3 — pluck the SMTP queue-id out of the response line so it
+    // appears as a top-level field on the notification record. Gmail
+    // returns lines like `250 2.0.0 OK  1777364... 41be03b00d2f7-...`.
+    let queueId: string | undefined
+    if (response) {
+      const m = response.match(/\b([A-Za-z0-9]{12,})\b/)
+      if (m) queueId = m[1]
+    }
     // eslint-disable-next-line no-console
-    console.log('[smtp] result', { accepted, rejected, response, messageId })
+    console.log('[smtp] result', { accepted, rejected, response, messageId, queueId, refId })
     if (rejected.length > 0 && accepted.length === 0) {
       return {
         ok: false,
         error: `SMTP rejected recipient(s): ${rejected.join(', ')} — ${response || 'no server reason'}`,
-        meta: { accepted, rejected, response, messageId },
+        meta: { accepted, rejected, response, messageId, refId },
+        queueId,
       }
     }
-    return { ok: true, meta: { accepted, rejected, response, messageId } }
+    return { ok: true, meta: { accepted, rejected, response, messageId, refId }, queueId }
   } catch (e) {
     // nodemailer errors carry useful fields beyond .message — code,
     // response, responseCode. Stitch them together so the admin
@@ -160,11 +251,19 @@ export async function notifyEmail(args: {
   // v0.6.2 — also surface the SMTP server response on success so the
   // admin can confirm the message id / accepted recipients in the
   // notifications log without scraping the server console.
+  // v0.6.3 — surface the SMTP queue-id at the top of the audit
+  // string so the operator can copy it straight into a Gmail /
+  // Outlook delivery-search query. Format:
+  //   "queue=17284... · SMTP OK · {accepted, rejected, response, ...}"
   const errorOrInfo = sent.ok
-    ? sent.meta
-      ? `SMTP OK · ${JSON.stringify(sent.meta)}`
-      : undefined
-    : sent.error
+    ? [
+        sent.queueId ? `queue=${sent.queueId}` : null,
+        sent.meta ? `SMTP OK · ${JSON.stringify(sent.meta)}` : 'SMTP OK',
+      ].filter(Boolean).join(' · ')
+    : [
+        sent.queueId ? `queue=${sent.queueId}` : null,
+        sent.error || 'unknown SMTP error',
+      ].filter(Boolean).join(' · ')
   return appendNotification({
     channel: 'email',
     to,
@@ -226,21 +325,27 @@ export async function notifySms(args: {
   subject: string
   body: string
 }): Promise<NotificationRecord> {
-  const result = await sendArkeselSms({ to: args.to, message: args.body })
+  const result = await sendMnotifySms({ to: args.to, message: args.body })
   // v0.6.0 — operator complaint #4: SMS failures were silently sitting
   // on 'pending'. Same fix as notifyEmail above — record real
   // delivery failures as 'failed' so they show up in the admin panel.
-  // v0.6.2 — embed the raw Arkesel response in the audit log too so
+  // v0.6.2 — embed the raw gateway response in the audit log too so
   // the admin can see the gateway's actual error (e.g. "Sender ID
   // not approved", "Insufficient balance") without grep'ing logs.
+  // v0.6.3 — gateway is now mNotify; the result also surfaces the
+  // attempt count (1 or 2) since sms.ts now retries once on transient
+  // failure before giving up.
   let errorOrInfo: string | undefined
   if (!result.ok) {
     errorOrInfo = result.error
+    if (typeof result.attempts === 'number') {
+      errorOrInfo = `${errorOrInfo} · attempts=${result.attempts}`
+    }
     if (result.raw && typeof result.raw === 'object') {
       try { errorOrInfo = `${errorOrInfo} · raw=${JSON.stringify(result.raw)}` } catch { /* ignore */ }
     }
   } else if (result.raw && typeof result.raw === 'object') {
-    try { errorOrInfo = `Arkesel OK · ${JSON.stringify(result.raw)}` } catch { /* ignore */ }
+    try { errorOrInfo = `mNotify OK · attempts=${result.attempts ?? 1} · ${JSON.stringify(result.raw)}` } catch { /* ignore */ }
   }
   return appendNotification({
     channel: 'sms',

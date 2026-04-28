@@ -176,6 +176,11 @@ export interface AppSettings {
   ndiRefPosition?: 'top' | 'bottom' | 'hidden'
   ndiRefScale?: number
   ndiTranslation?: BibleTranslation
+  /** v0.6.3 — when true, the NDI lower-third bar drops its gradient
+   *  background + drop-shadow so vMix / OBS receive a clean alpha
+   *  matte (text-only). Off by default so existing operator setups
+   *  keep their familiar "branded card" look on NDI. */
+  ndiLowerThirdTransparent?: boolean
 
   // Item #15 follow-up — when the SSE link to the secondary screen
   // drops, the page used to slam a full-screen "Reconnecting…"
@@ -586,6 +591,7 @@ const defaultSettings: AppSettings = {
   // change until they explicitly opt-in via the NDI Settings panel.
   ndiAspectRatio: undefined,
   ndiBibleColor: undefined,
+  ndiLowerThirdTransparent: false,
   ndiBibleLineHeight: undefined,
   ndiRefSize: undefined,
   ndiRefStyle: undefined,
