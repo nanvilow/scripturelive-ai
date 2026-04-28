@@ -836,13 +836,24 @@ function render(s){
     var boxStyleExtra=(dm==='lower-third-black')?'background:#000;':'';
     var ltInnerBg=(dm==='lower-third-black')?'':(st.customBackground?'<img class="lt-bg" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="lt-bg-overlay"></div>':'');
     // v0.6.3 — Transparent NDI lower-third matte. When the operator
-    // flips ndiLowerThirdTransparent ON (or the legacy ?transparent=1
-    // capture flag is set), the rounded card drops its gradient + drop
-    // shadow so vMix/OBS receive a clean alpha matte. We only do this
-    // on the NDI surface (IS_NDI) so the in-room projector keeps its
-    // branded card. The CSS class .transparent is gated by !important
-    // rules so it beats the per-theme background overrides.
-    var ltTransparent=IS_NDI && (FORCE_TRANSPARENT || st.ndiLowerThirdTransparent===true);
+    // flips ndiLowerThirdTransparent ON the rounded card drops its
+    // gradient + drop shadow so vMix/OBS receive a clean alpha matte
+    // through the BOX itself. We only do this on the NDI surface
+    // (IS_NDI) so the in-room projector keeps its branded card.
+    // The CSS class .transparent is gated by !important rules so it
+    // beats the per-theme background overrides.
+    //
+    // v0.6.8 — DECOUPLED from FORCE_TRANSPARENT (the URL flag now
+    // controls only the BrowserWindow surrounding-area transparency,
+    // which v0.6.8 makes always-on for NDI). Pre-v0.6.8 we OR'd
+    // FORCE_TRANSPARENT into this expression — that meant the moment
+    // the v0.6.8 panel started always sending ?transparent=1 the BOX
+    // would also always go transparent, silently overriding the
+    // operator's per-box toggle. Splitting the two settings restores
+    // the operator's control: the surrounding frame is always alpha
+    // (NDI as designed) but the lower-third card keeps or drops its
+    // themed gradient backdrop based on the operator's preference.
+    var ltTransparent=IS_NDI && st.ndiLowerThirdTransparent===true;
     var ltTransparentClass=ltTransparent?' transparent':'';
     // v0.6.5 — Apply the .ndi-full width override on the NDI surface
     // only. In-room projector + operator preview keep the centered

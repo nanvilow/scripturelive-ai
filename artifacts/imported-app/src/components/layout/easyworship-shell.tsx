@@ -223,14 +223,22 @@ function NdiToggleButton() {
         // either entry point dropped the BrowserWindow into opaque
         // 'mirror' layout regardless of the operator's transparent
         // toggle. We read live store state at click time.
+        //
+        // v0.6.8 — `transparent` is always true here too (NDI is
+        // always alpha-keyed), and `lowerThird.enabled` follows
+        // `ndiDisplayMode` so the header toggle respects the
+        // operator's pick of Full Screen vs Lower-Third. Without
+        // these two changes the header path would broadcast opaque
+        // black AND ignore the displayMode picker — the very two
+        // operator complaints v0.6.8 fixes.
         const settings = useAppStore.getState().settings
         const r = await desktop.ndi.start({
           name: 'ScriptureLive AI',
           width: 1920, height: 1080, fps: 30,
           layout: 'ndi',
-          transparent: settings.ndiLowerThirdTransparent === true,
+          transparent: true,
           lowerThird: {
-            enabled: true,
+            enabled: settings.ndiDisplayMode === 'lower-third',
             // The projector's lowerThirdPosition is shared with NDI;
             // there is no separate ndiLowerThirdPosition in the store.
             position: settings.lowerThirdPosition === 'top' ? 'top' : 'bottom',
