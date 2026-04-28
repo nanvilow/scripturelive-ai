@@ -297,6 +297,43 @@ export function NdiOutputPanel() {
                   </button>
                 </div>
               </div>
+
+              {/* v0.6.3 — Transparent lower-third toggle. Only meaningful
+                  when the NDI Display Mode above is set to Lower Third.
+                  When ON: vMix / OBS receive a clean alpha matte (text
+                  only, no card fill) so they can key the bar over their
+                  own program output without a black box around the
+                  letters. The in-room projector stays untouched. */}
+              {ndiDisplayMode === 'lower-third' && (
+                <div className="flex items-center justify-between gap-3 mt-2 pt-2 border-t border-border/40">
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold text-foreground">Transparent lower-third</div>
+                    <p className="text-[10px] text-muted-foreground leading-snug">
+                      Drops the lower-third card background so vMix / OBS get a clean alpha matte. Text stays opaque.
+                    </p>
+                  </div>
+                  <button
+                    role="switch"
+                    aria-checked={settings.ndiLowerThirdTransparent === true}
+                    onClick={() => updateSettings({
+                      ndiLowerThirdTransparent: !settings.ndiLowerThirdTransparent,
+                    })}
+                    className={cn(
+                      'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors',
+                      settings.ndiLowerThirdTransparent
+                        ? 'bg-emerald-500/80'
+                        : 'bg-muted-foreground/30',
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'inline-block h-5 w-5 transform rounded-full bg-background shadow transition-transform',
+                        settings.ndiLowerThirdTransparent ? 'translate-x-5' : 'translate-x-0.5',
+                      )}
+                    />
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* NDI Typography (always visible — no more Advanced) */}

@@ -48,7 +48,14 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 .bg-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;pointer-events:none}
 .bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);pointer-events:none}
 .slide-content{position:relative;z-index:1;text-align:center;width:90%;max-width:90vw;padding:4vh 3vw;display:flex;flex-direction:column;align-items:center;justify-content:center}
-.slide-reference{font-size:clamp(.85rem,1.4vw,1.6rem);opacity:.55;margin-bottom:1.4vh;letter-spacing:.06em}
+/* v0.6.3 — Bible reference text: BOLD by default + full opacity. The
+   previous .55 opacity + default 500 weight made the chapter / verse
+   line whisper-soft on the projector and effectively invisible on the
+   NDI feed once the receiver re-encoded. Operators consistently asked
+   for the reference to read clearly so the congregation sees what
+   chapter is being read. Bound to ALL surfaces (live display,
+   secondary screen, NDI lower-third) since they share this engine. */
+.slide-reference{font-size:clamp(.85rem,1.4vw,1.6rem);opacity:1;font-weight:700;margin-bottom:1.4vh;letter-spacing:.06em}
 .slide-text{font-weight:500;line-height:1.4;margin:0;padding:0;word-wrap:break-word;overflow-wrap:break-word}
 /* When the verse splitter hands us multiple short lines, render them
    as a single flowing paragraph so words wrap on a consistent baseline
@@ -74,11 +81,21 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 .lt-box.theme-christmas{background:linear-gradient(135deg,#3c0a0a,#4c0519)}
 .lt-box.theme-praise{background:linear-gradient(135deg,#3c3a0a,#451a03)}
 .lt-box.theme-minimal{background:linear-gradient(135deg,#0a0a0a,#171717)}
+/* v0.6.3 — NDI lower-third transparent matte. When the operator flips
+   "Transparent lower-third" on the NDI tab, the rounded card drops
+   its gradient + drop-shadow so vMix / OBS receive a clean alpha
+   matte (text only, zero fill). The text itself stays opaque so it
+   survives keying. The `!important` is intentional — it must beat the
+   per-theme background overrides above. */
+.lt-box.transparent{background:transparent !important;box-shadow:none !important}
+.lt-box.transparent .lt-bg,.lt-box.transparent .lt-bg-overlay{display:none !important}
 /* Custom background image — clipped to the rounded box only. */
 .lt-box .lt-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;border-radius:inherit;pointer-events:none}
 .lt-box .lt-bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);border-radius:inherit;pointer-events:none}
 .lt-box .lt-content{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;width:100%;height:100%}
-.lt-box .slide-reference{font-size:clamp(.7rem,min(2cqw,4cqh),1.4rem);opacity:.7;font-weight:500;line-height:1.2;margin-bottom:.6cqh}
+/* v0.6.3 — lower-third reference: same bold default as full-screen so
+   broadcast viewers see the chapter clearly even at lower-third sizes. */
+.lt-box .slide-reference{font-size:clamp(.7rem,min(2cqw,4cqh),1.4rem);opacity:1;font-weight:700;line-height:1.2;margin-bottom:.6cqh}
 .lt-box .slide-text,.lt-box .slide-title{font-weight:600;line-height:1.25}
 .align-left{text-align:left;align-items:flex-start}
 .align-right{text-align:right;align-items:flex-end}
@@ -792,8 +809,17 @@ function render(s){
     var boxThemeClass=(dm==='lower-third-black')?'':tc;
     var boxStyleExtra=(dm==='lower-third-black')?'background:#000;':'';
     var ltInnerBg=(dm==='lower-third-black')?'':(st.customBackground?'<img class="lt-bg" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="lt-bg-overlay"></div>':'');
+    // v0.6.3 — Transparent NDI lower-third matte. When the operator
+    // flips ndiLowerThirdTransparent ON (or the legacy ?transparent=1
+    // capture flag is set), the rounded card drops its gradient + drop
+    // shadow so vMix/OBS receive a clean alpha matte. We only do this
+    // on the NDI surface (IS_NDI) so the in-room projector keeps its
+    // branded card. The CSS class `transparent` is gated by
+    // `!important` rules so it beats the per-theme background overrides.
+    var ltTransparent=IS_NDI && (FORCE_TRANSPARENT || st.ndiLowerThirdTransparent===true);
+    var ltTransparentClass=ltTransparent?' transparent':'';
     var ltOrdered=refOrderTop?(ref+ltTxt):(ltTxt+ref);
-    $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:transparent;'+fontStyle+'"><div class="lower-third '+pos+'" style="'+ltStyle+'"><div class="lt-box '+boxThemeClass+' '+alignClass+'" style="'+boxStyleExtra+fontStyle+'">'+ltInnerBg+'<div class="lt-content '+alignClass+'">'+ltOrdered+'</div></div></div></div>';
+    $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:transparent;'+fontStyle+'"><div class="lower-third '+pos+'" style="'+ltStyle+'"><div class="lt-box '+boxThemeClass+ltTransparentClass+' '+alignClass+'" style="'+boxStyleExtra+fontStyle+'">'+ltInnerBg+'<div class="lt-content '+alignClass+'">'+ltOrdered+'</div></div></div></div>';
   }else{
     var ta=st.textAlign||'center';
     var jc=ta==='left'?'flex-start':ta==='right'?'flex-end':'center';

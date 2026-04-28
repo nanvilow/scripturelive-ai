@@ -80,6 +80,10 @@ export interface OutputState {
     ndiTheme?: unknown
     ndiLowerThirdHeight?: unknown
     ndiLowerThirdPosition?: unknown
+    /** v0.6.3 — operator's transparent-matte toggle for the NDI lower
+     *  third. Renderer reads this and adds the `transparent` class to
+     *  `.lt-box` so vMix/OBS receive a clean alpha matte. */
+    ndiLowerThirdTransparent?: unknown
     ndiShowReferenceOnOutput?: unknown
     ndiReferenceTextShadow?: unknown
     ndiDisplayMode?: unknown

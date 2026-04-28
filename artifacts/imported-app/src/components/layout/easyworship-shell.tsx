@@ -1685,8 +1685,13 @@ export function EasyWorshipShell() {
     return () => window.removeEventListener('keydown', handler)
   }, [previewSlideIndex, slides.length, goLive, clearLive, goBlack, setPreviewSlideIndex])
 
+  // v0.6.3 — root container honours next-themes' html.dark|html.light
+  // switch instead of forcing a hardcoded dark/black palette. The
+  // previous `bg-black ... dark` pinning was the reason theme toggling
+  // didn't reach the panels: the shell's wrapper short-circuited the
+  // cascade so every child rendered against the dark token map.
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-black text-foreground dark">
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-background text-foreground">
       <TopToolbar outputActive={outputActive} toggleOutput={toggleOutput} />
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <LibraryPanel />

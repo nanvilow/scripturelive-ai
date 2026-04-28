@@ -116,6 +116,10 @@ export function OutputBroadcaster() {
         ndiTheme: sExt.ndiTheme,
         ndiLowerThirdHeight: sExt.ndiLowerThirdHeight,
         ndiLowerThirdPosition: sExt.ndiLowerThirdPosition,
+        // v0.6.3 — propagate the new "transparent matte" toggle so the
+        // congregation renderer can drop the lt-box gradient when the
+        // operator flips it on the NDI tab.
+        ndiLowerThirdTransparent: sExt.ndiLowerThirdTransparent,
         ndiShowReferenceOnOutput: sExt.ndiShowReferenceOnOutput,
         ndiReferenceTextShadow: sExt.ndiReferenceTextShadow,
         // Slide transition: style picks Cut (instant swap) vs Fade
