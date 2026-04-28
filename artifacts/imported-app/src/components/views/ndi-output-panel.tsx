@@ -59,6 +59,7 @@ export function NdiOutputPanel() {
   const ndiRefPosition = useAppStore((s) => s.settings.ndiRefPosition)
   const ndiRefScale = useAppStore((s) => s.settings.ndiRefScale)
   const ndiTranslation = useAppStore((s) => s.settings.ndiTranslation)
+  const ndiLowerThirdTransparent = useAppStore((s) => s.settings.ndiLowerThirdTransparent)
 
   const ndiHasOverrides =
     ndiFontFamily !== undefined ||
@@ -314,13 +315,13 @@ export function NdiOutputPanel() {
                   </div>
                   <button
                     role="switch"
-                    aria-checked={settings.ndiLowerThirdTransparent === true}
+                    aria-checked={ndiLowerThirdTransparent === true}
                     onClick={() => updateSettings({
-                      ndiLowerThirdTransparent: !settings.ndiLowerThirdTransparent,
+                      ndiLowerThirdTransparent: !ndiLowerThirdTransparent,
                     })}
                     className={cn(
                       'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors',
-                      settings.ndiLowerThirdTransparent
+                      ndiLowerThirdTransparent
                         ? 'bg-emerald-500/80'
                         : 'bg-muted-foreground/30',
                     )}
@@ -328,7 +329,7 @@ export function NdiOutputPanel() {
                     <span
                       className={cn(
                         'inline-block h-5 w-5 transform rounded-full bg-background shadow transition-transform',
-                        settings.ndiLowerThirdTransparent ? 'translate-x-5' : 'translate-x-0.5',
+                        ndiLowerThirdTransparent ? 'translate-x-5' : 'translate-x-0.5',
                       )}
                     />
                   </button>
