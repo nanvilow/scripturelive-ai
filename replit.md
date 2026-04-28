@@ -2,6 +2,129 @@
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It supports live congregation output, NDI broadcasting, and advanced speech recognition. The system targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service.
 
+## v0.6.8.1 — HOTFIX: lower-third surrounding-area still opaque (Apr 2026)
+
+Code review of v0.6.8 caught a high-severity miss: the v0.6.5
+ancestor-background paint at `route.ts:871` (`var __bg = ltTransparent
+? 'transparent' : '#000'`) was the ONE place in the lower-third render
+path that still gated transparency on the operator's per-box toggle
+alone after v0.6.8 decoupled `ltTransparent` from `FORCE_TRANSPARENT`.
+
+Effect on the operator: with the per-box toggle OFF (its default, and
+the only state available on a fresh install since the toggle is hidden
+unless the operator manually picks lower-third mode), the renderer
+still slammed `html / body / #stage / #output` to OPAQUE BLACK on
+every NDI broadcast. The BrowserWindow was transparent (v0.6.8 fix)
+and the URL had `?transparent=1` (v0.6.8 fix), but the renderer's
+inline style won — vMix/OBS still saw a black frame around the bar.
+
+Fix: re-OR `FORCE_TRANSPARENT` into the surrounding-area paint
+(`var __bg = (FORCE_TRANSPARENT || ltTransparent) ? 'transparent' : '#000';`)
+so the URL flag controls the surrounding ancestors and the operator's
+toggle continues to control only the box backdrop class.
+`ltTransparentClass` (the CSS class added to `.lt-box`) is unchanged —
+it still honours the operator's toggle alone. Two settings, two
+effects, no cross-contamination.
+
+**Files**
+- `replit.md`                                                                  (this changelog)
+- `artifacts/imported-app/package.json`                                         (0.6.8 → 0.6.8.1)
+- `artifacts/imported-app/BUILD.bat`                                            (banner)
+- `artifacts/imported-app/src/app/api/output/congregation/route.ts`             (re-OR FORCE_TRANSPARENT into ancestor-bg paint)
+
+## v0.6.8 — NDI always-transparent + display-mode actually applies + mNotify circuit-breaker (Apr 2026)
+
+Operator video (streamable.com/4a16uw) showed two distinct NDI failures
+on the v0.6.7 build that the v0.6.6 plumbing fix should have addressed:
+
+**T801 — NDI receivers (vMix/OBS/Wirecast) STILL show opaque black
+AND the Lower-Third → Full-Screen toggle has zero effect on the
+broadcast feed.** Two root causes:
+
+(1) `ndi-output-panel.tsx` and `easyworship-shell.tsx` both passed
+`transparent: settings.ndiLowerThirdTransparent === true` to
+`desktop.ndi.start()`. That toggle defaults OFF and is HIDDEN in the
+panel UI unless the operator has already picked "lower-third" mode —
+so on a fresh install the BrowserWindow is always created OPAQUE
+(`transparent: false`, `backgroundColor: '#000000'`) and vMix/OBS
+receives an opaque black frame with text floating on it instead of an
+alpha matte. v0.6.8 always passes `transparent: true` because NDI is
+fundamentally an alpha-keyed overlay format intended for compositing
+in vMix/OBS/Wirecast — opaque NDI defeats the entire purpose. The
+operator's per-box "Transparent lower-third" toggle now controls only
+whether the lower-third card keeps its themed gradient backdrop; the
+surrounding frame is always alpha.
+
+(2) Both call sites also hardcoded `lowerThird: { enabled: true }`
+regardless of `settings.ndiDisplayMode`. So the BrowserWindow URL
+always contained `?lowerThird=1`, the renderer's `FORCE_LT` flag was
+always true, and the renderer's display-mode resolution at
+`route.ts:560` always picked `'lower-third'` — the operator's pick of
+Full Screen was silently ignored. v0.6.8 sets
+`lowerThird.enabled = ndiDisplayMode === 'lower-third'` so picking
+Full mode actually broadcasts the verse full-screen and picking
+Lower-Third actually broadcasts the bar.
+
+Supporting changes:
+- The `useEffect` restart trigger in `ndi-output-panel.tsx` now
+  watches `ndiDisplayMode` (was `ndiLowerThirdTransparent`) so
+  flipping Full ↔ Lower-Third while broadcasting tears down the
+  BrowserWindow and rebuilds with the new flags. main.ts's
+  short-circuit equality check (extended in v0.6.6) already covers
+  `frameCaptureFlags.lowerThird`, so the rebuild fires immediately.
+- The preview iframe `key` + `src` were updated to mirror the new
+  query-string contract (`?ndi=1&transparent=1` always; `?lowerThird=1`
+  only when in lower-third mode) so the in-app preview matches what
+  vMix/OBS receives across every mode permutation.
+- `route.ts:845` `ltTransparent` was DECOUPLED from `FORCE_TRANSPARENT`.
+  Pre-v0.6.8 the box-transparent decision was
+  `IS_NDI && (FORCE_TRANSPARENT || st.ndiLowerThirdTransparent===true)`
+  — and the moment v0.6.8 started always sending `?transparent=1` the
+  box would also always go transparent, silently overriding the
+  operator's per-box toggle. Now it's
+  `IS_NDI && st.ndiLowerThirdTransparent===true` so the URL flag
+  controls only the BrowserWindow surrounding-area transparency and
+  the store flag controls only the box backdrop — two settings, two
+  controls, no cross-contamination.
+
+**T802 — mNotify SMS gateway returns HTTP 419 "Your account has been
+tagged as fraudulent" for every send (both customer and admin SMS).**
+This is a permanent state on mNotify's side — only an operator phone
+call to mNotify support at 0541509394 can clear it. Pre-v0.6.8 we
+kept retrying:
+  1. attempt #1 hits mNotify, gets 419 fraudulent.
+  2. one-second back-off, attempt #2 hits the same dead account, same
+     419 fraudulent — log noise + a second strike on the account from
+     mNotify's fraud team.
+  3. notifySms() returns failed; the next call (admin SMS for the same
+     payment ref) repeats the whole pattern → operator sees TWO
+     identical "fraudulent" badges per payment ref, plus another two
+     every time the customer hits Resend.
+
+v0.6.8 adds a session-level circuit breaker in
+`src/lib/licensing/sms.ts`. The moment we see HTTP 419 OR a body
+matching `/fraudulent/i` (or the related `/account.*suspend/i`,
+`/account.*block/i` patterns) we flip a module-level flag and
+short-circuit every subsequent `sendMnotifySms()` call in the same
+Node process. The error returned to the audit log carries a clear
+admin-facing message: "SMS provider disabled this session — mNotify
+account flagged (HTTP 419 / 'fraudulent'). Call mNotify support at
+0541509394 or email support@mnotify.com to clear the flag, then
+restart ScriptureLive AI." Process restart automatically clears the
+flag — no persistent state to corrupt. Other channels (notifyEmail,
+notifyWhatsApp) are unaffected; payment-code creation continues
+unblocked thanks to the existing try/catch in
+`payment-code/route.ts`.
+
+**Files**
+- `replit.md`                                                                  (this changelog)
+- `artifacts/imported-app/package.json`                                         (0.6.7 → 0.6.8)
+- `artifacts/imported-app/BUILD.bat`                                            (banner)
+- `artifacts/imported-app/src/components/views/ndi-output-panel.tsx`            (always-transparent + displayMode-aware lowerThird + iframe + restart deps)
+- `artifacts/imported-app/src/components/layout/easyworship-shell.tsx`          (header NDI toggle: always-transparent + displayMode-aware)
+- `artifacts/imported-app/src/app/api/output/congregation/route.ts`             (decouple ltTransparent from FORCE_TRANSPARENT)
+- `artifacts/imported-app/src/lib/licensing/sms.ts`                             (419/fraudulent circuit breaker)
+
 ## v0.6.7 — HOTFIX: v0.6.6 Settings page crash (Apr 2026)
 
 **Critical regression in v0.6.6.** Operator reported that opening Settings

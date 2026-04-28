@@ -836,13 +836,24 @@ function render(s){
     var boxStyleExtra=(dm==='lower-third-black')?'background:#000;':'';
     var ltInnerBg=(dm==='lower-third-black')?'':(st.customBackground?'<img class="lt-bg" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="lt-bg-overlay"></div>':'');
     // v0.6.3 — Transparent NDI lower-third matte. When the operator
-    // flips ndiLowerThirdTransparent ON (or the legacy ?transparent=1
-    // capture flag is set), the rounded card drops its gradient + drop
-    // shadow so vMix/OBS receive a clean alpha matte. We only do this
-    // on the NDI surface (IS_NDI) so the in-room projector keeps its
-    // branded card. The CSS class .transparent is gated by !important
-    // rules so it beats the per-theme background overrides.
-    var ltTransparent=IS_NDI && (FORCE_TRANSPARENT || st.ndiLowerThirdTransparent===true);
+    // flips ndiLowerThirdTransparent ON the rounded card drops its
+    // gradient + drop shadow so vMix/OBS receive a clean alpha matte
+    // through the BOX itself. We only do this on the NDI surface
+    // (IS_NDI) so the in-room projector keeps its branded card.
+    // The CSS class .transparent is gated by !important rules so it
+    // beats the per-theme background overrides.
+    //
+    // v0.6.8 — DECOUPLED from FORCE_TRANSPARENT (the URL flag now
+    // controls only the BrowserWindow surrounding-area transparency,
+    // which v0.6.8 makes always-on for NDI). Pre-v0.6.8 we OR'd
+    // FORCE_TRANSPARENT into this expression — that meant the moment
+    // the v0.6.8 panel started always sending ?transparent=1 the BOX
+    // would also always go transparent, silently overriding the
+    // operator's per-box toggle. Splitting the two settings restores
+    // the operator's control: the surrounding frame is always alpha
+    // (NDI as designed) but the lower-third card keeps or drops its
+    // themed gradient backdrop based on the operator's preference.
+    var ltTransparent=IS_NDI && st.ndiLowerThirdTransparent===true;
     var ltTransparentClass=ltTransparent?' transparent':'';
     // v0.6.5 — Apply the .ndi-full width override on the NDI surface
     // only. In-room projector + operator preview keep the centered
@@ -856,8 +867,20 @@ function render(s){
     // receiver with a black bar where the matte should be alpha). We
     // restore them to #000 when transparent goes back off so toggling
     // doesn't permanently bleach the surface.
+    //
+    // v0.6.8.1 — CRITICAL FIX. The v0.6.8 decoupling of `ltTransparent`
+    // from FORCE_TRANSPARENT meant this background-paint condition only
+    // checked the operator's per-box toggle. With the toggle defaulting
+    // OFF (and hidden in non-lower-third mode), the surrounding ancestors
+    // were forced to OPAQUE BLACK (#000) on every NDI broadcast — so vMix/
+    // OBS still saw a black frame around the bar even though the
+    // BrowserWindow itself was transparent and ?transparent=1 was on the
+    // URL. Re-OR FORCE_TRANSPARENT here so the surrounding-area paint
+    // honours the URL flag (always-on for v0.6.8 NDI) while the BOX class
+    // (`ltTransparentClass`) continues to honour only the operator's
+    // toggle. Two settings, two effects, no cross-contamination.
     try{
-      var __bg=ltTransparent?'transparent':'#000';
+      var __bg=(FORCE_TRANSPARENT||ltTransparent)?'transparent':'#000';
       document.documentElement.style.background=__bg;
       document.body.style.background=__bg;
       var __st2=document.getElementById('stage');if(__st2)__st2.style.background=__bg;

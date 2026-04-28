@@ -97,19 +97,25 @@ export function NdiOutputPanel() {
   // couldn't load" page, and the operator could not open Settings
   // (which renders this component) at all.
   //
-  // The Restart-on-Toggle behaviour itself is unchanged: when the
-  // operator flips the Transparent switch or moves the lower-third
-  // top/bottom while NDI is broadcasting, we re-issue ndi.start with
-  // the new flags so main.ts (whose short-circuit equality check was
-  // extended in v0.6.6 to include layout/transparent/lowerThird) tears
-  // down the opaque BrowserWindow and rebuilds a transparent one. The
-  // ref guard prevents a self-induced loop from the resulting
-  // ndi:status push.
+  // v0.6.8 — Restart triggers now include `ndiDisplayMode` so flipping
+  // Full ↔ Lower-Third while broadcasting tears down the BrowserWindow
+  // and rebuilds with `?lowerThird=` flipped. Pre-v0.6.8 the displayMode
+  // change only flipped the toggle in the panel UI; the running NDI
+  // BrowserWindow kept its old URL because the restart effect only
+  // watched `ndiLowerThirdTransparent` and `lowerThirdPosition`.
+  //
+  // The Restart-on-Toggle behaviour itself is unchanged in shape: when
+  // the operator changes any NDI-relevant setting while NDI is
+  // broadcasting, we re-issue ndi.start with the new flags so main.ts
+  // (whose short-circuit equality check was extended in v0.6.6 to
+  // include layout/transparent/lowerThird) tears down the BrowserWindow
+  // and rebuilds with the new flags. The ref guard prevents a
+  // self-induced loop from the resulting ndi:status push.
   const restartGuardRef = useRef<string>('')
   const isRunningForEffect = !!status?.running
   useEffect(() => {
     if (!isRunningForEffect || !desktop) return
-    const want = `${ndiLowerThirdTransparent ? 1 : 0}:${lowerThirdPosition}`
+    const want = `${ndiDisplayMode}:${lowerThirdPosition}`
     if (restartGuardRef.current === want) return
     if (restartGuardRef.current === '') {
       // First settle — record what's already on the wire so the next
@@ -125,13 +131,27 @@ export function NdiOutputPanel() {
       height: 1080,
       fps: 60,
       layout: 'ndi',
-      transparent: ndiLowerThirdTransparent === true,
+      // v0.6.8 — ALWAYS broadcast NDI as alpha-keyed (transparent
+      // surrounding area). NDI is fundamentally an overlay format
+      // intended for compositing in vMix/OBS/Wirecast — opaque NDI
+      // defeats the entire purpose. The operator's per-box
+      // `ndiLowerThirdTransparent` toggle still controls whether the
+      // lower-third card itself keeps its themed gradient backdrop;
+      // that decision is now read from the store directly by the
+      // renderer (see route.ts line 845) so the toggle no longer
+      // needs to be plumbed through to the BrowserWindow URL.
+      transparent: true,
       lowerThird: {
-        enabled: true,
+        // v0.6.8 — Honour the operator's display-mode pick. When they
+        // choose Full Screen the renderer now actually renders
+        // full-screen on the NDI feed; when Lower-Third the bar
+        // appears. Pre-v0.6.8 this was hardcoded to true so flipping
+        // to Full had zero effect on vMix/OBS receivers.
+        enabled: ndiDisplayMode === 'lower-third',
         position: lowerThirdPosition === 'top' ? 'top' : 'bottom',
       },
     }).catch(() => { /* surfaced by the ndi:status broadcast */ })
-  }, [isRunningForEffect, desktop, ndiLowerThirdTransparent, lowerThirdPosition, sourceName])
+  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName])
 
   // Reset the guard when NDI stops so the first toggle after the next
   // Start does the right thing (record-then-skip).
@@ -184,15 +204,20 @@ export function NdiOutputPanel() {
         // skipped, and the BrowserWindow was always created opaque
         // black — so vMix/Wirecast/OBS receivers showed a black frame
         // with text floating on it instead of an alpha matte.
+        //
+        // v0.6.8 — `transparent` is now always true (NDI is always
+        // alpha-keyed by design) and `lowerThird.enabled` follows
+        // `ndiDisplayMode`. See the restart-effect block above for the
+        // full rationale.
         const res = await desktop.ndi.start({
           name: sourceName.trim() || 'ScriptureLive AI',
           width: 1920,
           height: 1080,
           fps: 60,
           layout: 'ndi',
-          transparent: ndiLowerThirdTransparent === true,
+          transparent: true,
           lowerThird: {
-            enabled: true,
+            enabled: ndiDisplayMode === 'lower-third',
             position: lowerThirdPosition === 'top' ? 'top' : 'bottom',
           },
         })
@@ -776,12 +801,21 @@ export function NdiOutputPanel() {
                     or the Transparent switch updated the NDI feed but the
                     preview kept showing the full-screen render. The keyed
                     src forces the iframe to reload when any of those flags
-                    change so the next paint shows the new mode. */}
+                    change so the next paint shows the new mode.
+
+                    v0.6.8 — Now also mirrors the displayMode-driven
+                    lowerThird flag (the BrowserWindow ALWAYS gets
+                    `?transparent=1` for alpha-keying; `?lowerThird=1` is
+                    only sent when the operator picks lower-third mode).
+                    The preview key includes displayMode so flipping
+                    Full ↔ Lower-Third reloads the iframe immediately. */}
                 <iframe
-                  key={`ndi-preview:${ndiLowerThirdTransparent ? 1 : 0}:${lowerThirdPosition}`}
-                  src={`/api/output/congregation?ndi=1&lowerThird=1${
-                    ndiLowerThirdTransparent ? '&transparent=1' : ''
-                  }${lowerThirdPosition === 'top' ? '&position=top' : ''}`}
+                  key={`ndi-preview:${ndiDisplayMode}:${lowerThirdPosition}`}
+                  src={`/api/output/congregation?ndi=1&transparent=1${
+                    ndiDisplayMode === 'lower-third' ? '&lowerThird=1' : ''
+                  }${
+                    ndiDisplayMode === 'lower-third' && lowerThirdPosition === 'top' ? '&position=top' : ''
+                  }`}
                   title="NDI Live Preview"
                   className="absolute inset-0 w-full h-full border-0"
                 />

@@ -65,6 +65,76 @@ export interface SmsSendResult {
   attempts?: number
 }
 
+// v0.6.8 — Session-level circuit-breaker for permanent mNotify failures.
+//
+// Operator complaint (Apr 2026): mNotify started returning HTTP 419
+// "Your account has been tagged as fraudulent. Call customer support at
+// 0541509394 for further assistance or send an email to support@mnotify.com
+// with your account number, message content, and sender ID attached."
+// for EVERY send. This is a permanent state on mNotify's side — only an
+// operator phone call to mNotify support can clear it. Pre-v0.6.8 we
+// kept retrying:
+//   1. attempt #1 hits mNotify, gets 419 fraudulent.
+//   2. one-second back-off, attempt #2 hits the same dead account, same
+//      419 fraudulent — log noise + a second strike on the account from
+//      mNotify's side that can't help our reputation with their fraud team.
+//   3. notifySms() returns failed; the next call (admin SMS for the same
+//      payment ref) repeats the whole pattern → operator sees TWO
+//      identical "fraudulent" badges per payment ref, plus another two
+//      every time the customer hits Resend.
+//
+// Fix: the moment we see HTTP 419 OR a body matching /fraudulent/i,
+// flip a module-level flag. All subsequent sendMnotifySms() calls in
+// this Node process short-circuit with a friendly admin-facing message
+// and DON'T POST to mNotify. A process restart (operator clears the
+// account, relaunches the app) automatically clears the flag — no
+// persistent state to corrupt.
+//
+// This does NOT affect other channels: notifyEmail and notifyWhatsApp
+// continue to fire normally, and the existing try/catch in
+// payment-code/route.ts already keeps the customer's payment-code
+// creation unblocked when SMS fails.
+let smsProviderDisabled = false
+let smsDisabledReason = ''
+
+/**
+ * Detect the kind of mNotify failure that no number of retries will fix:
+ * the account is suspended/flagged on the gateway side. mNotify returns
+ * HTTP 419 with a body containing the literal word "fraudulent" in this
+ * scenario; we match either signal so a future change to their wire
+ * format (e.g. switching to 403 with the same body, or adding "blocked"
+ * vocabulary) still trips the breaker.
+ */
+function isPermanentMnotifyFailure(result: SmsSendResult): boolean {
+  if (!result || result.ok) return false
+  const err = result.error || ''
+  if (/HTTP 419/.test(err)) return true
+  if (/fraudulent/i.test(err)) return true
+  if (/account.*suspend/i.test(err)) return true
+  if (/account.*block/i.test(err)) return true
+  return false
+}
+
+/**
+ * Test seam — let the unit suite (and any future admin "try again"
+ * button) clear the in-process circuit breaker without bouncing the
+ * Node host. Not exposed via the IPC bridge today; manually triggered
+ * from the test harness.
+ */
+export function _resetMnotifyCircuitBreakerForTests(): void {
+  smsProviderDisabled = false
+  smsDisabledReason = ''
+}
+
+/**
+ * Read-only accessor so the admin notifications panel can surface a
+ * one-line "SMS gateway disabled — restart the app once the mNotify
+ * account is cleared" banner without poking at module-private state.
+ */
+export function getMnotifyCircuitBreakerStatus(): { disabled: boolean; reason: string } {
+  return { disabled: smsProviderDisabled, reason: smsDisabledReason }
+}
+
 /**
  * Normalize a phone number to mNotify's expected wire format.
  *
@@ -190,6 +260,27 @@ export async function sendMnotifySms(args: {
     return { ok: true, status: 'sent', raw: { sandbox: true }, attempts: 0 }
   }
 
+  // v0.6.8 — Circuit breaker. If a previous call this session already
+  // discovered the mNotify account is flagged/fraudulent, don't waste a
+  // round-trip + another mNotify-side strike against our account. Return
+  // the cached disabled-reason so the audit log stays consistent across
+  // every blocked attempt.
+  if (smsProviderDisabled) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[mnotify-sms] BLOCKED — provider disabled this session. recipient =',
+      recipient,
+      '  reason =',
+      smsDisabledReason,
+    )
+    return {
+      ok: false,
+      status: 'pending',
+      error: smsDisabledReason,
+      attempts: 0,
+    }
+  }
+
   const url = `${MNOTIFY_LIVE_URL}?key=${encodeURIComponent(apiKey)}`
 
   // eslint-disable-next-line no-console
@@ -210,6 +301,31 @@ export async function sendMnotifySms(args: {
     return { ...result, attempts: 1 }
   }
 
+  // v0.6.8 — Permanent failure short-circuit. If mNotify reports the
+  // account is flagged/fraudulent there's no value in a second POST —
+  // the answer won't change, and every further send adds to the
+  // gateway's reputation tally against the operator's account. Trip
+  // the circuit breaker, surface a clear admin-friendly reason, and
+  // return immediately without burning attempt #2.
+  if (isPermanentMnotifyFailure(result)) {
+    smsProviderDisabled = true
+    smsDisabledReason =
+      'SMS provider disabled this session — mNotify account flagged ' +
+      '(HTTP 419 / "fraudulent"). Call mNotify support at 0541509394 ' +
+      'or email support@mnotify.com to clear the flag, then restart ' +
+      'ScriptureLive AI. Original gateway message: ' +
+      (result.error || 'unknown')
+    // eslint-disable-next-line no-console
+    console.error('[mnotify-sms] PERMANENT FAILURE — circuit breaker engaged.  to =', recipient, '  err =', result.error)
+    return {
+      ok: false,
+      status: 'pending',
+      error: smsDisabledReason,
+      raw: result.raw,
+      attempts: 1,
+    }
+  }
+
   // Retry-once on what looks like a transient failure. Logical
   // mNotify failures (invalid sender ID, low balance) won't change
   // on a retry, but those are rare enough that the cheap re-POST is
@@ -222,6 +338,29 @@ export async function sendMnotifySms(args: {
     // eslint-disable-next-line no-console
     console.log('[mnotify-sms] SUCCESS on retry — delivered to', recipient, '  attempt = 2')
     return { ...result, attempts: 2 }
+  }
+  // v0.6.8 — Same circuit-breaker check on the retry. If the second
+  // attempt comes back fraudulent (e.g. the first failure was a
+  // transient 5xx that resolved, but the underlying account is in
+  // fact flagged), trip the breaker NOW so the next caller this
+  // session doesn't waste another round-trip.
+  if (isPermanentMnotifyFailure(result)) {
+    smsProviderDisabled = true
+    smsDisabledReason =
+      'SMS provider disabled this session — mNotify account flagged ' +
+      '(HTTP 419 / "fraudulent"). Call mNotify support at 0541509394 ' +
+      'or email support@mnotify.com to clear the flag, then restart ' +
+      'ScriptureLive AI. Original gateway message: ' +
+      (result.error || 'unknown')
+    // eslint-disable-next-line no-console
+    console.error('[mnotify-sms] PERMANENT FAILURE on retry — circuit breaker engaged.  to =', recipient, '  err =', result.error)
+    return {
+      ok: false,
+      status: 'pending',
+      error: smsDisabledReason,
+      raw: result.raw,
+      attempts: 2,
+    }
   }
   // eslint-disable-next-line no-console
   console.error('[mnotify-sms] FINAL FAILURE — to =', recipient, '  err =', result.error)
