@@ -2,6 +2,36 @@
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It supports live congregation output, NDI broadcasting, and advanced speech recognition. The system targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service.
 
+## v0.6.8.1 — HOTFIX: lower-third surrounding-area still opaque (Apr 2026)
+
+Code review of v0.6.8 caught a high-severity miss: the v0.6.5
+ancestor-background paint at `route.ts:871` (`var __bg = ltTransparent
+? 'transparent' : '#000'`) was the ONE place in the lower-third render
+path that still gated transparency on the operator's per-box toggle
+alone after v0.6.8 decoupled `ltTransparent` from `FORCE_TRANSPARENT`.
+
+Effect on the operator: with the per-box toggle OFF (its default, and
+the only state available on a fresh install since the toggle is hidden
+unless the operator manually picks lower-third mode), the renderer
+still slammed `html / body / #stage / #output` to OPAQUE BLACK on
+every NDI broadcast. The BrowserWindow was transparent (v0.6.8 fix)
+and the URL had `?transparent=1` (v0.6.8 fix), but the renderer's
+inline style won — vMix/OBS still saw a black frame around the bar.
+
+Fix: re-OR `FORCE_TRANSPARENT` into the surrounding-area paint
+(`var __bg = (FORCE_TRANSPARENT || ltTransparent) ? 'transparent' : '#000';`)
+so the URL flag controls the surrounding ancestors and the operator's
+toggle continues to control only the box backdrop class.
+`ltTransparentClass` (the CSS class added to `.lt-box`) is unchanged —
+it still honours the operator's toggle alone. Two settings, two
+effects, no cross-contamination.
+
+**Files**
+- `replit.md`                                                                  (this changelog)
+- `artifacts/imported-app/package.json`                                         (0.6.8 → 0.6.8.1)
+- `artifacts/imported-app/BUILD.bat`                                            (banner)
+- `artifacts/imported-app/src/app/api/output/congregation/route.ts`             (re-OR FORCE_TRANSPARENT into ancestor-bg paint)
+
 ## v0.6.8 — NDI always-transparent + display-mode actually applies + mNotify circuit-breaker (Apr 2026)
 
 Operator video (streamable.com/4a16uw) showed two distinct NDI failures
