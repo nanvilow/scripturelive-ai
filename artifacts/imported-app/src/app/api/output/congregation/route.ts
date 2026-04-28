@@ -813,10 +813,29 @@ function render(s){
     // (preview, secondary screen, NDI) render identical bar heights.
     var hMap={sm:22,md:33,lg:45};
     var hPct=hMap[st.lowerThirdHeight]||33;
+    // v0.7.0 — Compute the NDI lower-third size multiplier UP FRONT so
+    // we can scale the BOX itself in lockstep with the verse text. Pre-
+    // v0.7.0 only the font multiplied with ndiLtScale; the box height
+    // stayed pinned to hPct, so at 2.0x the bigger text overflowed the
+    // bottom of the bar (operator screenshot v0.6.9 — verse text "those
+    // who love God, to those..." clipped past the rounded edge). The
+    // default for ndiLowerThirdScale is now 2.0 (store.ts) and persisted
+    // profiles missing the field also fall back to 2.0 so the box-fit
+    // fix applies uniformly. Clamp 0.5..2.0 just like the slider.
+    var ndiLtScale = IS_NDI
+      ? (typeof st.ndiLowerThirdScale === 'number'
+          ? Math.min(2, Math.max(0.5, st.ndiLowerThirdScale))
+          : 2)
+      : 1;
+    // Scale the bar height with the multiplier so 2x text still fits
+    // inside the rounded card. Cap at 80% of the screen so the bar
+    // never crowds out the camera/preacher feed completely. Edge-bottom
+    // padding (6%) is preserved.
+    var hPctScaled = Math.min(80, hPct * ndiLtScale);
     // The upper area outside the bar must always be transparent
     // (#000), per spec. Theme colour and custom background image
     // both render *inside* the rounded card only.
-    var ltStyle='position:absolute;left:0;right:0;height:'+hPct+'%;'+(pos==='top'?'top:6%;':'bottom:6%;');
+    var ltStyle='position:absolute;left:0;right:0;height:'+hPctScaled+'%;'+(pos==='top'?'top:6%;':'bottom:6%;');
     var alignClass='align-'+(st.textAlign||'center');
     // Re-size body text inside the bar based on character density so
     // long verses shrink to fit. We also bake in the operator's
@@ -830,13 +849,13 @@ function render(s){
     var ltCap=Math.max(1.4,2*scale);
     var ltMin=Math.max(.4,.6*scale);
     /* v0.6.4 — Apply the operator's NDI lower-third size multiplier
-       on the NDI surface only. Stays at 1× for the in-room projector
+       on the NDI surface only. Stays at 1x for the in-room projector
        and the operator preview, so the broadcast feed can be tuned
        (smaller for vMix overlays, bigger for full-screen NDI) without
-       disturbing what the audience sees in the room. Clamp 0.5 .. 2.0. */
-    var ndiLtScale = (IS_NDI && (typeof st.ndiLowerThirdScale === 'number'))
-      ? Math.min(2, Math.max(0.5, st.ndiLowerThirdScale))
-      : 1;
+       disturbing what the audience sees in the room.
+       v0.7.0 — ndiLtScale is computed earlier (above the ltStyle line)
+       so the BOX height also scales with it; here we just apply it to
+       the text band so font + box grow in lockstep. */
     ltBand = ltBand * ndiLtScale;
     ltCap  = ltCap  * ndiLtScale;
     ltMin  = ltMin  * ndiLtScale;

@@ -2,6 +2,90 @@
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It supports live congregation output, NDI broadcasting, and advanced speech recognition. The system targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service.
 
+## v0.7.0 — NDI default 2.0× lower-third + box auto-fit + email retry + activation-code admin dashboard (Apr 2026)
+
+Five operator-urgent issues bundled into one minor release because
+"the project has to go live":
+
+**1. NDI lower-third scale default raised to 2.0×.** Operator
+configures every venue at 2.0× and was tired of moving the slider on
+each fresh install. `store.ts` default `ndiLowerThirdScale` now `2.0`
+and the slider's "Reset" button drops back to 2.0 instead of 1.0.
+
+**2. Lower-third BOX must scale with text (no clipping at 2.0×).**
+`/api/output/congregation` was scaling the text font but leaving the
+box at the original `hPct` height, so 2.0× verses overflowed past
+the bottom edge. Fix moves the `ndiLtScale` calc above `ltStyle` and
+recomputes `hPctScaled = min(80, hPct * scale)` so the container
+grows with its content (capped at 80% of viewport so the lower-third
+never becomes a full screen).
+
+**3. Email broken with "Unexpected socket close" — fixed with
+retry-with-backoff.** `notifications.ts` SMTP transport was a single
+attempt; transient TCP drops (operator's venue Wi-Fi, ECONNRESET on
+some Gmail SMTP edges) silently failed every receipt. Added
+`isTransientSmtpError` detector covering ECONNRESET / ETIMEDOUT /
+ESOCKET / EPIPE / EAI_AGAIN / "socket close" + retry loop (3
+attempts, 1s/2.5s/5s backoff, fresh transport per attempt) plus
+tighter connection/socket/greeting timeouts so a hung edge can't
+freeze the receipt thread for minutes.
+
+**4. NDI typography compliance.** Verified after #1+#2 that every
+`OutputUiSettings` field flowing through the JSON channel is
+honoured by both Output Display and NDI; the v0.6.9 sync work
+already made this pass — this release just confirms it under the
+2.0× default.
+
+**5. NEW: Activation-code admin dashboard.** Operator request:
+"Create a place in the admin panel where admins can keep records of
+all activation codes... days of purchase, duration remaining,
+expiration date, never-used / expired / error status, real-time
+location of where users are using each code, buyer phone numbers,
+and a way to renew or cancel. Deleted codes go to a bin for 1 week
+before permanent purge."
+- `storage.ts`: extended `ActivationCodeRecord` with
+  `buyerPhone`, `cancelledAt`, `cancelReason`, `lastSeenAt`,
+  `lastSeenIp`, `lastSeenLocation`, `softDeletedAt`. Added
+  `purgeExpiredBin` (auto-runs on every list), `computeCodeStatus`
+  (precedence: deleted > cancelled > master > never-used >
+  active/expired), `listAdminCodes`, `cancelActivationByCode`,
+  `renewActivationByCode`, `softDeleteActivationByCode`,
+  `restoreActivationByCode`, `recordCodeHeartbeat`. `activateCode`
+  now takes `ctx?:{ip,location}`, refuses cancelled / soft-deleted
+  codes, and mirrors `generatedFor.whatsapp → buyerPhone`.
+- `geoip.ts`: free, no-key ip-api.com lookup with 30-min in-memory
+  cache and 5 s timeout — never blocks activation if it fails.
+- API routes: `POST /api/license/admin/cancel|renew|restore`,
+  `GET /api/license/admin/codes?includeDeleted=1`. The existing
+  `delete-activation` route now defaults to soft-delete (bin)
+  with `permanent:true` for forever-purge.
+- `activate` + `status` routes capture client IP via
+  `x-forwarded-for` and write geo onto the code; `status` heartbeat
+  refreshes liveness on every poll so the dashboard sees who's
+  actively using each code right now.
+- `admin-modal.tsx`: new "Codes" tab with stat strip, search + status
+  filter, color-coded status pills, buyer phone / email / location /
+  last-seen / days-remaining columns, per-row Cancel / Renew (prompt
+  for days) / Soft-delete actions, plus a Bin view with Restore and
+  Delete-forever buttons + days-until-purge countdown.
+
+Files touched:
+- `artifacts/imported-app/package.json` (0.6.9 → 0.7.0)
+- `artifacts/imported-app/src/lib/store.ts` (default 2.0)
+- `artifacts/imported-app/src/components/views/ndi-output-panel.tsx` (slider reset 2.0)
+- `artifacts/imported-app/src/app/api/output/congregation/route.ts` (box scales with text)
+- `artifacts/imported-app/src/lib/licensing/notifications.ts` (retry-with-backoff)
+- `artifacts/imported-app/src/lib/licensing/storage.ts` (admin dashboard schema + helpers)
+- `artifacts/imported-app/src/lib/licensing/geoip.ts` (NEW — free geo lookup)
+- `artifacts/imported-app/src/app/api/license/activate/route.ts` (geo capture)
+- `artifacts/imported-app/src/app/api/license/status/route.ts` (heartbeat)
+- `artifacts/imported-app/src/app/api/license/admin/codes/route.ts` (NEW)
+- `artifacts/imported-app/src/app/api/license/admin/cancel/route.ts` (NEW)
+- `artifacts/imported-app/src/app/api/license/admin/renew/route.ts` (NEW)
+- `artifacts/imported-app/src/app/api/license/admin/restore/route.ts` (NEW)
+- `artifacts/imported-app/src/app/api/license/admin/delete-activation/route.ts` (soft-delete by default)
+- `artifacts/imported-app/src/components/license/admin-modal.tsx` (Codes tab + Bin view)
+
 ## v0.6.9 — Typography sync to Output Display + Bible line-height + revert full-screen NDI background-strip (Apr 2026)
 
 Three operator-reported issues from the v0.6.8.1 follow-up video,

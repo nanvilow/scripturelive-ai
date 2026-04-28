@@ -199,12 +199,17 @@ export interface AppSettings {
   ndiLowerThirdTransparent?: boolean
 
   /** v0.6.4 — Operator-tunable size multiplier for the NDI lower-third
-   *  bar. Multiplies the verse + reference font sizes (and the box
-   *  band that drives them). 1 = stock; 0.5 = half; 2 = double. The
-   *  in-room projector and live preview ignore this, so operators can
-   *  tune their broadcast feed for vMix/OBS without disturbing what
-   *  the audience sees in the room. Default `undefined` ⇒ no scale
-   *  applied (effective 1.0) so existing operator setups don't shift. */
+   *  bar. Multiplies the verse + reference font sizes AND the BOX
+   *  height/width on the NDI surface. 1 = stock; 0.5 = half; 2 = double.
+   *  The in-room projector and live preview ignore this, so operators
+   *  can tune their broadcast feed for vMix/OBS without disturbing what
+   *  the audience sees in the room.
+   *
+   *  v0.7.0 — Default is now 2.0 (full scale) per operator request and
+   *  the lower-third box height now scales with this multiplier so the
+   *  bigger text at 2.0× still fits inside the bar instead of clipping
+   *  past the bottom edge (operator screenshot v0.6.9). When unset
+   *  (older persisted profiles) we fall back to 2.0 in the renderer too. */
   ndiLowerThirdScale?: number
 
   // Item #15 follow-up — when the SSE link to the secondary screen
@@ -624,7 +629,10 @@ const defaultSettings: AppSettings = {
   ndiAspectRatio: undefined,
   ndiBibleColor: undefined,
   ndiLowerThirdTransparent: false,
-  ndiLowerThirdScale: undefined,
+  // v0.7.0 — Operator request: ship at full 2.0× by default. Pre-v0.7.0
+  // shipped undefined (effective 1.0); the slider reset button still
+  // returns to 2.0 now so the "Reset" affordance matches the default.
+  ndiLowerThirdScale: 2,
   ndiBibleLineHeight: undefined,
   ndiRefSize: undefined,
   ndiRefStyle: undefined,

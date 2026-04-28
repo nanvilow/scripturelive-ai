@@ -7,16 +7,28 @@
 // activation code, and the originating payment ref so the customer
 // Settings → License row can render without a second roundtrip.
 
-import { NextResponse } from 'next/server'
-import { computeStatus, getFile } from '@/lib/licensing/storage'
+import { NextRequest, NextResponse } from 'next/server'
+import { computeStatus, getFile, recordCodeHeartbeat } from '@/lib/licensing/storage'
 import { findPlan } from '@/lib/licensing/plans'
+import { captureGeoFromRequest } from '@/lib/licensing/geoip'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const s = computeStatus()
   const file = getFile()
+
+  // v0.7.0 — Heartbeat: refresh lastSeenAt + lastSeenIp + location
+  // for the activation code currently powering this device's
+  // subscription so the admin dashboard sees real-time liveness.
+  // Best-effort, never blocks the response.
+  if (s.activeSubscription?.activationCode) {
+    try {
+      const geo = await captureGeoFromRequest(req)
+      recordCodeHeartbeat(s.activeSubscription.activationCode, geo)
+    } catch { /* heartbeat is best-effort */ }
+  }
 
   // Build the customer-facing subscription summary if there's an
   // active sub. Master codes get the "Lifetime" label so the row

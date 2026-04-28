@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { useLicense } from './license-provider'
-import { ShieldCheck, Copy, Mail, Phone, RefreshCw, KeyRound, AlertTriangle, CheckCircle2, Loader2, Settings as SettingsIcon, Save, Sparkles, UserPlus, Trash2 } from 'lucide-react'
+import { ShieldCheck, Copy, Mail, Phone, RefreshCw, KeyRound, AlertTriangle, CheckCircle2, Loader2, Settings as SettingsIcon, Save, Sparkles, UserPlus, Trash2, ListChecks, MapPin, Clock, Ban, CalendarPlus, Undo2, Trash } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -91,7 +91,69 @@ function copy(t: string) {
   }
 }
 
-type AdminTab = 'overview' | 'settings'
+type AdminTab = 'overview' | 'codes' | 'settings'
+
+// v0.7.0 — Admin activation-code dashboard. Mirrors the AdminCodeRow
+// shape returned by GET /api/license/admin/codes. We keep the union
+// here so the type lives next to the consumer; storage.ts is the
+// source of truth.
+type AdminCodeStatus = 'never-used' | 'active' | 'expired' | 'used' | 'cancelled' | 'deleted' | 'master'
+interface AdminCodeRow {
+  code: string
+  planCode: string
+  days: number
+  durationMs?: number
+  generatedAt: string
+  generatedFor?: { email?: string; whatsapp?: string; paymentRef?: string; note?: string }
+  buyerPhone?: string
+  isMaster: boolean
+  isUsed: boolean
+  usedAt?: string
+  subscriptionExpiresAt?: string
+  cancelledAt?: string
+  cancelReason?: string
+  lastSeenAt?: string
+  lastSeenIp?: string
+  lastSeenLocation?: string
+  softDeletedAt?: string
+  status: AdminCodeStatus
+  daysRemaining: number | null
+  binMsRemaining: number | null
+}
+interface AdminCodesResp {
+  codes: AdminCodeRow[]
+  bin: AdminCodeRow[]
+  stats: {
+    total: number; active: number; neverUsed: number; expired: number;
+    cancelled: number; used: number; master: number; inBin: number
+  }
+}
+
+const STATUS_PILL: Record<AdminCodeStatus, string> = {
+  active:       'bg-emerald-500/15 text-emerald-300 border-emerald-500/40',
+  'never-used': 'bg-sky-500/15 text-sky-300 border-sky-500/40',
+  expired:      'bg-rose-500/15 text-rose-300 border-rose-500/40',
+  used:         'bg-zinc-500/15 text-zinc-300 border-zinc-500/40',
+  cancelled:    'bg-orange-500/15 text-orange-300 border-orange-500/40',
+  deleted:      'bg-rose-500/15 text-rose-300 border-rose-500/40',
+  master:       'bg-violet-500/15 text-violet-300 border-violet-500/40',
+}
+
+function fmtRel(iso?: string): string {
+  if (!iso) return '—'
+  const t = Date.parse(iso); if (!Number.isFinite(t)) return iso
+  const diff = Date.now() - t
+  const abs = Math.abs(diff)
+  const past = diff >= 0
+  const sec = Math.floor(abs / 1000)
+  if (sec < 60) return past ? `${sec}s ago` : `in ${sec}s`
+  const min = Math.floor(sec / 60)
+  if (min < 60) return past ? `${min}m ago` : `in ${min}m`
+  const hr = Math.floor(min / 60)
+  if (hr < 48) return past ? `${hr}h ago` : `in ${hr}h`
+  const d = Math.floor(hr / 24)
+  return past ? `${d}d ago` : `in ${d}d`
+}
 
 export function AdminModal() {
   const { ui, refresh } = useLicense()
@@ -149,6 +211,17 @@ export function AdminModal() {
     deepgram: false,
   })
 
+  // v0.7.0 — Codes tab. Operator dashboard listing every activation
+  // code with status, days remaining, geo location, buyer phone, and
+  // cancel/renew/restore actions. Soft-deleted codes live in the bin
+  // for 7 days before automatic purge.
+  const [codesData, setCodesData] = useState<AdminCodesResp | null>(null)
+  const [codesLoading, setCodesLoading] = useState(false)
+  const [codesShowBin, setCodesShowBin] = useState(false)
+  const [codesQuery, setCodesQuery] = useState('')
+  const [codesFilter, setCodesFilter] = useState<'all' | AdminCodeStatus>('all')
+  const [codeBusy, setCodeBusy] = useState<string | null>(null) // code currently mutating
+
   const reload = useCallback(async () => {
     setLoading(true)
     try {
@@ -164,6 +237,54 @@ export function AdminModal() {
     const id = setInterval(reload, 5_000)
     return () => clearInterval(id)
   }, [open, reload])
+
+  // v0.7.0 — Codes tab loader. Polls every 5 s while the tab is open
+  // so heartbeat-driven location/lastSeen updates appear in real time.
+  const reloadCodes = useCallback(async () => {
+    setCodesLoading(true)
+    try {
+      const r = await fetch(`/api/license/admin/codes?includeDeleted=1`, { cache: 'no-store' })
+      const j = await r.json()
+      if (r.ok) setCodesData(j as AdminCodesResp)
+    } catch { /* ignore — toast on user action only */ }
+    finally { setCodesLoading(false) }
+  }, [])
+
+  useEffect(() => {
+    if (!open || tab !== 'codes') return
+    reloadCodes()
+    const id = setInterval(reloadCodes, 5_000)
+    return () => clearInterval(id)
+  }, [open, tab, reloadCodes])
+
+  // Action helpers for the Codes tab. Each toasts on success/failure
+  // and re-loads the dashboard so the new status / row position
+  // appears without a manual refresh.
+  const codeAction = useCallback(async (
+    code: string,
+    endpoint: 'cancel' | 'renew' | 'restore' | 'delete-activation',
+    body: Record<string, unknown>,
+    successMsg: string,
+  ) => {
+    setCodeBusy(code)
+    try {
+      const r = await fetch(`/api/license/admin/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, ...body }),
+      })
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({} as Record<string, unknown>))
+        throw new Error((j as { error?: string }).error || `HTTP ${r.status}`)
+      }
+      toast.success(successMsg)
+      await reloadCodes()
+      await reload()
+      await refresh()
+    } catch (e) {
+      toast.error(`${successMsg.split(' ')[0]} failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally { setCodeBusy(null) }
+  }, [reloadCodes, reload, refresh])
 
   const confirm = async (ref: string) => {
     setConfirmBusy(true); setConfirmResult(null)
@@ -482,6 +603,22 @@ export function AdminModal() {
                 : 'border-transparent text-muted-foreground hover:text-foreground',
             )}
           >Overview</button>
+          <button
+            type="button"
+            onClick={() => setTab('codes')}
+            className={cn(
+              'px-3 py-1.5 text-[11px] uppercase tracking-wider border-b-2 -mb-px transition-colors flex items-center gap-1.5',
+              tab === 'codes'
+                ? 'border-emerald-400 text-emerald-300'
+                : 'border-transparent text-muted-foreground hover:text-foreground',
+            )}
+          ><ListChecks className="h-3 w-3" /> Codes
+            {codesData && (
+              <span className="ml-1 text-[9px] font-mono bg-background border border-border rounded px-1 py-0.5">
+                {codesData.stats.active}/{codesData.stats.total}
+              </span>
+            )}
+          </button>
           <button
             type="button"
             onClick={() => setTab('settings')}
@@ -1216,6 +1353,321 @@ export function AdminModal() {
                   </Button>
                 </div>
               </>
+            )}
+          </div>
+        )}
+
+        {tab === 'codes' && (
+          <div className="space-y-4">
+            {/* ── Stat strip ──────────────────────────────────────────── */}
+            <section className="grid grid-cols-3 sm:grid-cols-7 gap-2 text-center text-[11px]">
+              {([
+                ['Total',     codesData?.stats.total      ?? 0, 'text-foreground'],
+                ['Active',    codesData?.stats.active     ?? 0, 'text-emerald-300'],
+                ['Unused',    codesData?.stats.neverUsed  ?? 0, 'text-sky-300'],
+                ['Expired',   codesData?.stats.expired    ?? 0, 'text-rose-300'],
+                ['Used',      codesData?.stats.used       ?? 0, 'text-zinc-300'],
+                ['Cancelled', codesData?.stats.cancelled  ?? 0, 'text-orange-300'],
+                ['Bin',       codesData?.stats.inBin      ?? 0, 'text-rose-300'],
+              ] as const).map(([label, n, color]) => (
+                <div key={label} className="rounded border border-border bg-card/40 px-2 py-1.5">
+                  <div className={cn('font-mono text-base leading-tight', color)}>{n}</div>
+                  <div className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</div>
+                </div>
+              ))}
+            </section>
+
+            {/* ── Toolbar ─────────────────────────────────────────────── */}
+            <section className="flex flex-wrap items-center gap-2">
+              <Input
+                value={codesQuery}
+                onChange={(e) => setCodesQuery(e.target.value)}
+                placeholder="Search code, phone, email, location, note…"
+                className="bg-background border-border text-foreground text-xs h-8 flex-1 min-w-[220px]"
+              />
+              <select
+                value={codesFilter}
+                onChange={(e) => setCodesFilter(e.target.value as 'all' | AdminCodeStatus)}
+                className="h-8 rounded border border-border bg-background text-foreground text-xs px-2"
+              >
+                <option value="all">All statuses</option>
+                <option value="active">Active</option>
+                <option value="never-used">Never used</option>
+                <option value="expired">Expired</option>
+                <option value="used">Used</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="master">Master</option>
+              </select>
+              <Button
+                size="sm" variant="outline"
+                onClick={() => setCodesShowBin((v) => !v)}
+                className={cn(
+                  'border-border text-foreground h-8',
+                  codesShowBin && 'bg-rose-500/10 border-rose-500/40 text-rose-200',
+                )}
+              >
+                <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                {codesShowBin ? 'Hide bin' : `Bin (${codesData?.bin.length ?? 0})`}
+              </Button>
+              <Button
+                size="sm" variant="ghost"
+                onClick={reloadCodes}
+                disabled={codesLoading}
+                className="h-8"
+              >
+                {codesLoading
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <RefreshCw className="h-3.5 w-3.5" />}
+              </Button>
+            </section>
+
+            {/* ── Loading state ───────────────────────────────────────── */}
+            {!codesData && (
+              <div className="py-12 text-center text-muted-foreground text-sm">
+                <Loader2 className="h-6 w-6 mx-auto animate-spin mb-2" /> Loading codes…
+              </div>
+            )}
+
+            {/* ── Active codes table ──────────────────────────────────── */}
+            {codesData && !codesShowBin && (() => {
+              const q = codesQuery.trim().toLowerCase()
+              const rows = codesData.codes.filter((r) => {
+                if (codesFilter !== 'all' && r.status !== codesFilter) return false
+                if (!q) return true
+                const haystack = [
+                  r.code, r.planCode, r.buyerPhone, r.lastSeenLocation, r.lastSeenIp,
+                  r.generatedFor?.email, r.generatedFor?.whatsapp, r.generatedFor?.note,
+                  r.generatedFor?.paymentRef,
+                ].filter(Boolean).join(' ').toLowerCase()
+                return haystack.includes(q)
+              })
+              if (rows.length === 0) {
+                return (
+                  <div className="py-10 text-center text-muted-foreground text-xs border border-dashed border-border rounded-lg">
+                    No codes match the current filter.
+                  </div>
+                )
+              }
+              return (
+                <section className="rounded-lg border border-border bg-card/40 overflow-x-auto">
+                  <table className="w-full text-[11px]">
+                    <thead className="text-[9px] uppercase tracking-wider text-muted-foreground bg-background/50">
+                      <tr>
+                        <th className="text-left px-2 py-1.5">Code / Plan</th>
+                        <th className="text-left px-2 py-1.5">Status</th>
+                        <th className="text-left px-2 py-1.5">Buyer</th>
+                        <th className="text-left px-2 py-1.5">Days left</th>
+                        <th className="text-left px-2 py-1.5">Expires</th>
+                        <th className="text-left px-2 py-1.5">Last seen</th>
+                        <th className="text-right px-2 py-1.5">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/40">
+                      {rows.map((r) => {
+                        const busy = codeBusy === r.code
+                        const days = r.daysRemaining
+                        const daysCell =
+                          r.status === 'master' ? '∞'
+                          : r.status === 'never-used' ? `${r.days}d granted`
+                          : days == null ? '—'
+                          : days >= 0 ? `${days}d`
+                          : `${Math.abs(days)}d ago`
+                        return (
+                          <tr key={r.code} className="hover:bg-background/30">
+                            <td className="px-2 py-1.5 align-top">
+                              <div className="flex items-center gap-1">
+                                <code className="font-mono text-[10px] break-all">{r.code}</code>
+                                <button onClick={() => copy(r.code)} className="text-muted-foreground hover:text-foreground" title="Copy">
+                                  <Copy className="h-3 w-3" />
+                                </button>
+                              </div>
+                              <div className="text-[9px] text-muted-foreground mt-0.5">
+                                {r.planCode} · {r.days}d
+                                {r.generatedFor?.note && <> · {r.generatedFor.note}</>}
+                              </div>
+                            </td>
+                            <td className="px-2 py-1.5 align-top">
+                              <Badge className={cn('text-[9px] border', STATUS_PILL[r.status])}>
+                                {r.status.toUpperCase()}
+                              </Badge>
+                              {r.cancelReason && (
+                                <div className="text-[9px] text-orange-300 mt-0.5 truncate max-w-[140px]" title={r.cancelReason}>
+                                  {r.cancelReason}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5 align-top">
+                              {r.buyerPhone && (
+                                <div className="flex items-center gap-1">
+                                  <Phone className="h-2.5 w-2.5 text-muted-foreground" />
+                                  <span className="font-mono text-[10px]">{r.buyerPhone}</span>
+                                </div>
+                              )}
+                              {r.generatedFor?.email && (
+                                <div className="flex items-center gap-1 mt-0.5">
+                                  <Mail className="h-2.5 w-2.5 text-muted-foreground" />
+                                  <span className="text-[10px] truncate max-w-[140px]" title={r.generatedFor.email}>{r.generatedFor.email}</span>
+                                </div>
+                              )}
+                              {!r.buyerPhone && !r.generatedFor?.email && (
+                                <span className="text-muted-foreground text-[10px]">—</span>
+                              )}
+                            </td>
+                            <td className={cn(
+                              'px-2 py-1.5 align-top font-mono text-[10px]',
+                              r.status === 'active' && 'text-emerald-300',
+                              r.status === 'expired' && 'text-rose-300',
+                              r.status === 'never-used' && 'text-sky-300',
+                            )}>
+                              {daysCell}
+                            </td>
+                            <td className="px-2 py-1.5 align-top text-[10px]">
+                              {r.subscriptionExpiresAt
+                                ? new Date(r.subscriptionExpiresAt).toLocaleDateString()
+                                : <span className="text-muted-foreground">—</span>}
+                              <div className="text-[9px] text-muted-foreground">
+                                {r.usedAt ? `used ${fmtRel(r.usedAt)}` : `created ${fmtRel(r.generatedAt)}`}
+                              </div>
+                            </td>
+                            <td className="px-2 py-1.5 align-top">
+                              {r.lastSeenLocation || r.lastSeenIp ? (
+                                <div>
+                                  <div className="flex items-center gap-1 text-[10px]">
+                                    <MapPin className="h-2.5 w-2.5 text-muted-foreground" />
+                                    <span className="truncate max-w-[160px]" title={r.lastSeenLocation || r.lastSeenIp}>
+                                      {r.lastSeenLocation || r.lastSeenIp}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-1 text-[9px] text-muted-foreground mt-0.5">
+                                    <Clock className="h-2.5 w-2.5" />
+                                    {fmtRel(r.lastSeenAt)}
+                                  </div>
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground text-[10px]">never</span>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5 align-top">
+                              <div className="flex items-center justify-end gap-1">
+                                {r.status !== 'cancelled' && r.status !== 'master' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const reason = window.prompt(`Cancel code ${r.code}?\nOptional reason (visible in dashboard):`, '') ?? null
+                                      if (reason === null) return
+                                      void codeAction(r.code, 'cancel', { reason }, `Cancelled ${r.code}`)
+                                    }}
+                                    disabled={busy}
+                                    title="Cancel — code refuses to activate, active sub killed"
+                                    className="p-1 rounded hover:bg-orange-500/15 text-orange-300 disabled:opacity-40"
+                                  ><Ban className="h-3 w-3" /></button>
+                                )}
+                                {r.status !== 'master' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const raw = window.prompt(`Renew ${r.code} — add how many days?`, '30')
+                                      if (raw == null) return
+                                      const addDays = Number(raw)
+                                      if (!Number.isFinite(addDays) || addDays <= 0) { toast.error('Enter a positive number'); return }
+                                      void codeAction(r.code, 'renew', { addDays }, `Renewed ${r.code} +${addDays}d`)
+                                    }}
+                                    disabled={busy}
+                                    title="Renew — extend subscription / add days to grant"
+                                    className="p-1 rounded hover:bg-emerald-500/15 text-emerald-300 disabled:opacity-40"
+                                  ><CalendarPlus className="h-3 w-3" /></button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (!window.confirm(`Move ${r.code} to bin (recoverable for 7 days)?`)) return
+                                    void codeAction(r.code, 'delete-activation', { permanent: false }, `Moved ${r.code} to bin`)
+                                  }}
+                                  disabled={busy}
+                                  title="Soft-delete — moves to bin for 7 days"
+                                  className="p-1 rounded hover:bg-rose-500/15 text-rose-300 disabled:opacity-40"
+                                >
+                                  {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </section>
+              )
+            })()}
+
+            {/* ── Bin view ────────────────────────────────────────────── */}
+            {codesData && codesShowBin && (
+              <section className="rounded-lg border border-rose-500/30 bg-rose-950/10 overflow-x-auto">
+                <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-rose-300 border-b border-rose-500/30 flex items-center justify-between">
+                  <span>Bin · auto-purges 7 days after delete</span>
+                  <span className="text-muted-foreground normal-case">{codesData.bin.length} item(s)</span>
+                </div>
+                {codesData.bin.length === 0 ? (
+                  <div className="py-8 text-center text-muted-foreground text-xs">Bin is empty.</div>
+                ) : (
+                  <table className="w-full text-[11px]">
+                    <thead className="text-[9px] uppercase tracking-wider text-muted-foreground bg-background/30">
+                      <tr>
+                        <th className="text-left px-2 py-1.5">Code</th>
+                        <th className="text-left px-2 py-1.5">Plan</th>
+                        <th className="text-left px-2 py-1.5">Buyer</th>
+                        <th className="text-left px-2 py-1.5">Deleted</th>
+                        <th className="text-left px-2 py-1.5">Purges in</th>
+                        <th className="text-right px-2 py-1.5">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/40">
+                      {codesData.bin.map((r) => {
+                        const busy = codeBusy === r.code
+                        const purgeDays = r.binMsRemaining != null
+                          ? Math.max(0, Math.ceil(r.binMsRemaining / 86400000))
+                          : null
+                        return (
+                          <tr key={r.code}>
+                            <td className="px-2 py-1.5 font-mono text-[10px] break-all">{r.code}</td>
+                            <td className="px-2 py-1.5 text-[10px]">{r.planCode} · {r.days}d</td>
+                            <td className="px-2 py-1.5 text-[10px]">
+                              {r.buyerPhone || r.generatedFor?.email || <span className="text-muted-foreground">—</span>}
+                            </td>
+                            <td className="px-2 py-1.5 text-[10px]">{fmtRel(r.softDeletedAt)}</td>
+                            <td className="px-2 py-1.5 text-[10px] text-rose-300">
+                              {purgeDays == null ? '—' : `${purgeDays}d`}
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => void codeAction(r.code, 'restore', {}, `Restored ${r.code}`)}
+                                  disabled={busy}
+                                  title="Restore from bin"
+                                  className="p-1 rounded hover:bg-emerald-500/15 text-emerald-300 disabled:opacity-40"
+                                ><Undo2 className="h-3 w-3" /></button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (!window.confirm(`Permanently delete ${r.code}? This cannot be undone.`)) return
+                                    void codeAction(r.code, 'delete-activation', { permanent: true }, `Purged ${r.code}`)
+                                  }}
+                                  disabled={busy}
+                                  title="Delete forever"
+                                  className="p-1 rounded hover:bg-rose-500/15 text-rose-300 disabled:opacity-40"
+                                >
+                                  {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash className="h-3 w-3" />}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </section>
             )}
           </div>
         )}
