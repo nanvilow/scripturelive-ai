@@ -928,14 +928,24 @@ export function AdminModal() {
                             "SMTP OK · …"). Inspect `n.status` so a successful
                             send is labeled "Info" in emerald and only an
                             actual failure shows the red "Error". */}
+                        {/* v0.6.4 review fix — three-way branch on n.status:
+                            sent ⇒ green "Info:" (success audit string),
+                            pending ⇒ amber "Info:" (queued, not failed yet),
+                            failed ⇒ red "Error:". The pending branch was
+                            previously falling through to the rose default
+                            and mis-labelled the operator's queued sends. */}
                         {n.error && (
                           <div
                             className={cn(
                               'text-[10px] mt-0.5',
-                              n.status === 'sent' ? 'text-emerald-400' : 'text-rose-400',
+                              n.status === 'sent'
+                                ? 'text-emerald-400'
+                                : n.status === 'pending'
+                                  ? 'text-amber-300'
+                                  : 'text-rose-400',
                             )}
                           >
-                            {n.status === 'sent' ? 'Info: ' : 'Error: '}
+                            {n.status === 'failed' ? 'Error: ' : 'Info: '}
                             {n.error}
                           </div>
                         )}
