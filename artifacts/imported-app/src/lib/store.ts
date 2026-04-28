@@ -138,6 +138,16 @@ export interface AppSettings {
   referenceTextShadow?: boolean
   referenceTextScale?: number
   referenceTextAlign?: 'left' | 'center' | 'right' | 'justify'
+  // ── v0.6.9 — Bible body line-height ─────────────────────────────
+  // Operator-controlled vertical spacing for the verse body (the
+  // .slide-text / .slide-paragraph element). Applied to both the
+  // secondary screen AND the NDI feed when no NDI-only override
+  // (`ndiBibleLineHeight`) is set. Range 0.9 .. 2.5 with default 1.4
+  // — same clamp the renderer enforces server-side. Mirrors the
+  // existing NDI-only line-height slider so the in-room projector
+  // can finally tune verse breathing-room without going through the
+  // NDI panel.
+  bibleLineHeight?: number
   // ── NDI-only display mode ──────────────────────────────────────
   // The secondary screen and NDI used to share `displayMode`, which
   // forced operators to choose ONE layout for both. Production
@@ -582,6 +592,12 @@ const defaultSettings: AppSettings = {
   referenceTextShadow: undefined,
   referenceTextScale: undefined,
   referenceTextAlign: undefined,
+  // v0.6.9 — Bible body line-height. 1.4 mirrors the typographic
+  // default the NDI panel suggested (its slider seeded at 1.40 too)
+  // so the secondary screen renders the same vertical rhythm out of
+  // the box and operators only see a visible change once they
+  // actually drag the slider.
+  bibleLineHeight: 1.4,
   congregationScreenTheme: 'minimal',
   // English-only per v0.5.5 spec — the multi-language picker was a
   // footgun because Whisper's Base model is English-only and the

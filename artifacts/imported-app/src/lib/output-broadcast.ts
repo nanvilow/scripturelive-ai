@@ -92,6 +92,22 @@ export interface OutputState {
     ndiShowReferenceOnOutput?: unknown
     ndiReferenceTextShadow?: unknown
     ndiDisplayMode?: unknown
+    /** v0.6.9 — Reference-typography fields. Each is optional;
+     *  `undefined` means "fall back to the body equivalent above".
+     *  Pre-v0.6.9 these were never broadcast, so the renderer's
+     *  `st.referenceFontSize` etc. lookup always saw `undefined` on
+     *  the secondary screen and the operator's per-reference picks
+     *  silently no-op'd. Typed loosely (`unknown` / specific union)
+     *  on purpose — the renderer narrows per field. */
+    referenceFontSize?: 'sm' | 'md' | 'lg' | 'xl'
+    referenceFontFamily?: string
+    referenceTextShadow?: boolean
+    referenceTextScale?: number
+    referenceTextAlign?: 'left' | 'center' | 'right' | 'justify'
+    /** v0.6.9 — Operator-controlled Bible body line-height that
+     *  applies to BOTH the secondary screen AND the NDI feed (when
+     *  no NDI-only override is set). Default 1.4. */
+    bibleLineHeight?: number
     slideTransitionStyle?: string
     slideTransitionDuration?: number
   }

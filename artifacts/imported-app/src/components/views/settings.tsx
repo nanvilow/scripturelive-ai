@@ -701,6 +701,58 @@ export function SettingsView() {
 
           <Separator />
 
+          {/* v0.6.9 — Bible body line-height. New operator-facing
+              control mirroring the NDI panel's "Bible line-height"
+              slider so the in-room projector can finally tune verse
+              breathing-room without going through the NDI panel.
+              The renderer's NDI-only override (`ndiBibleLineHeight`)
+              still wins when set; this is the body-default. */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium flex items-center justify-between">
+              <span>Bible Line-Height</span>
+              <span className="text-[11px] font-mono text-primary">
+                {(settings.bibleLineHeight ?? 1.4).toFixed(2)}
+              </span>
+            </Label>
+            <input
+              type="range"
+              min={0.9}
+              max={2.5}
+              step={0.05}
+              value={settings.bibleLineHeight ?? 1.4}
+              onChange={(e) => updateSettings({ bibleLineHeight: parseFloat(e.target.value) })}
+              className="w-full h-2 rounded-full bg-muted accent-primary cursor-pointer"
+            />
+            <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+              <button
+                onClick={() => updateSettings({ bibleLineHeight: 1.0 })}
+                className="hover:text-foreground transition-colors"
+              >
+                Tight
+              </button>
+              <button
+                onClick={() => updateSettings({ bibleLineHeight: 1.4 })}
+                className="hover:text-foreground transition-colors"
+              >
+                Default (1.40)
+              </button>
+              <button
+                onClick={() => updateSettings({ bibleLineHeight: 2.0 })}
+                className="hover:text-foreground transition-colors"
+              >
+                Airy
+              </button>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Vertical spacing of the verse body. Applies to the secondary
+              screen and the NDI feed. The NDI panel&apos;s &ldquo;Bible
+              line-height&rdquo; override still wins on the broadcast feed
+              when set.
+            </p>
+          </div>
+
+          <Separator />
+
           <div className="space-y-2">
             <Label className="text-sm font-medium">Congregation Screen Theme</Label>
             <div className="flex flex-wrap gap-2">

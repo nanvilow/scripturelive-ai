@@ -126,6 +126,29 @@ export function OutputBroadcaster() {
         ndiLowerThirdScale: sExt.ndiLowerThirdScale,
         ndiShowReferenceOnOutput: sExt.ndiShowReferenceOnOutput,
         ndiReferenceTextShadow: sExt.ndiReferenceTextShadow,
+        // v0.6.9 — Reference-typography fields. CRITICAL fix: these
+        // were missing from the broadcasted state, so the secondary
+        // screen + NDI feed always saw `referenceFontSize ===
+        // undefined` etc. and silently fell back to body settings,
+        // even though the operator's Typography panel had moved them
+        // to a different value. The renderer in route.ts (line 629)
+        // explicitly reads `st.referenceFontSize` etc. for the live
+        // (non-NDI) surface — without these in the SSE payload that
+        // read returns undefined every tick. That is the root cause
+        // of operator reports that "Reference Font Size + Reference
+        // Text Scale + Reference Text Alignment + Reference Font
+        // Family + Reference Text Shadow do nothing on the second
+        // screen". Forwarding them here closes the gap.
+        referenceFontSize: settings.referenceFontSize,
+        referenceFontFamily: settings.referenceFontFamily,
+        referenceTextShadow: settings.referenceTextShadow,
+        referenceTextScale: settings.referenceTextScale,
+        referenceTextAlign: settings.referenceTextAlign,
+        // v0.6.9 — Operator-controlled Bible body line-height. New
+        // setting added in v0.6.9; default 1.4. Mirrors the existing
+        // ndiBibleLineHeight override but applies to BOTH surfaces
+        // (live screen + NDI) when no NDI-only value is set.
+        bibleLineHeight: sExt.bibleLineHeight,
         // Slide transition: style picks Cut (instant swap) vs Fade
         // (crossfade), duration drives the fade length in ms. The
         // congregation route honours both on every slide change.
