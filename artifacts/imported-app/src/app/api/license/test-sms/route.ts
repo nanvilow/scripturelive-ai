@@ -16,6 +16,7 @@
 // instead.
 
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/licensing/admin-auth'
 import { notifySms } from '@/lib/licensing/notifications'
 import { NOTIFICATION_WHATSAPP } from '@/lib/licensing/plans'
 
@@ -23,6 +24,8 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
+  const guard = requireAdmin(req)
+  if (guard) return guard
   let to: string | undefined
   try {
     const body = (await req.json().catch(() => ({}))) as { to?: string }

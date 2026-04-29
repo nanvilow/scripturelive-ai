@@ -7,12 +7,15 @@
 // Resp: { ok: true } | { error }
 
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/licensing/admin-auth'
 import { restoreActivationByCode } from '@/lib/licensing/storage'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
+  const guard = requireAdmin(req)
+  if (guard) return guard
   let body: unknown
   try { body = await req.json() } catch {
     return NextResponse.json({ error: 'Body must be JSON' }, { status: 400 })

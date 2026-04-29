@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getConfig, saveConfig, type RuntimeConfig } from '@/lib/licensing/storage'
+import { requireAdmin } from '@/lib/licensing/admin-auth'
 import {
   PLANS,
   MOMO_RECIPIENT,
@@ -42,7 +43,9 @@ function defaults(): Defaults {
   }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const guard = requireAdmin(req)
+  if (guard) return guard
   const config = getConfig() ?? {}
   return NextResponse.json(
     { config, defaults: defaults() },
@@ -73,6 +76,8 @@ function clean(v: unknown): unknown {
 }
 
 export async function POST(req: NextRequest) {
+  const guard = requireAdmin(req)
+  if (guard) return guard
   let body: SavePayload
   try {
     body = (await req.json()) as SavePayload

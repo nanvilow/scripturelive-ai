@@ -18,11 +18,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { notifyEmail, notifySms, notifyWhatsApp } from '@/lib/licensing/notifications'
 import { getNotificationById } from '@/lib/licensing/storage'
+import { requireAdmin } from '@/lib/licensing/admin-auth'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
+  const guard = requireAdmin(req)
+  if (guard) return guard
   let id: string | undefined
   try {
     const body = (await req.json().catch(() => ({}))) as { id?: string }

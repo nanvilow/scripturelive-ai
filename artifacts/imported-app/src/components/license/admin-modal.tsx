@@ -222,6 +222,75 @@ export function AdminModal() {
   const [codesFilter, setCodesFilter] = useState<'all' | AdminCodeStatus>('all')
   const [codeBusy, setCodeBusy] = useState<string | null>(null) // code currently mutating
 
+  // v0.7.1 — Server-side auth gate. The Ctrl+Shift+P shortcut now
+  // OPENS this modal but does NOT grant access — every admin API
+  // route requires a valid session cookie obtained by POSTing the
+  // operator password to /api/license/admin/login. We probe
+  // /whoami on every open so a returning operator with a still-
+  // valid cookie skips the password screen entirely.
+  type AuthState = 'checking' | 'needs-password' | 'authed'
+  const [authState, setAuthState] = useState<AuthState>('checking')
+  const [pwdInput, setPwdInput] = useState('')
+  const [pwdError, setPwdError] = useState<string | null>(null)
+  const [pwdBusy, setPwdBusy] = useState(false)
+  const authed = authState === 'authed'
+
+  // Probe the session whenever the modal opens. We deliberately
+  // re-probe on every open (not once on mount) so a logout in
+  // another tab / cookie expiry between opens is caught.
+  useEffect(() => {
+    if (!open) {
+      // Reset gate state when the modal closes so the next open
+      // shows the spinner briefly, not the wrong content.
+      setAuthState('checking')
+      setPwdInput('')
+      setPwdError(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const r = await fetch('/api/license/admin/whoami', {
+          cache: 'no-store',
+          credentials: 'same-origin',
+        })
+        if (cancelled) return
+        setAuthState(r.ok ? 'authed' : 'needs-password')
+      } catch {
+        if (cancelled) return
+        setAuthState('needs-password')
+      }
+    })()
+    return () => { cancelled = true }
+  }, [open])
+
+  const submitPassword = useCallback(async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    if (!pwdInput) { setPwdError('Enter the admin password'); return }
+    setPwdBusy(true)
+    setPwdError(null)
+    try {
+      const r = await fetch('/api/license/admin/login', {
+        method: 'POST',
+        cache: 'no-store',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pwdInput }),
+      })
+      if (r.ok) {
+        setAuthState('authed')
+        setPwdInput('')
+      } else {
+        const j = await r.json().catch(() => ({}))
+        setPwdError((j as { error?: string })?.error ?? 'Invalid password')
+      }
+    } catch {
+      setPwdError('Network error — is the app reachable?')
+    } finally {
+      setPwdBusy(false)
+    }
+  }, [pwdInput])
+
   const reload = useCallback(async () => {
     setLoading(true)
     try {
@@ -232,11 +301,14 @@ export function AdminModal() {
   }, [])
 
   useEffect(() => {
-    if (!open) return
+    // v0.7.1 — also gate on `authed` so we don't 401-spam the
+    // server (and pollute the audit log) before the operator
+    // submits the password.
+    if (!open || !authed) return
     reload()
     const id = setInterval(reload, 5_000)
     return () => clearInterval(id)
-  }, [open, reload])
+  }, [open, authed, reload])
 
   // v0.7.0 — Codes tab loader. Polls every 5 s while the tab is open
   // so heartbeat-driven location/lastSeen updates appear in real time.
@@ -251,11 +323,11 @@ export function AdminModal() {
   }, [])
 
   useEffect(() => {
-    if (!open || tab !== 'codes') return
+    if (!open || !authed || tab !== 'codes') return
     reloadCodes()
     const id = setInterval(reloadCodes, 5_000)
     return () => clearInterval(id)
-  }, [open, tab, reloadCodes])
+  }, [open, authed, tab, reloadCodes])
 
   // Action helpers for the Codes tab. Each toasts on success/failure
   // and re-loads the dashboard so the new status / row position
@@ -509,8 +581,8 @@ export function AdminModal() {
   }, [])
 
   useEffect(() => {
-    if (open && tab === 'settings' && !cfg && !cfgLoading) loadCfg()
-  }, [open, tab, cfg, cfgLoading, loadCfg])
+    if (open && authed && tab === 'settings' && !cfg && !cfgLoading) loadCfg()
+  }, [open, authed, tab, cfg, cfgLoading, loadCfg])
 
   const saveCfg = async () => {
     if (!cfg) return
@@ -589,6 +661,52 @@ export function AdminModal() {
           </DialogDescription>
         </DialogHeader>
 
+        {/* v0.7.1 — Server-side auth gate. Until the operator
+            successfully POSTs the password to /login, every other
+            admin endpoint returns 401 and we hide the dashboard. */}
+        {authState === 'checking' && (
+          <div className="flex items-center justify-center py-12 text-xs text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+            Checking session…
+          </div>
+        )}
+        {authState === 'needs-password' && (
+          <form
+            onSubmit={submitPassword}
+            className="flex flex-col gap-3 py-6 px-2 max-w-sm mx-auto"
+          >
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+              Enter the admin password to continue.
+            </div>
+            <input
+              type="password"
+              autoFocus
+              autoComplete="current-password"
+              value={pwdInput}
+              onChange={(e) => { setPwdInput(e.target.value); if (pwdError) setPwdError(null) }}
+              disabled={pwdBusy}
+              placeholder="Admin password"
+              className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground focus:outline-none focus:border-emerald-400 disabled:opacity-50"
+            />
+            {pwdError && (
+              <div className="text-xs text-rose-300 -mt-1">{pwdError}</div>
+            )}
+            <button
+              type="submit"
+              disabled={pwdBusy || !pwdInput}
+              className="w-full px-3 py-2 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-200 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {pwdBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+              Unlock
+            </button>
+            <div className="text-[10px] text-muted-foreground/70 mt-1 leading-relaxed">
+              Default password is <code className="font-mono">admin</code> on first run — change it in Settings → Admin Password.
+            </div>
+          </form>
+        )}
+
+        {authed && (<>
         {/* Tab bar (v0.5.48). Overview keeps the existing payment +
             activation + notifications view; Settings shows the
             owner-tunable runtime config. */}
@@ -1671,6 +1789,7 @@ export function AdminModal() {
             )}
           </div>
         )}
+        </>)}
       </DialogContent>
     </Dialog>
   )

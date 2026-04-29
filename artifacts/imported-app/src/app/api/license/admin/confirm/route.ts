@@ -23,11 +23,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { findPlan } from '@/lib/licensing/plans'
 import { confirmPaymentAndIssueActivation } from '@/lib/licensing/storage'
 import { notifyEmail, notifyWhatsApp, notifySms } from '@/lib/licensing/notifications'
+import { requireAdmin } from '@/lib/licensing/admin-auth'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
+  const guard = requireAdmin(req)
+  if (guard) return guard
   let body: unknown
   try { body = await req.json() } catch { return NextResponse.json({ error: 'Body must be JSON' }, { status: 400 }) }
   const ref = String((body as Record<string, unknown>)?.ref ?? '').trim()
