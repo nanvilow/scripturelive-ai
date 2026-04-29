@@ -12,9 +12,10 @@
 //   variant="floating" — legacy fixed top-right behaviour, kept in
 //                      case the operator wants the corner pill back.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Sparkles, ShieldCheck, Lock } from 'lucide-react'
 import { useLicense } from './license-provider'
+import { useAppStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
 import {
   formatDaysHoursMinutes,
@@ -40,25 +41,56 @@ function formatTrial(msLeft: number): string {
   return `${mm}:${ss}`
 }
 
-// v0.5.50 — second-resolution clock that re-renders this component
-// every 1 s while a trial is in flight. Without this, the badge only
-// updated on each 30 s status-poll tick, so operators thought the
-// countdown was frozen. We compute msLeft locally as
-// (expiresAt - now) so the displayed value is always current,
-// regardless of how stale the server-snapshot msLeft is.
-function useTickingTrialMsLeft(expiresAt: string | undefined, isTrial: boolean): number | null {
-  const [now, setNow] = useState(() => Date.now())
+// v0.7.10 — Activity-gated DISPLAYED countdown (was wall-clock based).
+//
+// Pre-v0.7.10 bug: the badge's per-second counter advanced regardless
+// of whether the mic was actually running. The server-side budget
+// (`trialMsUsed`) only grows while listening, so the displayed
+// countdown was disconnected from reality:
+//
+//   • User opens app idle  → badge shows 60:00, ticks to 59:30 over
+//     30 s of just looking at it.
+//   • User closes / reopens → badge shows 60:00 again (because the
+//     real counter on disk is still 0 — they never listened).
+//   • Operator concludes "the trial timer reset on app exit" — but
+//     functionally nothing was ever consumed; only the lying display
+//     made it look that way.
+//
+// Fix: we still want a smooth 1 Hz tick while the user is genuinely
+// using the trial (so they see the badge counting down in real time
+// instead of waiting 30 s for the next status poll), but the moment
+// the mic stops the displayed value FREEZES on the last server
+// snapshot and stays put until detection resumes. App exit/reopen
+// thus restores the badge to the same value the user saw when they
+// last stopped — which matches what the persisted `trialMsUsed`
+// implies and matches operator expectation.
+function useTickingTrialMsLeft(serverMsLeft: number, isTrial: boolean, isListening: boolean): number | null {
+  const baseRef = useRef<number>(serverMsLeft)
+  const [displayed, setDisplayed] = useState<number>(serverMsLeft)
+
+  // Re-anchor on every server snapshot. Status polls land every 30 s
+  // and trial-tick responses land every 5 s while listening, so the
+  // displayed value never drifts more than a few seconds from disk.
   useEffect(() => {
-    if (!isTrial || !expiresAt) return
-    // Anchor the first tick on the next 1 s boundary so all running
-    // license badges in the toolbar update in lockstep — looks
-    // intentional rather than a stutter.
-    const id = setInterval(() => setNow(Date.now()), 1000)
+    baseRef.current = serverMsLeft
+    setDisplayed(serverMsLeft)
+  }, [serverMsLeft])
+
+  // Tick the displayed value down at 1 Hz, but only while the mic is
+  // actually running. When stopped, the last setDisplayed() call
+  // sticks and the badge freezes.
+  useEffect(() => {
+    if (!isTrial || !isListening) return
+    const start = Date.now()
+    const id = setInterval(() => {
+      const elapsed = Date.now() - start
+      setDisplayed(Math.max(0, baseRef.current - elapsed))
+    }, 1000)
     return () => clearInterval(id)
-  }, [isTrial, expiresAt])
-  if (!isTrial || !expiresAt) return null
-  const ms = new Date(expiresAt).getTime() - now
-  return Number.isFinite(ms) ? Math.max(0, ms) : 0
+  }, [isTrial, isListening, serverMsLeft])
+
+  if (!isTrial) return null
+  return displayed
 }
 
 interface Props {
@@ -67,9 +99,11 @@ interface Props {
 
 export function LicenseTopBarButton({ variant = 'inline' }: Props) {
   const { status, isActive, isTrial, openSubscribe } = useLicense()
-  // v0.5.50 — local 1 s clock so the trial countdown ticks visibly
-  // instead of waiting for the next 30 s status poll.
-  const tickingMsLeft = useTickingTrialMsLeft(status.trial?.expiresAt, isTrial)
+  // v0.7.10 — Trial counter only ticks while mic is actively running.
+  // Pulls isListening from the global store (set by SpeechProvider on
+  // start/stop) so a stopped detection visibly freezes the badge.
+  const isListening = useAppStore((s) => s.isListening)
+  const tickingMsLeft = useTickingTrialMsLeft(status.trial?.msLeft ?? 0, isTrial, isListening)
 
   if (status.state === 'unknown') return null
 
@@ -135,10 +169,15 @@ export function LicenseTopBarButton({ variant = 'inline' }: Props) {
           'border border-amber-300/60',
           'transition-colors shrink-0',
         )}
-        title="You're on the 1-hour free trial. Click to activate a subscription."
+        title={
+          isListening
+            ? "You're on the 1-hour free trial. Counter only runs while detecting. Click to activate a subscription."
+            : "Trial paused — counter is frozen until you start detecting. Click to activate a subscription."
+        }
       >
         <Sparkles className="h-3 w-3" />
-        Trial — {formatTrial(tickingMsLeft ?? status.trial.msLeft)} · Activate
+        Trial — {formatTrial(tickingMsLeft ?? status.trial.msLeft)}
+        {!isListening && ' (paused)'} · Activate
       </button>
     )
   }
