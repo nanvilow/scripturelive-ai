@@ -10,14 +10,22 @@
 //                                        the file system anyway)
 //   POST → triggers an email send + flips the masterCodeEmailedAt flag
 
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getFile, markMasterEmailed } from '@/lib/licensing/storage'
 import { notifyEmail, notifyWhatsApp } from '@/lib/licensing/notifications'
+import { requireAdmin } from '@/lib/licensing/admin-auth'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
+// v0.7.1 — both handlers gated on the same admin session as
+// /api/license/admin/*. The master code permanently unlocks the
+// app, so revealing it (GET) or emailing it (POST) without auth
+// was the same kind of dashboard-leak gap we just patched on the
+// /admin/* routes.
+export async function GET(req: NextRequest) {
+  const guard = requireAdmin(req)
+  if (guard) return guard
   const f = getFile()
   return NextResponse.json({
     masterCode: f.masterCode,
@@ -26,7 +34,9 @@ export async function GET() {
   })
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const guard = requireAdmin(req)
+  if (guard) return guard
   const f = getFile()
   const body = [
     'ScriptureLive AI — Master Activation Code',

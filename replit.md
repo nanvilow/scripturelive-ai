@@ -2,6 +2,35 @@
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It supports live congregation output, NDI broadcasting, and advanced speech recognition. The system targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service.
 
+## v0.7.2 — Extend admin auth to /master, /test-email, /test-sms (Apr 2026)
+
+Code-review follow-up to v0.7.1. The audit found that three more
+endpoints — `/api/license/master` (GET+POST), `/api/license/test-email`
+(POST), and `/api/license/test-sms` (POST) — were also operator-only
+in intent but had been left unguarded. Same gap, same fix:
+
+- `/api/license/master` GET would have leaked the install's permanent
+  master activation code (which fully unlocks the app forever);
+  POST would have triggered an outbound email + WhatsApp message.
+- `/api/license/test-email` and `/api/license/test-sms` were free
+  spam vectors — anyone reachable could have triggered SMTP / SMS
+  sends from the operator's account.
+
+All three now call `requireAdmin(req)` exactly the same way the
+`/admin/*` routes do. The `master` route's pre-existing comment
+"safe because access to the dev console = access to the file system
+anyway" was true for early-version self-hosted dev builds but not
+for the v0.7.0 dashboard model that exposes a real port.
+
+Re-ran the same smoke harness — all 4 new assertions PASS (401
+unauth on each, 200 with cookie on `/master` GET).
+
+**Files changed:**
+- `artifacts/imported-app/src/app/api/license/master/route.ts`     (+ requireAdmin x2)
+- `artifacts/imported-app/src/app/api/license/test-email/route.ts` (+ requireAdmin)
+- `artifacts/imported-app/src/app/api/license/test-sms/route.ts`   (+ requireAdmin)
+- `artifacts/imported-app/package.json`                            (0.7.1 → 0.7.2)
+
 ## v0.7.1 — Server-side admin auth gate (Apr 2026)
 
 Critical security hotfix. v0.7.0 shipped the new activation-code
