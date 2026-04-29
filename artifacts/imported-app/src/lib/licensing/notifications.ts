@@ -153,8 +153,51 @@ function isTransientSmtpError(err: { message?: string; code?: string; responseCo
   return false
 }
 
-const SMTP_MAX_ATTEMPTS = 3
-const SMTP_BACKOFF_MS = [1000, 2500, 5000] as const
+// v0.7.12 — Bumped from 3 → 5 attempts and stretched the backoff
+// curve from [1s, 2.5s, 5s] (totals ~9s) to [2s, 8s, 20s, 45s] (totals
+// ~75s). Operator escalation: customer activations were failing with
+// "Unexpected socket close | attempt=3/3" because Gmail's
+// per-IP rate limiter needs ≥30s to release a flagged egress IP, and
+// our old 9-second window blew past ALL retries before the limiter
+// reset. Five attempts over ~75s gives Gmail's rate-limit window
+// time to expire AND lets the port-fallback (587 STARTTLS → 465
+// SMTPS, see below) actually swap modes between attempts.
+const SMTP_MAX_ATTEMPTS = 5
+const SMTP_BACKOFF_MS = [2000, 8000, 20000, 45000] as const
+
+// v0.7.12 — Port-fallback strategy. The single most common cause of
+// the "Unexpected socket close" Gmail bug is a STARTTLS handshake
+// failure on port 587 — Gmail accepts the TCP connection, sends its
+// banner, then drops the socket the moment our client says STARTTLS.
+// This happens far more often from cloud / NAT'd / corporate-firewall
+// origins (Replit egress IPs, university/church Wi-Fi, etc.) because
+// some middleboxes mangle the STARTTLS upgrade frame. Direct TLS on
+// port 465 (SMTPS) bypasses STARTTLS entirely — the TLS handshake is
+// the FIRST thing on the wire, so middleboxes either let it through
+// or block the whole connection (which surfaces immediately as a
+// connection refused, not a mid-handshake socket close).
+//
+// Strategy: alternate ports across attempts. If the operator hasn't
+// pinned a port via MAIL_PORT, we try 587 → 465 → 587 → 465 → 587.
+// If they HAVE pinned a port (MAIL_PORT in env / baked), we honor
+// it on attempt 1 then fall back to the OPPOSITE port on subsequent
+// attempts. This way a transient STARTTLS glitch on 587 is absorbed
+// by the next attempt switching to SMTPS, and vice versa.
+function pickPortForAttempt(operatorPort: number | null, attemptNum: number): { port: number; secure: boolean } {
+  // No operator pin → start with 587 (STARTTLS), fall back to 465 (SMTPS).
+  // Operator pin → use the pinned port on attempt 1, swap on retries.
+  const useSecondaryThisAttempt = operatorPort
+    ? attemptNum >= 2 && attemptNum % 2 === 0
+    : attemptNum % 2 === 0
+  if (operatorPort) {
+    if (!useSecondaryThisAttempt) return { port: operatorPort, secure: operatorPort === 465 }
+    // Swap: 587 ↔ 465, anything else falls back to 465 SMTPS as the safest secondary.
+    if (operatorPort === 587) return { port: 465, secure: true }
+    if (operatorPort === 465) return { port: 587, secure: false }
+    return { port: 465, secure: true }
+  }
+  return useSecondaryThisAttempt ? { port: 465, secure: true } : { port: 587, secure: false }
+}
 
 async function sendEmailViaSmtp(args: {
   to: string
@@ -175,22 +218,32 @@ async function sendEmailViaSmtp(args: {
   const from = normalizeMailFrom(getMailFrom() || user)
   if (!host || !user || !pass || !from) return { ok: false, error: 'SMTP not configured' }
 
+  // v0.5.54 — defensively coerce port: invalid/NaN/0 -> null (no pin).
+  // The inject script already filters placeholder values like
+  // MAIL_PORT="MAIL_PORT", but a runtime override via process.env
+  // could still be garbage, so guard at use-site too.
+  const portRawNum = Number(getMailPort())
+  const operatorPort: number | null =
+    Number.isFinite(portRawNum) && portRawNum > 0 && portRawNum < 65536 ? portRawNum : null
+  // v0.7.12 — MAIL_SECURE was previously only consulted when 1.
+  // Now it's ONLY consulted when the operator pinned a port AND
+  // also pinned MAIL_SECURE; otherwise we let pickPortForAttempt
+  // decide secure: based on the chosen port (587 → false, 465 → true).
+  const operatorSecureExplicit = getMailSecure() === '1' ? true : null
+
   // v0.7.0 — Single attempt body extracted into closure so the outer
   // retry loop can re-invoke it cleanly. Each attempt creates a FRESH
   // transport because nodemailer's transport carries the dead socket
   // state across calls — reusing one would just hit the same closed
   // pipe again. Returns the same SmtpSendResult shape; the outer loop
   // inspects the embedded transient flag (we tag it via attemptMeta).
-  type AttemptResult = SmtpSendResult & { transient?: boolean }
+  type AttemptResult = SmtpSendResult & { transient?: boolean; portTried?: number }
   const attempt = async (attemptNum: number): Promise<AttemptResult> => {
     // nodemailer is a heavy import — only load when actually configured.
     const nm = await import('nodemailer')
-    // v0.5.54 — defensively coerce port: invalid/NaN/0 -> 587. The
-    // inject script already filters placeholder values like
-    // MAIL_PORT="MAIL_PORT", but a runtime override via process.env
-    // could still be garbage, so guard at use-site too.
-    const portRaw = Number(getMailPort())
-    const port = Number.isFinite(portRaw) && portRaw > 0 && portRaw < 65536 ? portRaw : 587
+    const choice = pickPortForAttempt(operatorPort, attemptNum)
+    const port = choice.port
+    const secure = operatorSecureExplicit ?? choice.secure
     // v0.7.0 — Tighter timeouts so a flaky upstream can't lock the
     // admin UI for 60+ seconds while nodemailer waits for its own
     // defaults (which are 2 minutes for connection, 10 for greeting,
@@ -199,15 +252,20 @@ async function sendEmailViaSmtp(args: {
     const tx = nm.createTransport({
       host,
       port,
-      secure: getMailSecure() === '1',
+      secure,
       auth: { user, pass },
       connectionTimeout: 15000,
       greetingTimeout: 10000,
       socketTimeout: 25000,
+      // v0.7.12 — Force modern TLS. Some Windows / Electron builds were
+      // negotiating down to TLS 1.0 with Gmail and getting closed during
+      // the handshake. Pinning 1.2 as the floor matches Google's
+      // documented requirement for smtp.gmail.com:465 / :587.
+      tls: { minVersion: 'TLSv1.2', servername: host },
     })
     try {
     // eslint-disable-next-line no-console
-    console.log('[smtp] sending', { host, port, from, to: args.to, subject: args.subject })
+    console.log('[smtp] sending', { host, port, secure, attempt: attemptNum, from, to: args.to, subject: args.subject })
     // v0.6.3 — Email deliverability hardening:
     //   • multipart text + html alternatives (Gmail/O365 spam filters
     //     prefer multipart over text-only; this single change is
@@ -266,30 +324,36 @@ async function sendEmailViaSmtp(args: {
         queueId,
       }
     }
-    return { ok: true, meta: { accepted, rejected, response, messageId, refId }, queueId }
+    return { ok: true, meta: { accepted, rejected, response, messageId, refId, port, secure }, queueId, portTried: port }
     } catch (e) {
       // nodemailer errors carry useful fields beyond .message — code,
       // response, responseCode. Stitch them together so the admin
       // panel sees the actual SMTP reply (e.g. "550 5.7.1 ... blocked").
       const err = e as { message?: string; code?: string; response?: string; responseCode?: number }
       const transient = isTransientSmtpError(err)
+      // v0.7.12 — Surface the port + security mode in the audit string
+      // so the operator can see at a glance whether the failure was
+      // STARTTLS-on-587 (the common Gmail bug) or SMTPS-on-465
+      // (network-level block). Without this it was impossible to tell
+      // why "attempt=3/3" had failed and which port to try manually.
       const detail = [
         err.message || String(e),
         err.responseCode ? `code=${err.responseCode}` : null,
         err.code ? `nm=${err.code}` : null,
         err.response ? `resp=${err.response}` : null,
+        `port=${port}${secure ? '/SMTPS' : '/STARTTLS'}`,
         `attempt=${attemptNum}/${SMTP_MAX_ATTEMPTS}`,
       ]
         .filter(Boolean)
         .join(' | ')
       // eslint-disable-next-line no-console
-      console.error('[smtp] attempt failed', { to: args.to, transient, attempt: attemptNum, error: detail })
+      console.error('[smtp] attempt failed', { to: args.to, port, secure, transient, attempt: attemptNum, error: detail })
       // v0.7.0 — Best-effort socket cleanup so the next attempt's
       // fresh transport doesn't trip over stale FDs (Gmail occasionally
       // refuses a new connection from the same port for ~10s if the
       // previous socket wasn't closed cleanly).
       try { tx.close() } catch { /* ignore */ }
-      return { ok: false, error: detail, transient }
+      return { ok: false, error: detail, transient, portTried: port }
     }
   }
 

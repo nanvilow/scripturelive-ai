@@ -1568,9 +1568,19 @@ function setupIpc() {
   ipcMain.handle('ndi:stop', () =>
     serializeNdi(async () => {
       try {
+        // v0.7.12 — Stop the frame capture FIRST so no new frames
+        // arrive into nativeSendFrame while we're emitting the
+        // black-frame fadeout. Then call gracefulStop() so downstream
+        // receivers (OBS, vMix, Wirecast, NDI Studio Monitor) get a
+        // clean ~200ms fade-to-black on the wire instead of a frozen
+        // last-frame, and have a clear "source went off-air" event
+        // they can react to without the operator needing to close /
+        // reopen them. Plain stop() is reserved for emergency shutdown
+        // paths (before-quit, crash) where adding 200ms would risk
+        // losing the exit deadline.
         if (frameCapture) { await frameCapture.stop(); frameCapture = null }
         frameCaptureFlags = null
-        await ndi.stop()
+        await ndi.gracefulStop()
         broadcastNdiStatus(ndi.getStatus())
         return { ok: true }
       } catch (err) {

@@ -103,6 +103,38 @@ export class NdiService extends EventEmitter {
   private loadError: string | null = null
   private status: NdiStatus = { running: false, frameCount: 0 }
   private startedAt = 0
+  // ─── v0.7.12 — Persistent-source state ──────────────────────────────
+  // The four fields below implement a "the receiver never sees a gap"
+  // contract for downstream NDI consumers (OBS, vMix, Wirecast, NDI
+  // Studio Monitor, etc.). Operator escalation: when the SLAI renderer
+  // stalled for any reason (page nav, GC pause, heavy AI inference,
+  // operator toggling on-air off briefly) the receiver would lose the
+  // source from its list, and the operator had to close/reopen OBS to
+  // get it back. The fix is sender-side: cache the last frame and
+  // re-emit it on a tick whenever fresh frames stop arriving.
+  //
+  //   lastFrame              Most recent BGRA buffer + dimensions +
+  //                          timestamp. Re-sent by the keep-alive
+  //                          tick when the renderer is silent.
+  //   keepAliveTimer         setInterval handle that fires at the
+  //                          configured FPS. Cleared on stop().
+  //   sendBusy               Mutex flag — clock_video=true makes
+  //                          send_send_video_v2 BLOCK until the next
+  //                          frame slot, so we must not let the timer
+  //                          re-enter the native call while sendFrame
+  //                          is mid-flight (and vice versa). Frames
+  //                          delivered while busy are dropped (the
+  //                          newest one wins anyway via lastFrame).
+  //   lastDestroyAt          Timestamp of the most recent send_destroy
+  //                          call. Used by start() to wait at least
+  //                          DESTROY_COOLDOWN_MS before recreating a
+  //                          sender with the same name, so mDNS gets
+  //                          time to retract the old advertisement
+  //                          before we re-publish.
+  private lastFrame: { buffer: Buffer; width: number; height: number; ts: number } | null = null
+  private keepAliveTimer: NodeJS.Timeout | null = null
+  private sendBusy = false
+  private lastDestroyAt = 0
 
   constructor() {
     super()
@@ -251,6 +283,21 @@ export class NdiService extends EventEmitter {
     }
     if (this.senderInstance) await this.stop()
 
+    // v0.7.12 — mDNS-flush cooldown. When start() is called shortly
+    // after a stop() (e.g. operator changed resolution, on-air toggle
+    // bounce, fps switch) we MUST give the NDI runtime time to retract
+    // the old mDNS advertisement before publishing a new one with the
+    // same source name. Without this, downstream receivers occasionally
+    // see TWO sources momentarily — one dead, one live — and may
+    // latch onto the dead one until the operator restarts the receiver.
+    // 200ms is enough for the runtime's mDNS goodbye packets to fan
+    // out on a typical LAN; longer would just delay first-frame.
+    const sinceDestroy = Date.now() - this.lastDestroyAt
+    const DESTROY_COOLDOWN_MS = 200
+    if (this.lastDestroyAt > 0 && sinceDestroy < DESTROY_COOLDOWN_MS) {
+      await new Promise((res) => setTimeout(res, DESTROY_COOLDOWN_MS - sinceDestroy))
+    }
+
     const settings = {
       p_ndi_name: wantedName,
       p_groups: null as unknown as string,
@@ -274,9 +321,109 @@ export class NdiService extends EventEmitter {
       frameCount: 0,
     }
     this.startedAt = Date.now()
+    // v0.7.12 — Reset last-frame cache on every fresh start. If the
+    // operator changed resolution, the cached frame's dimensions no
+    // longer match — re-sending it would crash the native send call.
+    this.lastFrame = null
+    // Boot the keep-alive ticker so the receiver sees a continuous
+    // source even before the first real frame arrives.
+    this.startKeepAlive()
+  }
+
+  /**
+   * v0.7.12 — Keep-alive ticker. Runs at the configured FPS while the
+   * sender is alive. On each tick:
+   *
+   *   • If a real frame arrived within the last interval (i.e. the
+   *     renderer is happily delivering frames), do nothing — sendFrame
+   *     already pushed it.
+   *
+   *   • If no fresh frame has arrived (renderer stalled, page is
+   *     navigating, on-air paused, GC pause, AI inference spike), re-
+   *     emit the cached last frame. The receiver sees a continuous
+   *     stream and never drops the source.
+   *
+   * This is the single biggest stability win for downstream OBS/vMix
+   * users. Without it, any sub-second renderer hiccup can make the
+   * receiver decide our source is dead and require manual reconnect.
+   */
+  private startKeepAlive(): void {
+    this.stopKeepAlive()
+    const fps = this.status.fps || 30
+    const intervalMs = Math.max(16, Math.floor(1000 / fps))
+    // Threshold for "stale enough to re-emit". 1.5 frame intervals
+    // means a single missed frame triggers re-emit, but two back-to-
+    // back real frames don't double-up.
+    const staleThresholdMs = Math.floor(intervalMs * 1.5)
+    this.keepAliveTimer = setInterval(() => {
+      if (!this.senderInstance || !this.bindings) return
+      if (this.sendBusy) return
+      const last = this.lastFrame
+      if (!last) return
+      if (Date.now() - last.ts < staleThresholdMs) return
+      // Re-emit cached frame. We deliberately do NOT touch lastFrame.ts
+      // here — only real renderer frames update it, so successive
+      // stalls keep firing the keep-alive.
+      this.nativeSendFrame(last.buffer, last.width, last.height)
+    }, intervalMs)
+    // setInterval keeps the event loop alive in Node — fine, the
+    // sender being alive IS the whole point. unref() would let the
+    // process exit while we're still publishing, which is wrong.
+  }
+
+  private stopKeepAlive(): void {
+    if (this.keepAliveTimer) {
+      clearInterval(this.keepAliveTimer)
+      this.keepAliveTimer = null
+    }
+  }
+
+  /**
+   * v0.7.12 — Internal frame push. Shared by sendFrame (renderer-driven)
+   * and the keep-alive ticker. Guards against concurrent native calls
+   * via sendBusy: clock_video=true makes send_send_video_v2 BLOCK until
+   * the next frame slot, so re-entering would queue a frame behind the
+   * blocked one and drift our pacing. When busy, the caller drops —
+   * dropping is correct because (a) for sendFrame the next renderer
+   * frame is ~33ms away, (b) for keep-alive we'll get another tick.
+   */
+  private nativeSendFrame(bgraBuffer: Buffer, width: number, height: number): void {
+    if (!this.senderInstance || !this.bindings) return
+    if (this.sendBusy) return
+    this.sendBusy = true
+    try {
+      const fps = this.status.fps || 30
+      const frame = {
+        xres: width,
+        yres: height,
+        FourCC: FOURCC_BGRA,
+        frame_rate_N: fps * 1000,
+        frame_rate_D: 1000,
+        picture_aspect_ratio: width / height,
+        frame_format_type: FRAME_FORMAT_PROGRESSIVE,
+        timecode: BigInt(0) as unknown as number,
+        p_data: bgraBuffer,
+        line_stride_in_bytes: width * 4,
+        p_metadata: null as unknown as string,
+        timestamp: BigInt(0) as unknown as number,
+      }
+      this.bindings.send_send_video_v2(this.senderInstance, frame)
+      this.status.frameCount += 1
+      if (this.status.frameCount % 30 === 0) {
+        this.emit('frame', this.status.frameCount)
+      }
+    } catch (err) {
+      this.emit('error', err instanceof Error ? err.message : String(err))
+    } finally {
+      this.sendBusy = false
+    }
   }
 
   async stop(): Promise<void> {
+    // v0.7.12 — Always stop the keep-alive ticker first so it can't
+    // race with send_destroy and crash the native runtime by writing
+    // into a freed sender pointer.
+    this.stopKeepAlive()
     if (this.senderInstance && this.bindings) {
       try {
         this.bindings.send_destroy(this.senderInstance)
@@ -284,8 +431,45 @@ export class NdiService extends EventEmitter {
         /* ignore */
       }
       this.senderInstance = null
+      this.lastDestroyAt = Date.now()
     }
+    this.lastFrame = null
     this.status = { running: false, frameCount: this.status.frameCount }
+  }
+
+  /**
+   * v0.7.12 — Graceful stop. Emits a short black-frame fadeout (~200ms
+   * by default) before tearing the sender down. This gives downstream
+   * receivers a clean "fade to black" event on the wire instead of a
+   * frozen last-frame, which is what NDI Studio Monitor / vMix /
+   * Wirecast prefer to see when a source intentionally goes off-air.
+   *
+   * Used by ipcMain ndi:stop (operator-initiated). Emergency shutdown
+   * paths (before-quit, crash) still call plain stop() because we may
+   * have only milliseconds before the process exits and the fadeout
+   * would add user-perceptible latency.
+   */
+  async gracefulStop(blackFrameMs = 200): Promise<void> {
+    if (!this.senderInstance || !this.bindings) {
+      return this.stop()
+    }
+    this.stopKeepAlive()
+    const w = this.status.width ?? 1280
+    const h = this.status.height ?? 720
+    const fps = this.status.fps || 30
+    const frameMs = Math.max(1, Math.floor(1000 / fps))
+    const totalFrames = Math.max(1, Math.ceil(blackFrameMs / frameMs))
+    // BGRA opaque black: B=0,G=0,R=0,A=255. Allocating once is fine
+    // (1080p = ~8MB, lives only for the fadeout). We reuse the same
+    // buffer across all the fadeout sends — NDI copies it internally
+    // before send_send_video_v2 returns (clock_video=true blocks
+    // until the slot is consumed).
+    const black = Buffer.alloc(w * h * 4)
+    for (let i = 3; i < black.length; i += 4) black[i] = 255
+    for (let i = 0; i < totalFrames; i++) {
+      this.nativeSendFrame(black, w, h)
+    }
+    return this.stop()
   }
 
   /**
@@ -311,30 +495,19 @@ export class NdiService extends EventEmitter {
 
   sendFrame(bgraBuffer: Buffer, width: number, height: number): void {
     if (!this.senderInstance || !this.bindings) return
-    try {
-      const fps = this.status.fps || 30
-      const frame = {
-        xres: width,
-        yres: height,
-        FourCC: FOURCC_BGRA,
-        frame_rate_N: fps * 1000,
-        frame_rate_D: 1000,
-        picture_aspect_ratio: width / height,
-        frame_format_type: FRAME_FORMAT_PROGRESSIVE,
-        timecode: BigInt(0) as unknown as number,
-        p_data: bgraBuffer,
-        line_stride_in_bytes: width * 4,
-        p_metadata: null as unknown as string,
-        timestamp: BigInt(0) as unknown as number,
-      }
-      this.bindings.send_send_video_v2(this.senderInstance, frame)
-      this.status.frameCount += 1
-      if (this.status.frameCount % 30 === 0) {
-        this.emit('frame', this.status.frameCount)
-      }
-    } catch (err) {
-      this.emit('error', err instanceof Error ? err.message : String(err))
-    }
+    // v0.7.12 — Cache the frame BEFORE pushing so even if the native
+    // call is currently blocked (sendBusy), the keep-alive ticker has
+    // a fresh frame to emit on its next tick. We make a defensive
+    // COPY because the BrowserWindow frame subscription's bitmap is
+    // owned by Chromium's compositor — it's reused for the next
+    // capture immediately after our callback returns, so retaining a
+    // reference for keep-alive re-emit would race against Chromium
+    // overwriting it. Copy is cheap (1080p = ~8MB / 30fps) compared
+    // to the alternative of dropping frames or showing tearing.
+    const copy = Buffer.allocUnsafe(bgraBuffer.length)
+    bgraBuffer.copy(copy)
+    this.lastFrame = { buffer: copy, width, height, ts: Date.now() }
+    this.nativeSendFrame(copy, width, height)
   }
 
   /**
