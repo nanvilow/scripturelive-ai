@@ -16,11 +16,22 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import { useLicense } from './license-provider'
-import { ShieldCheck, Copy, Mail, Phone, RefreshCw, KeyRound, AlertTriangle, CheckCircle2, Loader2, Settings as SettingsIcon, Save, Sparkles, UserPlus, Trash2, ListChecks, MapPin, Clock, Ban, CalendarPlus, Undo2, Trash } from 'lucide-react'
+import { ShieldCheck, Copy, Mail, Phone, RefreshCw, KeyRound, AlertTriangle, CheckCircle2, Loader2, Settings as SettingsIcon, Save, Sparkles, UserPlus, Trash2, ListChecks, MapPin, Clock, Ban, CalendarPlus, Undo2, Trash, CheckSquare, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -235,6 +246,86 @@ export function AdminModal() {
   const [pwdBusy, setPwdBusy] = useState(false)
   const authed = authState === 'authed'
 
+  // ─── v0.7.5 — In-modal confirmation dialog (T501) ────────────────
+  //
+  // ROOT CAUSE for "buttons in CODES / Recent Payments / Recent
+  // Activations don't fire": every action handler used native
+  // window.confirm() / window.prompt(). Inside the packaged Electron
+  // build (and inside the embedded preview iframe used during dev)
+  // those native dialogs are blocked by the host shell — the call
+  // returns `false` immediately and the action silently no-ops, so
+  // the operator sees nothing happen and assumes the button is dead.
+  //
+  // Replacement: a single in-modal AlertDialog driven by `pending`
+  // state. Each action that previously called window.confirm/prompt
+  // now calls askConfirm({...}) which opens the dialog; the user
+  // hits "Confirm" and we invoke the supplied callback. Because the
+  // dialog renders inside the same React tree as the rest of the
+  // panel it can never be blocked by the host shell.
+  interface PendingAction {
+    title: string
+    description: string
+    confirmLabel: string
+    destructive?: boolean
+    /** Optional free-text input collected before confirming. */
+    input?: { label: string; placeholder?: string; defaultValue?: string }
+    onConfirm: (value: string | null) => void | Promise<void>
+  }
+  const [pending, setPending] = useState<PendingAction | null>(null)
+  const [pendingValue, setPendingValue] = useState('')
+  const [pendingBusy, setPendingBusy] = useState(false)
+  const askConfirm = useCallback((action: PendingAction) => {
+    setPending(action)
+    setPendingValue(action.input?.defaultValue ?? '')
+  }, [])
+  const closePending = useCallback(() => {
+    setPending(null)
+    setPendingValue('')
+    setPendingBusy(false)
+  }, [])
+  const runPending = useCallback(async () => {
+    if (!pending) return
+    setPendingBusy(true)
+    try {
+      await pending.onConfirm(pending.input ? pendingValue : null)
+      closePending()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+      setPendingBusy(false)
+    }
+  }, [pending, pendingValue, closePending])
+
+  // ─── v0.7.5 — Multi-select state per section (T501) ──────────────
+  //
+  // Each of the three sections (Recent Payments, Recent Activations,
+  // CODES) gets its own selection mode toggle + Set<string> of ids
+  // currently checked. Toggling the mode off clears the selection.
+  // The bulk-delete action bar appears whenever the corresponding
+  // selection set is non-empty.
+  const [paySelectMode, setPaySelectMode] = useState(false)
+  const [paySelected, setPaySelected] = useState<Set<string>>(new Set())
+  const [actSelectMode, setActSelectMode] = useState(false)
+  const [actSelected, setActSelected] = useState<Set<string>>(new Set())
+  const [codesSelectMode, setCodesSelectMode] = useState(false)
+  const [codesSelected, setCodesSelected] = useState<Set<string>>(new Set())
+  // Helper: toggle a single id in/out of a Set without mutating it.
+  const toggleSet = (set: Set<string>, id: string): Set<string> => {
+    const next = new Set(set)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  }
+  // Whenever the operator leaves a tab or closes the modal, clear
+  // selection state so reopening doesn't surprise them with stale
+  // checkboxes still ticked.
+  useEffect(() => {
+    if (!open) {
+      setPaySelectMode(false); setPaySelected(new Set())
+      setActSelectMode(false); setActSelected(new Set())
+      setCodesSelectMode(false); setCodesSelected(new Set())
+      setPending(null); setPendingValue(''); setPendingBusy(false)
+    }
+  }, [open])
+
   // Probe the session whenever the modal opens. We deliberately
   // re-probe on every open (not once on mount) so a logout in
   // another tab / cookie expiry between opens is caught.
@@ -410,6 +501,47 @@ export function AdminModal() {
       toast.error(`Delete failed: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
+
+  // v0.7.5 — Bulk-delete helper (T501). Hits the new
+  // /api/license/admin/bulk-delete endpoint with the kind discriminator
+  // + the appropriate id list, then reloads the corresponding panel
+  // section + the codes dashboard so the operator sees the rows
+  // disappear immediately. `permanent` only matters for activations
+  // (payments + notifications are always hard-deleted because they're
+  // audit log rows, not subscription state).
+  const bulkDelete = useCallback(async (
+    kind: 'payment' | 'activation' | 'notification',
+    ids: string[],
+    opts: { permanent?: boolean } = {},
+  ) => {
+    if (ids.length === 0) return
+    try {
+      const body: Record<string, unknown> = { kind }
+      if (kind === 'payment') body.refs = ids
+      else if (kind === 'activation') { body.codes = ids; body.permanent = !!opts.permanent }
+      else body.ids = ids
+      const r = await fetch('/api/license/admin/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({} as Record<string, unknown>))
+        throw new Error((j as { error?: string }).error || `HTTP ${r.status}`)
+      }
+      const j = await r.json().catch(() => ({ deleted: ids.length }))
+      const n = (j as { deleted?: number }).deleted ?? ids.length
+      toast.success(`Deleted ${n} ${kind}${n === 1 ? '' : 's'}`)
+      // Clear the corresponding selection set + reload data.
+      if (kind === 'payment') { setPaySelected(new Set()); setPaySelectMode(false) }
+      if (kind === 'activation') { setActSelected(new Set()); setActSelectMode(false); setCodesSelected(new Set()); setCodesSelectMode(false) }
+      await reload()
+      await reloadCodes()
+      await refresh()
+    } catch (e) {
+      toast.error(`Bulk delete failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }, [reload, reloadCodes, refresh])
 
   const generateCode = async () => {
     setGenResult(null)
@@ -1008,21 +1140,93 @@ export function AdminModal() {
 
             {/* ── Pending + recent payments ────────────────────────────── */}
             <section>
-              <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
                 <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Recent Payments ({data.paymentCodes.length})</div>
-                <Button size="sm" variant="ghost" onClick={reload} disabled={loading}><RefreshCw className={cn('h-3 w-3', loading && 'animate-spin')} /></Button>
+                <div className="flex items-center gap-1">
+                  {/* v0.7.5 — Selection mode toggle (T501). Reveals
+                      a checkbox column + bulk action bar. Toggling
+                      off clears any pending selection so the next
+                      open is clean. */}
+                  <Button
+                    size="sm" variant="ghost"
+                    className={cn('h-7 text-[10px]', paySelectMode && 'bg-primary/10 text-primary')}
+                    onClick={() => {
+                      setPaySelectMode((v) => !v)
+                      setPaySelected(new Set())
+                    }}
+                  >
+                    {paySelectMode ? <X className="h-3 w-3 mr-1" /> : <CheckSquare className="h-3 w-3 mr-1" />}
+                    {paySelectMode ? 'Cancel' : 'Select'}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={reload} disabled={loading}><RefreshCw className={cn('h-3 w-3', loading && 'animate-spin')} /></Button>
+                </div>
               </div>
+              {/* v0.7.5 — Bulk action bar appears whenever any row is
+                  ticked. Edit is enabled only with a single row picked
+                  (it just opens the existing per-row Confirm flow);
+                  Delete (N) hits the new bulk-delete endpoint. */}
+              {paySelectMode && paySelected.size > 0 && (
+                <div className="mb-1.5 flex items-center gap-2 rounded border border-primary/40 bg-primary/5 px-2 py-1.5 text-[11px]">
+                  <span className="font-semibold">{paySelected.size} selected</span>
+                  <div className="flex-1" />
+                  <Button
+                    size="sm" variant="outline" className="h-7 text-[10px]"
+                    disabled={paySelected.size !== 1}
+                    onClick={() => {
+                      const ref = Array.from(paySelected)[0]
+                      const row = data.paymentCodes.find((p) => p.ref === ref)
+                      if (!row) return
+                      if (row.status === 'WAITING_PAYMENT') void confirm(ref)
+                      else if (row.activationCode) copy(row.activationCode)
+                      else toast.info('Nothing to edit on this row')
+                    }}
+                  >Edit</Button>
+                  <Button
+                    size="sm" className="h-7 text-[10px] bg-rose-600 hover:bg-rose-500"
+                    onClick={() => askConfirm({
+                      title: `Delete ${paySelected.size} payment row${paySelected.size === 1 ? '' : 's'}?`,
+                      description: 'Removes the rows from the audit log only. Active subscriptions are unaffected.',
+                      confirmLabel: `Delete ${paySelected.size}`,
+                      destructive: true,
+                      onConfirm: () => bulkDelete('payment', Array.from(paySelected)),
+                    })}
+                  ><Trash2 className="h-3 w-3 mr-1" />Delete ({paySelected.size})</Button>
+                </div>
+              )}
               <div className="rounded-lg border border-border overflow-hidden">
                 {data.paymentCodes.length === 0 ? (
                   <div className="p-4 text-center text-[11px] text-muted-foreground">No payments yet.</div>
                 ) : (
                   <table className="w-full text-[11px]">
                     <thead className="bg-card/60 text-muted-foreground uppercase tracking-wider text-[9px]">
-                      <tr><th className="text-left px-2 py-1.5">Ref</th><th className="text-left px-2 py-1.5">Plan</th><th className="text-left px-2 py-1.5">Amount</th><th className="text-left px-2 py-1.5">Customer</th><th className="text-left px-2 py-1.5">Status</th><th className="text-right px-2 py-1.5">Action</th></tr>
+                      <tr>
+                        {paySelectMode && (
+                          <th className="px-2 py-1.5 w-8 text-center">
+                            <Checkbox
+                              checked={paySelected.size > 0 && paySelected.size === data.paymentCodes.length}
+                              onCheckedChange={(c) => {
+                                if (c) setPaySelected(new Set(data.paymentCodes.map((p) => p.ref)))
+                                else setPaySelected(new Set())
+                              }}
+                              aria-label="Select all payments"
+                            />
+                          </th>
+                        )}
+                        <th className="text-left px-2 py-1.5">Ref</th><th className="text-left px-2 py-1.5">Plan</th><th className="text-left px-2 py-1.5">Amount</th><th className="text-left px-2 py-1.5">Customer</th><th className="text-left px-2 py-1.5">Status</th><th className="text-right px-2 py-1.5">Action</th>
+                      </tr>
                     </thead>
                     <tbody>
                       {data.paymentCodes.map((p) => (
-                        <tr key={p.ref + p.createdAt} className="border-t border-border hover:bg-card/40">
+                        <tr key={p.ref + p.createdAt} className={cn('border-t border-border hover:bg-card/40', paySelectMode && paySelected.has(p.ref) && 'bg-primary/5')}>
+                          {paySelectMode && (
+                            <td className="px-2 py-1.5 text-center">
+                              <Checkbox
+                                checked={paySelected.has(p.ref)}
+                                onCheckedChange={() => setPaySelected((s) => toggleSet(s, p.ref))}
+                                aria-label={`Select payment ${p.ref}`}
+                              />
+                            </td>
+                          )}
                           <td className="px-2 py-1.5 font-mono font-bold text-emerald-300">{p.ref}</td>
                           <td className="px-2 py-1.5">{p.planCode}</td>
                           <td className="px-2 py-1.5 font-mono">GHS {p.amountGhs}</td>
@@ -1042,11 +1246,13 @@ export function AdminModal() {
                                 variant="ghost"
                                 className="h-6 w-6 p-0 text-rose-400 hover:text-rose-300 hover:bg-rose-950/40"
                                 title={`Delete payment ${p.ref}`}
-                                onClick={() => {
-                                  if (window.confirm(`Delete payment ${p.ref}? This only removes the row from the audit log.`)) {
-                                    delRow('delete-payment', { ref: p.ref }, `Payment ${p.ref}`)
-                                  }
-                                }}
+                                onClick={() => askConfirm({
+                                  title: `Delete payment ${p.ref}?`,
+                                  description: 'This only removes the row from the audit log.',
+                                  confirmLabel: 'Delete',
+                                  destructive: true,
+                                  onConfirm: () => delRow('delete-payment', { ref: p.ref }, `Payment ${p.ref}`),
+                                })}
                               >
                                 <Trash2 className="h-3 w-3" />
                               </Button>
@@ -1062,7 +1268,44 @@ export function AdminModal() {
 
             {/* ── Recent activations ────────────────────────────────────── */}
             <section>
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Recent Activations ({data.activationCodes.length})</div>
+              <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Recent Activations ({data.activationCodes.length})</div>
+                <Button
+                  size="sm" variant="ghost"
+                  className={cn('h-7 text-[10px]', actSelectMode && 'bg-primary/10 text-primary')}
+                  onClick={() => {
+                    setActSelectMode((v) => !v)
+                    setActSelected(new Set())
+                  }}
+                >
+                  {actSelectMode ? <X className="h-3 w-3 mr-1" /> : <CheckSquare className="h-3 w-3 mr-1" />}
+                  {actSelectMode ? 'Cancel' : 'Select'}
+                </Button>
+              </div>
+              {actSelectMode && actSelected.size > 0 && (
+                <div className="mb-1.5 flex items-center gap-2 rounded border border-primary/40 bg-primary/5 px-2 py-1.5 text-[11px]">
+                  <span className="font-semibold">{actSelected.size} selected</span>
+                  <div className="flex-1" />
+                  <Button
+                    size="sm" variant="outline" className="h-7 text-[10px]"
+                    disabled={actSelected.size !== 1}
+                    onClick={() => {
+                      const code = Array.from(actSelected)[0]
+                      copy(code)
+                    }}
+                  >Edit</Button>
+                  <Button
+                    size="sm" className="h-7 text-[10px] bg-rose-600 hover:bg-rose-500"
+                    onClick={() => askConfirm({
+                      title: `Delete ${actSelected.size} activation row${actSelected.size === 1 ? '' : 's'}?`,
+                      description: 'Soft-deletes the activations into the bin (recoverable for 90 days). Active subscriptions on this install are unaffected.',
+                      confirmLabel: `Delete ${actSelected.size}`,
+                      destructive: true,
+                      onConfirm: () => bulkDelete('activation', Array.from(actSelected), { permanent: false }),
+                    })}
+                  ><Trash2 className="h-3 w-3 mr-1" />Delete ({actSelected.size})</Button>
+                </div>
+              )}
               <div className="rounded-lg border border-border overflow-hidden">
                 {data.activationCodes.length === 0 ? (
                   <div className="p-4 text-center text-[11px] text-muted-foreground">No activations yet.</div>
@@ -1070,6 +1313,18 @@ export function AdminModal() {
                   <table className="w-full text-[11px]">
                     <thead className="bg-card/60 text-muted-foreground uppercase tracking-wider text-[9px]">
                       <tr>
+                        {actSelectMode && (
+                          <th className="px-2 py-1.5 w-8 text-center">
+                            <Checkbox
+                              checked={actSelected.size > 0 && actSelected.size === data.activationCodes.length}
+                              onCheckedChange={(c) => {
+                                if (c) setActSelected(new Set(data.activationCodes.map((a) => a.code)))
+                                else setActSelected(new Set())
+                              }}
+                              aria-label="Select all activations"
+                            />
+                          </th>
+                        )}
                         <th className="text-left px-2 py-1.5">Code</th>
                         <th className="text-left px-2 py-1.5">Plan</th>
                         <th className="text-left px-2 py-1.5">Days</th>
@@ -1090,7 +1345,16 @@ export function AdminModal() {
                             ?? a.generatedFor?.whatsapp
                             ?? (a.generatedFor?.paymentRef ? `ref ${a.generatedFor.paymentRef}` : '—')
                         return (
-                          <tr key={a.code} className="border-t border-border hover:bg-card/40">
+                          <tr key={a.code} className={cn('border-t border-border hover:bg-card/40', actSelectMode && actSelected.has(a.code) && 'bg-primary/5')}>
+                            {actSelectMode && (
+                              <td className="px-2 py-1.5 text-center">
+                                <Checkbox
+                                  checked={actSelected.has(a.code)}
+                                  onCheckedChange={() => setActSelected((s) => toggleSet(s, a.code))}
+                                  aria-label={`Select activation ${a.code}`}
+                                />
+                              </td>
+                            )}
                             <td className="px-2 py-1.5 font-mono">{a.code}</td>
                             <td className="px-2 py-1.5">{a.planCode}</td>
                             <td className="px-2 py-1.5">{a.days}</td>
@@ -1108,11 +1372,13 @@ export function AdminModal() {
                                   variant="ghost"
                                   className="h-6 w-6 p-0 text-rose-400 hover:text-rose-300 hover:bg-rose-950/40"
                                   title={`Delete activation ${a.code}`}
-                                  onClick={() => {
-                                    if (window.confirm(`Delete activation ${a.code}? The active subscription on this install is unaffected — this only clears the audit log.`)) {
-                                      delRow('delete-activation', { code: a.code }, `Activation ${a.code}`)
-                                    }
-                                  }}
+                                  onClick={() => askConfirm({
+                                    title: `Delete activation ${a.code}?`,
+                                    description: 'The active subscription on this install is unaffected — this only clears the audit log.',
+                                    confirmLabel: 'Delete',
+                                    destructive: true,
+                                    onConfirm: () => delRow('delete-activation', { code: a.code }, `Activation ${a.code}`),
+                                  })}
                                 >
                                   <Trash2 className="h-3 w-3" />
                                 </Button>
@@ -1161,11 +1427,13 @@ export function AdminModal() {
                             variant="ghost"
                             className="h-5 w-5 p-0 text-rose-400 hover:text-rose-300 hover:bg-rose-950/40"
                             title="Delete notification"
-                            onClick={() => {
-                              if (window.confirm('Dismiss this notification from the audit log?')) {
-                                delRow('delete-notification', { id: n.id }, 'Notification')
-                              }
-                            }}
+                            onClick={() => askConfirm({
+                              title: 'Dismiss notification?',
+                              description: 'Removes this row from the audit log. The original message (already sent or queued) is unaffected.',
+                              confirmLabel: 'Dismiss',
+                              destructive: true,
+                              onConfirm: () => delRow('delete-notification', { id: n.id }, 'Notification'),
+                            })}
                           >
                             <Trash2 className="h-3 w-3" />
                           </Button>
@@ -1528,6 +1796,17 @@ export function AdminModal() {
                 {codesShowBin ? 'Hide bin' : `Bin (${codesData?.bin.length ?? 0})`}
               </Button>
               <Button
+                size="sm" variant="outline"
+                className={cn('border-border text-foreground h-8', codesSelectMode && 'bg-primary/10 border-primary/40 text-primary')}
+                onClick={() => {
+                  setCodesSelectMode((v) => !v)
+                  setCodesSelected(new Set())
+                }}
+              >
+                {codesSelectMode ? <X className="h-3.5 w-3.5 mr-1.5" /> : <CheckSquare className="h-3.5 w-3.5 mr-1.5" />}
+                {codesSelectMode ? 'Cancel select' : 'Select'}
+              </Button>
+              <Button
                 size="sm" variant="ghost"
                 onClick={reloadCodes}
                 disabled={codesLoading}
@@ -1538,6 +1817,49 @@ export function AdminModal() {
                   : <RefreshCw className="h-3.5 w-3.5" />}
               </Button>
             </section>
+
+            {/* v0.7.5 — Bulk action bar for the CODES tab. Lives just
+                below the toolbar so it scrolls with the table; appears
+                only when at least one row is ticked. Edit (single) opens
+                the existing renew dialog so the operator doesn't have
+                to scroll back to the row; Delete (N) bulk-soft-deletes
+                into the bin via the new endpoint. */}
+            {codesSelectMode && codesSelected.size > 0 && (
+              <section className="flex items-center gap-2 rounded border border-primary/40 bg-primary/5 px-3 py-2 text-[11px]">
+                <span className="font-semibold">{codesSelected.size} code{codesSelected.size === 1 ? '' : 's'} selected</span>
+                <div className="flex-1" />
+                <Button
+                  size="sm" variant="outline" className="h-7 text-[10px]"
+                  disabled={codesSelected.size !== 1}
+                  onClick={() => {
+                    const code = Array.from(codesSelected)[0]
+                    askConfirm({
+                      title: `Renew ${code}`,
+                      description: 'Add days to the active subscription (or to the unused grant). Whole positive numbers only.',
+                      confirmLabel: 'Add days',
+                      input: { label: 'Days to add', placeholder: '30', defaultValue: '30' },
+                      onConfirm: (raw) => {
+                        const addDays = Number(raw)
+                        if (!Number.isFinite(addDays) || addDays <= 0) {
+                          throw new Error('Enter a positive number of days')
+                        }
+                        return codeAction(code, 'renew', { addDays }, `Renewed ${code} +${addDays}d`)
+                      },
+                    })
+                  }}
+                >Edit</Button>
+                <Button
+                  size="sm" className="h-7 text-[10px] bg-rose-600 hover:bg-rose-500"
+                  onClick={() => askConfirm({
+                    title: `Move ${codesSelected.size} code${codesSelected.size === 1 ? '' : 's'} to bin?`,
+                    description: 'Soft-delete — recoverable from the Bin for 90 days, then auto-purges.',
+                    confirmLabel: `Move ${codesSelected.size} to bin`,
+                    destructive: true,
+                    onConfirm: () => bulkDelete('activation', Array.from(codesSelected), { permanent: false }),
+                  })}
+                ><Trash2 className="h-3 w-3 mr-1" />Delete ({codesSelected.size})</Button>
+              </section>
+            )}
 
             {/* ── Loading state ───────────────────────────────────────── */}
             {!codesData && (
@@ -1571,6 +1893,18 @@ export function AdminModal() {
                   <table className="w-full text-[11px]">
                     <thead className="text-[9px] uppercase tracking-wider text-muted-foreground bg-background/50">
                       <tr>
+                        {codesSelectMode && (
+                          <th className="px-2 py-1.5 w-8 text-center">
+                            <Checkbox
+                              checked={codesSelected.size > 0 && codesSelected.size === rows.length}
+                              onCheckedChange={(c) => {
+                                if (c) setCodesSelected(new Set(rows.map((r) => r.code)))
+                                else setCodesSelected(new Set())
+                              }}
+                              aria-label="Select all visible codes"
+                            />
+                          </th>
+                        )}
                         <th className="text-left px-2 py-1.5">Code / Plan</th>
                         <th className="text-left px-2 py-1.5">Status</th>
                         <th className="text-left px-2 py-1.5">Buyer</th>
@@ -1591,7 +1925,17 @@ export function AdminModal() {
                           : days >= 0 ? `${days}d`
                           : `${Math.abs(days)}d ago`
                         return (
-                          <tr key={r.code} className="hover:bg-background/30">
+                          <tr key={r.code} className={cn('hover:bg-background/30', codesSelectMode && codesSelected.has(r.code) && 'bg-primary/5')}>
+                            {codesSelectMode && (
+                              <td className="px-2 py-1.5 text-center align-top">
+                                <Checkbox
+                                  checked={codesSelected.has(r.code)}
+                                  onCheckedChange={() => setCodesSelected((s) => toggleSet(s, r.code))}
+                                  disabled={r.status === 'master'}
+                                  aria-label={`Select code ${r.code}`}
+                                />
+                              </td>
+                            )}
                             <td className="px-2 py-1.5 align-top">
                               <div className="flex items-center gap-1">
                                 <code className="font-mono text-[10px] break-all">{r.code}</code>
@@ -1670,11 +2014,14 @@ export function AdminModal() {
                                 {r.status !== 'cancelled' && r.status !== 'master' && (
                                   <button
                                     type="button"
-                                    onClick={() => {
-                                      const reason = window.prompt(`Cancel code ${r.code}?\nOptional reason (visible in dashboard):`, '') ?? null
-                                      if (reason === null) return
-                                      void codeAction(r.code, 'cancel', { reason }, `Cancelled ${r.code}`)
-                                    }}
+                                    onClick={() => askConfirm({
+                                      title: `Cancel code ${r.code}?`,
+                                      description: 'The code will refuse to activate on any new install, and any active subscription using it will be killed immediately.',
+                                      confirmLabel: 'Cancel code',
+                                      destructive: true,
+                                      input: { label: 'Reason (optional, visible in dashboard)', placeholder: 'e.g. customer requested refund' },
+                                      onConfirm: (reason) => codeAction(r.code, 'cancel', { reason: reason ?? '' }, `Cancelled ${r.code}`),
+                                    })}
                                     disabled={busy}
                                     title="Cancel — code refuses to activate, active sub killed"
                                     className="p-1 rounded hover:bg-orange-500/15 text-orange-300 disabled:opacity-40"
@@ -1683,13 +2030,19 @@ export function AdminModal() {
                                 {r.status !== 'master' && (
                                   <button
                                     type="button"
-                                    onClick={() => {
-                                      const raw = window.prompt(`Renew ${r.code} — add how many days?`, '30')
-                                      if (raw == null) return
-                                      const addDays = Number(raw)
-                                      if (!Number.isFinite(addDays) || addDays <= 0) { toast.error('Enter a positive number'); return }
-                                      void codeAction(r.code, 'renew', { addDays }, `Renewed ${r.code} +${addDays}d`)
-                                    }}
+                                    onClick={() => askConfirm({
+                                      title: `Renew ${r.code}`,
+                                      description: 'Add days to the active subscription (or to the unused grant). Whole positive numbers only.',
+                                      confirmLabel: 'Add days',
+                                      input: { label: 'Days to add', placeholder: '30', defaultValue: '30' },
+                                      onConfirm: (raw) => {
+                                        const addDays = Number(raw)
+                                        if (!Number.isFinite(addDays) || addDays <= 0) {
+                                          throw new Error('Enter a positive number of days')
+                                        }
+                                        return codeAction(r.code, 'renew', { addDays }, `Renewed ${r.code} +${addDays}d`)
+                                      },
+                                    })}
                                     disabled={busy}
                                     title="Renew — extend subscription / add days to grant"
                                     className="p-1 rounded hover:bg-emerald-500/15 text-emerald-300 disabled:opacity-40"
@@ -1697,10 +2050,13 @@ export function AdminModal() {
                                 )}
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    if (!window.confirm(`Move ${r.code} to bin (recoverable for 90 days)?`)) return
-                                    void codeAction(r.code, 'delete-activation', { permanent: false }, `Moved ${r.code} to bin`)
-                                  }}
+                                  onClick={() => askConfirm({
+                                    title: `Move ${r.code} to bin?`,
+                                    description: 'Soft delete — recoverable from the Bin for 90 days, then auto-purges.',
+                                    confirmLabel: 'Move to bin',
+                                    destructive: true,
+                                    onConfirm: () => codeAction(r.code, 'delete-activation', { permanent: false }, `Moved ${r.code} to bin`),
+                                  })}
                                   disabled={busy}
                                   title="Soft-delete — moves to bin for 90 days"
                                   className="p-1 rounded hover:bg-rose-500/15 text-rose-300 disabled:opacity-40"
@@ -1767,10 +2123,13 @@ export function AdminModal() {
                                 ><Undo2 className="h-3 w-3" /></button>
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    if (!window.confirm(`Permanently delete ${r.code}? This cannot be undone.`)) return
-                                    void codeAction(r.code, 'delete-activation', { permanent: true }, `Purged ${r.code}`)
-                                  }}
+                                  onClick={() => askConfirm({
+                                    title: `Permanently delete ${r.code}?`,
+                                    description: 'This cannot be undone. The activation row will be wiped from the audit log forever.',
+                                    confirmLabel: 'Delete forever',
+                                    destructive: true,
+                                    onConfirm: () => codeAction(r.code, 'delete-activation', { permanent: true }, `Purged ${r.code}`),
+                                  })}
                                   disabled={busy}
                                   title="Delete forever"
                                   className="p-1 rounded hover:bg-rose-500/15 text-rose-300 disabled:opacity-40"
@@ -1791,6 +2150,50 @@ export function AdminModal() {
         )}
         </>)}
       </DialogContent>
+      {/* v0.7.5 — In-modal confirmation dialog (T501). Replaces every
+          window.confirm/window.prompt site that was silently no-op'ing
+          inside the packaged Electron build. Renders as a sibling to
+          the main DialogContent so Radix portals it above the panel
+          but inside the same React tree — no host shell can suppress
+          it. The free-text input is conditional on `pending.input`
+          being supplied (cancel/renew); pure confirms hide it. */}
+      <AlertDialog open={!!pending} onOpenChange={(o) => { if (!o) closePending() }}>
+        <AlertDialogContent className="bg-background border-border text-foreground">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{pending?.title ?? ''}</AlertDialogTitle>
+            <AlertDialogDescription>{pending?.description ?? ''}</AlertDialogDescription>
+          </AlertDialogHeader>
+          {pending?.input && (
+            <div className="space-y-1.5">
+              <label className="text-[11px] uppercase tracking-wider text-muted-foreground">{pending.input.label}</label>
+              <Input
+                value={pendingValue}
+                onChange={(e) => setPendingValue(e.target.value)}
+                placeholder={pending.input.placeholder}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !pendingBusy) {
+                    e.preventDefault()
+                    void runPending()
+                  }
+                }}
+                className="bg-card border-border text-foreground"
+              />
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pendingBusy} onClick={closePending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={pendingBusy}
+              onClick={(e) => { e.preventDefault(); void runPending() }}
+              className={cn(pending?.destructive && 'bg-rose-600 hover:bg-rose-500 text-white')}
+            >
+              {pendingBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+              {pending?.confirmLabel ?? 'Confirm'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   )
 }

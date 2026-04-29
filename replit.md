@@ -2,6 +2,170 @@
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It supports live congregation output, NDI broadcasting, and advanced speech recognition. The system targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service.
 
+## v0.7.5 — Operator batch: admin actions, activity-gated trial, NDI lower-third frame, scripture-bound previews, instant activation, SMS overhaul (Apr 2026)
+
+Seven items shipped together. The thread that ties them is **operator
+trust**: previously the admin panel had buttons that silently no-op'd,
+the trial timer ate days while the user was offline, the NDI lower-
+third box stretched past the camera frame on long verses, the typography
+preview ignored the verse the operator had just looked up, activation
+felt slow because notifications blocked the response, and SMS only
+fired for the admin even though the customer was the one waiting for
+the code. v0.7.5 fixes all six surfaces.
+
+### 1. Admin Panel — buttons fire reliably + multi-select bulk actions (T501)
+
+**Root cause for "the buttons in CODES / Recent Payments / Recent
+Activations don't fire"**: every action handler was wrapped in
+`window.confirm()` / `window.prompt()`. Inside the packaged Electron
+shell (and inside the embedded preview iframe used during dev), those
+native dialogs are blocked by the host — the call returns `false`
+immediately and the action silently no-op'd. The operator saw
+nothing happen and assumed the button was dead.
+
+**Fix**: replaced every native dialog site with an in-modal
+`AlertDialog` rendered as a sibling to the main panel. The dialog
+lives inside the same React tree, so no host shell can suppress it.
+All five sites (delete payment, delete activation, dismiss
+notification, cancel code, renew code, soft-delete code, permanent
+delete) now route through one `askConfirm({...})` helper that
+optionally collects free-text input (renew / cancel reason).
+
+**Multi-select**: each of the three sections (Recent Payments, Recent
+Activations, CODES) gained a "Select" toggle in its header. Toggling
+on reveals a checkbox column; ticking any row pops a bulk action bar
+with **Edit** (single-row) and **Delete (N)** (bulk). Bulk delete
+hits a new `POST /api/license/admin/bulk-delete` endpoint that
+accepts `{ kind: 'payment'|'activation'|'notification', refs/codes/ids,
+permanent? }` and runs `deletePaymentsByRefs` /
+`softDeleteActivationsByCodes` / `deleteActivationsByCodes` /
+`deleteNotificationsByIds` in storage.ts.
+
+### 2. Free trial timer — activity-gated, not calendar (T502)
+
+Pre-v0.7.5 the trial was 30 minutes of **wall-clock** time from
+`firstLaunchAt`, regardless of whether the user ever started the mic.
+An operator who installed at 5pm to evaluate, ran for 2 minutes, then
+waited until Sunday's service arrived to a 0-minute trial they hadn't
+used.
+
+**Fix**: trial is now **usage-based**.
+
+- `LicenseFile` gained `trialMsUsed` (millis of mic-on time consumed).
+- `computeStatus` calculates `msLeft = trialDurationMs - trialMsUsed`
+  and synthesises `trialEnd = now + msLeft` so the existing UI
+  countdown surfaces work unchanged.
+- A new `addTrialUsage(deltaMs)` API caps any single tick at 5
+  minutes (safety against a stuck client sending a huge delta after
+  a refresh) and persists.
+- `LicenseProvider` watches `useAppStore(s => s.isListening)`. On
+  `true` it starts a 5-second `setInterval` that POSTs `{ deltaMs }`
+  to a new `POST /api/license/trial-tick` (unauth, install-scoped);
+  on `false` it flushes one final partial tick. Each tick refreshes
+  the local status from the response so the countdown reflects the
+  new `msLeft` within seconds.
+- Active subscriptions skip the tick entirely.
+
+### 3. NDI lower-third — fixed frame, scripture auto-fits inside (T503)
+
+Operator screenshot showed the lower-third box growing past the
+camera frame any time the verse text or `ndiLowerThirdScale` grew —
+because the previous renderer multiplied **box height** AND **text
+size** by `ndiLtScale`. The operator wanted the opposite: pin the
+box to the small bottom strip selected via the height bucket
+(sm 22% / md 33% / lg 45%) and shrink the verse to fit inside it.
+
+**Fix in `congregation/route.ts`**: `hPctScaled = hPct` (no longer
+multiplied by `ndiLtScale`). The text-band (`ltBand` / `ltCap` /
+`ltMin`) still uses `ndiLtScale` so operators can dial verse legibility
+up; combined with a new CSS line-clamp (`-webkit-line-clamp:6`,
+`overflow:hidden`, `overflow-wrap:anywhere` on `.slide-text` /
+`.slide-title` inside `.lt-content`), long verses shrink first and
+then truncate cleanly with an ellipsis instead of bleeding past the
+rounded card edge.
+
+### 4. Settings previews bind to the selected verse (T504)
+
+The Typography preview pair in Settings was hardcoded to Romans 8:34
+and John 3:16 samples even though `OutputPreview` already falls back
+to `liveVerse` → `currentVerse` from the Zustand store when no
+`sample` prop is supplied. Dropped the `sample={...}` prop on both
+`OutputPreview` calls in `settings.tsx`. Selecting Genesis 2:5 in
+the lookup column now updates all three preview surfaces (Full,
+Lower-Third, Typography) to display Genesis 2:5.
+
+### 5 + 6. Instant activation + SMS overhaul (T505 / T506 / T507)
+
+Pre-v0.7.5, four routes blocked their HTTP response on **synchronous**
+notification dispatch (`await notifyEmail()` + `await notifySms()`
+inside the route handler). On a slow SMTP / mNotify upstream the
+customer waited 3-8 seconds staring at a spinner before the success
+toast appeared.
+
+**Fix**: every send-site (`payment-code/route.ts`,
+`admin/confirm/route.ts`, `activate/route.ts`, `admin/generate/route.ts`)
+now builds the success response first and fires-and-forgets:
+
+```ts
+setImmediate(() => {
+  void notifyXxx(...).catch((e) => req.log.warn({ err: e }, 'notify failed'))
+})
+return NextResponse.json(success)
+```
+
+`activate/route.ts` keeps the geo-IP lookup **inline** before the
+ledger write so the dashboard's `lastSeenLocation` populates
+immediately. `admin/confirm/route.ts` only fires the
+customer-facing notification when `newlyGenerated === true`
+(avoids spamming the customer if the operator double-clicks
+Confirm).
+
+**SMS overhaul**: `payment-code/route.ts` now fires **two** SMS in
+parallel:
+- to the **customer**: full MoMo payment instructions (number, name,
+  amount, "use ref code XXXX as payment description") so they can
+  pay without re-opening the app
+- to the **admin**: the existing alert that a customer wants to pay
+  for plan Z
+
+The customer SMS uses the operator-set MoMo override
+(`adminConfig.momoNumber` / `momoName`) when present, falling back
+to the baked defaults. The new SMS_API_KEY rotated by the operator
+is what mNotify reads for both.
+
+### 7. Version + push (T508)
+
+- `artifacts/imported-app/package.json`: 0.7.4.1 → 0.7.5
+- `.local/release/v0.7.5/push.mjs` — pushes the changeset + tag to
+  `nanvilow/scripturelive-ai` `main` as `v0.7.5`.
+
+### Files
+
+- `artifacts/imported-app/src/lib/licensing/storage.ts` (T501 bulk
+  helpers + T502 `trialMsUsed` + `addTrialUsage`)
+- `artifacts/imported-app/src/app/api/license/trial-tick/route.ts`
+  (NEW — T502)
+- `artifacts/imported-app/src/app/api/license/admin/bulk-delete/route.ts`
+  (NEW — T501)
+- `artifacts/imported-app/src/app/api/license/payment-code/route.ts`
+  (T505 / T506 / T507 — fire-and-forget + customer SMS)
+- `artifacts/imported-app/src/app/api/license/admin/confirm/route.ts`
+  (T506)
+- `artifacts/imported-app/src/app/api/license/activate/route.ts`
+  (T506 — geo lookup stays inline)
+- `artifacts/imported-app/src/app/api/license/admin/generate/route.ts`
+  (T506)
+- `artifacts/imported-app/src/app/api/output/congregation/route.ts`
+  (T503 — `hPctScaled = hPct` + line-clamp CSS)
+- `artifacts/imported-app/src/components/license/admin-modal.tsx`
+  (T501 — AlertDialog + multi-select)
+- `artifacts/imported-app/src/components/license/license-provider.tsx`
+  (T502 — trial-tick interval driven by `isListening`)
+- `artifacts/imported-app/src/components/views/settings.tsx`
+  (T504 — drop hardcoded `sample` prop on both `OutputPreview` calls)
+- `artifacts/imported-app/package.json` (0.7.4.1 → 0.7.5)
+- `replit.md` (changelog)
+
 ## v0.7.4.1 — Mobile entry point for the Admin Panel (Apr 2026)
 
 Tiny, surgical addition on top of v0.7.4. The owner asked: *"Can I

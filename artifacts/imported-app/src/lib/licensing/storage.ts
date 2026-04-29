@@ -180,6 +180,16 @@ export interface LicenseFile {
   notifications: NotificationRecord[]
   /** Owner-controlled runtime config (v0.5.48) */
   config?: RuntimeConfig
+  /** v0.7.5 — Activity-gated trial accounting (Apr 29, 2026).
+   *  Replaces the v1 calendar-based trial (firstLaunchAt +
+   *  trialDurationMs vs wall-clock now). We sum the elapsed
+   *  listening time the user accrues while the mic is actually
+   *  ON into `trialMsUsed`. The trial is "expired" the moment
+   *  `trialMsUsed >= trialDurationMs`. Refresh, overnight wait,
+   *  or the app sitting idle do NOT consume trial — only active
+   *  listening does. The renderer pings POST /api/license/trial-tick
+   *  every few seconds while the mic is running. */
+  trialMsUsed?: number
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -322,8 +332,16 @@ export interface SubscriptionStatus {
 
 export function computeStatus(now = Date.now()): SubscriptionStatus {
   const f = sweepExpired(now)
-  const trialEnd = new Date(f.firstLaunchAt).getTime() + f.trialDurationMs
-  const trialMsLeft = Math.max(0, trialEnd - now)
+  // v0.7.5 — Activity-gated trial. The trial budget is `trialDurationMs`
+  // total LISTENING time (mic actually running). `trialMsUsed` accumulates
+  // only while the user is actively detecting; refresh / overnight wait
+  // do not consume it. We synthesise a startedAt/expiresAt pair so the
+  // existing UI countdown widget keeps rendering — expiresAt is just a
+  // projection of "if you started listening continuously RIGHT NOW, the
+  // trial would run out at..." (i.e. now + remaining budget).
+  const trialUsed = Math.max(0, Math.min(f.trialDurationMs, f.trialMsUsed ?? 0))
+  const trialMsLeft = Math.max(0, f.trialDurationMs - trialUsed)
+  const trialEnd = now + trialMsLeft
   const trialExpired = trialMsLeft === 0
 
   // Active subscription wins over trial.
@@ -1030,6 +1048,104 @@ export function deleteNotificationById(id: string): boolean {
   if (f.notifications.length === before) return false
   persist(f)
   return true
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// v0.7.5 — Activity-gated trial tick (Apr 29, 2026)
+//
+// The renderer pings POST /api/license/trial-tick every few seconds
+// while the mic is actively running. We add the elapsed delta into
+// `trialMsUsed`, clamped to [0, trialDurationMs] so a runaway client
+// can't push the counter past the cap (which would make daysLeft
+// look negative on the next status read). Returns the fresh status
+// so the caller can update the UI without a second round-trip.
+//
+// Tick is silently ignored when:
+//   - an active subscription is in force (trial doesn't apply)
+//   - the trial is already exhausted (no point counting further)
+//   - delta is non-positive / non-finite (clock skew / tab restored)
+// ─────────────────────────────────────────────────────────────────────
+export function addTrialUsage(deltaMs: number): SubscriptionStatus {
+  const delta = Math.max(0, Math.floor(Number(deltaMs)))
+  if (!Number.isFinite(delta) || delta === 0) return computeStatus()
+  const f = load()
+  // No-op when an active subscription covers the user — trial is
+  // dormant in that case.
+  if (f.activeSubscription) {
+    const expMs = new Date(f.activeSubscription.expiresAt).getTime()
+    if (f.activeSubscription.isMaster || expMs > Date.now()) return computeStatus()
+  }
+  const cap = f.trialDurationMs
+  const before = Math.max(0, Math.min(cap, f.trialMsUsed ?? 0))
+  if (before >= cap) return computeStatus()
+  // Single-tick safety: never let one ping consume more than 5 minutes
+  // of trial. Protects against a tab being suspended for hours and
+  // then firing one giant catch-up tick on resume.
+  const safeDelta = Math.min(delta, 5 * 60_000)
+  const next = Math.min(cap, before + safeDelta)
+  if (next !== before) {
+    f.trialMsUsed = next
+    persist(f)
+  }
+  return computeStatus()
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// v0.7.5 — Bulk-delete helpers for the admin dashboard "Select +
+// Delete all" bar. Each accepts an array of identifiers and returns
+// the count actually removed so the UI can toast e.g. "3 of 4
+// removed (1 already gone)".
+// ─────────────────────────────────────────────────────────────────────
+export function deletePaymentsByRefs(refs: string[]): number {
+  const f = load()
+  const set = new Set(refs.map((r) => r.trim()).filter(Boolean))
+  if (set.size === 0) return 0
+  const before = f.paymentCodes.length
+  f.paymentCodes = f.paymentCodes.filter((p) => !set.has(p.ref))
+  const removed = before - f.paymentCodes.length
+  if (removed > 0) persist(f)
+  return removed
+}
+
+export function deleteActivationsByCodes(codes: string[]): number {
+  const f = load()
+  const set = new Set(codes.map((c) => c.trim().toUpperCase()).filter(Boolean))
+  if (set.size === 0) return 0
+  const before = f.activationCodes.length
+  f.activationCodes = f.activationCodes.filter((a) => !set.has(a.code))
+  const removed = before - f.activationCodes.length
+  if (removed > 0) persist(f)
+  return removed
+}
+
+export function deleteNotificationsByIds(ids: string[]): number {
+  const f = load()
+  const set = new Set(ids.map((i) => i.trim()).filter(Boolean))
+  if (set.size === 0) return 0
+  const before = f.notifications.length
+  f.notifications = f.notifications.filter((n) => !set.has(n.id))
+  const removed = before - f.notifications.length
+  if (removed > 0) persist(f)
+  return removed
+}
+
+export function softDeleteActivationsByCodes(codes: string[]): number {
+  const f = load()
+  const set = new Set(codes.map((c) => c.trim().toUpperCase()).filter(Boolean))
+  if (set.size === 0) return 0
+  let removed = 0
+  const stamp = new Date().toISOString()
+  for (const a of f.activationCodes) {
+    if (set.has(a.code) && !a.softDeletedAt) {
+      a.softDeletedAt = stamp
+      if (f.activeSubscription?.activationCode === a.code) {
+        f.activeSubscription = null
+      }
+      removed++
+    }
+  }
+  if (removed > 0) persist(f)
+  return removed
 }
 
 /** Test-only: reset the entire file. Guarded against prod use. */
