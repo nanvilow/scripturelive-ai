@@ -101,6 +101,29 @@ export interface ActivationCodeRecord {
    *  after that window passes the row is purged. Operator can Restore
    *  at any time before the purge. */
   softDeletedAt?: string
+
+  // ─── v0.7.11 — Transferable activation (move-to-another-PC) ──────
+  // Pastebin item #6 followup: the v0.5.48 "Deactivate on this PC"
+  // button only nulled the local activeSubscription, leaving the
+  // activation row stuck at isUsed=true so the same code refused to
+  // activate anywhere else. Customers swapping PCs lost remaining
+  // days. v0.7.11 adds a true transfer path: transferActivationByCode
+  // flips isUsed back to false, sets transferredAt, and PRESERVES
+  // subscriptionExpiresAt as the absolute deadline so the new install
+  // inherits the original remaining time (no extension, no reset).
+  /** Last time the operator transferred this code off a device. When
+   *  set together with `isUsed === false`, activateCode() treats the
+   *  next activation as a transfer-in and reuses the existing
+   *  subscriptionExpiresAt instead of computing a fresh deadline. */
+  transferredAt?: string
+  /** Total transfer events ever recorded for this code. Useful for the
+   *  admin dashboard to spot codes ping-ponging across installs. */
+  transferCount?: number
+  /** First-ever activation timestamp. Set on the first activateCode()
+   *  pass and preserved across transfers so the audit trail keeps
+   *  pointing at the original activation moment. `usedAt` continues
+   *  to track the MOST RECENT activation. */
+  originalActivatedAt?: string
 }
 
 export interface NotificationRecord {
@@ -225,7 +248,17 @@ const TRIAL_DURATION_MS = 60 * 60 * 1000 // 1 hour
 // the buyer's MoMo deposit couldn't be confirmed against them.
 // 7 days is enough cushion to cover a long weekend without a
 // flood of stale "WAITING_PAYMENT" rows.
-const PAYMENT_CODE_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
+//
+// v0.7.11 — Tightened from 7 days → 30 minutes per operator request.
+// Customers were holding on to a generated payment code for days
+// without following through, then trying to "use" it after the
+// MoMo wallet had moved on, leading to support load. 30 minutes is
+// enough time for a real customer to open MoMo, type the code as
+// the reference, and confirm the transfer — anything longer is
+// almost certainly a stale lead. Customers who took too long get
+// a clear "code expired, start a new payment" prompt and can
+// generate a fresh code in seconds.
+const PAYMENT_CODE_TTL_MS = 30 * 60 * 1000 // 30 minutes
 
 let cache: LicenseFile | null = null
 
@@ -247,6 +280,50 @@ function freshFile(): LicenseFile {
 function ensureDir() {
   const dir = storageDir()
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+}
+
+// v0.7.11 — One-shot upgrade migration for stale MoMo wallet numbers.
+// The MoMo recipient was migrated from the old 0530686367 wallet to
+// the current 0246798526 wallet a couple of releases back; the
+// compiled-in default in plans.ts already points at the new number,
+// but operators who customised the recipient via the in-app Admin
+// Settings screen still have the OLD value persisted in their
+// license.json (config.momoNumber === '0530686367') — and the
+// payment modal renders that persisted value, so customers were
+// being asked to send MoMo to a wallet the church no longer owns.
+//
+// This migration silently rewrites every persisted '0530686367' to
+// '0246798526' on load, then persist() flushes the corrected file
+// back to disk on the next mutation. We touch all three phone-
+// number fields (momoNumber, whatsappNumber, adminPhone) so any
+// surface that still pointed at the dead wallet — payment modal,
+// WhatsApp escalation footer, admin SMS alerts — switches over in
+// one go on first launch of v0.7.11. No-op for installs that never
+// customised these fields (compiled defaults already correct) and
+// no-op for installs that already moved off 0530686367.
+const STALE_MOMO_NUMBER = '0530686367'
+const NEW_MOMO_NUMBER = '0246798526'
+function migrateStaleConfigNumbers(config: RuntimeConfig | undefined): RuntimeConfig | undefined {
+  if (!config) return config
+  let changed = false
+  const next: RuntimeConfig = { ...config }
+  if (next.momoNumber?.replace(/\D/g, '') === STALE_MOMO_NUMBER) {
+    next.momoNumber = NEW_MOMO_NUMBER
+    changed = true
+  }
+  if (next.whatsappNumber?.replace(/\D/g, '') === STALE_MOMO_NUMBER) {
+    next.whatsappNumber = NEW_MOMO_NUMBER
+    changed = true
+  }
+  if (next.adminPhone?.replace(/\D/g, '') === STALE_MOMO_NUMBER) {
+    next.adminPhone = NEW_MOMO_NUMBER
+    changed = true
+  }
+  if (changed) {
+    // eslint-disable-next-line no-console
+    console.log('[licensing] migrated stale MoMo wallet number from', STALE_MOMO_NUMBER, '→', NEW_MOMO_NUMBER)
+  }
+  return next
 }
 
 function load(): LicenseFile {
@@ -275,7 +352,7 @@ function load(): LicenseFile {
       paymentCodes: parsed.paymentCodes ?? [],
       activationCodes: parsed.activationCodes ?? [],
       notifications: parsed.notifications ?? [],
-      config: parsed.config ?? undefined,
+      config: migrateStaleConfigNumbers(parsed.config),
       // v0.7.5 — hydrate trial-usage counter from disk so the activity-
       // gated trial survives process restarts. Without this, every cold
       // start would silently reset the trial back to 0 minutes used.
@@ -657,6 +734,13 @@ export function activateCode(rawCode: string, ctx?: { ip?: string; location?: st
 
   const activation = f.activationCodes.find((a) => a.code === code)
   if (!activation) throw new Error('Activation code not recognised. Please check and re-enter.')
+  // v0.7.11 — A code that was previously activated and then transferred
+  // off a device sits as { isUsed:false, transferredAt:set,
+  // subscriptionExpiresAt:<original deadline> }. We allow re-activation
+  // but PRESERVE the original deadline so the customer doesn't get a
+  // free renewal by toggling devices. The only rejection is when that
+  // deadline has already passed.
+  const isTransferIn = !activation.isUsed && !!activation.transferredAt
   if (activation.isUsed) throw new Error('This activation code has already been used.')
   // v0.7.0 — admin can cancel a code from the dashboard. Cancelled
   // codes refuse to activate even if they were never used. The error
@@ -670,18 +754,36 @@ export function activateCode(rawCode: string, ctx?: { ip?: string; location?: st
   }
 
   const now = new Date()
-  // v0.6.3 — prefer the exact ms duration (set by the admin generate
-  // route from {months,days,hours,minutes}) so a 20-minute code expires
-  // in 20 minutes, not 24 hours. Pre-v0.6.3 records have no durationMs
-  // → fall back to the legacy day-precision arithmetic so historical
-  // codes activate identically.
-  const durationMs = (typeof activation.durationMs === 'number' && activation.durationMs > 0)
-    ? activation.durationMs
-    : activation.days * 86400000
-  const expires = new Date(now.getTime() + durationMs)
+  let expires: Date
+  if (isTransferIn && activation.subscriptionExpiresAt) {
+    // Transfer-in: reuse the existing absolute deadline. If it's
+    // already in the past, refuse with a clear error so the customer
+    // doesn't pay for a "transfer" that gives them zero time.
+    const prev = Date.parse(activation.subscriptionExpiresAt)
+    if (!Number.isFinite(prev) || prev <= now.getTime()) {
+      throw new Error('This activation code\'s remaining time has expired. Please purchase a new code.')
+    }
+    expires = new Date(prev)
+  } else {
+    // v0.6.3 — prefer the exact ms duration (set by the admin generate
+    // route from {months,days,hours,minutes}) so a 20-minute code expires
+    // in 20 minutes, not 24 hours. Pre-v0.6.3 records have no durationMs
+    // → fall back to the legacy day-precision arithmetic so historical
+    // codes activate identically.
+    const durationMs = (typeof activation.durationMs === 'number' && activation.durationMs > 0)
+      ? activation.durationMs
+      : activation.days * 86400000
+    expires = new Date(now.getTime() + durationMs)
+  }
   activation.isUsed = true
   activation.usedAt = now.toISOString()
   activation.subscriptionExpiresAt = expires.toISOString()
+  // v0.7.11 — Stamp the original activation moment on the very first
+  // activateCode() pass; preserve it across transfers so the dashboard
+  // can always show "first activated DD MMM YYYY".
+  if (!activation.originalActivatedAt) {
+    activation.originalActivatedAt = activation.usedAt
+  }
 
   // Mark the originating payment as consumed for clean audit trail.
   if (activation.generatedFor?.paymentRef) {
@@ -1012,6 +1114,74 @@ export function deactivateSubscription(): SubscriptionStatus {
     persist(f)
   }
   return computeStatus()
+}
+
+// ─── v0.7.11 — Transferable deactivation (move-to-another-PC) ────────
+// Pastebin item #6 follow-up. The pre-v0.7.11 deactivateSubscription()
+// only nulled the local active sub; the activation row stayed
+// isUsed:true so the customer's code refused to re-activate anywhere.
+// transferActivationByCode flips isUsed back to false, sets
+// transferredAt, and PRESERVES subscriptionExpiresAt so the next
+// install inherits the original remaining time. activateCode() above
+// recognises rows with { isUsed:false, transferredAt:set } as
+// transfer-ins and reuses the existing deadline (no extension).
+//
+// Failure modes handled by the caller (the route, then the UI toast):
+//  - no active sub                  -> { ok:false, error }
+//  - active sub maps to no row       -> { ok:false, error }
+//  - master code (cannot transfer)   -> { ok:false, error }
+export interface TransferResult {
+  status: SubscriptionStatus
+  /** The activation code the customer should type into the new PC. */
+  code: string
+  /** ISO timestamp when the preserved subscription will expire. */
+  expiresAt: string
+  /** Convenience for the UI — milliseconds until expiry, never negative. */
+  msLeft: number
+}
+
+export function transferActiveSubscription(): TransferResult {
+  const f = load()
+  if (!f.activeSubscription) {
+    throw new Error('No active subscription to transfer.')
+  }
+  if (f.activeSubscription.isMaster) {
+    throw new Error('The master code cannot be transferred. It is already valid on every install.')
+  }
+  const code = f.activeSubscription.activationCode
+  const a = f.activationCodes.find((r) => r.code === code)
+  if (!a) {
+    // Defensive: active sub points at a row that no longer exists.
+    // Drop the orphaned sub so the user is not stuck and surface the
+    // error so the operator notices the data inconsistency.
+    f.activeSubscription = null
+    persist(f)
+    throw new Error('Activation record not found for the active subscription. The local subscription has been cleared; please contact support to recover the code.')
+  }
+  // Carry the preserved deadline. Prefer the row's authoritative value
+  // (set on every activateCode pass) and fall back to the active sub's
+  // mirror only if the row somehow lacks it.
+  const expiresAt = a.subscriptionExpiresAt ?? f.activeSubscription.expiresAt
+  const expiresMs = Date.parse(expiresAt)
+  if (!Number.isFinite(expiresMs) || expiresMs <= Date.now()) {
+    throw new Error('This subscription has already expired — there is no remaining time to transfer.')
+  }
+  // Flip the row back to "available" while keeping every audit field
+  // (originalActivatedAt, lastSeen*, generatedFor, payment ref) so the
+  // admin dashboard still shows the full history.
+  a.isUsed = false
+  a.transferredAt = new Date().toISOString()
+  a.transferCount = (a.transferCount ?? 0) + 1
+  // Keep usedAt + subscriptionExpiresAt as-is; activateCode reads them
+  // on the transfer-in branch and refuses if expiresAt is in the past.
+  f.activeSubscription = null
+  persist(f)
+  return {
+    status: computeStatus(),
+    code,
+    expiresAt,
+    msLeft: Math.max(0, expiresMs - Date.now()),
+  }
 }
 
 export function markMasterEmailed(): void {
