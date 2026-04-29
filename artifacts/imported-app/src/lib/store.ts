@@ -634,10 +634,12 @@ const defaultSettings: AppSettings = {
   ndiAspectRatio: undefined,
   ndiBibleColor: undefined,
   ndiLowerThirdTransparent: false,
-  // v0.7.0 — Operator request: ship at full 2.0× by default. Pre-v0.7.0
-  // shipped undefined (effective 1.0); the slider reset button still
-  // returns to 2.0 now so the "Reset" affordance matches the default.
-  ndiLowerThirdScale: 2,
+  // v0.7.3 — Reverted to 1.0× (was 2.0× in v0.7.0). Operator's
+  // broadcast frame showed 2.0× was way too large; their lower-third
+  // was covering the preacher. The slider Reset button also returns
+  // to 1.0× to match (see ndi-output-panel.tsx). Pre-v0.7.0 shipped
+  // undefined (effective 1.0) so this matches the original safe default.
+  ndiLowerThirdScale: 1,
   ndiBibleLineHeight: undefined,
   ndiRefSize: undefined,
   ndiRefStyle: undefined,

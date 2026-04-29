@@ -2,6 +2,29 @@
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It supports live congregation output, NDI broadcasting, and advanced speech recognition. The system targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service.
 
+## v0.7.3.1 — Hotfix for v0.7.3 (Apr 2026)
+
+Code-review caught two regressions in v0.7.3 that shipped with the
+release blob:
+
+1. **NDI default scale was still 2.0× in `defaultSettings`.** The
+   v0.7.3 changelog and slider reset were updated to 1.0×, but the
+   `defaultSettings.ndiLowerThirdScale` literal in `lib/store.ts` was
+   not — fresh installs and any user without persisted state were
+   still getting the oversized 2.0× lower-third. Fixed: now `1`.
+
+2. **Geo public-IP fallback could hang activation up to 5 s and
+   negative-cache for 24 h on transient ip-api.com failures.**
+   Tightened to 1.5 s timeout (was 5 s) and 5-min negative cache
+   (was 24 h). Successful lookups still cache for 24 h. The
+   activation / status request can no longer be stretched by a slow
+   geo enrichment.
+
+**Files changed:**
+- `artifacts/imported-app/src/lib/store.ts`             (default scale 2 → 1)
+- `artifacts/imported-app/src/lib/licensing/geoip.ts`   (1.5 s timeout + 5 min negative-cache)
+- `artifacts/imported-app/package.json`                 (0.7.3 → 0.7.3.1)
+
 ## v0.7.3 — Operator bug-blast fixes (Apr 2026)
 
 Field-report fixes from a multi-issue bug report. Triaged into seven

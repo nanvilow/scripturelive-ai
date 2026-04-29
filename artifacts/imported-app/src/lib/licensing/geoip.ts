@@ -51,16 +51,24 @@ export function clientIpFromRequest(req: Request): string | undefined {
  *  the operator's bug report flagged: "doesn't show the accurate
  *  region, country, city, or town." */
 let serverPublicIpCache: { at: number; ip: string | null } | null = null
-const SERVER_IP_TTL_MS = 24 * 60 * 60 * 1000  // 24 h
+const SERVER_IP_TTL_OK_MS = 24 * 60 * 60 * 1000  // 24 h on success
+const SERVER_IP_TTL_FAIL_MS = 5 * 60 * 1000      // 5 min on failure
+// v0.7.3.1 — Tight 1.5s timeout so the geo enrichment cannot stretch
+// the activation / status request when ip-api.com is slow or unreachable.
+// On timeout we negative-cache for 5 min (not 24 h) so a transient
+// outage doesn't disable geo for the whole day.
+const SERVER_IP_FETCH_TIMEOUT_MS = 1500
 
 async function resolveServerPublicIp(): Promise<string | null> {
   const now = Date.now()
-  if (serverPublicIpCache && now - serverPublicIpCache.at < SERVER_IP_TTL_MS) {
-    return serverPublicIpCache.ip
+  if (serverPublicIpCache) {
+    const age = now - serverPublicIpCache.at
+    const ttl = serverPublicIpCache.ip ? SERVER_IP_TTL_OK_MS : SERVER_IP_TTL_FAIL_MS
+    if (age < ttl) return serverPublicIpCache.ip
   }
   try {
     const controller = new AbortController()
-    const t = setTimeout(() => controller.abort(), 5000)
+    const t = setTimeout(() => controller.abort(), SERVER_IP_FETCH_TIMEOUT_MS)
     const res = await fetch('http://ip-api.com/json/?fields=status,query', { signal: controller.signal })
     clearTimeout(t)
     if (!res.ok) {
