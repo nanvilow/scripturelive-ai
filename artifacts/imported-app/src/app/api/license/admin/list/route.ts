@@ -61,7 +61,15 @@ export async function GET(req: NextRequest) {
       isMaster: status.isMaster,
     },
     paymentCodes: recent(f.paymentCodes, 30),
-    activationCodes: recent(f.activationCodes, 30),
+    // v0.7.9 — Hide soft-deleted activation rows from the Recent
+    // Activations table. Pre-fix, /admin/list returned every row
+    // including ones with `softDeletedAt` set, so when the operator
+    // clicked Delete the row was tombstoned in storage but kept
+    // showing up on the next poll — looking exactly like a broken
+    // delete. The dedicated bin endpoint (/admin/list-bin) still
+    // exposes them for the 7-day recovery window. Hard-deleted rows
+    // are obviously already gone (filter removes from the array).
+    activationCodes: recent(f.activationCodes.filter((a) => !a.softDeletedAt), 30),
     notifications: recent(f.notifications, 30),
     notificationDelivery: detectNotificationDelivery(),
   }, { headers: { 'Cache-Control': 'no-store' } })
