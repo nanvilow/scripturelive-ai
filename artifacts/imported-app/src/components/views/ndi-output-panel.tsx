@@ -113,9 +113,18 @@ export function NdiOutputPanel() {
   // self-induced loop from the resulting ndi:status push.
   const restartGuardRef = useRef<string>('')
   const isRunningForEffect = !!status?.running
+  // v0.7.5.1 — `lowerThirdHeight` and `ndiLowerThirdScale` are part of
+  // the restart trigger now. Pre-fix the operator could drag those
+  // sliders all day and the running BrowserWindow would keep its old
+  // ?lh / ?sc URL params, so vMix received the OLD bar size until they
+  // toggled position or display mode (which used to be the only things
+  // that re-issued ndi.start). Now any of these five settings causes a
+  // tear-down + rebuild so the captured page reloads with the latest
+  // params on its very first frame.
+  const lowerThirdHeightSetting = useAppStore((s) => s.settings.lowerThirdHeight)
   useEffect(() => {
     if (!isRunningForEffect || !desktop) return
-    const want = `${ndiDisplayMode}:${lowerThirdPosition}`
+    const want = `${ndiDisplayMode}:${lowerThirdPosition}:${lowerThirdHeightSetting}:${ndiLowerThirdScale ?? 1}`
     if (restartGuardRef.current === want) return
     if (restartGuardRef.current === '') {
       // First settle — record what's already on the wire so the next
@@ -149,9 +158,13 @@ export function NdiOutputPanel() {
         // to Full had zero effect on vMix/OBS receivers.
         enabled: ndiDisplayMode === 'lower-third',
         position: lowerThirdPosition === 'top' ? 'top' : 'bottom',
+        // v0.7.5.1 — bake the bucket + scale into the URL too (see
+        // FORCE_LH / FORCE_SC notes in route.ts and main.ts).
+        height: lowerThirdHeightSetting,
+        scale: typeof ndiLowerThirdScale === 'number' ? ndiLowerThirdScale : 1,
       },
     }).catch(() => { /* surfaced by the ndi:status broadcast */ })
-  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName])
+  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName, lowerThirdHeightSetting, ndiLowerThirdScale])
 
   // Reset the guard when NDI stops so the first toggle after the next
   // Start does the right thing (record-then-skip).
@@ -219,6 +232,9 @@ export function NdiOutputPanel() {
           lowerThird: {
             enabled: ndiDisplayMode === 'lower-third',
             position: lowerThirdPosition === 'top' ? 'top' : 'bottom',
+            // v0.7.5.1 — same first-paint URL params as the restart effect.
+            height: lowerThirdHeightSetting,
+            scale: typeof ndiLowerThirdScale === 'number' ? ndiLowerThirdScale : 1,
           },
         })
         if (!res.ok) toast.error(res.error || 'Failed to start NDI')
@@ -810,12 +826,14 @@ export function NdiOutputPanel() {
                     The preview key includes displayMode so flipping
                     Full ↔ Lower-Third reloads the iframe immediately. */}
                 <iframe
-                  key={`ndi-preview:${ndiDisplayMode}:${lowerThirdPosition}`}
+                  key={`ndi-preview:${ndiDisplayMode}:${lowerThirdPosition}:${lowerThirdHeightSetting}:${ndiLowerThirdScale ?? 1}`}
                   src={`/api/output/congregation?ndi=1&transparent=1${
                     ndiDisplayMode === 'lower-third' ? '&lowerThird=1' : ''
                   }${
                     ndiDisplayMode === 'lower-third' && lowerThirdPosition === 'top' ? '&position=top' : ''
-                  }`}
+                  }&lh=${encodeURIComponent(lowerThirdHeightSetting)}&sc=${encodeURIComponent(
+                    String(typeof ndiLowerThirdScale === 'number' ? ndiLowerThirdScale : 1),
+                  )}`}
                   title="NDI Live Preview"
                   className="absolute inset-0 w-full h-full border-0"
                 />

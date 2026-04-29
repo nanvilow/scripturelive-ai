@@ -54,6 +54,10 @@ export type ScriptureLiveDesktop = {
         position?: 'top' | 'bottom'
         branding?: string
         accent?: string
+        // v0.7.5.1 — Operator's bucket + scale, baked into the captured
+        // BrowserWindow URL so vMix/OBS render the right size on frame 1.
+        height?: 'sm' | 'md' | 'lg'
+        scale?: number
       }
     }) => Promise<{ ok: boolean; status?: NdiStatus; error?: string }>
     stop: () => Promise<{ ok: boolean; error?: string }>
