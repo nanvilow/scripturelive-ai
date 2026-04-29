@@ -818,14 +818,16 @@ function render(s){
     // v0.7.0 only the font multiplied with ndiLtScale; the box height
     // stayed pinned to hPct, so at 2.0x the bigger text overflowed the
     // bottom of the bar (operator screenshot v0.6.9 — verse text "those
-    // who love God, to those..." clipped past the rounded edge). The
-    // default for ndiLowerThirdScale is now 2.0 (store.ts) and persisted
-    // profiles missing the field also fall back to 2.0 so the box-fit
-    // fix applies uniformly. Clamp 0.5..2.0 just like the slider.
+    // who love God, to those..." clipped past the rounded edge).
+    // v0.7.3 — Default reverted from 2.0 to 1.0 (store.ts). Operator
+    // screenshot showed the 2.0× lower-third covering ~65% of the
+    // camera frame; 1.0× sits inside the bottom band the operator
+    // marked in red. Persisted profiles missing the field fall back
+    // to 1.0 too. Clamp 0.5..2.0 just like the slider.
     var ndiLtScale = IS_NDI
       ? (typeof st.ndiLowerThirdScale === 'number'
           ? Math.min(2, Math.max(0.5, st.ndiLowerThirdScale))
-          : 2)
+          : 1)
       : 1;
     // Scale the bar height with the multiplier so 2x text still fits
     // inside the rounded card. Cap at 80% of the screen so the bar

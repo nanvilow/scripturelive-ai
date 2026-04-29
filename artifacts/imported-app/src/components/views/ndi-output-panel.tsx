@@ -453,14 +453,14 @@ export function NdiOutputPanel() {
                     </label>
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] font-mono text-muted-foreground tabular-nums">
-                        {(typeof ndiLowerThirdScale === 'number' ? ndiLowerThirdScale : 2).toFixed(2)}×
+                        {(typeof ndiLowerThirdScale === 'number' ? ndiLowerThirdScale : 1).toFixed(2)}×
                       </span>
-                      {typeof ndiLowerThirdScale === 'number' && ndiLowerThirdScale !== 2 && (
+                      {typeof ndiLowerThirdScale === 'number' && ndiLowerThirdScale !== 1 && (
                         <button
                           type="button"
-                          onClick={() => updateSettings({ ndiLowerThirdScale: 2 })}
+                          onClick={() => updateSettings({ ndiLowerThirdScale: 1 })}
                           className="text-[10px] text-muted-foreground hover:text-foreground underline"
-                          title="Reset to 2.00× (default full scale)"
+                          title="Reset to 1.00× (default — sits inside the bottom band, doesn't cover the preacher)"
                         >
                           Reset
                         </button>
@@ -473,13 +473,15 @@ export function NdiOutputPanel() {
                     min={0.5}
                     max={2}
                     step={0.05}
-                    value={typeof ndiLowerThirdScale === 'number' ? ndiLowerThirdScale : 2}
+                    value={typeof ndiLowerThirdScale === 'number' ? ndiLowerThirdScale : 1}
                     onChange={(e) => {
                       const v = Number(e.target.value)
-                      // v0.7.0 — Default is now 2.0 (full scale). Always
-                      // store the raw slider value so the renderer never
-                      // falls back to the legacy 1.0 path; the box-fit
-                      // fix only kicks in when ndiLtScale is a number.
+                      // v0.7.3 — Default is 1.0× (was 2.0× in v0.7.0,
+                      // which the operator's broadcast frame showed
+                      // was way too large). Always store the raw
+                      // slider value so the renderer never falls back
+                      // to the legacy 1.0 path; the box-fit clamp
+                      // only kicks in when ndiLtScale is a number.
                       updateSettings({ ndiLowerThirdScale: v })
                     }}
                     className="w-full h-1.5 cursor-pointer accent-emerald-500"
