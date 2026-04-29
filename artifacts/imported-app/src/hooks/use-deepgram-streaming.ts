@@ -48,7 +48,14 @@ interface UseDeepgramStreamingReturn {
   interimTranscript: string
   isSupported: boolean
   error: string | null
-  startListening: (onResult?: (text: string) => void) => void
+  /**
+   * v0.7.4 — onResult signature now passes the per-chunk confidence
+   * (0..1) reported by Deepgram. Callers gate the downstream pipeline
+   * by this value (live / preview / drop tiers). Falls back to 1.0
+   * when Deepgram doesn't report a confidence score so we never
+   * suppress a transcript chunk by accident.
+   */
+  startListening: (onResult?: (text: string, confidence: number) => void) => void
   stopListening: () => void
   resetTranscript: () => void
 }
@@ -116,7 +123,7 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
   const [interimTranscript, setInterimTranscript] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  const onResultRef = useRef<((text: string) => void) | undefined>(undefined)
+  const onResultRef = useRef<((text: string, confidence: number) => void) | undefined>(undefined)
   const transcriptRef = useRef('')
   const sessionRef = useRef(0)
   const stopRequestedRef = useRef(false)
@@ -290,7 +297,16 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
         setTranscript(transcriptRef.current)
         setInterimTranscript('')
         const cb = onResultRef.current
-        if (cb) cb(cleaned)
+        if (cb) {
+          // v0.7.4 — pass the chunk-level confidence so the
+          // SpeechProvider can gate the live / preview / drop
+          // pipeline tiers. Default to 1.0 when Deepgram omits the
+          // field (rare; happens on some special message types).
+          const conf = typeof alt?.confidence === 'number'
+            ? Math.max(0, Math.min(1, alt!.confidence!))
+            : 1
+          cb(cleaned, conf)
+        }
       } else {
         // Interim — only update the live preview field.
         setInterimTranscript(cleaned)
@@ -407,7 +423,7 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
   )
 
   const startListening = useCallback(
-    (onResult?: (text: string) => void) => {
+    (onResult?: (text: string, confidence: number) => void) => {
       // eslint-disable-next-line no-console
       console.log('[deepgram-hook] startListening() called. isSupported =', isSupported)
       if (!isSupported) {

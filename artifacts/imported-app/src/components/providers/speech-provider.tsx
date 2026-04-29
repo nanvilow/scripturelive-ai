@@ -3,8 +3,11 @@
 import { useEffect, useCallback, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { bootstrapRuntimeKeys } from '@/lib/runtime-keys'
-import { detectBestReference } from '@/lib/bibles/reference-engine'
+import { detectBestReference, parseExplicitReference } from '@/lib/bibles/reference-engine'
 import { lookupRange, lookupVerse, isTranslationBundled } from '@/lib/bibles/local-bible'
+// v0.7.4 — chapter metadata for "next chapter" / "previous chapter"
+// voice commands. Same JSON the reference engine uses for validation.
+import bibleStructure from '@/data/bible-structure.json'
 import { detectCommand, type VoiceCommand } from '@/lib/voice/commands'
 import { pickBestVerse, type VerseLine } from '@/lib/voice/speaker-follow'
 // v0.5.45 — TRIPLE-ENGINE WITH AUTO-FALLBACK CHAIN.
@@ -158,7 +161,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // Holds the latest stableProcessCallback so the fallback path can
   // re-arm the next engine's startListening with the same transcript
   // handler.
-  const lastCallbackRef = useRef<((text: string) => void) | null>(null)
+  const lastCallbackRef = useRef<((text: string, confidence: number) => void) | null>(null)
   // One-shot guards so each handoff toast only fires once per
   // session and direction (e.g. dg->whisper toast, whisper->browser
   // toast).
@@ -188,8 +191,8 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   const pendingStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scheduleEngineStart = (
     target: EngineName,
-    handle: { startListening: (cb?: (t: string) => void) => void },
-    cb: ((text: string) => void) | null,
+    handle: { startListening: (cb?: (t: string, confidence: number) => void) => void },
+    cb: ((text: string, confidence: number) => void) | null,
     label: string,
   ) => {
     const gen = ++engineSwitchGenRef.current
@@ -463,7 +466,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   const REF_DEDUPE_TTL_MS = 30_000
 
   // Use a ref-based callback so the hook always calls the latest version
-  const processCallbackRef = useRef<(text: string) => Promise<void>>(async () => {})
+  const processCallbackRef = useRef<(text: string, confidence: number) => Promise<void>>(async () => {})
 
   // Track the spoken-text searches we've already attempted so we don't spam
   // the search API every couple of words as the transcript grows.
@@ -482,6 +485,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // (otherwise the just-spoken command words would briefly score
   // higher than the verse text and yank the highlight away).
   const speakerFollowSuspendedUntilRef = useRef<number>(0)
+
+  // v0.7.4 — Speaker-Follow anti-rewind: timestamp of the last
+  // FORWARD highlight switch. pickBestVerse reads this to suppress
+  // backward jumps inside `antiRewindMs` (default 1500 ms) so the
+  // highlight doesn't yank back to a previous verse on a single noisy
+  // transcript chunk.
+  const lastSpeakerSwitchAtRef = useRef<number>(0)
 
   /**
    * Dispatch a recognised voice command against the Zustand store.
@@ -572,6 +582,122 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         const slide = liveIdx >= 0 ? slides[liveIdx] : null
         const max = slide?.content?.length ? slide.content.length - 1 : 0
         s.setLiveActiveVerseIndex(Math.min(max, s.liveActiveVerseIndex + 1))
+        break
+      }
+      // ── v0.7.4 — chapter navigation ───────────────────────────────
+      // "next chapter" / "previous chapter" jumps the live output to
+      // chapter ±1 of whatever book is currently live. Reads the live
+      // slide title (e.g. "John 3:16") to recover book + chapter,
+      // validates against bibleStructure (so "Revelation 22" + next
+      // doesn't try to load chapter 23), and loads the WHOLE next
+      // chapter so the operator can use auto-scroll / speaker-follow
+      // to walk through it. Fails gracefully with a toast if there's
+      // no live verse-passage to anchor against.
+      case 'next_chapter':
+      case 'previous_chapter': {
+        const slide = liveIdx >= 0 ? slides[liveIdx] : null
+        if (!slide || slide.type !== 'verse' || !slide.title) {
+          toast.error('Chapter navigation needs a live Bible passage', { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const ref = parseExplicitReference(slide.title)
+        if (!ref) {
+          toast.error(`Cannot parse current passage: ${slide.title}`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const dir = cmd.kind === 'next_chapter' ? 1 : -1
+        const targetChapter = ref.chapter + dir
+        const struct = (bibleStructure as unknown as Record<string, number[]>)[ref.book]
+        if (!struct || targetChapter < 1 || targetChapter > struct.length) {
+          toast.error(
+            `${ref.book} has no ${cmd.kind === 'next_chapter' ? 'chapter ' + targetChapter : 'previous chapter'}`,
+            { duration: 2000, position: 'bottom-right' },
+          )
+          break
+        }
+        const verseCount = struct[targetChapter - 1] ?? 1
+        const tx = s.selectedTranslation
+        const refKey = `${ref.book} ${targetChapter}:1${verseCount > 1 ? `-${verseCount}` : ''}`
+        let textOut: string | null = null
+        const r = lookupRange(ref.book, targetChapter, 1, verseCount, tx)
+        if (r) textOut = r.text
+        if (!textOut && !isTranslationBundled(tx)) {
+          try {
+            const v = await fetchBibleVerse(refKey, tx)
+            if (v) textOut = v.text
+          } catch { /* fall through */ }
+        }
+        if (!textOut) {
+          toast.error(`Could not load ${refKey}`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const slideNew = {
+          id: `slide-${Date.now()}`,
+          type: 'verse' as const,
+          title: refKey,
+          subtitle: tx,
+          content: textOut.split('\n').filter(Boolean),
+          background: s.settings.congregationScreenTheme,
+        }
+        const cur = useAppStore.getState().slides
+        const next = cur.length > 0 ? [...cur, slideNew] : [slideNew]
+        const idx = next.length - 1
+        useAppStore.getState().setSlides(next)
+        useAppStore.getState().setPreviewSlideIndex(idx)
+        useAppStore.getState().setLiveSlideIndex(idx)
+        useAppStore.getState().setIsLive(true)
+        useAppStore.getState().setLiveActiveVerseIndex(0)
+        break
+      }
+      // ── v0.7.4 — "the bible says <ref>" → STANDBY only ────────────
+      // Same lookup as go_to_reference but routes the loaded passage
+      // to the operator's PREVIEW slot only — never to Live, even
+      // when Auto Go-Live is on. Lets a preacher cue up a verse
+      // mid-sermon without hijacking the screen ("the bible says
+      // John three sixteen…" → John 3:16 sits in preview, operator
+      // hits Enter to push it live when ready).
+      case 'bible_says': {
+        if (!cmd.reference) break
+        const r = cmd.reference
+        const refKey = `${r.book} ${r.chapter}:${r.verseStart}${
+          r.verseEnd && r.verseEnd !== r.verseStart ? `-${r.verseEnd}` : ''
+        }`
+        let textOut: string | null = null
+        const tx = s.selectedTranslation
+        const vEnd = r.verseEnd ?? r.verseStart
+        if (vEnd > r.verseStart) {
+          const rr = lookupRange(r.book, r.chapter, r.verseStart, vEnd, tx)
+          if (rr) textOut = rr.text
+        } else {
+          const v = lookupVerse(r.book, r.chapter, r.verseStart, tx)
+          if (v) textOut = v
+        }
+        if (!textOut) {
+          try {
+            const v = await fetchBibleVerse(refKey, tx)
+            if (v) textOut = v.text
+          } catch { /* ignore */ }
+        }
+        if (!textOut) {
+          toast.error(`Could not load ${refKey}`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const slide = {
+          id: `slide-${Date.now()}`,
+          type: 'verse' as const,
+          title: refKey,
+          subtitle: tx,
+          content: textOut.split('\n').filter(Boolean),
+          background: s.settings.congregationScreenTheme,
+        }
+        const cur = useAppStore.getState().slides
+        const next = cur.length > 0 ? [...cur, slide] : [slide]
+        const idx = next.length - 1
+        useAppStore.getState().setSlides(next)
+        useAppStore.getState().setPreviewSlideIndex(idx)
+        // Intentional: do NOT setLiveSlideIndex / setIsLive here.
+        // Standby = preview slot only. Operator confirms with Enter
+        // or the Go Live button.
         break
       }
       case 'autoscroll_start': s.setAutoScrollEnabled(true); break
@@ -673,10 +799,33 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
 
   // Update the ref in an effect (not during render) to satisfy ESLint react-hooks/refs
   useEffect(() => {
-    processCallbackRef.current = async (text: string) => {
+    processCallbackRef.current = async (text: string, confidence: number) => {
       if (!text.trim()) return
 
       const state = useAppStore.getState()
+      // v0.7.4 — Confidence-tier gate. Three bands:
+      //   • confidence < drop  → drop entirely (no detection, no
+      //     command pre-pass). The chunk still appears in the
+      //     operator's transcript via the hook's internal append —
+      //     that's intentional for diagnostics; only the auto-fire
+      //     pipeline is suppressed.
+      //   • [drop, live)       → preview tier: same — visible in
+      //     transcript, NOT processed for commands or references.
+      //   • >= live            → full pipeline as before.
+      // Defaults: drop 0.30 / live 0.70. Operator-tunable in Settings.
+      const dropT = state.settings.transcriptDropThreshold ?? 0.30
+      const liveT = state.settings.transcriptLiveThreshold ?? 0.70
+      if (confidence < liveT) {
+        // Both DROP and PREVIEW tiers terminate here. The hook has
+        // already appended the chunk to its internal transcript ref;
+        // we deliberately leave it visible to the operator (helps
+        // them notice when the mic is being mis-heard) but skip all
+        // command + reference processing. _dropT is read so future
+        // diagnostics or visual styling can use it without churn.
+        void dropT
+        state.setDetectionStatus('idle')
+        return
+      }
       state.setDetectionStatus('processing')
 
       // ── v0.5.52 — Voice Command pre-pass (commands.ts) ─────────────
@@ -773,7 +922,15 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             // Reset speaker-follow / auto-scroll cursor on new passage.
             useAppStore.getState().setLiveActiveVerseIndex(0)
             const autoLiveOn2 = state.autoLive || state.settings.autoGoLiveOnDetection
-            if (autoLiveOn2 && v2.confidence >= 90) {
+            // v0.7.4 — Auto-go-live threshold lowered 90 → 70 to
+            // align with the new transcriptLiveThreshold tier.
+            // The transcript chunk that produced this v2 detection
+            // already passed the 0.70 confidence gate above, and v2
+            // adds its own ≥80 detection floor; the prior 90 cutoff
+            // was an artifact of pre-tier days when low-confidence
+            // chunks reached this code path. 70 matches the operator
+            // spec ("≥70% live").
+            if (autoLiveOn2 && v2.confidence >= 70) {
               const slide = {
                 id: `slide-${Date.now()}`,
                 type: 'verse' as const,
@@ -958,8 +1115,10 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   })
 
   // Stable wrapper that delegates to the latest processCallbackRef
-  const stableProcessCallback = useCallback((text: string) => {
-    processCallbackRef.current(text)
+  // v0.7.4 — now forwards the per-chunk confidence (0..1) so the
+  // tier gate inside processCallbackRef can run.
+  const stableProcessCallback = useCallback((text: string, confidence: number) => {
+    processCallbackRef.current(text, confidence)
   }, [])
 
   // Keep the global mic-id mirror in sync so the Deepgram engine can
@@ -1083,9 +1242,18 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     const result = pickBestVerse(tail, verses, {
       currentIndex: liveActiveVerseIndexSF,
       switchThreshold: 0.20,
-      minDelta: 0.05,
+      // v0.7.4 — rely on speaker-follow.ts defaults (minDelta 0.08,
+      // antiRewindMs 1500). Pass the last-switch timestamp so the
+      // anti-rewind guard can suppress backward flips on a single
+      // noisy chunk.
+      lastSwitchAt: lastSpeakerSwitchAtRef.current,
     })
     if (result.shouldSwitch && result.bestIndex != null && result.bestIndex !== liveActiveVerseIndexSF) {
+      // Only stamp lastSwitchAt on FORWARD progress so the anti-rewind
+      // window is anchored to the most recent advance.
+      if (liveActiveVerseIndexSF === null || result.bestIndex > liveActiveVerseIndexSF) {
+        lastSpeakerSwitchAtRef.current = Date.now()
+      }
       setLiveActiveVerseIndexSF(result.bestIndex)
     }
   }, [

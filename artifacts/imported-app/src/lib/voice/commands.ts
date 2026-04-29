@@ -21,7 +21,10 @@ import { parseExplicitReference, type DetectedReference } from '@/lib/bibles/ref
 export type CommandKind =
   | 'next_verse'
   | 'previous_verse'
+  | 'next_chapter'
+  | 'previous_chapter'
   | 'go_to_reference'
+  | 'bible_says'
   | 'scroll_up'
   | 'scroll_down'
   | 'autoscroll_start'
@@ -61,10 +64,35 @@ const PATTERNS: Pattern[] = [
     kind: 'previous_verse',
     label: 'Previous verse',
   },
+  // v0.7.4 — Chapter navigation. Placed BEFORE the bare "next" /
+  // "previous" triggers above so the longer "next chapter" pattern
+  // wins the leading-position match. (PATTERNS is iterated in order.)
+  {
+    triggers: ['next chapter'],
+    kind: 'next_chapter',
+    label: 'Next chapter',
+  },
+  {
+    triggers: ['previous chapter', 'prev chapter', 'last chapter'],
+    kind: 'previous_chapter',
+    label: 'Previous chapter',
+  },
   {
     triggers: ['go to', 'goto', 'open', 'show', 'display', 'jump to', 'turn to'],
     kind: 'go_to_reference',
     label: 'Go to reference',
+    takesReference: true,
+  },
+  // v0.7.4 — "the bible says <ref>" is a STANDBY hot-trigger: parses
+  // the following text as an explicit reference and routes the result
+  // to the operator's preview slot only — it never auto-fires Live,
+  // even when Auto Go-Live is on. Lets a preacher cue up a passage
+  // mid-sermon ("the bible says John three sixteen…") without
+  // hijacking the live output.
+  {
+    triggers: ['the bible says', 'bible says', 'scripture says'],
+    kind: 'bible_says',
+    label: 'Standby',
     takesReference: true,
   },
   {
@@ -171,10 +199,16 @@ export function detectCommand(utterance: string): VoiceCommand | null {
         if (!after) return null
         const ref = parseExplicitReference(after)
         if (!ref) return null
+        // v0.7.4 — kind-aware label so "the bible says" surfaces as
+        // a distinct standby toast ("Standby: John 3:16") rather than
+        // looking like a regular Go To.
+        const label = pat.kind === 'bible_says'
+          ? `Standby: ${ref.reference}`
+          : `Go to ${ref.reference}`
         return {
           kind: pat.kind,
           confidence: 95,
-          label: `Go to ${ref.reference}`,
+          label,
           reference: ref,
         }
       }

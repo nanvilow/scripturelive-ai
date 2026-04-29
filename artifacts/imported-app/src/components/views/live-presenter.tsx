@@ -27,6 +27,7 @@ import {
   Play,
   Pause,
   Footprints,
+  Zap,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -207,6 +208,7 @@ export function LivePresenterView() {
     isLive, setIsLive,
     ndiConnected, setNdiConnected,
     settings, setCurrentView,
+    updateSettings,
   } = useAppStore()
 
   // v0.5.52 — auto-scroll + speaker-follow + highlight color wiring
@@ -588,11 +590,34 @@ export function LivePresenterView() {
                 <span className="text-sm font-semibold text-foreground">Live Output</span>
                 {liveSlide && <Badge variant="destructive" className="text-[10px] gap-1"><span className="live-indicator inline-block h-1.5 w-1.5 rounded-full bg-white" /> ON AIR</Badge>}
                 {!liveSlide && isLive && <Badge variant="secondary" className="text-[10px]">Black</Badge>}
+                {/* v0.7.4 — Auto Go-Live quick toggle. Mirror of the
+                    same setting in the Scripture-Detection panel so
+                    the operator can flip it without leaving the Live
+                    Presenter. Both buttons drive
+                    settings.autoGoLiveOnDetection. */}
+                <button
+                  type="button"
+                  onClick={() => updateSettings({ autoGoLiveOnDetection: !settings.autoGoLiveOnDetection })}
+                  className={cn(
+                    'ml-auto inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-medium transition-colors',
+                    settings.autoGoLiveOnDetection
+                      ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                      : 'bg-muted border-border text-muted-foreground hover:bg-muted/80',
+                  )}
+                  title={
+                    settings.autoGoLiveOnDetection
+                      ? 'Auto Go-Live ON — detected verses push live automatically. Click to disable.'
+                      : 'Auto Go-Live OFF — detected verses surface in the preview slot only. Click to enable.'
+                  }
+                >
+                  <Zap className="h-3 w-3" />
+                  Auto {settings.autoGoLiveOnDetection ? 'ON' : 'OFF'}
+                </button>
                 <button
                   type="button"
                   onClick={() => setSpeakerFollowEnabled(!speakerFollowEnabled)}
                   className={cn(
-                    'ml-auto inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-medium transition-colors',
+                    'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-medium transition-colors',
                     speakerFollowEnabled
                       ? 'bg-primary/15 border-primary/30 text-primary'
                       : 'bg-muted border-border text-muted-foreground hover:bg-muted/80',
