@@ -827,13 +827,33 @@ export function NdiOutputPanel() {
                     Full ↔ Lower-Third reloads the iframe immediately. */}
                 <iframe
                   key={`ndi-preview:${ndiDisplayMode}:${lowerThirdPosition}:${lowerThirdHeightSetting}:${ndiLowerThirdScale ?? 1}`}
-                  src={`/api/output/congregation?ndi=1&transparent=1${
-                    ndiDisplayMode === 'lower-third' ? '&lowerThird=1' : ''
-                  }${
-                    ndiDisplayMode === 'lower-third' && lowerThirdPosition === 'top' ? '&position=top' : ''
-                  }&lh=${encodeURIComponent(lowerThirdHeightSetting)}&sc=${encodeURIComponent(
-                    String(typeof ndiLowerThirdScale === 'number' ? ndiLowerThirdScale : 1),
-                  )}`}
+                  src={(() => {
+                    const p = new URLSearchParams()
+                    p.set('ndi', '1')
+                    p.set('transparent', '1')
+                    if (ndiDisplayMode === 'lower-third') {
+                      p.set('lowerThird', '1')
+                      if (lowerThirdPosition === 'top') p.set('position', 'top')
+                      // v0.7.5.1 — only emit lh/sc in lower-third mode so
+                      // full-screen captures don't carry stray params, and
+                      // never emit `lh=undefined` if the bucket is unset.
+                      if (
+                        lowerThirdHeightSetting === 'sm' ||
+                        lowerThirdHeightSetting === 'md' ||
+                        lowerThirdHeightSetting === 'lg'
+                      ) {
+                        p.set('lh', lowerThirdHeightSetting)
+                      }
+                      if (
+                        typeof ndiLowerThirdScale === 'number' &&
+                        ndiLowerThirdScale >= 0.5 &&
+                        ndiLowerThirdScale <= 2
+                      ) {
+                        p.set('sc', String(ndiLowerThirdScale))
+                      }
+                    }
+                    return `/api/output/congregation?${p.toString()}`
+                  })()}
                   title="NDI Live Preview"
                   className="absolute inset-0 w-full h-full border-0"
                 />
