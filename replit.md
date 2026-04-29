@@ -2,6 +2,59 @@
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It supports live congregation output, NDI broadcasting, and advanced speech recognition. The system targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service.
 
+## v0.7.4.1 — Mobile entry point for the Admin Panel (Apr 2026)
+
+Tiny, surgical addition on top of v0.7.4. The owner asked: *"Can I
+get to my Admin Panel on the go from my phone, without opening the
+.exe?"*
+
+The admin panel itself is already a web page rendered by the Next.js
+server, so the deployed URL has always served it from any browser.
+The blocker was the trigger: the only way to OPEN the panel was the
+**Ctrl+Shift+P** keyboard shortcut, which is impossible to fire on a
+phone touch screen.
+
+### Fix — URL-parameter trigger
+
+Added a second entry point in `LicenseProvider`: when the page is
+loaded with **`?admin=1`** (or `#admin` in the hash), the admin
+modal pops automatically. After opening, we strip the `admin` query
+parameter from the URL with `history.replaceState` so a manual
+refresh inside the panel doesn't keep re-popping the modal once the
+operator has closed it.
+
+Workflow on the road:
+
+1. Bookmark `https://your-deployed-domain.com/?admin=1` on the phone
+   home screen (Android: "Add to Home screen"; iOS: Share → Add to
+   Home Screen).
+2. Tap the bookmark → admin password gate appears (the same modal
+   the desktop Ctrl+Shift+P opens).
+3. Unlock → full Admin Panel: generate activation codes, renew,
+   cancel, view activations / payments, etc.
+
+### Security note
+
+This does NOT bypass any auth. All admin operations still hit
+`/api/license/admin/*` which is gated by `requireAdmin` →
+`SCRIPTURELIVE_ADMIN_PASSWORD` (or operator-set password) →
+HttpOnly `sl_admin_session` cookie with a 12-hour sliding window.
+The URL marker only changes which UI surface is rendered; the
+backend gate is unchanged.
+
+If your deployed URL is publicly indexed and you're concerned about
+discovery, set a strong admin password in the operator config (or
+the `SCRIPTURELIVE_ADMIN_PASSWORD` env var) — the modal would still
+prompt for it before showing any data.
+
+### Files
+
+- `replit.md` (changelog)
+- `artifacts/imported-app/package.json` (0.7.4 → 0.7.4.1)
+- `artifacts/imported-app/src/components/license/license-provider.tsx`
+  (URL-parameter admin-modal trigger; cleans the query string after
+  opening so a refresh doesn't re-pop)
+
 ## v0.7.4 — Voice/detection polish + Live Output Auto Go-Live quick toggle (Apr 2026)
 
 Picks up the items deferred from v0.7.3. Five user-facing changes,

@@ -136,6 +136,41 @@ export function LicenseProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // v0.7.5-dev — Mobile / no-keyboard entry point for the admin panel.
+  //
+  // The Ctrl+Shift+P shortcut above is impossible to fire on a phone
+  // touch keyboard. Operators on the road need to mint activation
+  // codes / renew / cancel from a phone browser without opening the
+  // desktop .exe. So we additionally pop the admin modal whenever
+  // the page is loaded with `?admin=1` (or `#admin`) in the URL.
+  //
+  // Usage: bookmark `https://your-deployed-domain.com/?admin=1` on
+  // the phone home screen, tap → admin password gate → full panel.
+  // The same admin password protects /api/license/admin/* on the
+  // server, so opening the modal does not bypass any auth.
+  //
+  // We also strip the marker from the URL after opening so a refresh
+  // doesn't keep re-popping the modal once you've closed it. Runs
+  // once on mount; harmless on Electron (the URL doesn't have the
+  // marker there).
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const url = new URL(window.location.href)
+      const wantsAdmin =
+        url.searchParams.get('admin') === '1' ||
+        window.location.hash === '#admin'
+      if (!wantsAdmin) return
+      setAdminOpen(true)
+      // Clean the URL so a manual refresh inside the panel doesn't
+      // re-trigger after the user has closed it.
+      url.searchParams.delete('admin')
+      const cleaned = url.pathname + (url.search ? url.search : '') +
+        (window.location.hash === '#admin' ? '' : window.location.hash)
+      window.history.replaceState(null, '', cleaned)
+    } catch { /* malformed URL — ignore */ }
+  }, [])
+
   const isActive = status.state === 'active' || status.state === 'trial'
   const isTrial = status.state === 'trial'
   const isLocked = !isActive && status.state !== 'unknown'
