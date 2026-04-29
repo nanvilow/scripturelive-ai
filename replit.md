@@ -1,5 +1,34 @@
 # Recent Changes
 
+## v0.7.13 — Central telemetry backend + admin Records dashboard + accurate Last Seen (Apr 29, 2026)
+
+Two operator complaints rolled into one bundled release:
+1. The **Last Seen** column in the admin CODES tab was inaccurate — same problem with the NDI status indicator. Both stalled at the value last produced by the OPERATOR's PC and never reflected what was happening on the customer machines that had actually activated those codes.
+2. The **Reference Code** section (red-marked in the Pastebin handoff) was unused noise. The operator wanted real-time **Records** analytics — active users, total installs, system status, errors — in the same slot.
+
+Both have a shared root cause: every install was a sealed island. `license.json` lives on each PC, and `lastSeenAt` only ever updated on the device that activated the code. There was no central pipe through which a customer machine in Kumasi could tell the operator's machine in Accra that it was online.
+
+**New `/api/telemetry/*` endpoints on the central api-server (`artifacts/api-server`, deployed to `scripturelive.replit.app`)** — Brand-new server-side surface backed by three Postgres tables (`telemetry_installs`, `telemetry_heartbeats`, `telemetry_errors`) defined in `lib/db/src/schema/telemetry.ts`:
+- `POST /telemetry/install` — idempotent upsert per anonymous install ID. Records first-seen / last-seen / app version / OS.
+- `POST /telemetry/heartbeat` — insert + bumps `installs.last_seen_at`. Carries optional `code` (so we can answer "when was code XYZ last seen?"), `location` (already-anonymized "City, Country" string from `captureGeoFromRequest`), and an open-ended `features` JSON map.
+- `POST /telemetry/error` — accepts an `errorType + message + stack` triple for future error reporting wiring.
+- `POST /telemetry/codes-last-seen` — admin-gated by `x-master-key`. Returns `{ code → { lastSeenAt, lastSeenLocation, lastSeenIp } }` for the codes the caller asks about.
+- `GET /telemetry/records` — admin-gated. Aggregated dashboard payload: active-now (5-min window), total installs, sessions today, errors today, top features (today), 20 most-recent errors (24h), system status (server/AI/NDI heuristics).
+- Privacy: the only ID stored is the anonymous random UUID minted by `storage.ts` on first launch. IPs are truncated to /24 (IPv4) / /48 (IPv6) before any DB write — no PII, no email/phone, no device fingerprint.
+
+**Desktop client (`artifacts/imported-app`) — install ping + heartbeat from inside the embedded Next.js server** — New `src/lib/licensing/telemetry-client.ts` is the single chokepoint for outbound telemetry. All POSTs are fire-and-forget with a 4-second AbortController so a slow / unreachable backend can never delay licensing or transcription. Wired into:
+- `GET /api/license/status` (already polled every ~30s by the renderer + on focus). On every poll: fires the heartbeat (always — trial / expired installs still register as "active now"); on the first poll per install, also fires the one-shot install ping. Bookkeeping flag `telemetryInstallPingedAt` lives in `license.json` so we never re-send.
+- `storage.ts` gains `shouldSendTelemetryInstallPing()` / `markTelemetryInstallPinged()` helpers and the corresponding `LicenseFile.telemetryInstallPingedAt` schema field. The flag survives upgrades; reinstalls (which mint a new install UUID) re-ping cleanly.
+
+**Admin CODES tab — accurate Last Seen via central merge (`src/app/api/license/admin/codes/route.ts`)** — After building the local rows, the route now POSTs every code to `/telemetry/codes-last-seen` (using this install's `masterCode` as the auth header), then merges any newer central `lastSeenAt + lastSeenLocation + lastSeenIp` into each row before responding. Older central values are ignored (clock skew protection). Telemetry outage = local-only fallback, never an admin-panel error.
+
+**Admin Overview tab — Reference Code REMOVED, Records dashboard ADDED (`src/components/license/admin-modal.tsx`)** — Surgical replacement:
+- DELETED: the entire Reference Code `<section>` (≈70 lines), plus the `refCode / refExpiresAt / refBusy / refNow` state, the 1Hz countdown `useEffect`, and the `generateReferenceCode` callback. The customer-side `/api/license/activate-reference` HMAC redemption endpoint and lock-overlay form are LEFT INTACT (no breakage for any installed customer who already typed in a bucket code) — only the operator's mint UI is gone.
+- DELETED: `src/app/api/license/admin/reference-code/route.ts` (the operator-side mint endpoint, now orphaned).
+- ADDED: a new violet-bordered Records section, polled every 10s while Overview is open, fed by `GET /api/license/admin/records`. Renders four KPI cards (Active Now / Total Installs / Sessions Today / Errors Today, color-coded green/amber/red), three system-status pills (Server / AI / NDI with ok/idle/down state dots), a "Most-used features (today)" chip cluster, and a scrollable "Recent errors (24h)" list with timestamp + install-id prefix + version + code + message.
+
+**Schema migration** — `pnpm --filter @workspace/db run push` was run as part of this release; the three new telemetry tables are live in the Replit Postgres backing the deployed api-server. End-to-end smoke tested locally (install → heartbeat → codes-last-seen lookup → records aggregate, all returning `{ ok: true }` with the expected shape).
+
 ## v0.7.12 — SMTP port-fallback + lossless deactivation + persistent NDI source + typecheck cleanup (Apr 29, 2026)
 
 **SMTP "Unexpected socket close" fix (`src/lib/licensing/notifications.ts`)** — Customer activations were failing with `Unexpected socket close | attempt=3/3`. The retry loop was firing correctly but all 3 attempts hit the same wall — port 587 STARTTLS to Gmail — within ~9 seconds, so Gmail's per-IP rate limiter (which needs ≥30s to release a flagged egress IP) had no chance to recover. Three changes:
