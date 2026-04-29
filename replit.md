@@ -1,3 +1,26 @@
+# Recent Changes
+
+## v0.7.11 — Move-to-another-PC license transfer + NDI preview fixes + MoMo wallet cleanup (Apr 29, 2026)
+
+**License transfer ("Move to Another PC")** — Customers reformatting a PC, swapping laptops, or upgrading hardware previously LOST any remaining time on their activation code: the local "Deactivate" button only nulled the local subscription, the activation row stayed `isUsed: true`, and the code refused to re-activate anywhere. New flow:
+- `storage.transferActivationByCode(code)` — flips `isUsed=false`, sets `transferredAt`, increments `transferCount`, preserves `subscriptionExpiresAt` so the absolute deadline carries over (no time extension, no time loss).
+- `activateCode()` — when an existing row has `transferredAt` set AND `!isUsed`, treats it as a transfer-in: reuses the preserved `subscriptionExpiresAt` as the absolute deadline, refuses if it's already past, otherwise activates with exactly the remaining time intact.
+- `/api/license/deactivate` — accepts `{ transfer: true }`. When set, returns `{ transferredCode }` so the UI can show the customer the code they need to type in on the new install. Without the flag, the existing destructive path that lock-overlay relies on is unchanged.
+- Settings UI — new blue "Move to Another PC" button alongside the existing red "Deactivate on this PC". Confirmation copy makes the difference explicit (transfer = keep remaining time, deactivate = burn the code permanently). On success a Dialog shows the activation code in big monospace text with a Copy button.
+
+**NDI preview overscale + flash fix (`ndi-output-panel.tsx`, `congregation/route.ts`)** — Operator dragging the lower-third height/scale sliders saw the preview iframe instantly jump to a giant size and the live BrowserWindow flicker/restart for every pixel of slider movement. Two regressions:
+- Restart effect deps included the slider values, so EVERY drag tick destroyed and re-created the native NDI window. Trimmed deps to `[isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName]` — sliders no longer trigger restarts; the inner `<iframe src=…?lh=&sc=>` reload covers the in-flight value change.
+- `NdiPreviewSurface` froze its iframe `src` on first mount (`initialSrcRef`) and moved the `transform: scale(...)` onto the wrapping `<div>` (iframe stays `100%/100%` inside). Slider drag now only updates the wrapper's CSS transform — no iframe reload, no jump-to-100%-then-rescale flash.
+- `congregation/route.ts` template-literal precedence flipped: `st.lowerThirdHeight ?? FORCE_LH` instead of `FORCE_LH ?? st.lowerThirdHeight`. The forced cold-start defaults are now only used as a true fallback when the persisted state has no value; live slider edits propagate immediately.
+
+**MoMo wallet migration** — Customers were being told to send MoMo to the dead `0530686367` wallet because operators who had customised the recipient via Admin Settings still had the old number persisted in their `~/.scripturelive/license.json`. Added `migrateStaleConfigNumbers()` in `storage.load()`: on first launch of v0.7.11, any `momoNumber/whatsappNumber/adminPhone` field equal to `0530686367` is silently rewritten to `0246798526` (the current default), then persisted on the next mutation. No-op for installs that never customised these fields and no-op for installs already on the new wallet.
+
+**Payment code TTL: 7 days → 30 minutes** — The v0.7.3 bump to a 7-day window was too generous: customers held generated codes for days then tried to reuse them after the wallet had moved on, generating support load. Tightened `PAYMENT_CODE_TTL_MS` to 30 minutes — enough for a real customer to open MoMo, type the code as the reference, and confirm the transfer. Stale leads get a clear "code expired, start a new payment" prompt and can generate a fresh code instantly.
+
+## v0.7.10 — Trial display fix (Apr 29, 2026)
+
+Trial timer was *displaying* like it reset on app restart even though the on-disk usage counter was always correct. `useTickingTrialMsLeft` now takes `(serverMsLeft, isTrial, isListening)`; the 1Hz interval only runs while the mic is detecting, decrements from a `baseRef` anchored on every fresh server snapshot, freezes on Stop, and the badge appends "(paused)" when the mic is off.
+
 # Overview
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service. Key capabilities include live congregation output, NDI broadcasting, advanced speech recognition with AI semantic matching, and a comprehensive admin dashboard for managing activations and user licenses.

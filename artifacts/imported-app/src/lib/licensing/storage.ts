@@ -248,7 +248,17 @@ const TRIAL_DURATION_MS = 60 * 60 * 1000 // 1 hour
 // the buyer's MoMo deposit couldn't be confirmed against them.
 // 7 days is enough cushion to cover a long weekend without a
 // flood of stale "WAITING_PAYMENT" rows.
-const PAYMENT_CODE_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
+//
+// v0.7.11 — Tightened from 7 days → 30 minutes per operator request.
+// Customers were holding on to a generated payment code for days
+// without following through, then trying to "use" it after the
+// MoMo wallet had moved on, leading to support load. 30 minutes is
+// enough time for a real customer to open MoMo, type the code as
+// the reference, and confirm the transfer — anything longer is
+// almost certainly a stale lead. Customers who took too long get
+// a clear "code expired, start a new payment" prompt and can
+// generate a fresh code in seconds.
+const PAYMENT_CODE_TTL_MS = 30 * 60 * 1000 // 30 minutes
 
 let cache: LicenseFile | null = null
 
@@ -270,6 +280,50 @@ function freshFile(): LicenseFile {
 function ensureDir() {
   const dir = storageDir()
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+}
+
+// v0.7.11 — One-shot upgrade migration for stale MoMo wallet numbers.
+// The MoMo recipient was migrated from the old 0530686367 wallet to
+// the current 0246798526 wallet a couple of releases back; the
+// compiled-in default in plans.ts already points at the new number,
+// but operators who customised the recipient via the in-app Admin
+// Settings screen still have the OLD value persisted in their
+// license.json (config.momoNumber === '0530686367') — and the
+// payment modal renders that persisted value, so customers were
+// being asked to send MoMo to a wallet the church no longer owns.
+//
+// This migration silently rewrites every persisted '0530686367' to
+// '0246798526' on load, then persist() flushes the corrected file
+// back to disk on the next mutation. We touch all three phone-
+// number fields (momoNumber, whatsappNumber, adminPhone) so any
+// surface that still pointed at the dead wallet — payment modal,
+// WhatsApp escalation footer, admin SMS alerts — switches over in
+// one go on first launch of v0.7.11. No-op for installs that never
+// customised these fields (compiled defaults already correct) and
+// no-op for installs that already moved off 0530686367.
+const STALE_MOMO_NUMBER = '0530686367'
+const NEW_MOMO_NUMBER = '0246798526'
+function migrateStaleConfigNumbers(config: RuntimeConfig | undefined): RuntimeConfig | undefined {
+  if (!config) return config
+  let changed = false
+  const next: RuntimeConfig = { ...config }
+  if (next.momoNumber?.replace(/\D/g, '') === STALE_MOMO_NUMBER) {
+    next.momoNumber = NEW_MOMO_NUMBER
+    changed = true
+  }
+  if (next.whatsappNumber?.replace(/\D/g, '') === STALE_MOMO_NUMBER) {
+    next.whatsappNumber = NEW_MOMO_NUMBER
+    changed = true
+  }
+  if (next.adminPhone?.replace(/\D/g, '') === STALE_MOMO_NUMBER) {
+    next.adminPhone = NEW_MOMO_NUMBER
+    changed = true
+  }
+  if (changed) {
+    // eslint-disable-next-line no-console
+    console.log('[licensing] migrated stale MoMo wallet number from', STALE_MOMO_NUMBER, '→', NEW_MOMO_NUMBER)
+  }
+  return next
 }
 
 function load(): LicenseFile {
@@ -298,7 +352,7 @@ function load(): LicenseFile {
       paymentCodes: parsed.paymentCodes ?? [],
       activationCodes: parsed.activationCodes ?? [],
       notifications: parsed.notifications ?? [],
-      config: parsed.config ?? undefined,
+      config: migrateStaleConfigNumbers(parsed.config),
       // v0.7.5 — hydrate trial-usage counter from disk so the activity-
       // gated trial survives process restarts. Without this, every cold
       // start would silently reset the trial back to 0 minutes used.
