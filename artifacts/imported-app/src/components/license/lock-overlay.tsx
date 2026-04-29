@@ -22,7 +22,7 @@
 // "exit" affordance (closes any in-flight activation attempt and
 // confirms there is nothing to cancel).
 
-import { Lock, Sparkles, XCircle, KeyRound, Loader2 } from 'lucide-react'
+import { Lock, Sparkles, XCircle, KeyRound, Loader2, Flag, Check } from 'lucide-react'
 import { useState } from 'react'
 import { useLicense } from './license-provider'
 import { cn } from '@/lib/utils'
@@ -40,6 +40,16 @@ export function LiveTranscriptionLockOverlay() {
   const [refOpen, setRefOpen] = useState(false)
   const [refValue, setRefValue] = useState('')
   const [refBusy, setRefBusy] = useState(false)
+  // v0.7.14 — "Report Issue" inline form. Closes section 4 of the
+  // pastebin spec ("USER ISSUE REPORTING SYSTEM"). Sends the user's
+  // free-text description to /api/license/report-issue, which
+  // forwards it to the central /api/telemetry/error endpoint as
+  // errorType='user_report'. The admin Records dashboard surfaces
+  // it in the recent-errors panel within ~10s.
+  const [reportOpen, setReportOpen] = useState(false)
+  const [reportValue, setReportValue] = useState('')
+  const [reportBusy, setReportBusy] = useState(false)
+  const [reportSent, setReportSent] = useState(false)
   if (!isLocked) return null
 
   const hasSub = !!status.activeSubscription
@@ -210,6 +220,90 @@ export function LiveTranscriptionLockOverlay() {
             >
               ×
             </button>
+          </form>
+        )}
+      </div>
+
+      {/* v0.7.14 — Report Issue: optional user-side bug report.
+           When the user can't activate (rate-limited SMS, MoMo
+           dispute, unfamiliar error), this is their bridge to the
+           operator without going through WhatsApp / phone. */}
+      <div className="mt-3 w-full max-w-sm">
+        {!reportOpen ? (
+          <button
+            type="button"
+            onClick={() => { setReportOpen(true); setReportSent(false) }}
+            className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground underline-offset-2 hover:underline inline-flex items-center gap-1.5"
+          >
+            <Flag className="h-3 w-3" />
+            Report an issue
+          </button>
+        ) : reportSent ? (
+          <div className="text-[10px] font-medium uppercase tracking-wider text-emerald-300 inline-flex items-center gap-1.5">
+            <Check className="h-3 w-3" />
+            Sent — thank you. The operator has been notified.
+          </div>
+        ) : (
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault()
+              const message = reportValue.trim()
+              if (!message || reportBusy) return
+              setReportBusy(true)
+              try {
+                const r = await fetch('/api/license/report-issue', {
+                  method: 'POST',
+                  cache: 'no-store',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    message,
+                    context: `lock-overlay:${status.state}`,
+                  }),
+                })
+                if (r.ok) {
+                  setReportSent(true)
+                  setReportValue('')
+                  setReportOpen(false)
+                  // Auto-dismiss the "sent" badge after 6s so the
+                  // overlay doesn't permanently advertise it.
+                  setTimeout(() => setReportSent(false), 6000)
+                } else {
+                  toast.error('Could not send report — try again or contact support.')
+                }
+              } catch {
+                toast.error('Network error — could not reach the licensing service.')
+              } finally {
+                setReportBusy(false)
+              }
+            }}
+            className="flex flex-col gap-1.5 text-left"
+          >
+            <textarea
+              autoFocus
+              value={reportValue}
+              onChange={(e) => setReportValue(e.target.value.slice(0, 1500))}
+              placeholder="Describe the issue you're hitting (e.g. 'Paid via MoMo 2h ago, no SMS yet'). Up to 1500 chars."
+              rows={3}
+              className="w-full px-2.5 py-1.5 rounded-md text-[11px] bg-background/80 border border-border focus:outline-none focus:ring-1 focus:ring-emerald-400 text-foreground placeholder:text-muted-foreground/50 resize-none"
+            />
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] text-muted-foreground font-mono">{reportValue.length}/1500</span>
+              <div className="flex-1" />
+              <button
+                type="button"
+                onClick={() => { setReportOpen(false); setReportValue('') }}
+                className="text-[10px] text-muted-foreground hover:text-foreground px-2 h-7"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={reportBusy || !reportValue.trim()}
+                className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-violet-600 hover:bg-violet-500 text-white border border-violet-400/40 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {reportBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Send'}
+              </button>
+            </div>
           </form>
         )}
       </div>

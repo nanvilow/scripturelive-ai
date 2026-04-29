@@ -33,6 +33,14 @@ export const telemetryHeartbeats = pgTable(
   {
     id: serial("id").primaryKey(),
     installId: text("install_id").notNull(),
+    /** v0.7.14 — Per-app-launch UUID minted by the desktop client at
+     *  Next.js module-load time (effectively when the Electron app
+     *  starts) and held in memory until the process exits. Lets the
+     *  /telemetry/records endpoint derive per-session start/end
+     *  timestamps and an average-usage-time KPI without any explicit
+     *  session/start or session/end roundtrip. Older heartbeats (pre
+     *  v0.7.14) carry NULL here and are excluded from the average. */
+    sessionId: text("session_id"),
     code: text("code"),
     appVersion: text("app_version"),
     ipAnon: text("ip_anon"),
@@ -46,6 +54,7 @@ export const telemetryHeartbeats = pgTable(
     installIdx: index("telemetry_hb_install_idx").on(t.installId),
     codeIdx: index("telemetry_hb_code_idx").on(t.code),
     tsIdx: index("telemetry_hb_ts_idx").on(t.ts),
+    sessionIdx: index("telemetry_hb_session_idx").on(t.sessionId),
   }),
 );
 

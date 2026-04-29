@@ -27,6 +27,35 @@ export function telemetryUrl(): string {
 
 const TIMEOUT_MS = 4_000
 
+// v0.7.14 — Per-app-launch session identity. Minted ONCE per Node
+// process: the embedded Next.js standalone server starts when
+// Electron starts and exits when Electron exits, so a process =
+// a session. Heartbeats carry SESSION_ID so the central
+// /telemetry/records endpoint can derive avg session duration as
+// `max(ts) - min(ts)` per session_id.
+function mintSessionId(): string {
+  try {
+    // Node's crypto.randomUUID is available on every supported
+    // runtime; fall back to a Math.random scrap if for any reason
+    // it isn't (telemetry is best-effort, never throw).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const c = require('node:crypto') as { randomUUID?: () => string }
+    if (typeof c.randomUUID === 'function') return c.randomUUID()
+  } catch { /* fall through */ }
+  return (
+    'sess-' +
+    Date.now().toString(36) +
+    '-' +
+    Math.random().toString(36).slice(2, 10)
+  )
+}
+
+export const SESSION_ID: string = mintSessionId()
+export const SESSION_STARTED_AT: string = new Date().toISOString()
+export function getSessionInfo(): { sessionId: string; startedAt: string } {
+  return { sessionId: SESSION_ID, startedAt: SESSION_STARTED_AT }
+}
+
 async function postFireAndForget(path: string, body: unknown, headers?: Record<string, string>): Promise<void> {
   try {
     const ctrl = new AbortController()
@@ -58,13 +87,17 @@ export function pingInstall(p: InstallPingPayload): Promise<void> {
 
 export interface HeartbeatPayload {
   installId: string
+  /** v0.7.14 — per-app-launch session UUID. Defaults to the module-
+   *  level SESSION_ID if the caller doesn't pass one, so existing
+   *  call sites get session tracking automatically. */
+  sessionId?: string
   code?: string
   appVersion?: string
   location?: string
   features?: Record<string, number | boolean>
 }
 export function pingHeartbeat(p: HeartbeatPayload): Promise<void> {
-  return postFireAndForget('/heartbeat', p)
+  return postFireAndForget('/heartbeat', { sessionId: SESSION_ID, ...p })
 }
 
 export interface ErrorPayload {
@@ -124,6 +157,12 @@ export interface RecordsResp {
   activeNow?: number
   totalInstalls?: number
   sessionsToday?: number
+  /** v0.7.14 — average session duration today, in milliseconds.
+   *  Derived server-side as avg(max(ts)-min(ts)) per (install_id,
+   *  session_id) for sessions that produced ≥2 heartbeats today.
+   *  Single-heartbeat sessions are excluded so they don't drag the
+   *  average to ~0. Undefined when no qualifying sessions exist. */
+  avgSessionMs?: number
   errorsToday?: number
   topFeatures?: { name: string; count: number }[]
   recentErrors?: {

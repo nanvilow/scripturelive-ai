@@ -84,6 +84,10 @@ const installSchema = z.object({
 
 const heartbeatSchema = z.object({
   installId: z.string().min(8).max(128),
+  // v0.7.14 — per-app-launch session UUID. Optional for backward-
+  // compat with older clients (NULL session_id rows are excluded
+  // from avg-session-duration math).
+  sessionId: z.string().min(8).max(128).optional(),
   code: z.string().max(64).optional(),
   appVersion: z.string().max(32).optional(),
   location: z.string().max(128).optional(),
@@ -154,6 +158,7 @@ router.post("/telemetry/heartbeat", async (req, res) => {
 
     await db.insert(telemetryHeartbeats).values({
       installId: p.installId,
+      sessionId: p.sessionId ?? null,
       code: p.code ?? null,
       appVersion: p.appVersion ?? null,
       ipAnon,
@@ -288,7 +293,7 @@ router.get("/telemetry/records", async (req, res) => {
     );
     const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-    const [activeNow, totalInstalls, sessionsToday, errorsToday, recentErrs, topFeatureRows] =
+    const [activeNow, totalInstalls, sessionsToday, errorsToday, recentErrs, topFeatureRows, sessionDurationRows] =
       await Promise.all([
         db
           .select({ n: count() })
@@ -330,6 +335,27 @@ router.get("/telemetry/records", async (req, res) => {
           .from(telemetryHeartbeats)
           .where(gte(telemetryHeartbeats.ts, todayStart))
           .limit(5000),
+        // v0.7.14 — Per-session min/max ts for avg-session-duration
+        // KPI. Group by (install_id, session_id), take only sessions
+        // started today, and require ≥2 heartbeats so single-poll
+        // sessions don't drag the average to ~0. NULL session_id
+        // (older clients) is excluded by the WHERE clause.
+        db
+          .select({
+            installId: telemetryHeartbeats.installId,
+            sessionId: telemetryHeartbeats.sessionId,
+            minTs: sql<Date>`min(${telemetryHeartbeats.ts})`,
+            maxTs: sql<Date>`max(${telemetryHeartbeats.ts})`,
+            n: count(),
+          })
+          .from(telemetryHeartbeats)
+          .where(
+            and(
+              gte(telemetryHeartbeats.ts, todayStart),
+              sql`${telemetryHeartbeats.sessionId} is not null`,
+            ),
+          )
+          .groupBy(telemetryHeartbeats.installId, telemetryHeartbeats.sessionId),
       ]);
 
     const featureCounts: Record<string, number> = {};
@@ -351,12 +377,34 @@ router.get("/telemetry/records", async (req, res) => {
       .slice(0, 8)
       .map(([name, n]) => ({ name, count: n }));
 
+    // v0.7.14 — Avg session duration today, in ms. Only sessions with
+    // ≥2 heartbeats contribute (a single-heartbeat session has zero
+    // duration and would drag the avg to ~0). Sessions still in
+    // progress at request time are included with their CURRENT
+    // duration (max-min), which is what the operator wants — "people
+    // are right now using the app for X minutes on average".
+    let avgSessionMs: number | undefined;
+    {
+      const completed = sessionDurationRows.filter(
+        (r) => Number(r.n) >= 2 && r.minTs && r.maxTs,
+      );
+      if (completed.length > 0) {
+        const totalMs = completed.reduce((sum, r) => {
+          const min = r.minTs instanceof Date ? r.minTs : new Date(r.minTs);
+          const max = r.maxTs instanceof Date ? r.maxTs : new Date(r.maxTs);
+          return sum + Math.max(0, max.getTime() - min.getTime());
+        }, 0);
+        avgSessionMs = Math.round(totalMs / completed.length);
+      }
+    }
+
     res.json({
       ok: true,
       generatedAt: now.toISOString(),
       activeNow: activeNow[0]?.n ?? 0,
       totalInstalls: totalInstalls[0]?.n ?? 0,
       sessionsToday: Number(sessionsToday[0]?.n ?? 0),
+      avgSessionMs,
       errorsToday: errorsToday[0]?.n ?? 0,
       topFeatures,
       recentErrors: recentErrs.map((e) => ({
