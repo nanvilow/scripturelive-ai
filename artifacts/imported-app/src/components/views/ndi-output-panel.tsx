@@ -808,56 +808,38 @@ export function NdiOutputPanel() {
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">NDI live preview</div>
                 <div className="text-[10px] text-muted-foreground/70 hidden sm:block">vMix / OBS view</div>
               </div>
-              <div className="relative w-full" style={{ aspectRatio: '16 / 9' }}>
-                {/* v0.6.6 — Preview iframe MUST mirror the NDI BrowserWindow
-                    query string so what the operator sees here matches what
-                    Wirecast/vMix/OBS receive. Pre-v0.6.6 the iframe loaded
-                    `?ndi=1` only — it never received `?transparent=1` or
-                    `?lowerThird=1`/`?position=`, so toggling the lower-third
-                    or the Transparent switch updated the NDI feed but the
-                    preview kept showing the full-screen render. The keyed
-                    src forces the iframe to reload when any of those flags
-                    change so the next paint shows the new mode.
+              {/* v0.7.9 — TRUE WYSIWYG NDI preview. Pre-v0.7.9 the iframe
+                  filled the small ~360px-wide panel slot, which meant its
+                  internal viewport was ~360x202 px while the FrameCapture
+                  BrowserWindow that vMix/OBS actually receive runs at the
+                  native NDI resolution (1920x1080). The renderer's CSS
+                  uses `max-width: 68rem` on the .lt-box and a clamp(min,
+                  cqw/cqh, max) for font size — both of which produce
+                  DIFFERENT visual proportions at 360x202 vs 1920x1080:
 
-                    v0.6.8 — Now also mirrors the displayMode-driven
-                    lowerThird flag (the BrowserWindow ALWAYS gets
-                    `?transparent=1` for alpha-keying; `?lowerThird=1` is
-                    only sent when the operator picks lower-third mode).
-                    The preview key includes displayMode so flipping
-                    Full ↔ Lower-Third reloads the iframe immediately. */}
-                <iframe
-                  key={`ndi-preview:${ndiDisplayMode}:${lowerThirdPosition}:${lowerThirdHeightSetting}:${ndiLowerThirdScale ?? 1}`}
-                  src={(() => {
-                    const p = new URLSearchParams()
-                    p.set('ndi', '1')
-                    p.set('transparent', '1')
-                    if (ndiDisplayMode === 'lower-third') {
-                      p.set('lowerThird', '1')
-                      if (lowerThirdPosition === 'top') p.set('position', 'top')
-                      // v0.7.5.1 — only emit lh/sc in lower-third mode so
-                      // full-screen captures don't carry stray params, and
-                      // never emit `lh=undefined` if the bucket is unset.
-                      if (
-                        lowerThirdHeightSetting === 'sm' ||
-                        lowerThirdHeightSetting === 'md' ||
-                        lowerThirdHeightSetting === 'lg'
-                      ) {
-                        p.set('lh', lowerThirdHeightSetting)
-                      }
-                      if (
-                        typeof ndiLowerThirdScale === 'number' &&
-                        ndiLowerThirdScale >= 0.5 &&
-                        ndiLowerThirdScale <= 2
-                      ) {
-                        p.set('sc', String(ndiLowerThirdScale))
-                      }
-                    }
-                    return `/api/output/congregation?${p.toString()}`
-                  })()}
-                  title="NDI Live Preview"
-                  className="absolute inset-0 w-full h-full border-0"
-                />
-              </div>
+                    • At 360x202 the bar fills ~88% of the iframe (max-width
+                      never kicks in) and the font hits the cqw/cqh middle
+                      term, so the preview looks "tight and thin".
+                    • At 1920x1080 the bar caps at 1088px (~57% of the
+                      frame) and the font hits the 2rem MAX cap of the
+                      clamp, so OBS shows a SHORTER but TALLER-feeling bar
+                      with much bigger text — matching the operator's
+                      "OBS bar is oversized" complaint.
+
+                  The fix: render the iframe at the EXACT native NDI
+                  viewport (1920x1080 here matches the width/height passed
+                  to ndi.start), then CSS-scale it down with `transform:
+                  scale()` to fit the panel's 16:9 container. The internal
+                  layout calculates against the same pixel dimensions that
+                  vMix/OBS will see, the visual scale-down is purely
+                  optical, and the operator now gets a literal pixel-for-
+                  pixel preview of the broadcast feed. */}
+              <NdiPreviewSurface
+                ndiDisplayMode={ndiDisplayMode}
+                lowerThirdPosition={lowerThirdPosition}
+                lowerThirdHeightSetting={lowerThirdHeightSetting}
+                ndiLowerThirdScale={ndiLowerThirdScale}
+              />
             </div>
             <p className="text-[10px] text-muted-foreground/80 mt-1.5 px-1 leading-snug">
               Mirrors what vMix / OBS sees. Every change in the controls
@@ -867,5 +849,105 @@ export function NdiOutputPanel() {
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+// v0.7.9 — WYSIWYG NDI preview surface. Renders /api/output/congregation
+// at the EXACT native NDI viewport (NATIVE_W x NATIVE_H, defaults to
+// 1920x1080 to match the width/height passed to ndi.start) and shrinks
+// it visually with `transform: scale()` so the panel container can be
+// any size. The renderer's CSS layout (max-width:68rem cap, container-
+// query font clamps) computes against the SAME pixel dimensions vMix /
+// OBS receive, so what the operator sees here is literally a scaled-
+// down copy of the broadcast feed — no more "preview shows tight bar
+// but OBS shows huge oversized bar" surprises.
+type NdiPreviewSurfaceProps = {
+  ndiDisplayMode: string
+  lowerThirdPosition: string
+  lowerThirdHeightSetting: string
+  ndiLowerThirdScale: number | undefined
+}
+
+function NdiPreviewSurface(props: NdiPreviewSurfaceProps): JSX.Element {
+  const NATIVE_W = 1920
+  const NATIVE_H = 1080
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const [scale, setScale] = useState<number>(1)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    // Recompute scale whenever the panel container resizes (column
+    // collapse, side-rail open/close, browser zoom). ResizeObserver
+    // is supported on every Electron / modern browser the desktop app
+    // ships with, so no fallback path needed.
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const w = entry.contentRect.width
+        if (w > 0) setScale(w / NATIVE_W)
+      }
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const src = (() => {
+    const p = new URLSearchParams()
+    p.set('ndi', '1')
+    p.set('transparent', '1')
+    if (props.ndiDisplayMode === 'lower-third') {
+      p.set('lowerThird', '1')
+      if (props.lowerThirdPosition === 'top') p.set('position', 'top')
+      if (
+        props.lowerThirdHeightSetting === 'sm' ||
+        props.lowerThirdHeightSetting === 'md' ||
+        props.lowerThirdHeightSetting === 'lg'
+      ) {
+        p.set('lh', props.lowerThirdHeightSetting)
+      }
+      if (
+        typeof props.ndiLowerThirdScale === 'number' &&
+        props.ndiLowerThirdScale >= 0.5 &&
+        props.ndiLowerThirdScale <= 2
+      ) {
+        p.set('sc', String(props.ndiLowerThirdScale))
+      }
+    }
+    return `/api/output/congregation?${p.toString()}`
+  })()
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative w-full overflow-hidden bg-black"
+      style={{ aspectRatio: '16 / 9' }}
+    >
+      <iframe
+        // Reload on every flag flip so the next paint reflects the new
+        // mode without waiting for an SSE tick.
+        key={`ndi-preview:${props.ndiDisplayMode}:${props.lowerThirdPosition}:${props.lowerThirdHeightSetting}:${props.ndiLowerThirdScale ?? 1}`}
+        src={src}
+        title="NDI Live Preview"
+        // Native broadcast viewport. transform: scale() does the visual
+        // shrink — internal layout still computes against 1920x1080, so
+        // max-width:68rem caps and cqw/cqh font clamps land in the same
+        // place they will in the FrameCapture window.
+        width={NATIVE_W}
+        height={NATIVE_H}
+        style={{
+          border: 0,
+          width: NATIVE_W,
+          height: NATIVE_H,
+          transform: `scale(${scale})`,
+          transformOrigin: 'top left',
+          // Pin to the top-left corner so the scaled iframe sits flush
+          // inside the container (no centering offset to fight the
+          // transform-origin).
+          position: 'absolute',
+          top: 0,
+          left: 0,
+        }}
+      />
+    </div>
   )
 }
