@@ -323,7 +323,7 @@ export function SubscriptionModal() {
                     <Input id="lic-email" type="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} className="bg-background border-border text-foreground" />
                   </div>
                   <div className="space-y-1">
-                    <Label htmlFor="lic-wa" className="text-[10px] uppercase tracking-wider text-muted-foreground">WhatsApp Number</Label>
+                    <Label htmlFor="lic-wa" className="text-[10px] uppercase tracking-wider text-muted-foreground">SMS Number to Receive Activation Code</Label>
                     <Input id="lic-wa" type="tel" placeholder="0244 123 456" value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} className="bg-background border-border text-foreground" />
                   </div>
                 </div>

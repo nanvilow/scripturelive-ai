@@ -53,9 +53,24 @@ export function OutputPreview({
           ? 'text-justify'
           : 'text-center'
 
-  const ref = sample?.reference || 'John 3:16'
+  // v0.7.3 — When no `sample` is supplied, prefer the user's
+  // currently-selected scripture (live verse, then the last
+  // verse opened in the picker) so the Settings previews mirror
+  // what the audience is about to see. Falls back to John 3:16
+  // only when the user hasn't selected anything yet, which
+  // matches the legacy behaviour for first-run installs.
+  const liveVerse = useAppStore((s) => s.liveVerse)
+  const currentVerse = useAppStore((s) => s.currentVerse)
+  const fallback = liveVerse ?? currentVerse ?? null
+  const ref =
+    sample?.reference ||
+    fallback?.reference ||
+    (fallback
+      ? `${fallback.book} ${fallback.chapter}:${fallback.verseStart}${fallback.verseEnd ? `-${fallback.verseEnd}` : ''}`
+      : 'John 3:16')
   const body =
     sample?.text ||
+    fallback?.text ||
     'For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.'
 
   // Theme-derived backdrop matching the slide-renderer themes.

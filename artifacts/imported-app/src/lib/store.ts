@@ -205,11 +205,16 @@ export interface AppSettings {
    *  can tune their broadcast feed for vMix/OBS without disturbing what
    *  the audience sees in the room.
    *
-   *  v0.7.0 — Default is now 2.0 (full scale) per operator request and
-   *  the lower-third box height now scales with this multiplier so the
-   *  bigger text at 2.0× still fits inside the bar instead of clipping
-   *  past the bottom edge (operator screenshot v0.6.9). When unset
-   *  (older persisted profiles) we fall back to 2.0 in the renderer too. */
+   *  v0.7.0 — Default was 2.0 (full scale) per operator request and
+   *  the lower-third box height scales with this multiplier so the
+   *  text still fits inside the bar instead of clipping past the
+   *  bottom edge (operator screenshot v0.6.9).
+   *  v0.7.3 — Default reverted to 1.0. Operator's screenshot showed
+   *  the 2.0× lower-third covering ~65% of the camera frame, hiding
+   *  the preacher. 1.0× sits inside the bottom band the operator
+   *  marked in red; the auto-fit (fitFont + ltBand) keeps long
+   *  verses readable without inflating the bar. When unset (older
+   *  persisted profiles) we fall back to 1.0 in the renderer too. */
   ndiLowerThirdScale?: number
 
   // Item #15 follow-up — when the SSE link to the secondary screen
@@ -629,10 +634,12 @@ const defaultSettings: AppSettings = {
   ndiAspectRatio: undefined,
   ndiBibleColor: undefined,
   ndiLowerThirdTransparent: false,
-  // v0.7.0 — Operator request: ship at full 2.0× by default. Pre-v0.7.0
-  // shipped undefined (effective 1.0); the slider reset button still
-  // returns to 2.0 now so the "Reset" affordance matches the default.
-  ndiLowerThirdScale: 2,
+  // v0.7.3 — Reverted to 1.0× (was 2.0× in v0.7.0). Operator's
+  // broadcast frame showed 2.0× was way too large; their lower-third
+  // was covering the preacher. The slider Reset button also returns
+  // to 1.0× to match (see ndi-output-panel.tsx). Pre-v0.7.0 shipped
+  // undefined (effective 1.0) so this matches the original safe default.
+  ndiLowerThirdScale: 1,
   ndiBibleLineHeight: undefined,
   ndiRefSize: undefined,
   ndiRefStyle: undefined,

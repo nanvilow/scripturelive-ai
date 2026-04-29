@@ -41,6 +41,50 @@ export function clientIpFromRequest(req: Request): string | undefined {
   return undefined
 }
 
+/** v0.7.3 — Cached lookup of THIS server's own public IP via
+ *  ip-api.com (no IP arg → uses caller's outbound address).
+ *  Used when the request's client IP is loopback / RFC1918, which
+ *  is the common case for the desktop Electron build (the
+ *  Next.js server is bound to 127.0.0.1 and the buyer enters their
+ *  code on the same machine). Without this fallback the operator's
+ *  dashboard showed empty geo for every activation, which is what
+ *  the operator's bug report flagged: "doesn't show the accurate
+ *  region, country, city, or town." */
+let serverPublicIpCache: { at: number; ip: string | null } | null = null
+const SERVER_IP_TTL_OK_MS = 24 * 60 * 60 * 1000  // 24 h on success
+const SERVER_IP_TTL_FAIL_MS = 5 * 60 * 1000      // 5 min on failure
+// v0.7.3.1 — Tight 1.5s timeout so the geo enrichment cannot stretch
+// the activation / status request when ip-api.com is slow or unreachable.
+// On timeout we negative-cache for 5 min (not 24 h) so a transient
+// outage doesn't disable geo for the whole day.
+const SERVER_IP_FETCH_TIMEOUT_MS = 1500
+
+async function resolveServerPublicIp(): Promise<string | null> {
+  const now = Date.now()
+  if (serverPublicIpCache) {
+    const age = now - serverPublicIpCache.at
+    const ttl = serverPublicIpCache.ip ? SERVER_IP_TTL_OK_MS : SERVER_IP_TTL_FAIL_MS
+    if (age < ttl) return serverPublicIpCache.ip
+  }
+  try {
+    const controller = new AbortController()
+    const t = setTimeout(() => controller.abort(), SERVER_IP_FETCH_TIMEOUT_MS)
+    const res = await fetch('http://ip-api.com/json/?fields=status,query', { signal: controller.signal })
+    clearTimeout(t)
+    if (!res.ok) {
+      serverPublicIpCache = { at: now, ip: null }
+      return null
+    }
+    const data = (await res.json()) as { status?: string; query?: string }
+    const ip = data.status === 'success' && typeof data.query === 'string' ? data.query : null
+    serverPublicIpCache = { at: now, ip }
+    return ip
+  } catch {
+    serverPublicIpCache = { at: now, ip: null }
+    return null
+  }
+}
+
 function cleanIp(ip: string): string {
   // Strip IPv6 brackets and any port suffix.
   let s = ip.replace(/^\[|\]$/g, '')
@@ -123,10 +167,22 @@ export function formatGeoLocation(g: GeoResult | null | undefined): string | und
 }
 
 /** One-call helper used by activate + status routes. Pulls the IP,
- *  looks up geo (cached), and returns both for storage. */
+ *  looks up geo (cached), and returns both for storage.
+ *
+ *  v0.7.3 — When the request's client IP is missing or RFC1918
+ *  (which is virtually always the case on the desktop Electron
+ *  build, where the buyer's browser hits 127.0.0.1), we fall back
+ *  to the server's own outbound public IP via resolveServerPublicIp().
+ *  The geo result then describes where the operator's PC is on the
+ *  internet, which is the closest stand-in available without a
+ *  separate IP-from-the-internet round-trip in the buyer's browser. */
 export async function captureGeoFromRequest(req: Request): Promise<{ ip?: string; location?: string }> {
-  const ip = clientIpFromRequest(req)
-  if (!ip) return {}
+  let ip = clientIpFromRequest(req)
+  if (!ip || isPrivateIp(ip)) {
+    const fallback = await resolveServerPublicIp()
+    if (fallback) ip = fallback
+  }
+  if (!ip || isPrivateIp(ip)) return ip ? { ip } : {}
   const g = await lookupGeo(ip)
   const location = formatGeoLocation(g)
   return { ip, location }

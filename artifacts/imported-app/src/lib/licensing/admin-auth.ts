@@ -93,6 +93,18 @@ export function destroySession(token: string | undefined): void {
   sessions.delete(token)
 }
 
+/** v0.7.3 — Wipe every active admin session. Called from
+ *  /api/license/admin/config when the admin password is changed
+ *  so existing 12h cookies don't continue to work against the new
+ *  password (operator's expectation: "I changed it, so re-login
+ *  should be required"). Returns the number of sessions cleared
+ *  for caller logging. */
+export function revokeAllSessions(): number {
+  const n = sessions.size
+  sessions.clear()
+  return n
+}
+
 /** Returns true if the supplied token (from the cookie) is a known,
  *  unexpired admin session. */
 export function isSessionValid(token: string | undefined): boolean {

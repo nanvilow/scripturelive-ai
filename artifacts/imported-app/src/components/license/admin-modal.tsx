@@ -214,7 +214,7 @@ export function AdminModal() {
   // v0.7.0 — Codes tab. Operator dashboard listing every activation
   // code with status, days remaining, geo location, buyer phone, and
   // cancel/renew/restore actions. Soft-deleted codes live in the bin
-  // for 7 days before automatic purge.
+  // for 90 days before automatic purge (v0.7.3 — was 7).
   const [codesData, setCodesData] = useState<AdminCodesResp | null>(null)
   const [codesLoading, setCodesLoading] = useState(false)
   const [codesShowBin, setCodesShowBin] = useState(false)
@@ -1698,11 +1698,11 @@ export function AdminModal() {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    if (!window.confirm(`Move ${r.code} to bin (recoverable for 7 days)?`)) return
+                                    if (!window.confirm(`Move ${r.code} to bin (recoverable for 90 days)?`)) return
                                     void codeAction(r.code, 'delete-activation', { permanent: false }, `Moved ${r.code} to bin`)
                                   }}
                                   disabled={busy}
-                                  title="Soft-delete — moves to bin for 7 days"
+                                  title="Soft-delete — moves to bin for 90 days"
                                   className="p-1 rounded hover:bg-rose-500/15 text-rose-300 disabled:opacity-40"
                                 >
                                   {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
@@ -1722,7 +1722,7 @@ export function AdminModal() {
             {codesData && codesShowBin && (
               <section className="rounded-lg border border-rose-500/30 bg-rose-950/10 overflow-x-auto">
                 <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-rose-300 border-b border-rose-500/30 flex items-center justify-between">
-                  <span>Bin · auto-purges 7 days after delete</span>
+                  <span>Bin · auto-purges 90 days after delete (recoverable until then)</span>
                   <span className="text-muted-foreground normal-case">{codesData.bin.length} item(s)</span>
                 </div>
                 {codesData.bin.length === 0 ? (

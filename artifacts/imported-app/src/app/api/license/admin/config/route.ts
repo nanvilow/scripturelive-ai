@@ -10,7 +10,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getConfig, saveConfig, type RuntimeConfig } from '@/lib/licensing/storage'
-import { requireAdmin } from '@/lib/licensing/admin-auth'
+import { requireAdmin, revokeAllSessions, buildClearCookie } from '@/lib/licensing/admin-auth'
 import {
   PLANS,
   MOMO_RECIPIENT,
@@ -87,7 +87,18 @@ export async function POST(req: NextRequest) {
 
   const patch: Partial<Record<keyof RuntimeConfig, unknown>> = {}
 
-  if ('adminPassword' in body) patch.adminPassword = clean(body.adminPassword)
+  // v0.7.3 — Track whether the admin password is being changed so
+  // we can invalidate every other session at the end of the patch.
+  // Otherwise the operator's pre-change 12h cookie would keep
+  // working against the new password (their bug report:
+  // "I changed the password, exit, re-enter — no prompt").
+  let adminPasswordChanged = false
+  if ('adminPassword' in body) {
+    const newVal = clean(body.adminPassword)
+    const oldVal = getConfig()?.adminPassword ?? null
+    patch.adminPassword = newVal
+    if (newVal !== oldVal) adminPasswordChanged = true
+  }
   if ('adminOpenAIKey' in body) patch.adminOpenAIKey = clean(body.adminOpenAIKey)
   if ('adminDeepgramKey' in body) patch.adminDeepgramKey = clean(body.adminDeepgramKey)
   if ('momoName' in body) patch.momoName = clean(body.momoName)
@@ -127,8 +138,26 @@ export async function POST(req: NextRequest) {
   }
 
   const next = saveConfig(patch)
+
+  // v0.7.3 — When the admin password changes, blow away ALL active
+  // sessions (including the caller's). The response also clears the
+  // caller's cookie so the modal's next /whoami probe gets 401 and
+  // re-renders the password gate.
+  const headers: Record<string, string> = { 'Cache-Control': 'no-store' }
+  if (adminPasswordChanged) {
+    const cleared = revokeAllSessions()
+    // eslint-disable-next-line no-console
+    console.warn(`[admin-config] Admin password changed — revoked ${cleared} session(s)`)
+    headers['Set-Cookie'] = buildClearCookie()
+  }
+
   return NextResponse.json(
-    { ok: true, config: next, defaults: defaults() },
-    { headers: { 'Cache-Control': 'no-store' } },
+    {
+      ok: true,
+      config: next,
+      defaults: defaults(),
+      ...(adminPasswordChanged ? { reauthRequired: true } : {}),
+    },
+    { headers },
   )
 }

@@ -97,9 +97,9 @@ export interface ActivationCodeRecord {
   lastSeenLocation?: string
   /** Soft-delete timestamp. The dashboard's "delete" button sets this
    *  instead of removing the record. The bin retains the row for
-   *  exactly 7 days; on the next storage read after that window
-   *  passes the row is purged. Operator can Restore at any time
-   *  before the purge. */
+   *  exactly 90 days (v0.7.3 — was 7 days); on the next storage read
+   *  after that window passes the row is purged. Operator can Restore
+   *  at any time before the purge. */
   softDeletedAt?: string
 }
 
@@ -200,7 +200,15 @@ function storagePath(): string {
 // Initialise / load
 // ─────────────────────────────────────────────────────────────────────
 const TRIAL_DURATION_MS = 60 * 60 * 1000 // 1 hour
-const PAYMENT_CODE_TTL_MS = 15 * 60 * 1000 // 15 minutes
+// v0.7.3 — Bumped from 15 min → 7 days. Operator's bug report:
+// "Active subscriptions are killed... it deletes active codes by
+// itself while I didn't give that command." The 15-minute window
+// was firing on payment codes the operator generated and hadn't
+// gotten around to following up on yet, marking them EXPIRED so
+// the buyer's MoMo deposit couldn't be confirmed against them.
+// 7 days is enough cushion to cover a long weekend without a
+// flood of stale "WAITING_PAYMENT" rows.
+const PAYMENT_CODE_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 
 let cache: LicenseFile | null = null
 
@@ -680,13 +688,17 @@ export function activateCode(rawCode: string, ctx?: { ip?: string; location?: st
 
 // ─── v0.7.0 — Activation-code admin dashboard helpers ───────────────
 // Operator request: see all codes with their status, location, buyer
-// phone; cancel/renew without leaving the panel; soft-delete to a 7-day
-// bin instead of hard-delete. These helpers back the new
-// /api/license/admin/codes + /cancel + /renew + /restore routes.
+// phone; cancel/renew without leaving the panel; soft-delete to a
+// 90-day bin (v0.7.3 — was 7) instead of hard-delete. These helpers
+// back the /api/license/admin/codes + /cancel + /renew + /restore routes.
 
-/** v0.7.0 — Soft-delete window. Bin retains rows for 7 days; on the
- *  next read after that window passes the row is purged automatically. */
-const BIN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+/** v0.7.3 — Bumped soft-delete window from 7 days → 90 days.
+ *  Operator's bug report explicitly flagged "deletes active codes
+ *  by itself" — the 7-day auto-purge was happening before they
+ *  remembered to restore. 90 days gives them a full quarter to
+ *  notice and Restore from the bin before anything is gone for
+ *  good. The bin row still shows a "Purges in N days" countdown. */
+const BIN_RETENTION_MS = 90 * 24 * 60 * 60 * 1000
 
 /** Periodic sweep — purges any soft-deleted activation codes whose
  *  softDeletedAt is older than BIN_RETENTION_MS. Called from
@@ -865,9 +877,10 @@ export function renewActivationByCode(code: string, addDays: number): Activation
   return a
 }
 
-/** Move a code into the soft-delete bin (7-day retention). The code
- *  refuses activation while in the bin and is auto-purged after the
- *  retention window. Returns true if the code was found. */
+/** Move a code into the soft-delete bin (90-day retention as of v0.7.3
+ *  — was 7-day). The code refuses activation while in the bin and is
+ *  auto-purged after the retention window. Returns true if the code
+ *  was found. */
 export function softDeleteActivationByCode(code: string): boolean {
   const f = load()
   const a = f.activationCodes.find((r) => r.code === code)

@@ -2,6 +2,113 @@
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It supports live congregation output, NDI broadcasting, and advanced speech recognition. The system targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service.
 
+## v0.7.3.1 — Hotfix for v0.7.3 (Apr 2026)
+
+Code-review caught two regressions in v0.7.3 that shipped with the
+release blob:
+
+1. **NDI default scale was still 2.0× in `defaultSettings`.** The
+   v0.7.3 changelog and slider reset were updated to 1.0×, but the
+   `defaultSettings.ndiLowerThirdScale` literal in `lib/store.ts` was
+   not — fresh installs and any user without persisted state were
+   still getting the oversized 2.0× lower-third. Fixed: now `1`.
+
+2. **Geo public-IP fallback could hang activation up to 5 s and
+   negative-cache for 24 h on transient ip-api.com failures.**
+   Tightened to 1.5 s timeout (was 5 s) and 5-min negative cache
+   (was 24 h). Successful lookups still cache for 24 h. The
+   activation / status request can no longer be stretched by a slow
+   geo enrichment.
+
+**Files changed:**
+- `artifacts/imported-app/src/lib/store.ts`             (default scale 2 → 1)
+- `artifacts/imported-app/src/lib/licensing/geoip.ts`   (1.5 s timeout + 5 min negative-cache)
+- `artifacts/imported-app/package.json`                 (0.7.3 → 0.7.3.1)
+
+## v0.7.3 — Operator bug-blast fixes (Apr 2026)
+
+Field-report fixes from a multi-issue bug report. Triaged into seven
+shippable items here; multi-PC license + transcription confidence
+tiers + new voice commands deferred to v0.7.4.
+
+**1. Auth — re-prompt for password after change (CRITICAL).** The
+operator reported "I changed my admin password but didn't have to
+sign in again." Confirmed: `PATCH /api/license/admin/config` accepted
+a new `adminPassword` but did not invalidate any of the in-process
+sessions, so the existing 12h cookie stayed valid against the NEW
+password. Added `revokeAllSessions()` to `lib/licensing/admin-auth.ts`,
+called from the config PATCH handler whenever `adminPassword` is
+present in the body and the new value differs from the current one.
+The same response now also clears the cookie via
+`buildClearCookie()` and returns `reauthRequired: true` in the JSON
+body so the modal can immediately surface the password gate. Smoke
+test: login → PATCH config with new password → next request returns
+401, old password is rejected, new password succeeds.
+
+**2. "Codes deleted by themselves" — bin retention 7d → 90d, payment
+TTL 15min → 7d.** The operator reported active codes vanishing
+"without me touching them." Two timers were responsible:
+`BIN_RETENTION_MS` (soft-delete bin auto-purges) was 7 days, and
+`PAYMENT_CODE_TTL_MS` (pending-payment expiry) was 15 minutes — both
+too aggressive. Bumped to 90 days and 7 days respectively. Bin label
+in admin modal now reads "auto-purges 90 days after delete
+(recoverable until then)". Soft-delete confirm dialog and tooltip
+also updated (7→90).
+
+**3. Admin code-action buttons.** Verified end-to-end via curl with
+a real session cookie: `cancel`, `renew`, `restore`, `delete-activation`
+all reach the route handler (404 on a fake code, NOT 401). The wiring
+was correct; the operator's "all dead" report was almost certainly
+the auth-not-reprompting bug above (their cookie was stale).
+
+**4. Geo lookup — public-IP fallback.** The operator's dashboard
+showed empty region/country/city for every activation. Root cause:
+on the desktop Electron build the buyer's browser hits 127.0.0.1, so
+`req.ip` is loopback and `lookupGeo()` skips it. Added
+`resolveServerPublicIp()` to `lib/licensing/geoip.ts` — calls
+`http://ip-api.com/json/?fields=status,query` with no IP arg so the
+service returns the server's outbound public IP. Result is cached
+24 h. `captureGeoFromRequest()` now falls back to this whenever the
+client IP is missing or RFC1918.
+
+**5. NDI lower-third default 2.0× → 1.0×.** v0.7.0 doubled the
+default lower-third scale to 2.0× — the operator's screenshot showed
+this was way too large for their actual broadcast frame. Default is
+now 1.0× in `lib/store.ts`, the renderer fallback in
+`api/output/congregation/route.ts`, and the slider reset label in
+`ndi-output-panel.tsx`. The auto-fit (`fitFont` + `ltBand`) still
+clamps the band height so the band can never collide with the bottom
+edge of the safe area at any scale.
+
+**6. Settings → Output Preview wired to live verse.** The "Stage
+Output" and "Congregation Output" preview tiles in Settings were
+hardcoded to John 3:16. Both now read `currentVerse` (or `liveVerse`
+fallback) from the Zustand store via the `sample` prop, so the
+operator sees what's actually about to broadcast. Falls back to
+John 3:16 when nothing is queued.
+
+**7. SMS label + phone number swap.**
+- `WhatsApp Number` → `SMS Number to Receive Activation Code` in
+  `subscription-modal.tsx` (matches reality — the buyer receives an
+  SMS, not a WhatsApp message).
+- `0530686367` → `0246798526` in `lib/licensing/plans.ts`
+  (`NOTIFICATION_WHATSAPP` and `MOMO_RECIPIENT.number`). The operator
+  consolidated both MoMo + escalation onto their personal admin line.
+
+**Files changed:**
+- `artifacts/imported-app/src/lib/licensing/admin-auth.ts`            (+ revokeAllSessions)
+- `artifacts/imported-app/src/app/api/license/admin/config/route.ts`  (revoke + clear cookie on password change)
+- `artifacts/imported-app/src/lib/licensing/storage.ts`               (BIN 7d→90d, PAYMENT 15min→7d)
+- `artifacts/imported-app/src/lib/licensing/plans.ts`                 (phone swap)
+- `artifacts/imported-app/src/lib/licensing/geoip.ts`                 (+ public-IP fallback, 24h cache)
+- `artifacts/imported-app/src/components/license/subscription-modal.tsx` (SMS label)
+- `artifacts/imported-app/src/lib/store.ts`                           (ndiLowerThirdScale 2→1)
+- `artifacts/imported-app/src/components/views/ndi-output-panel.tsx`     (reset label 1.00×)
+- `artifacts/imported-app/src/app/api/output/congregation/route.ts`   (renderer fallback 1.0)
+- `artifacts/imported-app/src/components/settings/output-preview.tsx` (live verse from store)
+- `artifacts/imported-app/src/components/license/admin-modal.tsx`     (bin labels 7→90)
+- `artifacts/imported-app/package.json`                               (0.7.2 → 0.7.3)
+
 ## v0.7.2 — Extend admin auth to /master, /test-email, /test-sms (Apr 2026)
 
 Code-review follow-up to v0.7.1. The audit found that three more

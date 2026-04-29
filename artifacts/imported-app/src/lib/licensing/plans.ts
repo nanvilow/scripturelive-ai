@@ -49,14 +49,18 @@ export function isPlanCode(s: unknown): s is PlanCode {
 // WhatsApp escalation in the NOTE block, screenshot-proof line) now
 // pull from this single constant via payment.momoRecipient.number,
 // so future swaps land on every visible field at once.
+// v0.7.3 — operator switched both the receiving MoMo line AND the
+// public escalation line over to 0246798526 so the same number
+// shows in payment proofs, screenshot-target instructions, and the
+// SMS-receipt field on the activation modal.
 export const MOMO_RECIPIENT = {
   name: 'Richard Kwesi Attieku',
-  number: '0530686367',
+  number: '0246798526',
 } as const
 
 // Where receipts and notifications are sent (defaults; overridable).
 export const NOTIFICATION_EMAIL = 'nanvilow@gmail.com'
-export const NOTIFICATION_WHATSAPP = '0530686367'
+export const NOTIFICATION_WHATSAPP = '0246798526'
 
 // v0.6.6 — Admin's PERSONAL phone for receiving payment-code-generated
 // SMS alerts. Distinct from MOMO_RECIPIENT.number (the customer-facing
