@@ -198,3 +198,9 @@ id = "6sXxXRo-ly2gIoHjzN-FM"
 uri = "file://exports/ScriptureLive-AI-v0.7.9-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.9 source (run BUILD.bat on Windows)"
+
+[[outputs]]
+id = "ghAnlq4CCMYYE4LKb5tww"
+uri = "file://exports/ScriptureLive-AI-v0.7.10-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.10 source (run BUILD.bat on Windows)"
