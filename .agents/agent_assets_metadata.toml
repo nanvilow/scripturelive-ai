@@ -186,3 +186,9 @@ id = "DcZ3YO2CEiAObKbTesfA7"
 uri = "file://exports/ScriptureLive-AI-v0.7.6-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.6 source — NDI parity hotfix (semver fix)"
+
+[[outputs]]
+id = "TZXDL1vnEDBUScoAH6ITL"
+uri = "file://exports/ScriptureLive-AI-v0.7.8-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.8 source (run BUILD.bat on Windows)"

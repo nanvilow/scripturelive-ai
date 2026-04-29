@@ -22,7 +22,7 @@
 // "exit" affordance (closes any in-flight activation attempt and
 // confirms there is nothing to cancel).
 
-import { Lock, Sparkles, XCircle } from 'lucide-react'
+import { Lock, Sparkles, XCircle, KeyRound, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 import { useLicense } from './license-provider'
 import { cn } from '@/lib/utils'
@@ -31,6 +31,15 @@ import { toast } from 'sonner'
 export function LiveTranscriptionLockOverlay() {
   const { status, openSubscribe, isLocked, refresh } = useLicense()
   const [cancelling, setCancelling] = useState(false)
+  // v0.7.8 — "Have a reference code?" inline form. Operator can
+  // mint a short-lived (≈30-min) reference code from the Admin
+  // panel and read it to a customer over WhatsApp / phone. The
+  // customer types it here and AI Detection unlocks immediately.
+  // Posts to /api/license/activate-reference; refresh()es on
+  // success so the lock overlay disappears.
+  const [refOpen, setRefOpen] = useState(false)
+  const [refValue, setRefValue] = useState('')
+  const [refBusy, setRefBusy] = useState(false)
   if (!isLocked) return null
 
   const hasSub = !!status.activeSubscription
@@ -133,6 +142,76 @@ export function LiveTranscriptionLockOverlay() {
           <XCircle className="h-3.5 w-3.5" />
           {cancelling ? 'Cancelling…' : cancelLabel}
         </button>
+      </div>
+
+      <div className="mt-3 w-full max-w-sm">
+        {!refOpen ? (
+          <button
+            type="button"
+            onClick={() => setRefOpen(true)}
+            className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground underline-offset-2 hover:underline inline-flex items-center gap-1.5"
+          >
+            <KeyRound className="h-3 w-3" />
+            Have a reference code?
+          </button>
+        ) : (
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault()
+              const code = refValue.trim()
+              if (!code || refBusy) return
+              setRefBusy(true)
+              try {
+                const r = await fetch('/api/license/activate-reference', {
+                  method: 'POST',
+                  cache: 'no-store',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ code }),
+                })
+                const j = (await r.json().catch(() => ({}))) as { error?: string; ok?: boolean }
+                if (r.ok && j.ok) {
+                  toast.success('Reference code accepted — AI Detection unlocked.')
+                  setRefValue('')
+                  setRefOpen(false)
+                  await refresh()
+                } else {
+                  toast.error(j.error || 'Could not validate the reference code.')
+                }
+              } catch {
+                toast.error('Network error — could not reach the licensing service.')
+              } finally {
+                setRefBusy(false)
+              }
+            }}
+            className="flex items-center gap-1.5"
+          >
+            <input
+              type="text"
+              autoFocus
+              autoComplete="off"
+              spellCheck={false}
+              value={refValue}
+              onChange={(e) => setRefValue(e.target.value.toUpperCase())}
+              placeholder="XXXX-XXXX"
+              maxLength={9}
+              className="flex-1 h-8 px-2.5 rounded-md text-[12px] font-mono uppercase tracking-widest bg-background/80 border border-border focus:outline-none focus:ring-1 focus:ring-emerald-400 text-foreground placeholder:text-muted-foreground/50"
+            />
+            <button
+              type="submit"
+              disabled={refBusy || !refValue.trim()}
+              className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400/40 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {refBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Unlock'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setRefOpen(false); setRefValue('') }}
+              className="text-[10px] text-muted-foreground hover:text-foreground px-1.5"
+            >
+              ×
+            </button>
+          </form>
+        )}
       </div>
 
       <p className="mt-4 text-[10px] text-muted-foreground">

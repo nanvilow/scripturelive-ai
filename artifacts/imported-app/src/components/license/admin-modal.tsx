@@ -197,6 +197,49 @@ export function AdminModal() {
   const [genEmail, setGenEmail] = useState<string>('')
   const [genWhatsapp, setGenWhatsapp] = useState<string>('')
   const [genBusy, setGenBusy] = useState(false)
+  // v0.7.8 — Reference Code generator. Mints a short-lived
+  // (≈30-min) HMAC-derived code the operator can read to a
+  // customer over WhatsApp / phone. Customer types it into the
+  // lock overlay's "Have a reference code?" form and AI Detection
+  // unlocks immediately. No ledger entry, no rebuild — every
+  // installed app derives the same valid codes from the shared
+  // baked masterCode + 30-min wall-clock bucket.
+  const [refCode, setRefCode] = useState<string | null>(null)
+  const [refExpiresAt, setRefExpiresAt] = useState<number | null>(null)
+  const [refBusy, setRefBusy] = useState(false)
+  const [refNow, setRefNow] = useState(() => Date.now())
+  // Tick the displayed reference-code countdown once a second only
+  // while a code is shown. When the bucket rolls over the operator
+  // can click Generate again to mint the next bucket's code.
+  useEffect(() => {
+    if (!refCode || !refExpiresAt) return
+    const id = setInterval(() => setRefNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [refCode, refExpiresAt])
+  const generateReferenceCode = useCallback(async () => {
+    setRefBusy(true)
+    try {
+      const r = await fetch('/api/license/admin/reference-code', {
+        method: 'POST',
+        cache: 'no-store',
+        credentials: 'same-origin',
+      })
+      const j = (await r.json().catch(() => ({}))) as { code?: string; expiresAt?: number; error?: string }
+      if (r.ok && j.code && j.expiresAt) {
+        setRefCode(j.code)
+        setRefExpiresAt(j.expiresAt)
+        setRefNow(Date.now())
+        try { await navigator.clipboard.writeText(j.code) } catch { /* clipboard may be unavailable */ }
+        toast.success('Reference code copied. Read it to the customer within ~30 minutes.')
+      } else {
+        toast.error(j.error || 'Could not mint reference code.')
+      }
+    } catch {
+      toast.error('Network error — could not reach the licensing service.')
+    } finally {
+      setRefBusy(false)
+    }
+  }, [])
   const [genResult, setGenResult] = useState<{ ok: boolean; msg: string; code?: string; days?: number } | null>(null)
   // v0.5.48 — Settings tab state. Loaded lazily the first time the
   // tab is shown so the Overview tab opens instantly.
@@ -1029,6 +1072,76 @@ export function AdminModal() {
                   </div>
                 </div>
               )}
+            </section>
+
+            {/* ── Reference Code (v0.7.8) ────────────────────────────────
+                Mints a short-lived (≈30-min) HMAC-derived code the
+                operator can read out to a customer over WhatsApp /
+                phone. Customer types it into the lock overlay's
+                "Have a reference code?" form and AI Detection
+                unlocks immediately. No ledger entry, no rebuild —
+                every installed app derives the same valid codes
+                from the shared baked masterCode + 30-min wall-clock
+                bucket. */}
+            <section
+              className="rounded-lg border border-emerald-500/40 bg-emerald-950/10 p-3.5 space-y-3"
+              style={{ pointerEvents: 'auto' }}
+            >
+              <div className="text-[11px] uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
+                <KeyRound className="h-3.5 w-3.5" /> Reference Code (≈30-min, no rebuild needed)
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                One-tap activation channel for already-installed customers. Click <strong>Generate</strong>,
+                read the code over WhatsApp / phone, and the customer pastes it into
+                <em> &quot;Have a reference code?&quot;</em> on their lock screen. Works on every install
+                that shares this build&apos;s master key — no installer rebuild required.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={generateReferenceCode}
+                  disabled={refBusy}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400/40"
+                >
+                  {refBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Sparkles className="h-3.5 w-3.5 mr-1.5" /> {refCode ? 'Refresh Code' : 'Generate Reference Code'}</>}
+                </Button>
+                {refCode && refExpiresAt && (() => {
+                  const remaining = Math.max(0, Math.floor((refExpiresAt - refNow) / 1000))
+                  const mm = String(Math.floor(remaining / 60)).padStart(2, '0')
+                  const ss = String(remaining % 60).padStart(2, '0')
+                  const expired = remaining <= 0
+                  return (
+                    <>
+                      <code className="font-mono text-base tracking-widest font-bold px-3 py-1.5 rounded-md bg-emerald-500/15 text-emerald-100 border border-emerald-500/30 select-all">
+                        {refCode}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(refCode)
+                            toast.success('Reference code copied.')
+                          } catch {
+                            toast.error('Clipboard unavailable.')
+                          }
+                        }}
+                        className="inline-flex items-center gap-1 h-8 px-2 rounded-md text-[10px] uppercase tracking-wider bg-background border border-border hover:bg-muted text-muted-foreground hover:text-foreground"
+                      >
+                        <Copy className="h-3 w-3" /> Copy
+                      </button>
+                      <span className={cn(
+                        'text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded',
+                        expired
+                          ? 'bg-rose-500/15 text-rose-200 border border-rose-500/30'
+                          : 'bg-background text-muted-foreground border border-border',
+                      )}>
+                        {expired ? 'Expired — click Refresh' : `Expires in ${mm}:${ss}`}
+                      </span>
+                    </>
+                  )
+                })()}
+              </div>
             </section>
 
             {/* ── Generate Activation Code (v0.5.48) ─────────────────────
