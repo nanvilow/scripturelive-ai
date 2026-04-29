@@ -220,6 +220,14 @@ export interface LicenseFile {
    *  15-minute TTL. The login route accepts the code as a valid
    *  password until consumed (success) or expired. */
   pendingAdminReset?: { code: string; expiresAt: string }
+  /** v0.7.13 — One-shot flag tracking whether we've sent the initial
+   *  install ping to the central telemetry backend
+   *  (https://scripturelive.replit.app/api/telemetry/install). Set
+   *  the first time GET /api/license/status fires after install or
+   *  upgrade, so the admin Records dashboard sees this install in
+   *  its total-installs count. Heartbeats keep the lastSeenAt
+   *  bumped, so we never re-send the install ping. */
+  telemetryInstallPingedAt?: string
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -360,6 +368,8 @@ function load(): LicenseFile {
       // v0.7.7 — hydrate pending admin-reset OTP. Cleared on consume
       // or expiry from passwordMatches() so a stale entry can't linger.
       pendingAdminReset: parsed.pendingAdminReset,
+      // v0.7.13 — hydrate telemetry-install one-shot flag.
+      telemetryInstallPingedAt: parsed.telemetryInstallPingedAt,
     }
     return cache
   } catch (e) {
@@ -1410,6 +1420,23 @@ export function getPendingAdminReset(): { code: string; expiresAt: string } | nu
 }
 
 /** Consume (delete) the pending reset code after a successful login. */
+// v0.7.13 — Telemetry one-shot install ping bookkeeping. Returns true
+// the very first time it's called for this license.json (so the
+// caller knows it should now POST /api/telemetry/install). All
+// subsequent calls return false. The flag persists in license.json
+// so reinstalls (which mint a new installId) re-ping cleanly.
+export function shouldSendTelemetryInstallPing(): boolean {
+  const f = load()
+  return !f.telemetryInstallPingedAt
+}
+
+export function markTelemetryInstallPinged(): void {
+  const f = load()
+  if (f.telemetryInstallPingedAt) return
+  f.telemetryInstallPingedAt = new Date().toISOString()
+  persist(f)
+}
+
 export function consumePendingAdminReset(): void {
   const f = load()
   if (f.pendingAdminReset) {
