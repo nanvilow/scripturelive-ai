@@ -190,6 +190,13 @@ export interface LicenseFile {
    *  listening does. The renderer pings POST /api/license/trial-tick
    *  every few seconds while the mic is running. */
   trialMsUsed?: number
+  /** v0.7.7 — Pending admin password reset (forgot-password flow).
+   *  When the operator clicks "Forgot password" we mint a 6-digit
+   *  one-time code, send it via SMS to ADMIN_NOTIFICATION_PHONE
+   *  and email to NOTIFICATION_EMAIL, and stash it here with a
+   *  15-minute TTL. The login route accepts the code as a valid
+   *  password until consumed (success) or expired. */
+  pendingAdminReset?: { code: string; expiresAt: string }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -273,6 +280,9 @@ function load(): LicenseFile {
       // gated trial survives process restarts. Without this, every cold
       // start would silently reset the trial back to 0 minutes used.
       trialMsUsed: parsed.trialMsUsed ?? 0,
+      // v0.7.7 — hydrate pending admin-reset OTP. Cleared on consume
+      // or expiry from passwordMatches() so a stale entry can't linger.
+      pendingAdminReset: parsed.pendingAdminReset,
     }
     return cache
   } catch (e) {
@@ -1150,6 +1160,51 @@ export function softDeleteActivationsByCodes(codes: string[]): number {
   }
   if (removed > 0) persist(f)
   return removed
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// v0.7.7 — Admin password "Forgot password" reset OTP helpers.
+// The admin login route accepts the OTP as a one-shot password until
+// it is either consumed (success) or expires (15 min).
+// ─────────────────────────────────────────────────────────────────────
+const ADMIN_RESET_TTL_MS = 15 * 60 * 1000
+
+/** Mint a fresh 6-digit OTP and persist it. Returns the code (in
+ *  plain) so the caller can SMS/email it to the operator. Replaces
+ *  any prior pending reset so a follow-up "Forgot password" click
+ *  always invalidates the previous code. */
+export function setPendingAdminReset(): { code: string; expiresAt: string } {
+  const f = load()
+  // 6-digit numeric, zero-padded. Easy to read off SMS/email.
+  const code = String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0')
+  const expiresAt = new Date(Date.now() + ADMIN_RESET_TTL_MS).toISOString()
+  f.pendingAdminReset = { code, expiresAt }
+  persist(f)
+  return { code, expiresAt }
+}
+
+/** Returns the live (unexpired) pending reset code or null. Used by
+ *  passwordMatches() in admin-auth to decide if the supplied password
+ *  is actually a one-time reset. Sweeps expired entries on read. */
+export function getPendingAdminReset(): { code: string; expiresAt: string } | null {
+  const f = load()
+  const r = f.pendingAdminReset
+  if (!r) return null
+  if (new Date(r.expiresAt).getTime() <= Date.now()) {
+    f.pendingAdminReset = undefined
+    persist(f)
+    return null
+  }
+  return r
+}
+
+/** Consume (delete) the pending reset code after a successful login. */
+export function consumePendingAdminReset(): void {
+  const f = load()
+  if (f.pendingAdminReset) {
+    f.pendingAdminReset = undefined
+    persist(f)
+  }
 }
 
 /** Test-only: reset the entire file. Guarded against prod use. */
