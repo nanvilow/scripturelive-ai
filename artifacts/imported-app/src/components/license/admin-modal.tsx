@@ -244,6 +244,11 @@ export function AdminModal() {
   const [pwdInput, setPwdInput] = useState('')
   const [pwdError, setPwdError] = useState<string | null>(null)
   const [pwdBusy, setPwdBusy] = useState(false)
+  // v0.7.7 — Forgot-password reset flow state. `forgotInfo` holds the
+  // success hint shown after dispatch (e.g. "Code sent to 02467..."),
+  // `forgotBusy` disables the link while the request is in-flight.
+  const [forgotBusy, setForgotBusy] = useState(false)
+  const [forgotInfo, setForgotInfo] = useState<string | null>(null)
   const authed = authState === 'authed'
 
   // ─── v0.7.5 — In-modal confirmation dialog (T501) ────────────────
@@ -389,6 +394,52 @@ export function AdminModal() {
       setPwdBusy(false)
     }
   }, [pwdInput])
+
+  // v0.7.7 — Forgot password: ask the server to mint + dispatch a
+  // 6-digit OTP via SMS (admin phone) and email (admin inbox). The
+  // operator then types that code into the same password input above
+  // — passwordMatches() in admin-auth.ts accepts the OTP as a one-shot
+  // password, alongside the master code as a permanent fallback.
+  const requestPasswordReset = useCallback(async () => {
+    setForgotBusy(true)
+    setForgotInfo(null)
+    setPwdError(null)
+    try {
+      const r = await fetch('/api/license/admin/forgot-password', {
+        method: 'POST',
+        cache: 'no-store',
+      })
+      if (!r.ok) {
+        setPwdError('Could not send reset code. Try again.')
+        return
+      }
+      const j = (await r.json().catch(() => ({}))) as {
+        sms?: { dispatched?: boolean; to?: string }
+        email?: { dispatched?: boolean }
+        expMinutes?: number
+      }
+      const channels: string[] = []
+      if (j.sms?.dispatched && j.sms.to) channels.push(`SMS to ${j.sms.to}`)
+      if (j.email?.dispatched) channels.push('email to nanvilow@gmail.com')
+      const mins = j.expMinutes ?? 15
+      if (channels.length === 0) {
+        setForgotInfo(
+          `Reset code generated (valid ${mins} min) — neither SMS nor email dispatched. ` +
+          `Use the master code as a fallback, or check the audit log.`,
+        )
+      } else {
+        setForgotInfo(
+          `Reset code sent via ${channels.join(' and ')}. ` +
+          `Enter the 6-digit code above (valid ${mins} min). ` +
+          `Master code also works as a permanent fallback.`,
+        )
+      }
+    } catch {
+      setPwdError('Network error — could not request reset.')
+    } finally {
+      setForgotBusy(false)
+    }
+  }, [])
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -832,6 +883,11 @@ export function AdminModal() {
             {pwdError && (
               <div className="text-xs text-rose-300 -mt-1">{pwdError}</div>
             )}
+            {forgotInfo && (
+              <div className="text-[11px] text-emerald-300 -mt-1 leading-relaxed border border-emerald-500/30 bg-emerald-500/10 rounded px-2 py-1.5">
+                {forgotInfo}
+              </div>
+            )}
             <button
               type="submit"
               disabled={pwdBusy || !pwdInput}
@@ -840,8 +896,25 @@ export function AdminModal() {
               {pwdBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
               Unlock
             </button>
+            {/* v0.7.7 — Forgot password link. Clicking it dispatches a
+                6-digit OTP via SMS to the admin phone and email to the
+                admin inbox. The OTP is then typed into the password
+                input above (no separate UI), keeping the login screen
+                slim. The master code remains an evergreen fallback. */}
+            <div className="flex items-center justify-between -mt-1">
+              <button
+                type="button"
+                onClick={requestPasswordReset}
+                disabled={forgotBusy}
+                className="text-[11px] text-emerald-300 hover:text-emerald-200 underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {forgotBusy ? 'Sending reset code…' : 'Forgot password?'}
+              </button>
+            </div>
             <div className="text-[10px] text-muted-foreground/70 mt-1 leading-relaxed">
               Default password is <code className="font-mono">admin</code> on first run — change it in Settings → Admin Password.
+              Forgot it? Tap <span className="text-emerald-300">Forgot password</span> to receive a one-time code via SMS + email,
+              or use your master code (saved during install) which always works.
             </div>
           </form>
         )}
@@ -1110,7 +1183,7 @@ export function AdminModal() {
                   <label htmlFor="gen-whatsapp" className="block text-[10px] uppercase tracking-wider text-muted-foreground cursor-pointer">WhatsApp (optional)</label>
                   <Input
                     id="gen-whatsapp"
-                    placeholder="0530686367"
+                    placeholder="0246798526"
                     value={genWhatsapp}
                     onChange={(e) => setGenWhatsapp(e.target.value)}
                     className="bg-background border-border text-foreground font-mono cursor-text"
@@ -1754,21 +1827,51 @@ export function AdminModal() {
         {tab === 'codes' && (
           <div className="space-y-4">
             {/* ── Stat strip ──────────────────────────────────────────── */}
+            {/* v0.7.7 — Each tile is now a CLICKABLE drill-down filter:
+                clicking Active narrows the table to active codes,
+                clicking Bin opens the soft-deleted view, clicking
+                Total resets to "all + not-bin". The currently selected
+                tile gets a subtle highlight ring so the operator can
+                see which view they're in at a glance. Status filter
+                values mirror AdminCodeStatus exactly so this stays in
+                lockstep with the dropdown below. */}
             <section className="grid grid-cols-3 sm:grid-cols-7 gap-2 text-center text-[11px]">
               {([
-                ['Total',     codesData?.stats.total      ?? 0, 'text-foreground'],
-                ['Active',    codesData?.stats.active     ?? 0, 'text-emerald-300'],
-                ['Unused',    codesData?.stats.neverUsed  ?? 0, 'text-sky-300'],
-                ['Expired',   codesData?.stats.expired    ?? 0, 'text-rose-300'],
-                ['Used',      codesData?.stats.used       ?? 0, 'text-zinc-300'],
-                ['Cancelled', codesData?.stats.cancelled  ?? 0, 'text-orange-300'],
-                ['Bin',       codesData?.stats.inBin      ?? 0, 'text-rose-300'],
-              ] as const).map(([label, n, color]) => (
-                <div key={label} className="rounded border border-border bg-card/40 px-2 py-1.5">
-                  <div className={cn('font-mono text-base leading-tight', color)}>{n}</div>
-                  <div className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</div>
-                </div>
-              ))}
+                ['Total',     codesData?.stats.total      ?? 0, 'text-foreground',  'all',         false],
+                ['Active',    codesData?.stats.active     ?? 0, 'text-emerald-300', 'active',      false],
+                ['Unused',    codesData?.stats.neverUsed  ?? 0, 'text-sky-300',     'never-used',  false],
+                ['Expired',   codesData?.stats.expired    ?? 0, 'text-rose-300',    'expired',     false],
+                ['Used',      codesData?.stats.used       ?? 0, 'text-zinc-300',    'used',        false],
+                ['Cancelled', codesData?.stats.cancelled  ?? 0, 'text-orange-300',  'cancelled',   false],
+                ['Bin',       codesData?.stats.inBin      ?? 0, 'text-rose-300',    'all',         true ],
+              ] as const).map(([label, n, color, filterTarget, binTarget]) => {
+                const active = codesShowBin
+                  ? binTarget === true
+                  : !binTarget && codesFilter === filterTarget
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => {
+                      setCodesShowBin(binTarget)
+                      setCodesFilter(filterTarget as 'all' | AdminCodeStatus)
+                    }}
+                    aria-pressed={active}
+                    title={`Show ${label.toLowerCase()} codes`}
+                    className={cn(
+                      'rounded border bg-card/40 px-2 py-1.5 transition-colors text-center',
+                      'hover:bg-card/70 hover:border-emerald-400/40',
+                      'focus:outline-none focus:ring-2 focus:ring-emerald-400/40',
+                      active
+                        ? 'border-emerald-400/70 ring-1 ring-emerald-400/40 bg-emerald-500/10'
+                        : 'border-border',
+                    )}
+                  >
+                    <div className={cn('font-mono text-base leading-tight', color)}>{n}</div>
+                    <div className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</div>
+                  </button>
+                )
+              })}
             </section>
 
             {/* ── Toolbar ─────────────────────────────────────────────── */}

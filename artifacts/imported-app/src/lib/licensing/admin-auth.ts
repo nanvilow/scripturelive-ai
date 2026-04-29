@@ -21,7 +21,12 @@
 
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
-import { getConfig } from './storage'
+import {
+  getConfig,
+  getFile,
+  getPendingAdminReset,
+  consumePendingAdminReset,
+} from './storage'
 
 // Cookie + session config. The cookie name is intentionally
 // app-specific so it can coexist with other tools on the same
@@ -59,12 +64,8 @@ export function resolveAdminPassword(): string {
   return 'admin'
 }
 
-/** Constant-time password comparison so a remote attacker can't
- *  use response-timing to learn the password length / prefix. */
-export function passwordMatches(submitted: string): boolean {
-  const expected = resolveAdminPassword()
-  // Pad both to the same length to avoid an early-exit on
-  // length-mismatch leaking length info.
+/** Constant-time string comparison helper. */
+function constantTimeEq(expected: string, submitted: string): boolean {
   const len = Math.max(expected.length, submitted.length, 1)
   const a = Buffer.alloc(len)
   const b = Buffer.alloc(len)
@@ -72,9 +73,39 @@ export function passwordMatches(submitted: string): boolean {
   Buffer.from(submitted, 'utf8').copy(b)
   let ok = false
   try { ok = timingSafeEqual(a, b) } catch { ok = false }
-  // Also require true length equality so a longer guess that
-  // shares a prefix doesn't match.
   return ok && expected.length === submitted.length
+}
+
+/** Constant-time password comparison so a remote attacker can't
+ *  use response-timing to learn the password length / prefix.
+ *  v0.7.7 — Also accepts (a) the master code (permanent fallback,
+ *  same code that unlocks transcription) and (b) a live, unexpired
+ *  one-time forgot-password OTP. The OTP is consumed on success so
+ *  it can't be reused. The operator-set adminPassword stays the
+ *  primary credential; the alternates exist purely so the operator
+ *  can recover if they forget it. */
+export function passwordMatches(submitted: string): boolean {
+  if (!submitted) return false
+  const expected = resolveAdminPassword()
+  if (constantTimeEq(expected, submitted)) return true
+
+  // Master code fallback — always works, same value the operator
+  // already keeps for transcription unlock.
+  try {
+    const f = getFile()
+    if (f.masterCode && constantTimeEq(f.masterCode, submitted)) return true
+  } catch {
+    /* storage unavailable — skip alternate */
+  }
+
+  // One-shot forgot-password OTP. consume on hit so the same code
+  // can't be re-used by anyone who later sees the SMS / email.
+  const reset = getPendingAdminReset()
+  if (reset && constantTimeEq(reset.code, submitted)) {
+    consumePendingAdminReset()
+    return true
+  }
+  return false
 }
 
 /** Mint a new session token and remember it. Returns the token

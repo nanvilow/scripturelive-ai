@@ -13,14 +13,56 @@
 //     activate to continue"
 //   • expired — red, "Subscription expired"
 // Both surfaces a single CTA that opens the Subscribe modal.
+//
+// v0.7.7 — Operator request: there must be a discoverable way for
+// users to cancel/stop their subscription right beside the activate
+// button. We add a secondary "Cancel Subscription" button that posts
+// to /api/license/deactivate after a confirm prompt. It's visible in
+// every locked state — when no active sub exists it serves as the
+// "exit" affordance (closes any in-flight activation attempt and
+// confirms there is nothing to cancel).
 
-import { Lock, Sparkles } from 'lucide-react'
+import { Lock, Sparkles, XCircle } from 'lucide-react'
+import { useState } from 'react'
 import { useLicense } from './license-provider'
 import { cn } from '@/lib/utils'
+import { toast } from 'sonner'
 
 export function LiveTranscriptionLockOverlay() {
-  const { status, openSubscribe, isLocked } = useLicense()
+  const { status, openSubscribe, isLocked, refresh } = useLicense()
+  const [cancelling, setCancelling] = useState(false)
   if (!isLocked) return null
+
+  const hasSub = !!status.activeSubscription
+  const cancelLabel = hasSub ? 'Cancel Subscription' : 'Cancel'
+
+  const handleCancel = async () => {
+    const ok = window.confirm(
+      hasSub
+        ? 'Cancel your active subscription? Live Transcription will stop on this PC.'
+        : 'You have no active subscription to cancel. This will clear any pending activation state on this PC. Continue?'
+    )
+    if (!ok) return
+    setCancelling(true)
+    try {
+      const r = await fetch('/api/license/deactivate', {
+        method: 'POST',
+        cache: 'no-store',
+        credentials: 'same-origin',
+      })
+      if (r.ok) {
+        toast.success(hasSub ? 'Subscription cancelled.' : 'Cleared.')
+        await refresh()
+      } else {
+        const j = (await r.json().catch(() => ({}))) as { error?: string }
+        toast.error(j.error || 'Could not cancel — try again or contact support.')
+      }
+    } catch {
+      toast.error('Network error — could not reach the licensing service.')
+    } finally {
+      setCancelling(false)
+    }
+  }
 
   const expired = status.state === 'expired'
   const palette = expired
@@ -64,18 +106,34 @@ export function LiveTranscriptionLockOverlay() {
       <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
       <p className="mt-1.5 max-w-sm text-[12px] text-foreground leading-relaxed">{subtitle}</p>
 
-      <button
-        type="button"
-        onClick={openSubscribe}
-        className={cn(
-          'mt-5 inline-flex items-center gap-2 h-9 px-4 rounded-md text-[11px] font-semibold uppercase tracking-wider',
-          'border shadow-lg transition-colors',
-          palette.button,
-        )}
-      >
-        <Lock className="h-3.5 w-3.5" />
-        Activate AI Detection Now
-      </button>
+      <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+        <button
+          type="button"
+          onClick={openSubscribe}
+          className={cn(
+            'inline-flex items-center gap-2 h-9 px-4 rounded-md text-[11px] font-semibold uppercase tracking-wider',
+            'border shadow-lg transition-colors',
+            palette.button,
+          )}
+        >
+          <Lock className="h-3.5 w-3.5" />
+          Activate AI Detection Now
+        </button>
+        <button
+          type="button"
+          onClick={handleCancel}
+          disabled={cancelling}
+          className={cn(
+            'inline-flex items-center gap-2 h-9 px-4 rounded-md text-[11px] font-semibold uppercase tracking-wider',
+            'border shadow-lg transition-colors',
+            'border-rose-500/40 bg-rose-950/30 text-rose-200 hover:bg-rose-900/40 hover:text-rose-100',
+            'disabled:opacity-50 disabled:cursor-not-allowed',
+          )}
+        >
+          <XCircle className="h-3.5 w-3.5" />
+          {cancelling ? 'Cancelling…' : cancelLabel}
+        </button>
+      </div>
 
       <p className="mt-4 text-[10px] text-muted-foreground">
         ScriptureLive AI helps churches display scripture instantly without typing.<br />
