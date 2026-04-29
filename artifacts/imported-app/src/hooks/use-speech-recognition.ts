@@ -63,8 +63,8 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
 
   const getSpeechRecognition = useCallback((): SpeechRecognitionConstructor | null => {
     if (typeof window === 'undefined') return null
-    const SR = (window as Record<string, unknown>).SpeechRecognition
-      || (window as Record<string, unknown>).webkitSpeechRecognition
+    const w = window as unknown as Record<string, unknown>
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition
     return SR as SpeechRecognitionConstructor | null
   }, [])
 
