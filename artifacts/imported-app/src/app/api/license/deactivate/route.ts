@@ -2,23 +2,28 @@
 // v0.7.11 — accepts { transfer?: boolean }; transfer=true preserves the
 //           remaining time and returns the activation code so the
 //           customer can move the license to a new install.
+// v0.7.12 — Both modes are now LOSSLESS: deactivateSubscription()
+//           also flips the row back to isUsed:false with transferredAt
+//           set (same shape transferActiveSubscription produces), so
+//           the customer can re-enter the same code in any "Enter
+//           activation code" field on this or another PC and have
+//           their remaining time restored. The only difference between
+//           the two modes is whether the activation code is returned
+//           in the response body for display.
 //
 // Customer-side helper. Two modes:
 //
-//   1. transfer = false (default, legacy behaviour kept for
-//      lock-overlay's "Cancel Subscription" button): clears the
-//      active subscription on this device. The activation code stays
-//      isUsed:true; once consumed it's spent. Use when the customer
-//      truly wants to abandon this license (e.g. lock overlay
-//      cleanup after an aborted activation attempt).
+//   1. transfer = false (default, used by lock-overlay's "Cancel
+//      Subscription" and Settings' "Deactivate on this PC"): clears
+//      the active subscription AND releases the activation row so it
+//      can be re-entered later. Does NOT echo the code back — the
+//      customer is expected to remember / look it up themselves.
 //
 //   2. transfer = true: invokes transferActiveSubscription(), which
-//      flips the activation row back to isUsed:false, sets
-//      transferredAt, and PRESERVES subscriptionExpiresAt so the
-//      next install inherits the original remaining time. Returns
-//      the activation code in the response so the UI can show it
-//      with a Copy button. Refuses for master codes (already valid
-//      everywhere) and already-expired subs (no time to transfer).
+//      releases the row identically AND returns the activation code
+//      in the response so the UI can show it with a Copy button.
+//      Refuses for master codes (already valid everywhere) and
+//      already-expired subs (no time to transfer).
 
 import { NextRequest, NextResponse } from 'next/server'
 import {

@@ -48,7 +48,7 @@ export function LiveTranscriptionLockOverlay() {
   const handleCancel = async () => {
     const ok = window.confirm(
       hasSub
-        ? 'Cancel your active subscription? Live Transcription will stop on this PC.'
+        ? 'Cancel your active subscription? Live Transcription will stop on this PC.\n\nYour activation code is released — you can re-enter it later on this or any other PC and the SAME remaining time will be restored (provided it has not expired).'
         : 'You have no active subscription to cancel. This will clear any pending activation state on this PC. Continue?'
     )
     if (!ok) return

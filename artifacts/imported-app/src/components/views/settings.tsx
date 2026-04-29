@@ -107,11 +107,18 @@ export function SettingsView() {
   }
   // v0.7.11 — Two distinct flows for releasing the license on this PC:
   //
-  //   handleDeactivate (legacy, destructive)
-  //     Burns the activation. Code stays isUsed=true forever. Use only
-  //     when the customer truly does not need this code anywhere again.
+  //   handleDeactivate (v0.7.12, lossless)
+  //     Calls /api/license/deactivate with no body. The server now
+  //     ALSO flips the activation row back to isUsed:false with
+  //     transferredAt set (same shape as transferActiveSubscription),
+  //     so the customer can re-enter the same code in any "Enter
+  //     activation code" field on this or another PC and get the
+  //     remaining time back. The DIFFERENCE from handleTransfer is
+  //     just that this path doesn't surface the code in a dialog —
+  //     use it when the customer just wants to stop using the app
+  //     on this PC for a while and they already know their code.
   //
-  //   handleTransfer (v0.7.11, lossless)
+  //   handleTransfer (v0.7.11, lossless + reveals code)
   //     Calls /api/license/deactivate with { transfer: true }. Server
   //     flips the row to isUsed=false, sets transferredAt, preserves
   //     subscriptionExpiresAt. Returns the activation code so the
@@ -120,7 +127,7 @@ export function SettingsView() {
   //     in a modal with a Copy button.
   const handleDeactivate = async () => {
     if (!status.subscription) return
-    if (!confirm('Deactivate this subscription on this PC?\n\nThis is one-way: the activation code becomes permanently spent and cannot be used anywhere else. Any remaining days are LOST.\n\nIf you just want to move the license to another PC, use "Move to Another PC" instead.')) return
+    if (!confirm('Deactivate this subscription on this PC?\n\nThe activation code is released — you can re-enter it on this or any other PC and the SAME remaining time will be restored (provided it has not expired). Live Transcription will stop on this PC immediately.\n\nIf you also want the code displayed for easy copy/paste, use "Move to Another PC" instead.')) return
     setLicBusy(true)
     try {
       const r = await fetch('/api/license/deactivate', { method: 'POST' })
@@ -454,8 +461,9 @@ export function SettingsView() {
               </div>
               {!status.subscription.isMaster && (
                 <p className="text-[10px] text-muted-foreground leading-snug pt-1">
-                  <span className="text-sky-300">Move to Another PC</span> releases this license while keeping your remaining time, and gives you the code to enter on the new PC.{' '}
-                  <span className="text-rose-300">Deactivate</span> permanently spends the code — only use this if you do not need it anywhere else.
+                  Both options release the license while preserving your remaining time, so you can re-enter the same code later on this or another PC.{' '}
+                  <span className="text-sky-300">Move to Another PC</span> additionally shows the code in a copy-friendly dialog.{' '}
+                  <span className="text-rose-300">Deactivate</span> just stops the app on this PC; use it when you already know your code.
                 </p>
               )}
             </div>

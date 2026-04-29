@@ -1103,16 +1103,57 @@ export function saveConfig(patch: Partial<Record<keyof RuntimeConfig, unknown>>)
   return current
 }
 
-/** Owner-managed deactivation — clears the active subscription so the
- *  same activation code can be moved to a different install. We do
- *  NOT mark the activation as unused; once consumed, an activation is
- *  spent. This just lets the operator detach it from this device. */
+/** Owner-managed deactivation — clears the active subscription on
+ *  this device.
+ *
+ *  v0.7.12 — Operator escalation: customers were re-typing their code
+ *  after Deactivate (or after the lock-overlay's Cancel Subscription)
+ *  expecting it to come back, then hitting "This activation code has
+ *  already been used." The legacy behaviour permanently burned the
+ *  code, but in practice almost no customer wanted that — they just
+ *  wanted to take a break / restart / clear state, then resume on
+ *  the SAME or another PC with the time they'd already paid for.
+ *
+ *  New behaviour: deactivate is now LOSSLESS. We flip the activation
+ *  row to {isUsed:false, transferredAt:now, subscriptionExpiresAt:
+ *  unchanged}, exactly like transferActiveSubscription(). That means:
+ *
+ *    • activateCode() recognises the row as a transfer-in and
+ *      re-grants the SAME remaining time (no renewal, no extension).
+ *    • The customer can re-type the code in any "Enter activation
+ *      code" field on this PC or another — no new button needed.
+ *    • Already-expired codes still refuse to re-activate (the
+ *      transfer-in branch in activateCode rejects past deadlines).
+ *
+ *  The master code is special — it never wears out, so we just null
+ *  the active sub mirror. Codes whose deadline has already passed
+ *  are not flipped (no point making them "reusable" when activateCode
+ *  would reject them anyway, and we don't want stale rows accumulating
+ *  transferredAt timestamps).
+ */
 export function deactivateSubscription(): SubscriptionStatus {
   const f = load()
-  if (f.activeSubscription) {
-    f.activeSubscription = null
-    persist(f)
+  if (!f.activeSubscription) return computeStatus()
+  // Master never gets flipped — it's always valid everywhere.
+  if (!f.activeSubscription.isMaster) {
+    const code = f.activeSubscription.activationCode
+    const a = f.activationCodes.find((r) => r.code === code)
+    if (a && a.isUsed && a.subscriptionExpiresAt) {
+      const expiresMs = Date.parse(a.subscriptionExpiresAt)
+      // Only flip rows whose deadline is still in the future. Past-
+      // deadline codes stay isUsed:true (they're spent anyway).
+      if (Number.isFinite(expiresMs) && expiresMs > Date.now()) {
+        a.isUsed = false
+        a.transferredAt = new Date().toISOString()
+        a.transferCount = (a.transferCount ?? 0) + 1
+        // Keep usedAt + subscriptionExpiresAt + originalActivatedAt
+        // intact — activateCode() reads them on the transfer-in
+        // branch to enforce the original deadline.
+      }
+    }
   }
+  f.activeSubscription = null
+  persist(f)
   return computeStatus()
 }
 
