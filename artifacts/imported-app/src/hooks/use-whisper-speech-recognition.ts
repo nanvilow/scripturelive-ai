@@ -111,7 +111,14 @@ interface UseWhisperSpeechRecognitionReturn {
   interimTranscript: string
   isSupported: boolean
   error: string | null
-  startListening: (onResult?: (text: string) => void) => void
+  /**
+   * v0.7.4 — onResult signature aligned with the Deepgram hook so the
+   * SpeechProvider can route both engines through a single
+   * confidence-tier gate. Whisper's HTTP API doesn't expose chunk-level
+   * confidence, so we always pass 1.0 (live tier) — the tier-based
+   * suppression is a no-op for Whisper users, matching prior behaviour.
+   */
+  startListening: (onResult?: (text: string, confidence: number) => void) => void
   stopListening: () => void
   resetTranscript: () => void
 }
@@ -139,7 +146,7 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
   const [transcript, setTranscript] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  const onResultRef = useRef<((text: string) => void) | undefined>(undefined)
+  const onResultRef = useRef<((text: string, confidence: number) => void) | undefined>(undefined)
   const transcriptRef = useRef('')
   const streamRef = useRef<MediaStream | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
@@ -221,7 +228,10 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
         transcriptRef.current = (transcriptRef.current + ' ' + text).trim()
         setTranscript(transcriptRef.current)
         const cb = onResultRef.current
-        if (cb) cb(text)
+        // v0.7.4 — Whisper has no chunk-level confidence. Treat every
+        // emitted segment as live tier (1.0) so the SpeechProvider's
+        // gate is a no-op for Whisper users (matches prior behaviour).
+        if (cb) cb(text, 1)
       }
     }
   }, [])
@@ -370,7 +380,7 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
     }
   }, [])
 
-  const startListening = useCallback((onResult?: (text: string) => void) => {
+  const startListening = useCallback((onResult?: (text: string, confidence: number) => void) => {
     if (!isSupported) {
       setError('Audio recording is not available in this environment.')
       return

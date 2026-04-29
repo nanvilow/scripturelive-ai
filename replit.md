@@ -2,6 +2,136 @@
 
 This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services. It supports live congregation output, NDI broadcasting, and advanced speech recognition. The system targets both web and desktop (Electron) environments, offering features like dynamic downloads and real-time slide updates. The core ambition is a streamlined, cloud-powered Whisper transcription service.
 
+## v0.7.4 — Voice/detection polish + Live Output Auto Go-Live quick toggle (Apr 2026)
+
+Picks up the items deferred from v0.7.3. Five user-facing changes,
+all in the live-presenting path. Multi-PC license + single-active
+enforcement is **deferred again to v0.7.5** — it needs a central
+authority that the offline-first desktop build doesn't have today,
+and a proper design discussion (see "Deferred to v0.7.5" at the
+bottom of this entry).
+
+### 1. New voice command — "next chapter" / "previous chapter"
+
+Operators can now say **"next chapter"** or **"previous chapter"**
+(also "prev chapter" / "last chapter") to jump the live output to
+chapter ±1 of whatever book is currently live. The provider reads
+the live verse-slide title to recover book + chapter, validates
+against `bibleStructure` (so "Revelation 22 + next" doesn't try to
+load chapter 23 — it shows a polite toast instead), then loads the
+**whole** target chapter so the operator can use auto-scroll /
+speaker-follow to walk through it.
+
+The new patterns sit BEFORE the bare "next" / "previous" entries in
+`PATTERNS` so the longer-trigger match wins. Falls back gracefully
+when there's no live verse to anchor against.
+
+Example: "next chapter" with John 3 live → John 4:1-54 cued live.
+
+### 2. New voice command — "the bible says &lt;ref&gt;" → STANDBY only
+
+For mid-sermon cueing without hijacking the screen. Triggers:
+**"the bible says"**, "bible says", "scripture says". Same lookup
+as `go to`, but the loaded passage routes to the **preview slot
+only** — never to Live, even when Auto Go-Live is on. Operator hits
+Enter or clicks Go Live to push.
+
+Toast surfaces as `Standby: John 3:16` so the operator can see what
+got queued at a glance. The label is generated kind-aware in
+`commands.ts` (`bible_says` → `Standby:`, everything else →
+`Go to`).
+
+### 3. Live Output header — Auto Go-Live quick toggle
+
+Added a Zap-icon button to the Live Output panel header right next
+to the existing Footprints (Speaker-Follow) toggle. It mirrors the
+same `settings.autoGoLiveOnDetection` setting that lives in
+Scripture Detection — the operator can flip it without leaving the
+Live Presenter view, and the two buttons stay in sync because
+they're driving the same store field. Active state uses emerald
+(matches the detection panel's accent), inactive is the muted
+border treatment.
+
+### 4. Live transcription confidence tiers (≥70 / 30-70 / &lt;30)
+
+Threaded the per-chunk Deepgram confidence (0..1) through the
+streaming hook → SpeechProvider so we can gate the auto-fire
+pipeline by quality. Three bands, all operator-tunable in
+`AppSettings`:
+
+- **`transcriptDropThreshold` (default 0.30):** below this,
+  transcript chunk is shown for diagnostics but skipped entirely
+  by the command + reference detection pipeline.
+- **`transcriptPreviewThreshold` (default 0.60):** visual cutoff
+  reserved for future "tentative chunk" rendering.
+- **`transcriptLiveThreshold` (default 0.70):** at or above this,
+  the chunk runs the full pipeline (commands, v1 + v2 detection,
+  AI semantic match).
+
+The hook callback signature became `(text, confidence)`. Whisper
+HTTP API doesn't expose chunk-level confidence, so the Whisper hook
+always passes 1.0 — the gate is a no-op for Whisper users (matches
+prior behaviour). Deepgram passes its real `alt.confidence`,
+defaulting to 1.0 only when the field is missing on a special
+message type.
+
+Lowered the v2 auto-go-live threshold from 90 → 70 to align with
+the new live tier — 90 was an artifact of pre-tier days when
+low-confidence chunks reached that code path. The chunk that
+produces a v2 detection has now already passed the 0.70 gate, and
+v2 keeps its own ≥80 detection floor, so the combined safety is
+unchanged in practice.
+
+### 5. Speaker-Follow polish — anti-rewind + tighter delta
+
+Two surgical tweaks to `pickBestVerse` to stop the highlight
+flickering between adjacent verses when the preacher is mid-way
+through a passage:
+
+- **`minDelta` 0.05 → 0.08**: the new best-verse score now has to
+  beat the current verse by 0.08 (was 0.05) before we switch.
+  Sticks the highlight harder when adjacent verses share filler
+  tokens like "world", "God", "son" (e.g. John 3:16 / 3:17).
+- **Anti-rewind window (1500 ms)**: when the new best verse is
+  EARLIER than the current one, suppress the switch if it's within
+  1.5 s of the previous forward switch. Preachers almost always
+  progress forward; a sudden backward jump in that window is
+  overwhelmingly noise from filler-word leak. SpeechProvider tracks
+  the timestamp in a ref and stamps it only on FORWARD switches.
+
+### Deferred to v0.7.5
+
+- **Multi-PC license + single-active enforcement.** This needs a
+  central authority that doesn't exist in the current offline-first
+  desktop build. Two design directions in tension:
+  1. Add a thin "presence" service the desktop app heartbeats
+     against — solves single-active cleanly but breaks the offline
+     guarantee.
+  2. Sign a JWT into the activation payload that encodes the
+     allowed seat-count + a server-rotated nonce — works offline
+     but allows transient over-use until the next online check.
+  Punted to v0.7.5 so the right call can be made deliberately.
+
+### Files
+
+- `replit.md` (this changelog)
+- `artifacts/imported-app/package.json` (0.7.3.1 → 0.7.4)
+- `artifacts/imported-app/src/lib/voice/commands.ts` (next/prev
+  chapter + bible_says patterns; kind-aware label)
+- `artifacts/imported-app/src/lib/voice/speaker-follow.ts`
+  (minDelta default 0.08 + antiRewindMs guard)
+- `artifacts/imported-app/src/lib/store.ts` (three new
+  `transcript*Threshold` settings)
+- `artifacts/imported-app/src/hooks/use-deepgram-streaming.ts`
+  (callback signature + chunk confidence)
+- `artifacts/imported-app/src/hooks/use-whisper-speech-recognition.ts`
+  (callback signature; passes 1.0)
+- `artifacts/imported-app/src/components/providers/speech-provider.tsx`
+  (confidence-tier gate, next/prev chapter + bible_says dispatch,
+  v2 threshold 90→70, lastSpeakerSwitchAt anti-rewind)
+- `artifacts/imported-app/src/components/views/live-presenter.tsx`
+  (Live Output header Auto Go-Live Zap toggle)
+
 ## v0.7.3.1 — Hotfix for v0.7.3 (Apr 2026)
 
 Code-review caught two regressions in v0.7.3 that shipped with the

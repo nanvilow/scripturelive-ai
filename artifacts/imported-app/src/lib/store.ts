@@ -109,6 +109,21 @@ export interface AppSettings {
    *  true so the smart-match path "just works" for new operators;
    *  sermon-prep users can flip it off in Settings. */
   aiAutoSendOnHigh: boolean
+  /** v0.7.4 — Live transcription confidence tiers (0..1). The
+   *  SpeechProvider gates each Deepgram chunk against these:
+   *    • confidence < transcriptDropThreshold       → drop entirely
+   *    • [drop, transcriptLiveThreshold)            → preview only
+   *      (visible in the operator transcript with a tentative marker
+   *      but NOT fed to the verse-detection / voice-command pipeline)
+   *    • confidence ≥ transcriptLiveThreshold       → full pipeline
+   *  Defaults: 0.30 / 0.70. Operators can tune in Settings →
+   *  Detection. transcriptPreviewThreshold is the visual cutoff at
+   *  which the tentative marker is rendered (0.60 by default — chunks
+   *  in [0.30, 0.60) are clearly tentative; [0.60, 0.70) is "almost
+   *  good enough" and renders mid-tone). */
+  transcriptDropThreshold: number
+  transcriptPreviewThreshold: number
+  transcriptLiveThreshold: number
   // ── Secondary screen layout. `displayRatio` controls how the slide
   // canvas is fitted into the operator's secondary screen window:
   //   'fill'   – stretch to the full window (recommended for projectors)
@@ -620,6 +635,11 @@ const defaultSettings: AppSettings = {
   autoGoLiveOnDetection: true,
   autoGoLiveOnLookup: false,
   aiAutoSendOnHigh: true,
+  // v0.7.4 — Confidence tiers. Defaults match the operator spec:
+  // ≥0.70 live / [0.30, 0.70) preview / <0.30 drop.
+  transcriptDropThreshold: 0.30,
+  transcriptPreviewThreshold: 0.60,
+  transcriptLiveThreshold: 0.70,
   ndiDisplayMode: 'full',
   // NDI typography overrides (v0.5.48): leave undefined so the NDI
   // feed mirrors Live Display by default. The operator opts in via

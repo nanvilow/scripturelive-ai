@@ -73,10 +73,28 @@ export interface FollowResult {
 export interface FollowOpts {
   /** Required score for a verse to even be considered the new best. Default 0.20. */
   switchThreshold?: number
-  /** Required margin over `currentScore` to actually switch. Default 0.05. */
+  /**
+   * Required margin over `currentScore` to actually switch.
+   * v0.7.4: bumped 0.05 → 0.08 to make the highlight stickier in
+   * multi-verse passages where adjacent verses share many tokens
+   * (e.g. John 3:16 / 3:17 both contain "world", "God", "son",
+   * "perish", "everlasting"). Defaults to 0.08.
+   */
   minDelta?: number
   /** Index of the currently highlighted verse (caller-tracked). */
   currentIndex: number | null
+  /**
+   * v0.7.4 — Anti-rewind window. Timestamp (ms since epoch) of the
+   * most recent forward switch. If the new best verse index is LESS
+   * than `currentIndex` AND the elapsed time since `lastSwitchAt` is
+   * below `antiRewindMs`, we suppress the switch. Preachers almost
+   * always progress through a passage; a sudden backward jump within
+   * 1.5 s is overwhelmingly noise (filler words from the previous
+   * verse leaking into the speech window).
+   */
+  lastSwitchAt?: number
+  /** Default 1500 ms. Set 0 to disable the anti-rewind guard. */
+  antiRewindMs?: number
 }
 
 /**
@@ -97,7 +115,8 @@ export function pickBestVerse(
     return { bestIndex: opts.currentIndex, bestScore: 0, shouldSwitch: false }
   }
   const switchThreshold = opts.switchThreshold ?? 0.20
-  const minDelta = opts.minDelta ?? 0.05
+  const minDelta = opts.minDelta ?? 0.08
+  const antiRewindMs = opts.antiRewindMs ?? 1500
 
   const speechTri = trigrams(tokens(recentSpeech))
   let best = -1
@@ -119,9 +138,18 @@ export function pickBestVerse(
     return { bestIndex: best, bestScore, shouldSwitch: false }
   }
   const decisive = bestScore >= switchThreshold && bestScore >= currentScore + minDelta
+  // v0.7.4 — Anti-rewind guard. Suppress backward jumps within
+  // antiRewindMs of the previous forward switch.
+  const isBackward =
+    opts.currentIndex !== null && best < opts.currentIndex
+  const blockedByRewindGuard =
+    isBackward &&
+    antiRewindMs > 0 &&
+    opts.lastSwitchAt !== undefined &&
+    Date.now() - opts.lastSwitchAt < antiRewindMs
   return {
     bestIndex: best,
     bestScore,
-    shouldSwitch: decisive,
+    shouldSwitch: decisive && !blockedByRewindGuard,
   }
 }
