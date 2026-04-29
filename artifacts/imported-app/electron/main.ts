@@ -121,6 +121,17 @@ let frameCaptureFlags: {
   transparent: boolean
   lowerThird: boolean
   lowerThirdPosition: 'top' | 'bottom'
+  // v0.7.5.1 — Track the URL-baked lower-third HEIGHT bucket and
+  // SCALE multiplier on the running FrameCapture so the next
+  // ndi:start can detect operator-dragged changes to those sliders
+  // and force a true rebuild. Without this the equality check
+  // below would short-circuit (source/geometry/fps/transparent/
+  // lowerThird/position all unchanged), the BrowserWindow would
+  // keep loading the OLD ?lh=&sc= params, and vMix/OBS would
+  // continue to render the wrong size — defeating the whole point
+  // of the URL-bake fix.
+  lowerThirdHeight: 'sm' | 'md' | 'lg' | null
+  lowerThirdScale: number | null
 } | null = null
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -1434,6 +1445,24 @@ function setupIpc() {
         const wantLT = wantLayout === 'ndi' && Boolean(opts.lowerThird?.enabled)
         const wantLTPos: 'top' | 'bottom' =
           opts.lowerThird?.position === 'top' ? 'top' : 'bottom'
+        // v0.7.5.1 — extend equality to lower-third height/scale.
+        // Without this, an operator dragging the height bucket or
+        // scale slider WHILE NDI is broadcasting would re-call
+        // ndi:start with the same {name,w,h,fps,transparent,LT,pos}
+        // and hit the short-circuit below — leaving the FrameCapture
+        // BrowserWindow loading the OLD ?lh=&sc= URL forever.
+        const wantLTHeight: 'sm' | 'md' | 'lg' | null = wantLT
+          ? (() => {
+              const h = (opts.lowerThird as { height?: 'sm' | 'md' | 'lg' } | undefined)?.height
+              return h === 'sm' || h === 'md' || h === 'lg' ? h : null
+            })()
+          : null
+        const wantLTScale: number | null = wantLT
+          ? (() => {
+              const s = (opts.lowerThird as { scale?: number } | undefined)?.scale
+              return typeof s === 'number' && s >= 0.5 && s <= 2 ? s : null
+            })()
+          : null
         if (
           cur.running &&
           frameCapture &&
@@ -1445,7 +1474,9 @@ function setupIpc() {
           frameCaptureFlags.layout === wantLayout &&
           frameCaptureFlags.transparent === wantTransparent &&
           frameCaptureFlags.lowerThird === wantLT &&
-          (!wantLT || frameCaptureFlags.lowerThirdPosition === wantLTPos)
+          (!wantLT || frameCaptureFlags.lowerThirdPosition === wantLTPos) &&
+          (!wantLT || frameCaptureFlags.lowerThirdHeight === wantLTHeight) &&
+          (!wantLT || frameCaptureFlags.lowerThirdScale === wantLTScale)
         ) {
           broadcastNdiStatus(cur)
           return { ok: true, status: cur }
@@ -1515,6 +1546,10 @@ function setupIpc() {
           transparent,
           lowerThird: layout === 'ndi' && Boolean(opts.lowerThird?.enabled),
           lowerThirdPosition: opts.lowerThird?.position === 'top' ? 'top' : 'bottom',
+          // v0.7.5.1 — persist what we baked into the URL so the next
+          // ndi:start can detect operator-dragged changes.
+          lowerThirdHeight: wantLTHeight,
+          lowerThirdScale: wantLTScale,
         }
         broadcastNdiStatus(ndi.getStatus())
         return { ok: true, status: ndi.getStatus() }
