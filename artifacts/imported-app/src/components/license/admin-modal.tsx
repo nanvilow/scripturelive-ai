@@ -210,6 +210,10 @@ export function AdminModal() {
     activeNow?: number
     totalInstalls?: number
     sessionsToday?: number
+    /** v0.7.14 — average session duration today, in milliseconds.
+     *  Server-derived as avg(max(ts)-min(ts)) per (install_id,
+     *  session_id) for sessions with ≥2 heartbeats today. */
+    avgSessionMs?: number
     errorsToday?: number
     topFeatures?: { name: string; count: number }[]
     recentErrors?: {
@@ -1129,8 +1133,22 @@ export function AdminModal() {
               )}
 
               {/* KPI cards row */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                 {(() => {
+                  // v0.7.14 — pretty-print avgSessionMs into a compact
+                  // human-friendly string. <60s → "Ns", <60m → "Nm",
+                  // ≥1h → "Nh Mm". Undefined when no qualifying
+                  // sessions exist today.
+                  const formatAvg = (ms: number | undefined): string => {
+                    if (typeof ms !== 'number' || !isFinite(ms) || ms <= 0) return '—'
+                    const s = Math.round(ms / 1000)
+                    if (s < 60) return `${s}s`
+                    const m = Math.round(s / 60)
+                    if (m < 60) return `${m}m`
+                    const h = Math.floor(m / 60)
+                    const rem = m - h * 60
+                    return rem > 0 ? `${h}h ${rem}m` : `${h}h`
+                  }
                   const cards: Array<{
                     label: string
                     value: string | number
@@ -1149,6 +1167,11 @@ export function AdminModal() {
                     {
                       label: 'Sessions today',
                       value: records?.sessionsToday ?? '—',
+                      tone: 'info',
+                    },
+                    {
+                      label: 'Avg session',
+                      value: formatAvg(records?.avgSessionMs),
                       tone: 'info',
                     },
                     {

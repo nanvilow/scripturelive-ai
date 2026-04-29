@@ -24,12 +24,13 @@
 // operator can click to open WhatsApp Web with the body pre-filled.
 // Customers get the same link as part of the receipt modal in-app.
 
-import { appendNotification, NotificationRecord } from './storage'
+import { appendNotification, getFile, NotificationRecord } from './storage'
 import {
   NOTIFICATION_EMAIL,
   NOTIFICATION_WHATSAPP,
   getEffectiveNotificationTargets,
 } from './plans'
+import { pingError } from './telemetry-client'
 // v0.6.3 — SMS gateway migrated from Arkesel to mNotify. The named
 // export is now `sendMnotifySms`; sms.ts also keeps a `sendArkeselSms`
 // alias for any straggler imports during the transition.
@@ -367,7 +368,13 @@ async function sendEmailViaSmtp(args: {
   for (let i = 1; i <= SMTP_MAX_ATTEMPTS; i++) {
     last = await attempt(i)
     if (last.ok) return last
-    if (!last.transient) return last  // permanent error — don't waste retries
+    if (!last.transient) {
+      // v0.7.14 — Permanent SMTP failure. Forward to /api/telemetry/
+      // error so the operator's admin Records dashboard sees it
+      // immediately (vs having to scrape pending notifications).
+      void reportSmtpFailureTelemetry(args.to, last.error, i, false)
+      return last  // permanent error — don't waste retries
+    }
     if (i < SMTP_MAX_ATTEMPTS) {
       const wait = SMTP_BACKOFF_MS[i - 1] ?? 5000
       // eslint-disable-next-line no-console
@@ -375,7 +382,46 @@ async function sendEmailViaSmtp(args: {
       await new Promise((res) => setTimeout(res, wait))
     }
   }
+  // v0.7.14 — All retries exhausted on a transient error path.
+  // Forward to telemetry so the dashboard surfaces "Gmail rate-limit /
+  // socket-close" classes of failure that previously only lived in
+  // the admin notifications panel.
+  if (!last.ok) {
+    void reportSmtpFailureTelemetry(args.to, last.error, SMTP_MAX_ATTEMPTS, true)
+  }
   return last
+}
+
+// v0.7.14 — Telemetry helper. Best-effort, never throws. Does NOT
+// include the recipient email/phone (PII) — only the domain part of
+// the email and a hashed/truncated SMS prefix go through, in
+// service of error-rate trend analysis.
+function reportSmtpFailureTelemetry(
+  to: string,
+  err: string | undefined,
+  attempts: number,
+  exhausted: boolean,
+): Promise<void> {
+  try {
+    const f = getFile()
+    const installId = f.installId
+    // Strip recipient PII. Email: keep "@domain.tld"; phone: replace
+    // with "phone(N digits)" so the dashboard can spot a regional
+    // SMS-failure cluster without leaking customer numbers.
+    let target = '(unknown)'
+    if (typeof to === 'string' && to.length > 0) {
+      const at = to.indexOf('@')
+      if (at > 0) target = '@' + to.slice(at + 1)
+      else target = `phone(${to.replace(/\D/g, '').length}d)`
+    }
+    return pingError({
+      installId,
+      errorType: exhausted ? 'smtp_exhausted' : 'smtp_permanent',
+      message: `SMTP send failed → ${target} | attempts=${attempts}/${SMTP_MAX_ATTEMPTS} | ${err ?? 'no detail'}`.slice(0, 1900),
+    })
+  } catch {
+    return Promise.resolve()
+  }
 }
 
 export async function notifyEmail(args: {

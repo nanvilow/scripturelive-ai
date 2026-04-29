@@ -18,7 +18,7 @@ import {
 } from '@/lib/licensing/storage'
 import { findPlan } from '@/lib/licensing/plans'
 import { captureGeoFromRequest } from '@/lib/licensing/geoip'
-import { pingHeartbeat, pingInstall } from '@/lib/licensing/telemetry-client'
+import { pingHeartbeat, pingInstall, SESSION_ID } from '@/lib/licensing/telemetry-client'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -79,6 +79,12 @@ export async function GET(req: NextRequest) {
   try {
     void pingHeartbeat({
       installId: file.installId,
+      // v0.7.14 — pass the per-app-launch session id so the central
+      // backend can derive avg session duration. SESSION_ID is minted
+      // ONCE per Node process at module load (i.e. once per Electron
+      // launch since the embedded Next server's lifetime == the
+      // app's lifetime).
+      sessionId: SESSION_ID,
       code: s.activeSubscription?.activationCode,
       appVersion: appVersion(),
       location: geoLocation,

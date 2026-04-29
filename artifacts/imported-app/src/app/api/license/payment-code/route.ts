@@ -28,8 +28,24 @@ import {
   getEffectiveAdminPhone,
   getEffectiveNotificationTargets,
 } from '@/lib/licensing/plans'
-import { createPaymentCode } from '@/lib/licensing/storage'
+import { createPaymentCode, getFile } from '@/lib/licensing/storage'
 import { notifySms, notifyEmail } from '@/lib/licensing/notifications'
+import { pingError } from '@/lib/licensing/telemetry-client'
+
+// v0.7.14 — Tiny helper: forward a payment-code dispatch failure to
+// /api/telemetry/error so the admin Records dashboard sees it. Never
+// throws.
+function reportPaymentDispatchFailure(channel: 'customer_sms' | 'admin_sms' | 'admin_email', ref: string, err: unknown): void {
+  try {
+    const installId = getFile().installId
+    const message = err instanceof Error ? err.message : typeof err === 'string' ? err : (() => { try { return JSON.stringify(err) } catch { return String(err) } })()
+    void pingError({
+      installId,
+      errorType: `payment_${channel}`,
+      message: `payment ref ${ref}: ${message ?? '(no detail)'}`.slice(0, 1900),
+    })
+  } catch { /* swallow */ }
+}
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -84,14 +100,20 @@ export async function POST(req: NextRequest) {
       to: whatsapp,
       subject: `[ScriptureLive] Payment instructions — ref ${rec.ref}`,
       body: customerSms,
-    }).catch((e) => console.error('[payment-code] customer SMS failed:', e))
+    }).catch((e) => {
+      console.error('[payment-code] customer SMS failed:', e)
+      reportPaymentDispatchFailure('customer_sms', rec.ref, e)
+    })
 
     // Admin alert SMS.
     void notifySms({
       to: adminPhone,
       subject: `New payment ref ${rec.ref}`,
       body: adminAlertBody,
-    }).catch((e) => console.error('[payment-code] admin SMS failed:', e))
+    }).catch((e) => {
+      console.error('[payment-code] admin SMS failed:', e)
+      reportPaymentDispatchFailure('admin_sms', rec.ref, e)
+    })
 
     // Admin alert email (full details for the audit trail).
     void notifyEmail({
@@ -107,7 +129,10 @@ export async function POST(req: NextRequest) {
         `  WhatsApp:  ${whatsapp}\n` +
         `  Created:   ${rec.createdAt}\n` +
         `  Expires:   ${rec.expiresAt}\n`,
-    }).catch((e) => console.error('[payment-code] admin email failed:', e))
+    }).catch((e) => {
+      console.error('[payment-code] admin email failed:', e)
+      reportPaymentDispatchFailure('admin_email', rec.ref, e)
+    })
   })
 
   return NextResponse.json({

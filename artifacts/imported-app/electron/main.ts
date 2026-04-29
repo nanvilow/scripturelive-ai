@@ -4,6 +4,7 @@ import { spawn, ChildProcess } from 'node:child_process'
 import { createServer } from 'node:net'
 import fs from 'node:fs'
 import { NdiService, NdiStartOptions as NdiServiceStartOptions, NdiStatus } from './ndi-service'
+import { pingThrown, pingErrorMain } from './telemetry'
 
 let logFilePath = ''
 function setupFileLogging() {
@@ -32,8 +33,20 @@ function setupFileLogging() {
       resourcesPath: process.resourcesPath,
       userData: dir,
     })
-    process.on('uncaughtException', (err) => { console.error('uncaughtException', err) })
-    process.on('unhandledRejection', (err) => { console.error('unhandledRejection', err) })
+    // v0.7.14 — Central error reporting. Forward main-process
+    // crashes / unhandled rejections to the api-server's
+    // /api/telemetry/error endpoint so the operator's admin Records
+    // dashboard surfaces them in real time. Both calls are
+    // fire-and-forget with a 4-second timeout — a telemetry outage
+    // never blocks crash logging or app shutdown.
+    process.on('uncaughtException', (err) => {
+      console.error('uncaughtException', err)
+      try { pingThrown('uncaughtException', err) } catch { /* ignore */ }
+    })
+    process.on('unhandledRejection', (err) => {
+      console.error('unhandledRejection', err)
+      try { pingThrown('unhandledRejection', err) } catch { /* ignore */ }
+    })
   } catch (e) {
     // best-effort: file logging optional
   }
@@ -1761,6 +1774,14 @@ function setupIpc() {
   })
   ndi.on('error', (msg: string) => {
     broadcastNdiStatus({ ...ndi.getStatus(), error: msg })
+    // v0.7.14 — Forward NDI native binding errors to the central
+    // /api/telemetry/error endpoint so the operator's admin Records
+    // dashboard sees them. Anonymous installId only, message + a
+    // small "ndi" type tag — no frame data or PII.
+    void pingErrorMain({
+      errorType: 'ndi_native',
+      message: typeof msg === 'string' ? msg : String(msg),
+    })
   })
 }
 
