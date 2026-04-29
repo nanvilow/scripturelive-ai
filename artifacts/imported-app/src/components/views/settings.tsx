@@ -71,6 +71,7 @@ import {
   KeyRound,
   Sparkles,
   RefreshCw,
+  Send,
 } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { useLicense } from '@/components/license/license-provider'
@@ -104,9 +105,22 @@ export function SettingsView() {
       )
     }
   }
+  // v0.7.11 — Two distinct flows for releasing the license on this PC:
+  //
+  //   handleDeactivate (legacy, destructive)
+  //     Burns the activation. Code stays isUsed=true forever. Use only
+  //     when the customer truly does not need this code anywhere again.
+  //
+  //   handleTransfer (v0.7.11, lossless)
+  //     Calls /api/license/deactivate with { transfer: true }. Server
+  //     flips the row to isUsed=false, sets transferredAt, preserves
+  //     subscriptionExpiresAt. Returns the activation code so the
+  //     customer can paste it into the new install with the original
+  //     remaining time intact (NO renewal, NO reset). Result is shown
+  //     in a modal with a Copy button.
   const handleDeactivate = async () => {
     if (!status.subscription) return
-    if (!confirm('Deactivate this subscription on this PC? The activation code will be detached so you can re-use it on a different installation. This does NOT refund your remaining days — the code itself is already spent.')) return
+    if (!confirm('Deactivate this subscription on this PC?\n\nThis is one-way: the activation code becomes permanently spent and cannot be used anywhere else. Any remaining days are LOST.\n\nIf you just want to move the license to another PC, use "Move to Another PC" instead.')) return
     setLicBusy(true)
     try {
       const r = await fetch('/api/license/deactivate', { method: 'POST' })
@@ -116,6 +130,63 @@ export function SettingsView() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to deactivate')
     } finally { setLicBusy(false) }
+  }
+
+  // v0.7.11 — Move-to-another-PC dialog state. After a successful
+  // transfer we show the activation code in a big monospace box with
+  // a Copy button so the customer can read it to themselves / paste
+  // it into the new install. msLeftAtTransfer is shown verbatim so
+  // they understand exactly how much time is being preserved.
+  const [transferOpen, setTransferOpen] = useState(false)
+  const [transferCode, setTransferCode] = useState<string | null>(null)
+  const [transferMsLeft, setTransferMsLeft] = useState<number>(0)
+  const handleTransfer = async () => {
+    if (!status.subscription) return
+    if (status.subscription.isMaster) {
+      toast.error('The master code is already valid on every PC — no transfer needed.')
+      return
+    }
+    if (!confirm('Move your license to another PC?\n\nThis will release the code from this device while keeping your remaining time intact. You can then type the same code into the new installation and it will activate with the SAME remaining days you have now.\n\nLive Transcription will stop on this PC immediately.')) return
+    setLicBusy(true)
+    try {
+      const r = await fetch('/api/license/deactivate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transfer: true }),
+      })
+      const j = (await r.json().catch(() => ({}))) as {
+        ok?: boolean
+        code?: string
+        msLeft?: number
+        error?: string
+      }
+      if (!r.ok || !j.ok || !j.code) {
+        throw new Error(j.error || `HTTP ${r.status}`)
+      }
+      setTransferCode(j.code)
+      setTransferMsLeft(typeof j.msLeft === 'number' ? j.msLeft : 0)
+      setTransferOpen(true)
+      await refresh()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to transfer license')
+    } finally { setLicBusy(false) }
+  }
+  // Format ms → "12 days, 3 hours" (or "3 hours, 14 minutes" for short
+  // remaining periods) for the transfer-success dialog. Covers the
+  // common operator units; anything under a minute is rounded up.
+  const formatRemaining = (ms: number): string => {
+    if (ms <= 0) return '0 minutes'
+    const totalMin = Math.ceil(ms / 60000)
+    const days = Math.floor(totalMin / (60 * 24))
+    const hours = Math.floor((totalMin - days * 60 * 24) / 60)
+    const mins = totalMin - days * 60 * 24 - hours * 60
+    if (days > 0) {
+      return hours > 0 ? `${days} day${days === 1 ? '' : 's'}, ${hours} hour${hours === 1 ? '' : 's'}` : `${days} day${days === 1 ? '' : 's'}`
+    }
+    if (hours > 0) {
+      return mins > 0 ? `${hours} hour${hours === 1 ? '' : 's'}, ${mins} minute${mins === 1 ? '' : 's'}` : `${hours} hour${hours === 1 ? '' : 's'}`
+    }
+    return `${mins} minute${mins === 1 ? '' : 's'}`
   }
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isUploading, setIsUploading] = useState(false)
@@ -358,17 +429,35 @@ export function SettingsView() {
                   <RefreshCw className="h-3.5 w-3.5" /> Renew / Extend
                 </Button>
                 {!status.subscription.isMaster && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleDeactivate}
-                    disabled={licBusy}
-                    className="gap-1.5 text-rose-400 hover:text-rose-300 border-rose-500/30 hover:border-rose-500/60 hover:bg-rose-500/10"
-                  >
-                    <Power className="h-3.5 w-3.5" /> Deactivate on this PC
-                  </Button>
+                  <>
+                    {/* v0.7.11 — primary lossless flow: keeps remaining time, returns the code */}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleTransfer}
+                      disabled={licBusy}
+                      className="gap-1.5 text-sky-300 hover:text-sky-200 border-sky-500/40 hover:border-sky-500/70 hover:bg-sky-500/10"
+                    >
+                      <Send className="h-3.5 w-3.5" /> Move to Another PC
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleDeactivate}
+                      disabled={licBusy}
+                      className="gap-1.5 text-rose-400 hover:text-rose-300 border-rose-500/30 hover:border-rose-500/60 hover:bg-rose-500/10"
+                    >
+                      <Power className="h-3.5 w-3.5" /> Deactivate on this PC
+                    </Button>
+                  </>
                 )}
               </div>
+              {!status.subscription.isMaster && (
+                <p className="text-[10px] text-muted-foreground leading-snug pt-1">
+                  <span className="text-sky-300">Move to Another PC</span> releases this license while keeping your remaining time, and gives you the code to enter on the new PC.{' '}
+                  <span className="text-rose-300">Deactivate</span> permanently spends the code — only use this if you do not need it anywhere else.
+                </p>
+              )}
             </div>
           ) : (
             // No active subscription — trial / expired / never-activated
@@ -1463,6 +1552,61 @@ export function SettingsView() {
           Reset All Settings
         </Button>
       </div>
+
+      {/* v0.7.11 — Move-to-Another-PC success dialog. Shown after a
+          successful POST /api/license/deactivate { transfer:true }.
+          The activation code is rendered in a large monospace box
+          with a Copy button so the customer can read it to themselves
+          over WhatsApp / phone or paste it into the new install. The
+          preserved remaining time is spelled out so they understand
+          the transfer did NOT renew their subscription. */}
+      <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Send className="h-5 w-5 text-sky-400" />
+              License released — ready to move
+            </DialogTitle>
+            <DialogDescription>
+              Type or paste this activation code into the Activate dialog on the new PC. Your remaining time is preserved.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            {transferCode && (
+              <div className="rounded-lg border border-sky-500/40 bg-sky-500/5 p-4 space-y-3">
+                <p className="text-[10px] uppercase tracking-wider text-sky-300">
+                  Activation code
+                </p>
+                <p className="font-mono text-lg sm:text-xl break-all leading-snug select-all text-foreground">
+                  {transferCode}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleCopyLic(transferCode)}
+                  className="gap-1.5"
+                >
+                  <Copy className="h-3.5 w-3.5" /> Copy code
+                </Button>
+              </div>
+            )}
+            <div className="rounded-md border border-border bg-muted/30 p-3 space-y-1.5 text-xs">
+              <p>
+                <span className="text-muted-foreground">Remaining time preserved:</span>{' '}
+                <span className="font-semibold text-foreground">{formatRemaining(transferMsLeft)}</span>
+              </p>
+              <p className="text-muted-foreground leading-snug">
+                Live Transcription is now stopped on this PC. When you activate on the new PC, the new install will start with exactly the time shown above (no renewal, no reset).
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setTransferOpen(false)} className="w-full sm:w-auto">
+              Got it
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
