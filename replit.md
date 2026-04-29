@@ -60,6 +60,8 @@ The project is a pnpm monorepo using Node.js 24 and TypeScript 5.9, structured a
     -   Email deliverability hardening with multipart text+HTML, Reply-To, X-Entity-Ref-ID, List-Unsubscribe, and queue-id logging.
     -   Arkesel SMS API integration for customer activation receipts.
     -   Automatic SMTP self-test on server startup.
+    -   v0.7.5.1 NDI hotfix: hidden FrameCapture BrowserWindow now bakes the operator's `lowerThirdHeight` (sm/md/lg) and `ndiLowerThirdScale` directly into the captured URL via `?lh=` / `?sc=` overrides, so vMix/OBS see the same slim lower-third frame as the in-app preview from frame 1 (previously the captured window first-painted with default `md` / `1.0×` before SSE state arrived, producing the oversized bar covering ~30% of the broadcast frame).
+    -   v0.7.5.1 Settings previews also fall back to the live/preview slide (not just `liveVerse`/`currentVerse`) so the Full / Lower-Third / Typography preview cards mirror whatever scripture is actually on stage, regardless of which navigator surface (voice detection, dashboard, recents rail) selected it.
 
 # External Dependencies
 

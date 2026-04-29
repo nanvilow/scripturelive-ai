@@ -189,6 +189,17 @@ var IS_NDI=false;
 var FORCE_TRANSPARENT=false;
 var FORCE_LT=false;
 var FORCE_POS=null;
+// v0.7.5.1 — FORCE_LH / FORCE_SC let the Electron NDI capture pin the
+// operator's lower-third HEIGHT bucket and SCALE multiplier into the
+// URL itself, so the captured BrowserWindow renders the right box
+// size on the VERY FIRST paint instead of waiting for the SSE state
+// push. Pre-fix, the BrowserWindow rendered with default state (md
+// bucket, 1.0x scale) until SSE arrived — long enough that vMix/OBS
+// often grabbed a frame mid-transition and the operator saw an OLD
+// oversized bar even after they had dragged the slider down. Honoured
+// by the renderer below with PRIORITY over st.* so URL wins.
+var FORCE_LH=null;
+var FORCE_SC=null;
 try{
   var __qp=new URLSearchParams(location.search);
   IS_NDI=(__qp.get('ndi')==='1');
@@ -196,6 +207,10 @@ try{
   FORCE_LT=(__qp.get('lowerThird')==='1');
   var __p=__qp.get('position');
   if(__p==='top'||__p==='bottom')FORCE_POS=__p;
+  var __lh=__qp.get('lh');
+  if(__lh==='sm'||__lh==='md'||__lh==='lg')FORCE_LH=__lh;
+  var __sc=parseFloat(__qp.get('sc')||'');
+  if(isFinite(__sc)&&__sc>=0.5&&__sc<=2)FORCE_SC=__sc;
 }catch(e){}
 // Drop body / stage / output backgrounds when running as an NDI
 // alpha-keyed overlay so vMix/OBS receives a clean matte. Done at
@@ -825,7 +840,13 @@ function render(s){
     // percentage the operator preview uses so all three surfaces
     // (preview, secondary screen, NDI) render identical bar heights.
     var hMap={sm:22,md:33,lg:45};
-    var hPct=hMap[st.lowerThirdHeight]||33;
+    // v0.7.5.1 — FORCE_LH (URL ?lh=sm|md|lg) wins over SSE state so the
+    // captured NDI BrowserWindow paints the operator's exact bucket on
+    // its very first frame. Pre-fix it always rendered with the default
+    // 'md' bucket until SSE arrived, so vMix grabbed an oversized bar
+    // for the first few hundred ms after the operator dragged sm.
+    var __lhKey=FORCE_LH||st.lowerThirdHeight;
+    var hPct=hMap[__lhKey]||33;
     // v0.7.0 — Compute the NDI lower-third size multiplier UP FRONT so
     // we can scale the BOX itself in lockstep with the verse text. Pre-
     // v0.7.0 only the font multiplied with ndiLtScale; the box height
@@ -837,10 +858,16 @@ function render(s){
     // camera frame; 1.0× sits inside the bottom band the operator
     // marked in red. Persisted profiles missing the field fall back
     // to 1.0 too. Clamp 0.5..2.0 just like the slider.
+    // v0.7.5.1 — FORCE_SC (URL ?sc=0.5..2) wins over SSE state for the
+    // same first-paint reason as FORCE_LH above. The NDI capture bakes
+    // the operator's slider value into the URL so vMix gets the right
+    // text size on frame 1, not after SSE catches up.
     var ndiLtScale = IS_NDI
-      ? (typeof st.ndiLowerThirdScale === 'number'
-          ? Math.min(2, Math.max(0.5, st.ndiLowerThirdScale))
-          : 1)
+      ? (FORCE_SC !== null
+          ? FORCE_SC
+          : (typeof st.ndiLowerThirdScale === 'number'
+              ? Math.min(2, Math.max(0.5, st.ndiLowerThirdScale))
+              : 1))
       : 1;
     // v0.7.5 — Frame is FIXED (T503). Operator screenshot showed the
     // box growing past the bottom band of the camera frame (the

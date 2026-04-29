@@ -58,6 +58,14 @@ type NdiStartOptions = NdiServiceStartOptions & {
     position?: 'top' | 'bottom'
     branding?: string
     accent?: string
+    // v0.7.5.1 — Operator's lower-third HEIGHT bucket (sm/md/lg) and
+    // SCALE multiplier (0.5..2). When the panel passes them through,
+    // the FrameCapture URL includes ?lh= and ?sc= so the captured
+    // BrowserWindow paints with the operator's exact settings on its
+    // first frame, eliminating the "vMix sees an oversized bar even
+    // though the in-app preview shows the correct small card" mismatch.
+    height?: 'sm' | 'md' | 'lg'
+    scale?: number
   }
 }
 import { FrameCapture } from './frame-capture'
@@ -1473,6 +1481,22 @@ function setupIpc() {
           if (transparent) params.set('transparent', '1')
           if (lt.enabled) params.set('lowerThird', '1')
           if (lt.position === 'top') params.set('position', 'top')
+          // v0.7.5.1 — Bake the operator's lower-third HEIGHT bucket and
+          // SCALE multiplier into the URL itself. This is the fix for the
+          // "in-app NDI Live Preview shows small card but vMix/OBS receive
+          // an oversized bar" bug: the captured BrowserWindow used to wait
+          // for the SSE state push before applying the operator's slider
+          // values, so vMix grabbed the FIRST few frames at the renderer's
+          // default state (md / 1.0×) — leaving the broadcast feed visibly
+          // out of sync with what the iframe preview promised. Now both
+          // surfaces carry the same params from the URL on the very first
+          // paint and SSE only handles subsequent operator drags.
+          const lh = (lt as { height?: 'sm' | 'md' | 'lg' }).height
+          if (lh === 'sm' || lh === 'md' || lh === 'lg') params.set('lh', lh)
+          const sc = (lt as { scale?: number }).scale
+          if (typeof sc === 'number' && sc >= 0.5 && sc <= 2) {
+            params.set('sc', String(sc))
+          }
         }
         const capturePath = `/api/output/congregation?${params.toString()}`
         await frameCapture.start({

@@ -7,6 +7,10 @@ export type NdiLowerThirdConfig = {
   position?: 'top' | 'bottom'
   branding?: string
   accent?: string
+  // v0.7.5.1 — Operator's bucket + scale, baked into the captured
+  // BrowserWindow URL so vMix/OBS render the right size on frame 1.
+  height?: 'sm' | 'md' | 'lg'
+  scale?: number
 }
 
 export type NdiStartOptions = {

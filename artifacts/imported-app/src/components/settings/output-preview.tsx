@@ -59,18 +59,46 @@ export function OutputPreview({
   // what the audience is about to see. Falls back to John 3:16
   // only when the user hasn't selected anything yet, which
   // matches the legacy behaviour for first-run installs.
+  //
+  // v0.7.5.1 — ALSO fall back to the currently-LIVE or PREVIEW
+  // SLIDE when neither liveVerse nor currentVerse is set. The
+  // operator can pick a verse via voice detection, the dashboard
+  // chapter navigator, the recent-detections rail, or any other
+  // surface that builds a Slide and pushes it through the live
+  // pipeline without round-tripping through `setCurrentVerse`.
+  // Pre-fix, all those flows left the OutputPreview stuck on the
+  // "John 3:16" placeholder even though the audience was looking
+  // at Genesis 2:5 on stage. Reading slides[liveSlideIndex] (then
+  // slides[previewSlideIndex]) closes the gap so the Full Screen
+  // / Lower Third / Typography preview cards in Settings always
+  // mirror what the projector + NDI feed are rendering RIGHT NOW.
   const liveVerse = useAppStore((s) => s.liveVerse)
   const currentVerse = useAppStore((s) => s.currentVerse)
+  const slides = useAppStore((s) => s.slides)
+  const liveSlideIndex = useAppStore((s) => s.liveSlideIndex)
+  const previewSlideIndex = useAppStore((s) => s.previewSlideIndex)
+  const stageSlide =
+    (liveSlideIndex >= 0 ? slides[liveSlideIndex] : null) ||
+    slides[previewSlideIndex] ||
+    null
+  const slideRef = stageSlide?.title || ''
+  const slideBody =
+    stageSlide && Array.isArray(stageSlide.content) && stageSlide.content.length
+      ? stageSlide.content.join(' ')
+      : ''
   const fallback = liveVerse ?? currentVerse ?? null
   const ref =
     sample?.reference ||
     fallback?.reference ||
     (fallback
       ? `${fallback.book} ${fallback.chapter}:${fallback.verseStart}${fallback.verseEnd ? `-${fallback.verseEnd}` : ''}`
-      : 'John 3:16')
+      : '') ||
+    slideRef ||
+    'John 3:16'
   const body =
     sample?.text ||
     fallback?.text ||
+    slideBody ||
     'For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.'
 
   // Theme-derived backdrop matching the slide-renderer themes.
