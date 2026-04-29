@@ -11,7 +11,13 @@
 //   3. mark used + create the activeSubscription row
 //   4. return the new SubscriptionStatus + a receipt the front-end
 //      can show / let the customer copy / forward to themselves
-//   5. fire a customer-receipt notification (email + wa.me link)
+//   5. fire customer + owner receipt notifications
+//
+// v0.7.5 — Receipt notifications are now FIRE-AND-FORGET (T506).
+// Pre-v0.7.5 the customer saw a 3-5s spinner after clicking
+// Activate while we waited for SMTP. Now we return as soon as the
+// ledger write succeeds; the receipt email lands a few seconds
+// later. Failures are still recorded in the audit log.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { activateCode, peekActivationSource } from '@/lib/licensing/storage'
@@ -29,16 +35,7 @@ export async function POST(req: NextRequest) {
   const code = String((body as Record<string, unknown>)?.code ?? '').trim().toUpperCase()
   if (!code) return NextResponse.json({ error: 'Activation code required' }, { status: 400 })
 
-  // v0.6.5 — Code-class cross-rejection. The subscription modal has
-  // two activation entry boxes (Step 3 = paid activation, Bottom =
-  // generated/master). Pre-v0.6.5 either box accepted any valid
-  // code, so customers routinely pasted the wrong one and got
-  // confusing "code not recognised" errors. Frontend now passes
-  // `expectedType` ('activation' | 'master') and we reject up front
-  // with a precise, copy-paste-able message that names the OTHER box.
-  // Note: we do BOTH a format-prefix check (catches SL-MASTER-* even
-  // before storage lookup) AND a storage classify (paid vs standalone)
-  // so a typed-but-unsaved code still gets the right verdict.
+  // v0.6.5 — Code-class cross-rejection. (Unchanged from v0.7.4.)
   const expectedRaw = String((body as Record<string, unknown>)?.expectedType ?? '').toLowerCase()
   if (expectedRaw === 'activation' || expectedRaw === 'master') {
     if (isMasterCode(code) && expectedRaw !== 'master') {
@@ -63,15 +60,14 @@ export async function POST(req: NextRequest) {
           error: 'This is a generated (admin-issued) code, not a paid activation code. Use the bottom box ("Enter your generated and master code") to activate it.',
         }, { status: 400 })
       }
-      // src === 'unknown' falls through — activateCode() raises the
-      // standard "code not recognised" error so typos look the same
-      // regardless of which box they land in.
     }
   }
 
   // v0.7.0 — Capture client IP + free geo lookup so the admin
   // dashboard can show where each code was activated from. Best-
-  // effort; if the lookup fails we still record the IP.
+  // effort; if the lookup fails we still record the IP. Kept
+  // INLINE because it gates ledger write (we want the geo on the
+  // record at activation time, not 3 seconds later).
   const geoCtx = await captureGeoFromRequest(req).catch(() => ({}))
 
   let result
@@ -82,7 +78,7 @@ export async function POST(req: NextRequest) {
   const plan = findPlan(activated.planCode)
   const planLabel = activated.isMaster ? 'Master (lifetime)' : (plan?.label ?? activated.planCode)
 
-  // Customer + owner receipts
+  // Build receipt text now (used in response AND notifications).
   const receiptEmail = activated.generatedFor?.email
   const receiptWhats = activated.generatedFor?.whatsapp
   const receiptLines = [
@@ -97,27 +93,26 @@ export async function POST(req: NextRequest) {
     'Thank you for choosing ScriptureLive AI.',
   ].filter(Boolean).join('\n')
 
-  let customerEmailNote = null
-  let waLink: string | null = null
-  try {
+  // wa.me link is synthetic (just URL composition) so we keep it
+  // inline — no network call.
+  const waLink = receiptWhats ? whatsappLink(receiptWhats, receiptLines) : null
+
+  // ── Fire-and-forget receipt emails ───────────────────────────────
+  setImmediate(() => {
     if (receiptEmail) {
-      const e = await notifyEmail({
+      void notifyEmail({
         to: receiptEmail,
         subject: `Your ScriptureLive AI activation — ${planLabel}`,
         body: receiptLines,
-      })
-      customerEmailNote = { id: e.id, status: e.status, error: e.error }
-    }
-    if (receiptWhats) {
-      waLink = whatsappLink(receiptWhats, receiptLines)
+      }).catch((e) => console.error('[activate] customer receipt email failed:', e))
     }
     // Always tell the owner too (mirrors confirm step in case they
-    // miss it).
-    await notifyEmail({
+    // miss it). No `to` → uses configured owner notify email.
+    void notifyEmail({
       subject: `[ScriptureLive] Activation used — ${activated.code}`,
       body: receiptLines + `\n\nCustomer email:    ${receiptEmail ?? '(unknown)'}\nCustomer WhatsApp: ${receiptWhats ?? '(unknown)'}`,
-    })
-  } catch { /* receipts best-effort */ }
+    }).catch((e) => console.error('[activate] owner receipt email failed:', e))
+  })
 
   return NextResponse.json({
     status: {
@@ -138,7 +133,9 @@ export async function POST(req: NextRequest) {
     },
     receipt: {
       text: receiptLines,
-      customerEmailNote,
+      // v0.7.5 — Customer email is now async; the response no longer
+      // surfaces a per-delivery id. The audit log records the result.
+      customerEmailNote: null,
       whatsappLink: waLink,
     },
   })

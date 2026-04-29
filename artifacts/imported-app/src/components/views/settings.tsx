@@ -1218,22 +1218,16 @@ export function SettingsView() {
             <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
               Preview (Typography)
             </div>
-            <OutputPreview
-              mode="full"
-              sample={{
-                reference: 'Romans 8:34',
-                text:
-                  'Who is he that condemneth? It is Christ that died, yea rather, that is risen again, who is even at the right hand of God, who also maketh intercession for us.',
-              }}
-            />
-            <OutputPreview
-              mode="lower-third"
-              sample={{
-                reference: 'John 3:16',
-                text:
-                  'For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.',
-              }}
-            />
+            {/* v0.7.5 — Typography previews now mirror the verse the
+                operator currently has selected (T504), instead of the
+                hardcoded Romans 8:34 / John 3:16 samples that pre-v0.7.5
+                ignored the lookup column. OutputPreview already falls
+                back to liveVerse → currentVerse when no `sample` prop
+                is passed, so dropping the prop wires both previews to
+                whatever Genesis 2:5 / John 3:16 / etc. the operator
+                clicked in the search results. */}
+            <OutputPreview mode="full" />
+            <OutputPreview mode="lower-third" />
           </div>
         </CardContent>
       </Card>

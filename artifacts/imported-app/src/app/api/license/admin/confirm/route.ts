@@ -2,7 +2,7 @@
 //
 // Body: { ref: string }     ← payment reference the customer typed in
 //                              their MoMo transaction
-// Resp: { payment, activation, notifications: { email, whatsapp } }
+// Resp: { payment, activation, notifications: { email, whatsapp, sms } }
 //
 // Step 3 of the customer flow (admin step). The owner has just received
 // MoMo on their phone, opens the in-app Admin Panel via Ctrl+Shift+P,
@@ -11,13 +11,20 @@
 //   1. validate the ref (exists, not expired, not already consumed)
 //   2. mark it PAID
 //   3. mint an activation code (SL-{plan}-XXXXXX)
-//   4. send notifications to nanvilow@gmail.com + a wa.me deep-link
-//      to the operator's WhatsApp; both also get logged in-file so
-//      they're visible in the admin panel even if SMTP isn't wired.
+//   4. fire customer + owner notifications (email + SMS + wa.me link)
 //
 // Idempotent: re-confirming the same ref returns the SAME activation
 // code (and `newlyGenerated: false`), so accidental double-clicks
 // don't proliferate codes.
+//
+// v0.7.5 — Notifications are now FIRE-AND-FORGET (T506). Pre-v0.7.5
+// the response waited for SMTP + mNotify to finish, so the operator
+// would click "Confirm" and stare at a spinner for 5-10 seconds while
+// 3 deliveries happened sequentially. The customer's SMS is the most
+// time-sensitive piece, but EVERYTHING is best-effort — the audit
+// log captures success/failure for every send. The operator now sees
+// "PAID, code minted" within ~150ms; deliveries land seconds later
+// and surface in the Notifications panel via the next reload.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { findPlan } from '@/lib/licensing/plans'
@@ -50,98 +57,71 @@ export async function POST(req: NextRequest) {
   const plan = findPlan(payment.planCode)
   const planLabel = plan?.label ?? payment.planCode
 
-  // Notifications — best-effort, never block the admin response.
-  let emailNote: { id: string; status: string; error?: string } | null = null
-  let waNote: { id: string; waLink: string } | null = null
-  let smsNote: { id: string; status: string; error?: string; to: string } | null = null
-  // v0.6.2 — customer email is now first-class. Operator complaint:
-  // "test email works but the customer never gets an email." Reason:
-  // admin/confirm only ever sent the OWNER an email + the customer
-  // an SMS — there was no customer email path at all. Fixed below.
-  let customerEmailNote: { id: string; status: string; error?: string; to: string } | null = null
-  try {
-    if (newlyGenerated) {
-      // ── Customer activation SMS via Arkesel ──────────────────────
-      // Spec: "ScriptureLive AI: Activation successful. Code:
-      // SL-1M-83KF92. Enjoy 31 days of seamless live scripture display."
-      // Sent BEFORE the operator notifications so a slow Gmail SMTP
-      // doesn't delay the customer's receipt. Errors are recorded
-      // in the audit log; they never block the response.
-      try {
-        const customerSmsBody =
-          `ScriptureLive AI: Activation successful. Code: ${activation.code}. ` +
-          `Enjoy ${activation.days} days of seamless live scripture display.`
-        const s = await notifySms({
-          to: payment.whatsapp,
-          subject: `[ScriptureLive] Activation code for ${planLabel}`,
-          body: customerSmsBody,
-        })
-        smsNote = { id: s.id, status: s.status, error: s.error, to: s.to }
-      } catch (e) {
-        // notifySms swallows internally, but belt-and-braces.
-        // eslint-disable-next-line no-console
-        console.error('[admin/confirm] customer SMS failed:', e)
-      }
+  // ── Schedule notifications (fire-and-forget) ────────────────────
+  // Re-confirms (newlyGenerated=false) skip the deliveries — those
+  // already went out the first time and we don't want to spam the
+  // customer if the operator double-clicks Confirm.
+  if (newlyGenerated) {
+    const customerSmsBody =
+      `ScriptureLive AI: Activation successful. Code: ${activation.code}. ` +
+      `Enjoy ${activation.days} days of seamless live scripture display.`
 
-      // v0.6.2 — Customer activation email. Mirrors the SMS body so
-      // the customer has a written copy of the code in their inbox
-      // (SMS can be lost or garbled by carrier, especially across
-      // borders). Only fires when the customer supplied an email at
-      // payment time — silently skipped otherwise.
+    const ownerSubject = `[ScriptureLive] Payment confirmed — ${planLabel} (${payment.email})`
+    const ownerBody = [
+      'A new ScriptureLive AI subscription has been activated.',
+      '',
+      `Plan:               ${planLabel} (${payment.planCode}, ${activation.days} days)`,
+      `Amount:             GHS ${payment.amountGhs.toLocaleString()}`,
+      `Payment reference:  ${payment.ref}`,
+      `Customer email:     ${payment.email}`,
+      `Customer WhatsApp:  ${payment.whatsapp}`,
+      '',
+      `Activation code:    ${activation.code}`,
+      '',
+      `Generated at:       ${activation.generatedAt}`,
+    ].join('\n')
+
+    const customerEmailSubject = `Your ScriptureLive AI activation code (${planLabel})`
+    const customerEmailBody = [
+      'Hello,',
+      '',
+      'Your ScriptureLive AI payment has been confirmed. Your activation code is:',
+      '',
+      `    ${activation.code}`,
+      '',
+      `Plan:        ${planLabel}`,
+      `Duration:    ${activation.days} day(s)`,
+      `Reference:   ${payment.ref}`,
+      '',
+      'Open ScriptureLive AI on your PC, paste this code into the activation prompt, and click Activate. The code is single-use and will bind to your install.',
+      '',
+      'Thank you for choosing ScriptureLive AI.',
+      '— WassMedia',
+    ].join('\n')
+
+    setImmediate(() => {
+      // Customer SMS — most time-sensitive, fires first.
+      void notifySms({
+        to: payment.whatsapp,
+        subject: `[ScriptureLive] Activation code for ${planLabel}`,
+        body: customerSmsBody,
+      }).catch((e) => console.error('[admin/confirm] customer SMS failed:', e))
+
+      // Customer email — written copy of the code in their inbox.
       if (payment.email && /@/.test(payment.email)) {
-        try {
-          const customerSubject = `Your ScriptureLive AI activation code (${planLabel})`
-          const customerBody = [
-            'Hello,',
-            '',
-            'Your ScriptureLive AI payment has been confirmed. Your activation code is:',
-            '',
-            `    ${activation.code}`,
-            '',
-            `Plan:        ${planLabel}`,
-            `Duration:    ${activation.days} day(s)`,
-            `Reference:   ${payment.ref}`,
-            '',
-            'Open ScriptureLive AI on your PC, paste this code into the activation prompt, and click Activate. The code is single-use and will bind to your install.',
-            '',
-            'Thank you for choosing ScriptureLive AI.',
-            '— WassMedia',
-          ].join('\n')
-          const ce = await notifyEmail({
-            to: payment.email,
-            subject: customerSubject,
-            body: customerBody,
-          })
-          customerEmailNote = { id: ce.id, status: ce.status, error: ce.error, to: ce.to }
-        } catch (e) {
-          // eslint-disable-next-line no-console
-          console.error('[admin/confirm] customer email failed:', e)
-        }
+        void notifyEmail({
+          to: payment.email,
+          subject: customerEmailSubject,
+          body: customerEmailBody,
+        }).catch((e) => console.error('[admin/confirm] customer email failed:', e))
       }
 
-      const ownerSubject = `[ScriptureLive] Payment confirmed — ${planLabel} (${payment.email})`
-      const ownerBody = [
-        'A new ScriptureLive AI subscription has been activated.',
-        '',
-        `Plan:               ${planLabel} (${payment.planCode}, ${activation.days} days)`,
-        `Amount:             GHS ${payment.amountGhs.toLocaleString()}`,
-        `Payment reference:  ${payment.ref}`,
-        `Customer email:     ${payment.email}`,
-        `Customer WhatsApp:  ${payment.whatsapp}`,
-        '',
-        `Activation code:    ${activation.code}`,
-        '',
-        `Generated at:       ${activation.generatedAt}`,
-      ].join('\n')
-
-      const e = await notifyEmail({ subject: ownerSubject, body: ownerBody })
-      emailNote = { id: e.id, status: e.status, error: e.error }
-
-      const w = await notifyWhatsApp({ subject: ownerSubject, body: ownerBody })
-      waNote = { id: w.id, waLink: w.waLink }
-    }
-  } catch {
-    // notifications already log themselves to the audit file
+      // Owner notifications — for the audit trail.
+      void notifyEmail({ subject: ownerSubject, body: ownerBody })
+        .catch((e) => console.error('[admin/confirm] owner email failed:', e))
+      void notifyWhatsApp({ subject: ownerSubject, body: ownerBody })
+        .catch((e) => console.error('[admin/confirm] owner WA failed:', e))
+    })
   }
 
   return NextResponse.json({
@@ -161,11 +141,12 @@ export async function POST(req: NextRequest) {
       generatedAt: activation.generatedAt,
     },
     newlyGenerated,
+    // v0.7.5 — Notifications now dispatch async; the response no longer
+    // includes per-delivery ids. The operator can refresh the panel a
+    // few seconds later and see the new rows in the Notifications
+    // section (audit log) with their final status.
     notifications: {
-      email: emailNote,
-      whatsapp: waNote,
-      sms: smsNote,
-      customerEmail: customerEmailNote,
+      queued: newlyGenerated,
     },
   })
 }

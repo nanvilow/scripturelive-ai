@@ -185,6 +185,102 @@ export function LicenseProvider({ children }: { children: React.ReactNode }) {
     setLicenseLocked(isLocked)
   }, [isLocked, setLicenseLocked])
 
+  // ─── v0.7.5 — Activity-gated trial timer (T502) ───────────────────
+  //
+  // Pre-v0.7.5 the trial was calendar-based: 30 minutes of WALL-CLOCK
+  // time from firstLaunchAt, regardless of whether the user ever
+  // started the mic. So an operator who installed at 5pm to evaluate
+  // the app, ran it for 2 minutes, then waited until Sunday's service
+  // arrived to a 0-minute trial they hadn't used.
+  //
+  // v0.7.5 makes the trial USAGE-based: it only counts seconds the
+  // mic is actually running. We watch the Zustand `isListening` flag
+  // (set by speech-provider when recognition starts/stops) and:
+  //   • on START   → record the wall-clock timestamp + start a 5s tick
+  //   • each tick  → POST /api/license/trial-tick { deltaMs } to add
+  //                  the elapsed slice into trialMsUsed; update local
+  //                  status from the response so the countdown widget
+  //                  reflects the new msLeft within seconds
+  //   • on STOP    → fire one final tick with the remaining partial
+  //                  delta + clear the interval
+  //
+  // We skip the tick entirely once the user is on a real subscription
+  // (state==='active') — trial is dormant in that case, and the
+  // server-side addTrialUsage is also a no-op for safety.
+  const isListening = useAppStore((s) => s.isListening)
+  const tickStartRef = useRef<number | null>(null)
+  const tickLastSentRef = useRef<number>(0)
+  const tickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const trialActive = status.state === 'trial'
+
+  useEffect(() => {
+    // Only run the trial-tick machinery while the user is genuinely
+    // on a free trial. Active subscriptions, expired trials, and
+    // unknown state all skip — no point burning HTTP calls.
+    if (!trialActive) {
+      // Cleanup if we were ticking and just transitioned out of trial
+      // (e.g. operator just activated a paid code).
+      if (tickTimerRef.current) {
+        clearInterval(tickTimerRef.current)
+        tickTimerRef.current = null
+      }
+      tickStartRef.current = null
+      tickLastSentRef.current = 0
+      return
+    }
+
+    const sendTick = async (deltaMs: number) => {
+      if (deltaMs <= 0) return
+      try {
+        const r = await fetch('/api/license/trial-tick', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deltaMs: Math.floor(deltaMs) }),
+        })
+        if (!r.ok) return
+        const j = (await r.json()) as { ok: boolean; status: LicenseStatus }
+        if (j?.status) setStatus(j.status)
+      } catch {
+        // Offline / rate-limited / server restart — silently skip;
+        // the next tick will catch up the missed delta.
+      }
+    }
+
+    if (isListening) {
+      // Mic just started (or this effect is mounting while the mic was
+      // already running) — anchor the start time and begin pinging
+      // every 5 seconds. Each tick sends the delta since the last
+      // successful send, NOT since the start, so a missed tick (offline
+      // blip) doesn't double-count when the next one lands.
+      const now = Date.now()
+      tickStartRef.current = now
+      tickLastSentRef.current = now
+      tickTimerRef.current = setInterval(() => {
+        const t = Date.now()
+        const delta = t - tickLastSentRef.current
+        tickLastSentRef.current = t
+        void sendTick(delta)
+      }, 5_000)
+
+      return () => {
+        // Mic stopped (or component unmounted) — flush the partial
+        // delta accumulated since the last 5s tick so the user gets
+        // credit for the final 0-5s of listening. Clear the interval
+        // so we don't keep ticking after the mic is off.
+        if (tickTimerRef.current) {
+          clearInterval(tickTimerRef.current)
+          tickTimerRef.current = null
+        }
+        const final = Date.now() - tickLastSentRef.current
+        tickStartRef.current = null
+        tickLastSentRef.current = 0
+        if (final > 0) void sendTick(final)
+      }
+    }
+    // isListening = false branch: nothing to do — the cleanup above
+    // fired when the previous (true) effect tore down.
+  }, [isListening, trialActive])
+
   const value: LicenseContextValue = {
     status,
     isActive,

@@ -102,7 +102,20 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 /* Custom background image — clipped to the rounded box only. */
 .lt-box .lt-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;border-radius:inherit;pointer-events:none}
 .lt-box .lt-bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);border-radius:inherit;pointer-events:none}
-.lt-box .lt-content{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;width:100%;height:100%}
+.lt-box .lt-content{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;width:100%;height:100%;overflow:hidden;min-height:0}
+/* v0.7.5 — Hard clamp the verse text to N lines inside the FIXED
+   lower-third frame (T503). Combined with the auto-fit ltFs clamp
+   in the renderer, long verses shrink first; if they still don't
+   fit they truncate cleanly with an ellipsis instead of bleeding
+   past the rounded card edge. Line counts mirror the height bucket
+   (sm/md/lg) so the small frame doesn't try to render 8 lines. */
+.lt-box .lt-content .slide-text,
+.lt-box .lt-content .slide-title{
+  display:-webkit-box;-webkit-box-orient:vertical;
+  overflow:hidden;text-overflow:ellipsis;
+  -webkit-line-clamp:6;line-clamp:6;
+  word-break:break-word;overflow-wrap:anywhere;
+}
 /* v0.6.3 — lower-third reference: same bold default as full-screen so
    broadcast viewers see the chapter clearly even at lower-third sizes. */
 .lt-box .slide-reference{font-size:clamp(.7rem,min(2cqw,4cqh),1.4rem);opacity:1;font-weight:700;line-height:1.2;margin-bottom:.6cqh}
@@ -829,11 +842,18 @@ function render(s){
           ? Math.min(2, Math.max(0.5, st.ndiLowerThirdScale))
           : 1)
       : 1;
-    // Scale the bar height with the multiplier so 2x text still fits
-    // inside the rounded card. Cap at 80% of the screen so the bar
-    // never crowds out the camera/preacher feed completely. Edge-bottom
-    // padding (6%) is preserved.
-    var hPctScaled = Math.min(80, hPct * ndiLtScale);
+    // v0.7.5 — Frame is FIXED (T503). Operator screenshot showed the
+    // box growing past the bottom band of the camera frame (the
+    // operator's red box) any time text or ndiLowerThirdScale grew.
+    // Pre-v0.7.5 we multiplied the bar height by ndiLtScale so the
+    // BOX scaled in lockstep with the verse text — but the operator
+    // wants the OPPOSITE behaviour for NDI broadcast: the bar must
+    // stay pinned to the small bottom strip selected via the height
+    // bucket (sm 22% / md 33% / lg 45%) and the verse text must
+    // shrink to fit INSIDE that fixed frame, never expand it. The
+    // text-band auto-fit math (ltFs clamp + line-clamp below) does
+    // the shrinking; we just pin the box height here.
+    var hPctScaled = hPct;
     // The upper area outside the bar must always be transparent
     // (#000), per spec. Theme colour and custom background image
     // both render *inside* the rounded card only.

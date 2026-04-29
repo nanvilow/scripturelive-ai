@@ -168,3 +168,9 @@ id = "aiOJsmDcpcWIb0TbBJzj4"
 uri = "file://exports/ScriptureLive-AI-v0.5.55-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.55 — source ZIP (build hotfix, final)"
+
+[[outputs]]
+id = "kNdi8OFzl-CzXxx918ncv"
+uri = "file://exports/ScriptureLive-AI-v0.7.5-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.5 — source zip (run BUILD.bat on Windows)"
