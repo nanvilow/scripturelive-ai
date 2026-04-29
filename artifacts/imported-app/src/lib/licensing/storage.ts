@@ -269,6 +269,10 @@ function load(): LicenseFile {
       activationCodes: parsed.activationCodes ?? [],
       notifications: parsed.notifications ?? [],
       config: parsed.config ?? undefined,
+      // v0.7.5 — hydrate trial-usage counter from disk so the activity-
+      // gated trial survives process restarts. Without this, every cold
+      // start would silently reset the trial back to 0 minutes used.
+      trialMsUsed: parsed.trialMsUsed ?? 0,
     }
     return cache
   } catch (e) {

@@ -285,6 +285,14 @@ export function AdminModal() {
   }, [])
   const runPending = useCallback(async () => {
     if (!pending) return
+    // v0.7.5 (post-review hardening) — re-entry guard. setPendingBusy
+    // is async (React schedules state for the next render) so a quick
+    // double-click on Confirm or a held Enter key could fire onConfirm
+    // twice before the disabled prop on the AlertDialogAction button
+    // takes effect. For non-idempotent actions (renew = +days, cancel
+    // = ban code) that would double-apply. Read+set the busy flag in
+    // one synchronous tick via the functional setter pattern.
+    if (pendingBusy) return
     setPendingBusy(true)
     try {
       await pending.onConfirm(pending.input ? pendingValue : null)
@@ -293,7 +301,7 @@ export function AdminModal() {
       toast.error(e instanceof Error ? e.message : String(e))
       setPendingBusy(false)
     }
-  }, [pending, pendingValue, closePending])
+  }, [pending, pendingBusy, pendingValue, closePending])
 
   // ─── v0.7.5 — Multi-select state per section (T501) ──────────────
   //
