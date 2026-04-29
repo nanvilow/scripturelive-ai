@@ -113,18 +113,37 @@ export function NdiOutputPanel() {
   // self-induced loop from the resulting ndi:status push.
   const restartGuardRef = useRef<string>('')
   const isRunningForEffect = !!status?.running
-  // v0.7.5.1 — `lowerThirdHeight` and `ndiLowerThirdScale` are part of
-  // the restart trigger now. Pre-fix the operator could drag those
-  // sliders all day and the running BrowserWindow would keep its old
-  // ?lh / ?sc URL params, so vMix received the OLD bar size until they
-  // toggled position or display mode (which used to be the only things
-  // that re-issued ndi.start). Now any of these five settings causes a
-  // tear-down + rebuild so the captured page reloads with the latest
-  // params on its very first frame.
+  // v0.7.11 — REVERTED v0.7.5.1's "restart on every slider tick" rule.
+  // Operators reported a visible flash on vMix / OBS every time they
+  // dragged the lower-third height or NDI scale slider — which they
+  // do constantly while fine-tuning the bar live on air. Root cause:
+  // every 0.05 step on the slider wrote a new value to the store, the
+  // effect saw `lowerThirdHeightSetting` / `ndiLowerThirdScale` change
+  // in its dep list, and called `desktop.ndi.start({...})` which tears
+  // down the BrowserWindow and rebuilds it. The BrowserWindow takes
+  // ~150-400 ms to reach steady state, during which the NDI source
+  // emits a black/empty frame — that's the flash receivers saw.
+  //
+  // The renderer already receives `lowerThirdHeight` and
+  // `ndiLowerThirdScale` via the SSE settings push (see route.ts
+  // settingsRenderKey: `lh`, `ndLtSc`) and re-paints in <50 ms with no
+  // window churn. So the BrowserWindow only needs to restart when a
+  // setting actually changes its FOUNDATIONAL flags — display mode
+  // (lower-third vs full-screen, which flips the `lowerThird.enabled`
+  // capture flag) and source name (which renames the NDI sender on the
+  // wire). Slider drags now flow through SSE only — silent, frame-
+  // perfect, no receiver flash.
+  //
+  // The first-paint URL params (lh / sc) are still baked at start time
+  // in `handleToggle` below so the BrowserWindow's very first frame
+  // already shows the operator's latest values; from then on SSE owns
+  // updates. The renderer's FORCE_LH / FORCE_SC priority was also
+  // flipped (route.ts lines 854 / 871) so live SSE state always wins
+  // over the now-stale URL params after first arrival.
   const lowerThirdHeightSetting = useAppStore((s) => s.settings.lowerThirdHeight)
   useEffect(() => {
     if (!isRunningForEffect || !desktop) return
-    const want = `${ndiDisplayMode}:${lowerThirdPosition}:${lowerThirdHeightSetting}:${ndiLowerThirdScale ?? 1}`
+    const want = `${ndiDisplayMode}:${lowerThirdPosition}:${sourceName.trim()}`
     if (restartGuardRef.current === want) return
     if (restartGuardRef.current === '') {
       // First settle — record what's already on the wire so the next
@@ -159,12 +178,15 @@ export function NdiOutputPanel() {
         enabled: ndiDisplayMode === 'lower-third',
         position: lowerThirdPosition === 'top' ? 'top' : 'bottom',
         // v0.7.5.1 — bake the bucket + scale into the URL too (see
-        // FORCE_LH / FORCE_SC notes in route.ts and main.ts).
+        // FORCE_LH / FORCE_SC notes in route.ts and main.ts). v0.7.11:
+        // these are now ONLY used for the very first frame after a
+        // start/restart; SSE then takes over (see comment block above).
         height: lowerThirdHeightSetting,
         scale: typeof ndiLowerThirdScale === 'number' ? ndiLowerThirdScale : 1,
       },
     }).catch(() => { /* surfaced by the ndi:status broadcast */ })
-  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName, lowerThirdHeightSetting, ndiLowerThirdScale])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName])
 
   // Reset the guard when NDI stops so the first toggle after the next
   // Start does the right thing (record-then-skip).
@@ -891,6 +913,20 @@ function NdiPreviewSurface(props: NdiPreviewSurfaceProps): JSX.Element {
     return () => ro.disconnect()
   }, [])
 
+  // v0.7.11 — Freeze the iframe src AFTER MOUNT so it never reloads in
+  // response to slider drags. Pre-fix the iframe's `src` (and `key`)
+  // included `lowerThirdHeightSetting` and `ndiLowerThirdScale`, so
+  // every 0.05 step on the operator's scale slider unmounted +
+  // remounted the iframe — visible as a hard "blank-then-paint" flash
+  // in the preview pane (and matched a parallel BrowserWindow restart
+  // flash on the actual NDI feed; see the restart-effect block above).
+  // The renderer inside the iframe receives `lowerThirdHeight` and
+  // `ndiLowerThirdScale` via the SSE settings push (settingsRenderKey:
+  // `lh`, `ndLtSc`) and re-paints in <50 ms with no reload, so the
+  // initial URL params are only needed for the first frame. Only the
+  // foundational mode (lower-third vs full-screen, position) reloads
+  // the iframe from scratch — anything else flows through SSE.
+  const initialSrcRef = useRef<string | null>(null)
   const src = (() => {
     const p = new URLSearchParams()
     p.set('ndi', '1')
@@ -916,38 +952,58 @@ function NdiPreviewSurface(props: NdiPreviewSurfaceProps): JSX.Element {
     return `/api/output/congregation?${p.toString()}`
   })()
 
+  // The iframe's effective src: latest computed value if mode/position
+  // changed (intentional reload), otherwise the frozen first src.
+  const stableKey = `ndi-preview:${props.ndiDisplayMode}:${props.lowerThirdPosition}`
+  const lastKeyRef = useRef<string>(stableKey)
+  if (lastKeyRef.current !== stableKey) {
+    lastKeyRef.current = stableKey
+    initialSrcRef.current = src
+  } else if (initialSrcRef.current === null) {
+    initialSrcRef.current = src
+  }
+  const stableSrc = initialSrcRef.current
+
   return (
     <div
       ref={containerRef}
       className="relative w-full overflow-hidden bg-black"
       style={{ aspectRatio: '16 / 9' }}
     >
-      <iframe
-        // Reload on every flag flip so the next paint reflects the new
-        // mode without waiting for an SSE tick.
-        key={`ndi-preview:${props.ndiDisplayMode}:${props.lowerThirdPosition}:${props.lowerThirdHeightSetting}:${props.ndiLowerThirdScale ?? 1}`}
-        src={src}
-        title="NDI Live Preview"
-        // Native broadcast viewport. transform: scale() does the visual
-        // shrink — internal layout still computes against 1920x1080, so
-        // max-width:68rem caps and cqw/cqh font clamps land in the same
-        // place they will in the FrameCapture window.
-        width={NATIVE_W}
-        height={NATIVE_H}
+      {/* v0.7.11 — Wrap the iframe in a sized div that owns the
+          transform. The iframe itself fills its parent (100%/100%) so
+          its inner viewport is unambiguously NATIVE_W × NATIVE_H — no
+          chance of the browser deciding to use the visually-scaled
+          dimensions for layout. Critically, this also means cqw / cqh
+          container queries inside the renderer resolve against the
+          SAME pixel box they will in the FrameCapture BrowserWindow,
+          so the .7rem clamp-floor never kicks in (which was the root
+          cause of "preview text looks oversized vs broadcast"). */}
+      <div
         style={{
-          border: 0,
           width: NATIVE_W,
           height: NATIVE_H,
           transform: `scale(${scale})`,
           transformOrigin: 'top left',
-          // Pin to the top-left corner so the scaled iframe sits flush
-          // inside the container (no centering offset to fight the
-          // transform-origin).
           position: 'absolute',
           top: 0,
           left: 0,
         }}
-      />
+      >
+        <iframe
+          key={stableKey}
+          src={stableSrc}
+          title="NDI Live Preview"
+          style={{
+            border: 0,
+            display: 'block',
+            width: '100%',
+            height: '100%',
+            background: 'transparent',
+          }}
+          allowTransparency
+        />
+      </div>
     </div>
   )
 }

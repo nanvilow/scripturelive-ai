@@ -851,7 +851,16 @@ function render(s){
     // its very first frame. Pre-fix it always rendered with the default
     // 'md' bucket until SSE arrived, so vMix grabbed an oversized bar
     // for the first few hundred ms after the operator dragged sm.
-    var __lhKey=FORCE_LH||st.lowerThirdHeight;
+    // v0.7.11 — FLIPPED PRECEDENCE. Pre-fix this was
+    // (FORCE_LH || st.lowerThirdHeight), meaning the URL param baked
+    // at NDI start time ALWAYS won — even after the operator dragged
+    // the height slider and SSE pushed the new bucket. So vMix kept
+    // showing the old bucket until the BrowserWindow restarted (which
+    // v0.7.11 also disabled for slider drags to stop the receiver
+    // flash). The fix: prefer the live SSE state when present, fall
+    // back to FORCE_LH only when state has not arrived yet (cold-start
+    // first paint). Same change applied to ndiLtScale below.
+    var __lhKey=st.lowerThirdHeight||FORCE_LH;
     var hPct=hMap[__lhKey]||33;
     // v0.7.0 — Compute the NDI lower-third size multiplier UP FRONT so
     // we can scale the BOX itself in lockstep with the verse text. Pre-
@@ -868,12 +877,13 @@ function render(s){
     // same first-paint reason as FORCE_LH above. The NDI capture bakes
     // the operator's slider value into the URL so vMix gets the right
     // text size on frame 1, not after SSE catches up.
+    // v0.7.11 — FLIPPED PRECEDENCE (see __lhKey above for full
+    // rationale). Live SSE state wins; FORCE_SC is now only the
+    // first-paint fallback before SSE arrives.
     var ndiLtScale = IS_NDI
-      ? (FORCE_SC !== null
-          ? FORCE_SC
-          : (typeof st.ndiLowerThirdScale === 'number'
-              ? Math.min(2, Math.max(0.5, st.ndiLowerThirdScale))
-              : 1))
+      ? (typeof st.ndiLowerThirdScale === 'number'
+          ? Math.min(2, Math.max(0.5, st.ndiLowerThirdScale))
+          : (FORCE_SC !== null ? FORCE_SC : 1))
       : 1;
     // v0.7.5 — Frame is FIXED (T503). Operator screenshot showed the
     // box growing past the bottom band of the camera frame (the
