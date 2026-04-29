@@ -75,16 +75,22 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    upper area outside it stays transparent (#000) so any background
    change applies only to this rounded box, per spec. */
 .lt-box{position:relative;width:100%;max-width:68rem;padding:3% 5%;display:flex;flex-direction:column;justify-content:center;overflow:hidden;height:100%;box-sizing:border-box;border-radius:1.25rem;box-shadow:0 8px 28px rgba(0,0,0,.45);background:linear-gradient(135deg,#0a0a0a,#171717)}
-/* v0.6.5 — NDI lower-third full-width override. Operator's vMix/OBS
-   feed had black bands either side of the centered ≤68rem card
-   (image 3 "frame A"). Removing the cap on the NDI surface lets the
-   band span the full frame ("frame N") so the verse text reads at
-   broadcast distance. In-room projector + operator preview keep the
-   centered card by NOT receiving the .ndi-full class. Lower-third
-   gutter also tightens from 6% → 2% so the band is genuinely full
-   width and not just a slightly wider centered card. */
-.lower-third.ndi-full{padding:0 2%}
-.lt-box.ndi-full{max-width:none;border-radius:.75rem}
+/* v0.7.8 — REVERTED v0.6.5 NDI full-width override. Operators were
+   reporting that the lower-third bar in OBS/vMix/Wirecast did NOT
+   match what the in-app NDI Output Preview showed — the captured
+   feed was significantly wider (max-width:none) and used a smaller
+   border-radius (.75rem instead of 1.25rem) and tighter side
+   padding (2% instead of 6%), so the bar covered far more of the
+   broadcast frame than the operator had set up. The v0.6.5 "fill
+   the frame" rationale conflicted with the WYSIWYG contract the
+   preview is supposed to provide. The .ndi-full class is now a
+   no-op (kept as a defensive empty selector so any persisted SSE
+   state that still tries to add it cannot accidentally re-grow the
+   card). The captured frame now uses the same .lower-third + .lt-box
+   defaults as the preview: max-width 68rem, padding 0 6%, border-
+   radius 1.25rem. Pixel-WYSIWYG. */
+.lower-third.ndi-full{}
+.lt-box.ndi-full{}
 .lt-box.theme-worship{background:linear-gradient(135deg,#1e0a3c,#1e1b4b)}
 .lt-box.theme-sermon{background:linear-gradient(135deg,#3c1a0a,#451a03)}
 .lt-box.theme-easter{background:linear-gradient(135deg,#0a3c2a,#042f2e)}
@@ -935,11 +941,16 @@ function render(s){
     // themed gradient backdrop based on the operator's preference.
     var ltTransparent=IS_NDI && st.ndiLowerThirdTransparent===true;
     var ltTransparentClass=ltTransparent?' transparent':'';
-    // v0.6.5 — Apply the .ndi-full width override on the NDI surface
-    // only. In-room projector + operator preview keep the centered
-    // ≤68rem card; vMix/OBS NDI receivers get the full-width band so
-    // the verse fills the broadcast frame edge-to-edge ("frame N").
-    var ndiFullClass=IS_NDI?' ndi-full':'';
+    // v0.7.8 — REVERTED v0.6.5. The .ndi-full class (which removed
+    // the max-width cap and shrank side padding from 6% → 2%) was the
+    // root cause of the operator's "OBS/vMix lower-third doesn't
+    // match the in-app preview" complaint. NDI now uses the same
+    // geometry as the preview — same max-width:68rem, same padding
+    // 0 6%, same border-radius 1.25rem — so what the operator sees
+    // in the NDI Output Preview is exactly what vMix/OBS/Wirecast
+    // receive. Variable kept (always empty) so we don't have to
+    // touch the innerHTML template below.
+    var ndiFullClass='';
     // v0.6.5 — When transparent matte is on, ALSO drop the body /
     // stage / output backgrounds (the lt-box.transparent rule already
     // drops the card itself, but those four ancestors stay solid #000
