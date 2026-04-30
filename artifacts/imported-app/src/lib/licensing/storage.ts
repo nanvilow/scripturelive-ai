@@ -228,6 +228,23 @@ export interface LicenseFile {
    *  its total-installs count. Heartbeats keep the lastSeenAt
    *  bumped, so we never re-send the install ping. */
   telemetryInstallPingedAt?: string
+  /** v0.7.15 — Sticky flag: TRUE the moment any non-master activation
+   *  code has ever been activated on this device. Survives reinstall
+   *  because license.json lives at ~/.scripturelive/license.json and
+   *  Inno Setup's uninstaller does NOT touch the user's home folder.
+   *  Used by computeStatus() to refuse the free trial after an
+   *  activation has already been seen — operators were uninstalling
+   *  + reinstalling to "reset" their 60-minute trial, which had become
+   *  a routine workaround. The trial is now strictly first-time only. */
+  everActivated?: boolean
+  /** v0.7.15 — Sticky lockdown flag set by deactivateSubscription().
+   *  TRUE → computeStatus() must return state='expired' until a NEW
+   *  activation lands (which clears it). Operator request: a
+   *  Deactivated device must immediately go to the lock screen and
+   *  refuse to fall back to the trial budget. Note the trial budget
+   *  itself stays intact — re-activating later resets the lockdown
+   *  but does not refund trial time the user already burned. */
+  lockdownAfterDeactivation?: boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -247,7 +264,13 @@ function storagePath(): string {
 // ─────────────────────────────────────────────────────────────────────
 // Initialise / load
 // ─────────────────────────────────────────────────────────────────────
-const TRIAL_DURATION_MS = 60 * 60 * 1000 // 1 hour
+// v0.7.15 — Trial trimmed from 60 min → 30 min. Operator analytics
+// from v0.7.13/14 telemetry showed every churned trial user burned
+// the full 60 min, then uninstalled to reset and tried again. Half
+// the budget keeps "evaluation" honest while still giving the user
+// time to demo a service. Combined with `everActivated` lockout below,
+// the reinstall-to-reset workaround is now closed.
+const TRIAL_DURATION_MS = 30 * 60 * 1000 // 30 min
 // v0.7.3 — Bumped from 15 min → 7 days. Operator's bug report:
 // "Active subscriptions are killed... it deletes active codes by
 // itself while I didn't give that command." The 15-minute window
@@ -370,6 +393,12 @@ function load(): LicenseFile {
       pendingAdminReset: parsed.pendingAdminReset,
       // v0.7.13 — hydrate telemetry-install one-shot flag.
       telemetryInstallPingedAt: parsed.telemetryInstallPingedAt,
+      // v0.7.15 — hydrate sticky lockdown / ever-activated flags.
+      // license.json lives at ~/.scripturelive/ and survives uninstall
+      // by Inno Setup, so these flags persist across reinstalls — that
+      // is the whole point. Default falsy for fresh installs.
+      everActivated: parsed.everActivated === true ? true : undefined,
+      lockdownAfterDeactivation: parsed.lockdownAfterDeactivation === true ? true : undefined,
     }
     return cache
   } catch (e) {
@@ -470,7 +499,28 @@ export function computeStatus(now = Date.now()): SubscriptionStatus {
     persist(f)
   }
 
-  if (!trialExpired) {
+  // v0.7.15 — Two sticky overrides that block the trial fallback even
+  // when there's no active subscription:
+  //
+  //  • lockdownAfterDeactivation: set by deactivateSubscription().
+  //    The operator wants Deactivate to put the device into the lock
+  //    overlay immediately and stay there until a NEW activation lands.
+  //    No silent grace period back to "trial".
+  //
+  //  • everActivated: set the first time activateCode() succeeds with
+  //    any non-master code. The trial budget is meant to be a single
+  //    one-time evaluation; once a customer has paid (or used a free
+  //    code), the trial is permanently consumed even if they later
+  //    deactivate, and even if they uninstall + reinstall (license.json
+  //    lives at ~/.scripturelive/ which the Inno Setup uninstaller
+  //    leaves alone). So a freshly-installed binary on a PC that has
+  //    EVER activated still goes straight to the lock screen.
+  //
+  // Both flags map to state='expired' (not 'trial' / 'trial_expired'),
+  // which is what the lock-overlay UI keys off.
+  const blockedByLockdown = f.lockdownAfterDeactivation === true
+  const blockedByEverActivated = f.everActivated === true
+  if (!trialExpired && !blockedByLockdown && !blockedByEverActivated) {
     return {
       state: 'trial',
       daysLeft: 0,
@@ -487,8 +537,18 @@ export function computeStatus(now = Date.now()): SubscriptionStatus {
     }
   }
 
-  // No active sub, trial used up, never activated anything.
-  const everActivated = f.activationCodes.some((a) => a.isUsed)
+  // No active sub, trial used up (or trial blocked by sticky flags).
+  // v0.7.15 — OR in the persistent everActivated/lockdownAfterDeactivation
+  // flags so a deactivated device (which flips activationCodes[].isUsed
+  // back to false during transfer-out) still reports state='expired'
+  // and not 'trial_expired'. The lock overlay UI keys off 'expired'
+  // for the "Renew or activate" message; 'trial_expired' would tell
+  // the user they're still in evaluation mode, which is exactly the
+  // wrong message after they've already paid.
+  const everActivated =
+    f.activationCodes.some((a) => a.isUsed)
+    || f.everActivated === true
+    || f.lockdownAfterDeactivation === true
   return {
     state: everActivated ? 'expired' : 'trial_expired',
     daysLeft: 0,
@@ -738,6 +798,12 @@ export function activateCode(rawCode: string, ctx?: { ip?: string; location?: st
     }
     // Don't push the master to the activationCodes list more than once
     if (!f.activationCodes.some((a) => a.code === code)) f.activationCodes.push(activation)
+    // v0.7.15 — Master activation is the operator's own override; we do
+    // NOT set everActivated for it (the operator should still see "trial"
+    // on a fresh customer install they're testing). But we DO clear any
+    // stale lockdownAfterDeactivation flag because the operator chose
+    // to (re-)activate this device.
+    f.lockdownAfterDeactivation = undefined
     persist(f)
     return { status: computeStatus(), activated: activation }
   }
@@ -826,6 +892,14 @@ export function activateCode(rawCode: string, ctx?: { ip?: string; location?: st
   if (!activation.buyerPhone && activation.generatedFor?.whatsapp) {
     activation.buyerPhone = activation.generatedFor.whatsapp
   }
+  // v0.7.15 — Sticky everActivated. The first time any non-master code
+  // activates this device, mark the file so a future trial-fallback path
+  // in computeStatus() refuses to grant the free hour. Survives uninstall
+  // because license.json is in ~/.scripturelive/. Also clear any stale
+  // lockdownAfterDeactivation flag because the customer has just (re-)
+  // activated, which is the one thing that exits the lock screen.
+  f.everActivated = true
+  f.lockdownAfterDeactivation = undefined
   persist(f)
   return { status: computeStatus(), activated: activation }
 }
@@ -1144,6 +1218,17 @@ export function saveConfig(patch: Partial<Record<keyof RuntimeConfig, unknown>>)
 export function deactivateSubscription(): SubscriptionStatus {
   const f = load()
   if (!f.activeSubscription) return computeStatus()
+  // v0.7.15 — Sticky lockdown. Operator's spec: pressing Deactivate
+  // must drop the device into the lock overlay immediately and keep
+  // it there until a NEW activation lands. Pre-v0.7.15 the device
+  // would silently fall back to the trial budget (or "trial_expired"
+  // once the budget was gone), which was misleading — the customer
+  // had already paid for time but the screen now said "evaluation".
+  // computeStatus() returns state='expired' whenever this flag is
+  // set, and activateCode() (both branches above) clears it on
+  // successful re-activation. Set BEFORE we null the active sub so
+  // an exception in persist() leaves a coherent file state.
+  f.lockdownAfterDeactivation = true
   // Master never gets flipped — it's always valid everywhere.
   if (!f.activeSubscription.isMaster) {
     const code = f.activeSubscription.activationCode
@@ -1226,6 +1311,11 @@ export function transferActiveSubscription(): TransferResult {
   // Keep usedAt + subscriptionExpiresAt as-is; activateCode reads them
   // on the transfer-in branch and refuses if expiresAt is in the past.
   f.activeSubscription = null
+  // v0.7.15 — Same sticky lockdown as deactivateSubscription(). The
+  // customer chose to move this code to another PC; this PC must
+  // therefore go to the lock screen immediately, not silently fall
+  // back to whatever trial budget happens to be left.
+  f.lockdownAfterDeactivation = true
   persist(f)
   return {
     status: computeStatus(),
