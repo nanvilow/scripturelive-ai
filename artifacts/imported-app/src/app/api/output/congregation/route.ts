@@ -175,9 +175,21 @@ const themes={worship:'theme-worship',sermon:'theme-sermon',easter:'theme-easter
 // console uses. Tolerates legacy "font-sans"-style values.
 const FONT_MAP=${fontMapJson};
 function resolveFont(k){
-  if(!k)return FONT_MAP['sans'];
+  // v0.7.17 — FONT_MAP values use double-quoted family names like
+  // \"Segoe UI\" (standard CSS). When inlined into an HTML
+  // style="..." attribute, those embedded \" terminate the
+  // attribute early and silently drop every later declaration
+  // (font-size, font-style, text-shadow, …). This bug invisibly
+  // disabled the NDI Reference Label SIZE / STYLE / SCALE knobs
+  // because the ref div builds its inline style as
+  // 'font-family:'+rfFam+';font-size:...;font-style:...;'+rfShCss
+  // — once rfFam contained \" the rest was discarded by the parser.
+  // Single quotes around font names are equally valid CSS and
+  // survive the surrounding double-quoted attribute, so swap them
+  // here once and every downstream interpolation stays intact.
+  if(!k)return FONT_MAP['sans'].replace(/"/g,"'");
   if(typeof k==='string'&&k.indexOf('font-')===0)k=k.slice(5);
-  return FONT_MAP[k]||FONT_MAP['sans'];
+  return (FONT_MAP[k]||FONT_MAP['sans']).replace(/"/g,"'");
 }
 // Same four-bucket size multiplier the operator preview applies.
 const FS_MULT={sm:.85,md:1,lg:1.25,xl:1.5};
