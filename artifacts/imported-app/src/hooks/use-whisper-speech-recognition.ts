@@ -3,24 +3,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { cleanTranscriptText } from '@/lib/transcript-cleaner'
 import { useAppStore } from '@/lib/store'
-import { bootstrapRuntimeKeys, getOpenAIKey } from '@/lib/runtime-keys'
 
-// v0.5.52 — OpenAI Whisper now called DIRECTLY from the renderer.
-// No proxy through /api/transcribe; the baked NEXT_PUBLIC_*_OPENAI_KEY
-// is used (admin override wins). This removes a network hop and the
-// dependency on the local Next.js server being able to forward to a
-// Replit-hosted proxy.
-const WHISPER_ENDPOINT = 'https://api.openai.com/v1/audio/transcriptions'
-const BIBLE_PROMPT =
-  'The speaker is delivering a Christian sermon and may quote the Bible. ' +
-  'Common Bible book names: Genesis, Exodus, Leviticus, Numbers, Deuteronomy, ' +
-  'Joshua, Judges, Ruth, Samuel, Kings, Chronicles, Ezra, Nehemiah, Esther, ' +
-  'Job, Psalms, Proverbs, Ecclesiastes, Song of Solomon, Isaiah, Jeremiah, ' +
-  'Lamentations, Ezekiel, Daniel, Hosea, Joel, Amos, Obadiah, Jonah, Micah, ' +
-  'Nahum, Habakkuk, Zephaniah, Haggai, Zechariah, Malachi, Matthew, Mark, ' +
-  'Luke, John, Acts, Romans, Corinthians, Galatians, Ephesians, Philippians, ' +
-  'Colossians, Thessalonians, Timothy, Titus, Philemon, Hebrews, James, Peter, ' +
-  'Jude, Revelation.'
+// v0.7.17 hotfix — Reverted from the v0.5.52 direct-to-OpenAI browser
+// call. OpenAI tightened CORS on /v1/audio/transcriptions in 2026, so
+// `fetch('https://api.openai.com/v1/audio/transcriptions', ...)` from
+// the Electron renderer now fails the preflight with the generic
+// browser error "Failed to fetch" — surfaced to the operator as
+// "Transcription chunk failed: Failed to fetch".
+//
+// The fix is to go back through the local Next.js /api/transcribe
+// route, which already implements a three-tier resolution chain
+// (direct OPENAI_API_KEY → AI_INTEGRATIONS_OPENAI_* → forward to the
+// Replit-hosted proxy via TRANSCRIBE_PROXY_URL). The Electron main
+// process already sets TRANSCRIBE_PROXY_URL when it spawns the
+// bundled standalone server, so customers' machines never see an
+// OpenAI key. Same-origin POST means no CORS preflight at all.
+//
+// The route owns the model + prompt + language defaults; the renderer
+// only sends the audio blob and language hint.
+const WHISPER_ENDPOINT = '/api/transcribe'
 
 /**
  * Cloud-only Whisper speech recognition for the desktop (Electron) build.
@@ -280,24 +281,15 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
       }
     }
     try {
-      // v0.5.52 — direct call to OpenAI Whisper from the renderer.
-      await bootstrapRuntimeKeys()
-      const apiKey = getOpenAIKey()
-      if (!apiKey) {
-        throw new Error(
-          'Cloud transcription is temporarily unavailable. Please contact your administrator.',
-        )
-      }
+      // v0.7.17 hotfix — POST through the local /api/transcribe proxy
+      // (see WHISPER_ENDPOINT comment above). The route owns the model,
+      // BIBLE_PROMPT, response_format and temperature defaults so the
+      // renderer just sends the raw audio blob and a language hint.
       const fd = new FormData()
-      fd.append('file', blob, 'chunk.webm')
-      fd.append('model', 'whisper-1')
+      fd.append('audio', blob, 'chunk.webm')
       fd.append('language', 'en')
-      fd.append('response_format', 'json')
-      fd.append('temperature', '0')
-      fd.append('prompt', BIBLE_PROMPT)
       const r = await fetch(WHISPER_ENDPOINT, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}` },
         body: fd,
       })
       if (!stillCurrent()) return
