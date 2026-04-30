@@ -24,15 +24,14 @@ expertMode = true
 path = "scripts/post-merge.sh"
 timeoutMs = 240000
 
-# v0.7.18 deploy fix — Autoscale requires exactly ONE externally
-# forwarded port. The Next.js production server (server.mjs) listens
-# on 25650 and serves both the UI/HTTP API AND the Deepgram WebSocket
-# stream from the same origin, so a single forward is all production
-# needs. Dev workflows for api-server (8080) and mockup-sandbox (8081)
-# bind their own internal ports and remain reachable in the workspace
-# preview pane via the path-based artifact router defined in their
-# respective .replit-artifact/artifact.toml files — they do NOT
-# require [[ports]] entries here.
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
+
 [[ports]]
 localPort = 25650
 externalPort = 80
