@@ -94,6 +94,16 @@ export interface HeartbeatPayload {
   code?: string
   appVersion?: string
   location?: string
+  /** v0.7.17 — OS string (e.g. "win32 10.0.19045") and ISO country
+   *  code, both forwarded by the desktop on every heartbeat. The
+   *  install-ping is one-shot and routinely missed (network blip,
+   *  disabled telemetry, fresh-install race) so the records
+   *  dashboard's App ver / OS / Country columns used to show "—"
+   *  for any install whose initial ping never landed. Sending
+   *  these on every heartbeat backfills them within 30s of first
+   *  launch and keeps appVersion accurate across upgrades. */
+  os?: string
+  countryCode?: string
   features?: Record<string, number | boolean>
 }
 export function pingHeartbeat(p: HeartbeatPayload): Promise<void> {

@@ -52,9 +52,16 @@ export async function POST(req: NextRequest) {
           countryCode: p.countryCode ?? prev.countryCode ?? null,
         }
       } catch {
+        // v0.7.17 — Salvage firstSeenAt from the malformed blob so
+        // a transient corruption doesn't reset the install's age.
+        // Same pattern as heartbeat/route.ts.
+        const m = /"firstSeenAt"\s*:\s*"([^"]+)"/.exec(existing)
+        const salvagedFirst = m && Number.isFinite(Date.parse(m[1]!))
+          ? m[1]!
+          : now
         row = {
           installId: p.installId,
-          firstSeenAt: now,
+          firstSeenAt: salvagedFirst,
           lastSeenAt: now,
           appVersion: p.appVersion ?? null,
           os: p.os ?? null,

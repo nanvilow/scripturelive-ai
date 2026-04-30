@@ -63,14 +63,24 @@ export async function GET(req: NextRequest) {
   // for the activation code currently powering this device's
   // subscription so the admin dashboard sees real-time liveness.
   // Best-effort, never blocks the response.
+  //
+  // v0.7.17 — Always run the geo lookup (not just when an
+  // activation code is present) so we can forward countryCode on
+  // every heartbeat. The lookup is cached for 30 minutes per IP in
+  // geoip.ts, so doing it for trial / expired installs too costs
+  // nothing past the first call. Without this, any install that
+  // missed its one-shot /telemetry/install ping would never
+  // populate the records dashboard's Country column.
   let geoLocation: string | undefined
-  if (s.activeSubscription?.activationCode) {
-    try {
-      const geo = await captureGeoFromRequest(req)
-      geoLocation = geo.location
+  let geoCountryCode: string | undefined
+  try {
+    const geo = await captureGeoFromRequest(req)
+    geoLocation = geo.location
+    geoCountryCode = geo.countryCode
+    if (s.activeSubscription?.activationCode) {
       recordCodeHeartbeat(s.activeSubscription.activationCode, geo)
-    } catch { /* heartbeat is best-effort */ }
-  }
+    }
+  } catch { /* heartbeat is best-effort */ }
 
   // v0.7.13 — Central heartbeat (always, even when no active sub, so
   // trial / expired installs still register as "active now"). Sent
@@ -88,6 +98,13 @@ export async function GET(req: NextRequest) {
       code: s.activeSubscription?.activationCode,
       appVersion: appVersion(),
       location: geoLocation,
+      // v0.7.17 — Forward OS + ISO country on every heartbeat so
+      // the inst:* row gets backfilled even when the one-shot
+      // /telemetry/install ping was missed. The records dashboard
+      // reads these directly into the App ver / OS / Country
+      // columns of the Live install activity drilldown.
+      os: `${os.platform()} ${os.release()}`,
+      countryCode: geoCountryCode,
       features: {
         hasActiveSub: !!s.activeSubscription,
         isMaster: s.isMaster,
