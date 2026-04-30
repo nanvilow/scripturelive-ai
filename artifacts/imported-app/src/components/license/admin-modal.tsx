@@ -216,14 +216,46 @@ export function AdminModal() {
     avgSessionMs?: number
     errorsToday?: number
     topFeatures?: { name: string; count: number }[]
+    /** v0.7.16 — System errors only (errorType !== 'user_report').
+     *  User-submitted reports moved to userReports below. */
     recentErrors?: {
-      id: number
+      id: number | string
       errorType: string
       message: string
       ts: string
       installId: string
       code?: string
       appVersion?: string
+    }[]
+    /** v0.7.16 — User-submitted reports from the in-app + lock-overlay
+     *  Report Issue buttons. Sorted desc, max 50, last 24h. */
+    userReports?: {
+      id: number | string
+      message: string
+      ts: string
+      installId: string
+      code?: string
+      appVersion?: string
+    }[]
+    /** v0.7.16 — Top 100 installs by lastSeenAt desc. Powers the
+     *  Active Now / Total Installs drilldown dialogs. */
+    installs?: {
+      installId: string
+      firstSeenAt: string
+      lastSeenAt: string
+      appVersion?: string | null
+      os?: string | null
+      countryCode?: string | null
+    }[]
+    /** v0.7.16 — Today's per-session aggregates. Powers the Sessions
+     *  Today + Avg Session drilldown dialogs. */
+    sessionsList?: {
+      installId: string
+      sessionId: string
+      startTs: string
+      endTs: string
+      durationMs: number
+      hbCount: number
     }[]
     systemStatus?: {
       server: 'ok' | 'idle' | 'down'
@@ -232,9 +264,18 @@ export function AdminModal() {
     }
     error?: string
   }
+  // v0.7.16 — Which KPI card the operator clicked. Drives the detail
+  // Dialog rendered at the bottom of the Overview tab. null = closed.
+  type RecordsDrilldown = 'active' | 'installs' | 'sessions' | 'avg' | 'errors' | null
   const [records, setRecords] = useState<RecordsData | null>(null)
   const [recordsLoading, setRecordsLoading] = useState(false)
   const [recordsError, setRecordsError] = useState<string | null>(null)
+  // v0.7.16 — Which KPI card is "open" as a drilldown dialog. The
+  // operator clicks any of the 5 KPI cards (Active Now / Total
+  // Installs / Sessions / Avg Session / Errors) to open a Dialog
+  // with the underlying records pulled from the records payload
+  // (installs[], sessionsList[], recentErrors[]).
+  const [drill, setDrill] = useState<RecordsDrilldown>(null)
   const reloadRecords = useCallback(async () => {
     setRecordsLoading(true)
     try {
@@ -1132,7 +1173,11 @@ export function AdminModal() {
                 </div>
               )}
 
-              {/* KPI cards row */}
+              {/* KPI cards row — v0.7.16 each card is now a CLICKABLE
+                  button that opens a drill-down Dialog with the
+                  actual records (installs / sessions / errors / user
+                  reports). The hint text on each card tells the
+                  operator the click is interactive. */}
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                 {(() => {
                   // v0.7.14 — pretty-print avgSessionMs into a compact
@@ -1150,31 +1195,42 @@ export function AdminModal() {
                     return rem > 0 ? `${h}h ${rem}m` : `${h}h`
                   }
                   const cards: Array<{
+                    key: Exclude<RecordsDrilldown, null>
                     label: string
                     value: string | number
                     tone: 'ok' | 'warn' | 'err' | 'info'
+                    hint: string
                   }> = [
                     {
+                      key: 'active',
                       label: 'Active now (5 min)',
                       value: records?.activeNow ?? '—',
                       tone: (records?.activeNow ?? 0) > 0 ? 'ok' : 'info',
+                      hint: 'View installs',
                     },
                     {
+                      key: 'installs',
                       label: 'Total installs',
                       value: records?.totalInstalls ?? '—',
                       tone: 'info',
+                      hint: 'View all',
                     },
                     {
+                      key: 'sessions',
                       label: 'Sessions today',
                       value: records?.sessionsToday ?? '—',
                       tone: 'info',
+                      hint: 'View list',
                     },
                     {
+                      key: 'avg',
                       label: 'Avg session',
                       value: formatAvg(records?.avgSessionMs),
                       tone: 'info',
+                      hint: 'View durations',
                     },
                     {
+                      key: 'errors',
                       label: 'Errors (today)',
                       value: records?.errorsToday ?? '—',
                       tone:
@@ -1183,25 +1239,30 @@ export function AdminModal() {
                           : (records?.errorsToday ?? 0) < 5
                             ? 'warn'
                             : 'err',
+                      hint: 'View errors',
                     },
                   ]
                   const TONE: Record<string, string> = {
-                    ok: 'border-emerald-500/40 bg-emerald-950/20 text-emerald-100',
-                    warn: 'border-amber-500/40 bg-amber-950/20 text-amber-100',
-                    err: 'border-rose-500/40 bg-rose-950/20 text-rose-100',
-                    info: 'border-zinc-700/60 bg-zinc-900/40 text-zinc-100',
+                    ok: 'border-emerald-500/40 bg-emerald-950/20 text-emerald-100 hover:bg-emerald-950/40',
+                    warn: 'border-amber-500/40 bg-amber-950/20 text-amber-100 hover:bg-amber-950/40',
+                    err: 'border-rose-500/40 bg-rose-950/20 text-rose-100 hover:bg-rose-950/40',
+                    info: 'border-zinc-700/60 bg-zinc-900/40 text-zinc-100 hover:bg-zinc-800/60',
                   }
                   return cards.map((c) => (
-                    <div
+                    <button
                       key={c.label}
+                      type="button"
+                      onClick={() => setDrill(c.key)}
                       className={cn(
-                        'rounded-md border px-3 py-2 flex flex-col gap-0.5',
+                        'group rounded-md border px-3 py-2 flex flex-col gap-0.5 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 cursor-pointer',
                         TONE[c.tone],
                       )}
+                      title="Click to view the underlying records"
                     >
                       <div className="text-[9px] uppercase tracking-wider opacity-70">{c.label}</div>
                       <div className="text-xl font-mono font-bold tabular-nums">{c.value}</div>
-                    </div>
+                      <div className="text-[9px] opacity-60 group-hover:opacity-90 transition">{c.hint} →</div>
+                    </button>
                   ))
                 })()}
               </div>
@@ -1261,6 +1322,47 @@ export function AdminModal() {
                 </div>
               )}
 
+              {/* User reports (24 h) — v0.7.16
+                  Surfaces customer-submitted issue reports separately
+                  from system errors so a noisy SMTP/network failure
+                  loop can't bury real complaints. Each entry shows
+                  the time, install, app version, and the verbatim
+                  message the user typed in the Report Issue dialog. */}
+              <div className="rounded-md border border-border bg-background/40 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center justify-between">
+                  <span>User reports (24 h)</span>
+                  <span className="text-[9px] font-mono opacity-70">
+                    {records?.userReports?.length ?? 0} report
+                    {(records?.userReports?.length ?? 0) === 1 ? '' : 's'}
+                  </span>
+                </div>
+                {!records?.userReports || records.userReports.length === 0 ? (
+                  <div className="text-[11px] text-muted-foreground italic">No user reports in the last 24 hours.</div>
+                ) : (
+                  <div className="space-y-1 max-h-44 overflow-auto pr-1">
+                    {records.userReports.map((r) => (
+                      <div
+                        key={r.id}
+                        className="text-[11px] flex flex-col gap-0.5 rounded border border-violet-500/30 bg-violet-950/15 px-2 py-1"
+                      >
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-violet-200 uppercase tracking-wider text-[10px]">user_report</span>
+                          <span className="text-muted-foreground text-[10px]" title={r.ts}>{fmtRel(r.ts)}</span>
+                          {r.appVersion && (
+                            <span className="text-[9px] font-mono text-muted-foreground">v{r.appVersion}</span>
+                          )}
+                          <span className="text-[9px] font-mono text-muted-foreground">install {r.installId}</span>
+                          {r.code && (
+                            <span className="text-[9px] font-mono text-muted-foreground">code {r.code}</span>
+                          )}
+                        </div>
+                        <div className="text-violet-50 break-words whitespace-pre-wrap">{r.message}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* Recent errors */}
               <div className="rounded-md border border-border bg-background/40 px-3 py-2">
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Recent errors (24 h)</div>
@@ -1291,6 +1393,177 @@ export function AdminModal() {
                 )}
               </div>
             </section>
+
+            {/* ── Records drill-down Dialog (v0.7.16) ──────────────────
+                Single Dialog reused for all 5 KPI cards. Renders a
+                different table depending on `drill`. Data is taken
+                straight from the most recent records payload — no
+                extra fetch, no re-poll, so opening a drilldown is
+                instant and stays in sync with the next 10 s refresh
+                cycle. Close handled by `setDrill(null)`. */}
+            <Dialog open={drill !== null} onOpenChange={(o) => { if (!o) setDrill(null) }}>
+              <DialogContent className="sm:max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <ListChecks className="h-4 w-4 text-violet-300" />
+                    {drill === 'active' && 'Active installs (last 5 min)'}
+                    {drill === 'installs' && `All installs (top ${records?.installs?.length ?? 0})`}
+                    {drill === 'sessions' && 'Sessions today'}
+                    {drill === 'avg' && 'Session durations today'}
+                    {drill === 'errors' && 'Recent errors (24 h)'}
+                  </DialogTitle>
+                  <DialogDescription>
+                    {drill === 'active' && 'Installs that have sent a heartbeat in the last 5 minutes. Sorted by most-recent activity.'}
+                    {drill === 'installs' && 'Every install ever seen by the telemetry backend, newest activity first. Up to 100 rows.'}
+                    {drill === 'sessions' && 'Each row is one session (a contiguous run of heartbeats). Sorted by most-recently-active session first.'}
+                    {drill === 'avg' && 'Sessions today, ordered longest-first. Single-heartbeat sessions are excluded from the KPI average but shown here for transparency.'}
+                    {drill === 'errors' && 'System errors only — user-submitted reports appear in their own panel above.'}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="flex-1 overflow-auto rounded-md border border-border bg-background/40">
+                  {/* ── Active / Total Installs ────────────────────── */}
+                  {(drill === 'active' || drill === 'installs') && (() => {
+                    const all = records?.installs ?? []
+                    const fiveMin = records?.generatedAt
+                      ? Date.parse(records.generatedAt) - 5 * 60 * 1000
+                      : Date.now() - 5 * 60 * 1000
+                    const rows = drill === 'active'
+                      ? all.filter((i) => Date.parse(i.lastSeenAt) >= fiveMin)
+                      : all
+                    if (rows.length === 0) {
+                      return <div className="p-4 text-[12px] text-muted-foreground italic">No installs to show.</div>
+                    }
+                    return (
+                      <table className="w-full text-[11px] font-mono">
+                        <thead className="sticky top-0 bg-background/95 backdrop-blur border-b border-border">
+                          <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground">
+                            <th className="px-2 py-1.5">Install</th>
+                            <th className="px-2 py-1.5">Last seen</th>
+                            <th className="px-2 py-1.5">First seen</th>
+                            <th className="px-2 py-1.5">App ver</th>
+                            <th className="px-2 py-1.5">OS</th>
+                            <th className="px-2 py-1.5">Country</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((r) => (
+                            <tr key={r.installId} className="border-b border-border/40 hover:bg-muted/30">
+                              <td className="px-2 py-1 text-foreground">{r.installId}</td>
+                              <td className="px-2 py-1 text-muted-foreground" title={r.lastSeenAt}>{fmtRel(r.lastSeenAt)}</td>
+                              <td className="px-2 py-1 text-muted-foreground" title={r.firstSeenAt}>{fmtRel(r.firstSeenAt)}</td>
+                              <td className="px-2 py-1">{r.appVersion ?? '—'}</td>
+                              <td className="px-2 py-1">{r.os ?? '—'}</td>
+                              <td className="px-2 py-1">{r.countryCode ?? '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )
+                  })()}
+
+                  {/* ── Sessions Today / Avg Session ────────────────── */}
+                  {(drill === 'sessions' || drill === 'avg') && (() => {
+                    const all = records?.sessionsList ?? []
+                    const rows = drill === 'avg'
+                      ? all.filter((s) => s.hbCount >= 2).sort((a, b) => b.durationMs - a.durationMs)
+                      : all
+                    if (rows.length === 0) {
+                      return <div className="p-4 text-[12px] text-muted-foreground italic">No sessions to show.</div>
+                    }
+                    const fmtDur = (ms: number): string => {
+                      if (ms <= 0) return '<1s'
+                      const s = Math.round(ms / 1000)
+                      if (s < 60) return `${s}s`
+                      const m = Math.round(s / 60)
+                      if (m < 60) return `${m}m`
+                      const h = Math.floor(m / 60)
+                      const rem = m - h * 60
+                      return rem > 0 ? `${h}h ${rem}m` : `${h}h`
+                    }
+                    return (
+                      <table className="w-full text-[11px] font-mono">
+                        <thead className="sticky top-0 bg-background/95 backdrop-blur border-b border-border">
+                          <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground">
+                            <th className="px-2 py-1.5">Install</th>
+                            <th className="px-2 py-1.5">Session</th>
+                            <th className="px-2 py-1.5">Duration</th>
+                            <th className="px-2 py-1.5">Heartbeats</th>
+                            <th className="px-2 py-1.5">Started</th>
+                            <th className="px-2 py-1.5">Last beat</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((s) => (
+                            <tr key={`${s.installId}::${s.sessionId}`} className="border-b border-border/40 hover:bg-muted/30">
+                              <td className="px-2 py-1 text-foreground">{s.installId}</td>
+                              <td className="px-2 py-1 text-muted-foreground">{s.sessionId || '—'}</td>
+                              <td className={cn(
+                                'px-2 py-1 tabular-nums',
+                                s.hbCount < 2 ? 'text-muted-foreground italic' : 'text-emerald-200',
+                              )}>
+                                {s.hbCount < 2 ? '— (single beat)' : fmtDur(s.durationMs)}
+                              </td>
+                              <td className="px-2 py-1 tabular-nums">{s.hbCount}</td>
+                              <td className="px-2 py-1 text-muted-foreground" title={s.startTs}>{fmtRel(s.startTs)}</td>
+                              <td className="px-2 py-1 text-muted-foreground" title={s.endTs}>{fmtRel(s.endTs)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )
+                  })()}
+
+                  {/* ── Errors (24 h) ───────────────────────────────── */}
+                  {drill === 'errors' && (() => {
+                    const rows = records?.recentErrors ?? []
+                    if (rows.length === 0) {
+                      return <div className="p-4 text-[12px] text-muted-foreground italic">No system errors in the last 24 hours.</div>
+                    }
+                    return (
+                      <div className="p-2 space-y-1.5">
+                        {rows.map((e) => (
+                          <div
+                            key={e.id}
+                            className="text-[11px] flex flex-col gap-0.5 rounded border border-rose-500/30 bg-rose-950/15 px-2 py-1.5"
+                          >
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono text-rose-200 uppercase tracking-wider text-[10px]">{e.errorType}</span>
+                              <span className="text-muted-foreground text-[10px]" title={e.ts}>{fmtRel(e.ts)}</span>
+                              {e.appVersion && (
+                                <span className="text-[9px] font-mono text-muted-foreground">v{e.appVersion}</span>
+                              )}
+                              <span className="text-[9px] font-mono text-muted-foreground">install {e.installId}</span>
+                              {e.code && (
+                                <span className="text-[9px] font-mono text-muted-foreground">code {e.code}</span>
+                              )}
+                            </div>
+                            <div className="text-rose-100 break-words whitespace-pre-wrap">{e.message}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })()}
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-2">
+                  <span>
+                    {records?.generatedAt && (
+                      <>Snapshot {fmtRel(records.generatedAt)}</>
+                    )}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => { void reloadRecords() }}
+                    disabled={recordsLoading}
+                    className="h-7 px-2 text-[10px] uppercase tracking-wider gap-1"
+                  >
+                    <RefreshCw className={cn('h-3 w-3', recordsLoading && 'animate-spin')} />
+                    {recordsLoading ? 'Refreshing' : 'Refresh'}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
 
             {/* ── Generate Activation Code (v0.5.48) ─────────────────────
                 Mints a code by hand for free trials, partnerships,

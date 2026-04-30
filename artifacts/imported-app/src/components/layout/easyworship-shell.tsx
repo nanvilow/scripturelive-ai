@@ -58,6 +58,11 @@ import { MonitorPlay } from 'lucide-react'
 // the logo in the TopToolbar.
 import { LicenseTopBarButton } from '@/components/license/license-button'
 import { ThemeToggle } from '@/components/theme-toggle'
+// v0.7.16 — In-app "Report an Issue" button. Sits right next to the
+// theme toggle so users with an active subscription have an always-
+// visible bridge to the operator (the lock-overlay button is only
+// reachable when the app is locked, so we needed a second surface).
+import { ReportIssueButton } from '@/components/report-issue-button'
 
 // ──────────────────────────────────────────────────────────────────────
 // Library tab definitions
@@ -615,6 +620,12 @@ export function TopToolbar({
             license pill so it is always reachable from any view
             without leaving the operator console. */}
         <ThemeToggle />
+        {/* v0.7.16 — Always-on "Report an Issue" button. Operators
+            and customers can use this from any view to send a
+            free-text report to the admin Records dashboard via
+            /api/license/report-issue. Compact (icon-only) so it
+            doesn't crowd the TopToolbar. */}
+        <ReportIssueButton context="topbar" compact />
       </div>
 
       <div className="flex items-center gap-2">
