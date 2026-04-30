@@ -176,7 +176,7 @@ export function formatGeoLocation(g: GeoResult | null | undefined): string | und
  *  The geo result then describes where the operator's PC is on the
  *  internet, which is the closest stand-in available without a
  *  separate IP-from-the-internet round-trip in the buyer's browser. */
-export async function captureGeoFromRequest(req: Request): Promise<{ ip?: string; location?: string }> {
+export async function captureGeoFromRequest(req: Request): Promise<{ ip?: string; location?: string; countryCode?: string }> {
   let ip = clientIpFromRequest(req)
   if (!ip || isPrivateIp(ip)) {
     const fallback = await resolveServerPublicIp()
@@ -185,5 +185,12 @@ export async function captureGeoFromRequest(req: Request): Promise<{ ip?: string
   if (!ip || isPrivateIp(ip)) return ip ? { ip } : {}
   const g = await lookupGeo(ip)
   const location = formatGeoLocation(g)
-  return { ip, location }
+  // v0.7.17 — Surface the ISO country code separately so callers
+  // (telemetry install + heartbeat) can persist it on the install
+  // row regardless of whether the desktop client could derive it
+  // locally. Was previously embedded only inside the formatted
+  // location string, which the records dashboard doesn't parse
+  // — that left the Country column showing "—" for any install
+  // whose first /telemetry/install ping never reached us.
+  return { ip, location, countryCode: g?.countryCode || undefined }
 }
