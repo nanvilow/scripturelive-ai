@@ -54,3 +54,34 @@ copyDir(
 const wsSrc = path.join(workspaceRoot, "node_modules", "ws");
 const wsDst = path.join(standaloneRoot, "node_modules", "ws");
 copyDir(wsSrc, wsDst, "node_modules/ws");
+
+// Next 16 / Turbopack standalone tracing does NOT include
+// `next/dist/compiled/@babel/runtime` or `next/dist/compiled/webpack/*`
+// because Next loads them via dynamic `require.resolve` calls in
+// `config-utils.js#loadWebpackHook` (intentionally non-statically-analyzable,
+// per the comment in that file). Locally these resolve up to the workspace
+// root's `node_modules/next/`, so dev never sees the issue. In production
+// the standalone bundle has no parent `node_modules` to walk to, so server
+// startup throws `Cannot find package 'next/dist/compiled/@babel/runtime'`.
+// Copy the small subset of compiled deps that `loadWebpackHook` requires.
+const workspaceNextCompiled = path.join(
+  workspaceRoot,
+  "node_modules",
+  "next",
+  "dist",
+  "compiled",
+);
+const standaloneNextCompiled = path.join(
+  standaloneRoot,
+  "node_modules",
+  "next",
+  "dist",
+  "compiled",
+);
+for (const sub of ["@babel", "webpack"]) {
+  copyDir(
+    path.join(workspaceNextCompiled, sub),
+    path.join(standaloneNextCompiled, sub),
+    `next/dist/compiled/${sub}`,
+  );
+}
