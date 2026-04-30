@@ -13,7 +13,7 @@
     "prebuild": "node scripts/inject-keys.mjs",
     "dev": "cross-env DATABASE_URL=file:../db/custom.db next dev -H 0.0.0.0 -p ${PORT:-3000}",
     "build": "cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build",
-    "start": "cross-env DATABASE_URL=file:../db/custom.db NODE_ENV=production HOST=0.0.0.0 PORT=${PORT:-3000} node server.mjs",
+    "start": "DATABASE_URL=file:../db/custom.db NODE_ENV=production HOST=0.0.0.0 PORT=${PORT:-3000} node server.mjs",
     "postinstall": "node -e \"process.exit(0)\"",
     "lint": "eslint .",
     "test": "vitest run",
