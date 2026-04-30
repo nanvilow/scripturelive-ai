@@ -38,7 +38,19 @@ type UpdaterState =
   | { status: 'checking' }
   | { status: 'available'; version: string; releaseNotes?: string; releaseName?: string }
   | { status: 'not-available'; version: string }
-  | { status: 'downloading'; percent: number; transferred?: number; total?: number; bytesPerSecond?: number }
+  | {
+      status: 'downloading'
+      percent: number
+      transferred?: number
+      total?: number
+      bytesPerSecond?: number
+      // v0.7.17 — populated by the multi-threaded downloader so the
+      // toast can show "X.X MB/s · ETA 12s · 4 chunks". Both optional
+      // because older builds and the single-stream fallback don't
+      // include them.
+      parallelism?: number
+      etaSeconds?: number
+    }
   | { status: 'downloaded'; version: string; releaseNotes?: string; releaseName?: string }
   | { status: 'error'; message: string }
 
@@ -260,7 +272,43 @@ export function UpdateNotifier() {
           s.total != null ? (s.total / 1024 / 1024).toFixed(1) : null
         const sizeLine =
           mbTransferred && mbTotal ? `${mbTransferred} / ${mbTotal} MB` : null
-        const description = sizeLine ? `${pct}% · ${sizeLine}` : `${pct}%`
+        // v0.7.17 — Show throughput + ETA so the operator can see the
+        // download is actually moving (and roughly how long it has left).
+        // Auto-scale unit: B/s → KB/s → MB/s. Hide entirely when speed
+        // is 0 (pre-first-byte / paused) so the toast doesn't flicker
+        // a confusing "0 KB/s" between samples.
+        const bps = s.bytesPerSecond ?? 0
+        let speedLine: string | null = null
+        if (bps >= 1024 * 1024) speedLine = `${(bps / 1024 / 1024).toFixed(1)} MB/s`
+        else if (bps >= 1024) speedLine = `${(bps / 1024).toFixed(0)} KB/s`
+        else if (bps > 0) speedLine = `${Math.round(bps)} B/s`
+        // ETA: only show when speed is high enough for a stable estimate.
+        // Format as "ETA 1m 23s" when > 60s, "ETA 12s" otherwise.
+        let etaLine: string | null = null
+        const eta = s.etaSeconds
+        if (eta != null && Number.isFinite(eta) && eta >= 1) {
+          if (eta >= 60) {
+            const m = Math.floor(eta / 60)
+            const sec = Math.round(eta % 60)
+            etaLine = `ETA ${m}m ${sec}s`
+          } else {
+            etaLine = `ETA ${Math.round(eta)}s`
+          }
+        }
+        // Parallelism badge — small "(4 chunks)" suffix so the operator
+        // can tell the multi-threaded path is active. Single-stream
+        // fallback path leaves this undefined.
+        const chunksLine =
+          s.parallelism && s.parallelism > 1 ? `${s.parallelism} chunks` : null
+        const description = [
+          `${pct}%`,
+          sizeLine,
+          speedLine,
+          etaLine,
+          chunksLine,
+        ]
+          .filter(Boolean)
+          .join(' · ')
         // v0.5.31 — Cancel action attached to every progress toast
         // so the operator can abort the download from the same UI
         // surface that's tracking it. Calls the new `updater.cancel`

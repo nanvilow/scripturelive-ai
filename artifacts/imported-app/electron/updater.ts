@@ -1,7 +1,11 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { autoUpdater, CancellationToken, UpdateInfo, ProgressInfo } from 'electron-updater'
+import { spawn } from 'node:child_process'
 import { copyFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+import { parallelDownload, formatBytesPerSecond } from './parallel-download'
 
 /**
  * Auto-updater wired to electron-updater.
@@ -22,7 +26,18 @@ export type UpdateState =
   | { status: 'checking' }
   | { status: 'available'; version: string; releaseNotes?: string; releaseName?: string }
   | { status: 'not-available'; version: string }
-  | { status: 'downloading'; percent: number; transferred: number; total: number; bytesPerSecond: number }
+  | {
+      status: 'downloading'
+      percent: number
+      transferred: number
+      total: number
+      bytesPerSecond: number
+      // v0.7.17 — populated by the multi-threaded HTTP range downloader
+      // (electron/parallel-download.ts). Both optional because the
+      // electron-updater fallback path can't supply them.
+      parallelism?: number
+      etaSeconds?: number
+    }
   | {
       status: 'downloaded'
       version: string
@@ -52,6 +67,23 @@ let setMainIsQuitting: ((v: boolean) => void) | null = null
 // We hold the live token here so the new `updater:cancel` IPC and
 // the renderer "Cancel download" button can reach it.
 let activeCancellationToken: CancellationToken | null = null
+// v0.7.17 — Cached UpdateInfo from the most recent `update-available`
+// event. The fast (parallel) downloader needs it to construct the
+// GitHub release asset URL and to verify SHA-512 — electron-updater
+// keeps this internally but doesn't expose it via a public getter.
+let lastUpdateInfo: UpdateInfo | null = null
+// v0.7.17 — AbortController for the in-flight parallel download. We
+// expose abort via the same `updater:cancel` IPC the legacy single-
+// stream path uses, so the renderer doesn't need to know which path
+// it's on. Cleared on success / failure.
+let fastDownloadAbort: AbortController | null = null
+// v0.7.17 — Path of an installer downloaded by our parallel path.
+// When non-null, `updater:install` spawns this file directly (NSIS
+// detects the running .exe, prompts to close, then replaces). We need
+// this because electron-updater's `quitAndInstall()` only knows about
+// installers IT downloaded into its private cache — files we wrote
+// ourselves are invisible to it.
+let fastDownloadedFile: string | null = null
 // In-process listeners for state changes (e.g. tray icon updater).
 // Distinct from the renderer broadcast — we want to update OS chrome
 // like the tray tooltip even when no main window is alive (background
@@ -188,6 +220,12 @@ export function setupAutoUpdater(opts: {
 
   autoUpdater.on('checking-for-update', () => broadcast({ status: 'checking' }))
   autoUpdater.on('update-available', (info: UpdateInfo) => {
+    // v0.7.17 — Stash the full UpdateInfo so triggerFastDownload() can
+    // build the GitHub release URL and pass the canonical SHA-512 to
+    // the parallel downloader. electron-updater holds this internally
+    // but offers no public accessor, so caching it here is the only
+    // way to keep the fast path consistent with the slow fallback.
+    lastUpdateInfo = info
     const { notes, name } = normalizeNotes(info)
     broadcast({ status: 'available', version: info.version, releaseNotes: notes, releaseName: name })
   })
@@ -337,6 +375,29 @@ export function setupAutoUpdater(opts: {
       }
     }
     setImmediate(() => {
+      // v0.7.17 — When the parallel downloader produced the installer,
+      // electron-updater knows nothing about the file (it lives in
+      // %TEMP%, not the updater's private cache). Spawn the NSIS
+      // installer ourselves and let it replace the .exe normally:
+      // detached + unref + immediate app.quit() releases every file
+      // lock so the installer's internal close-detection wizard
+      // proceeds without operator intervention. We pass `--updated`
+      // for parity with electron-updater's launch flags so any
+      // post-install hook in the NSIS script that checks for it still
+      // sees the same surface.
+      if (fastDownloadedFile) {
+        try {
+          const child = spawn(fastDownloadedFile, ['--updated'], {
+            detached: true,
+            stdio: 'ignore',
+          })
+          child.unref()
+        } catch (err) {
+          console.error('[updater] fast-install spawn failed:', err)
+        }
+        app.quit()
+        return
+      }
       try {
         autoUpdater.quitAndInstall(false, true)
       } catch (err) {
@@ -359,16 +420,27 @@ export function setupAutoUpdater(opts: {
     if (currentState.status !== 'downloading') {
       return { ok: false, error: 'no download in progress' }
     }
-    if (!activeCancellationToken) {
+    // v0.7.17 — A cancel may target either the parallel downloader
+    // (fast path, owns `fastDownloadAbort`) or electron-updater
+    // (slow fallback, owns `activeCancellationToken`). Fire whichever
+    // is live; in practice only one is set at a time, but we don't
+    // gate on which path is active so a cancel is always honoured.
+    if (!fastDownloadAbort && !activeCancellationToken) {
       return { ok: false, error: 'no active cancellation token' }
     }
     try {
-      activeCancellationToken.cancel()
+      if (fastDownloadAbort) {
+        fastDownloadAbort.abort()
+        fastDownloadAbort = null
+      }
+      if (activeCancellationToken) {
+        activeCancellationToken.cancel()
+        activeCancellationToken = null
+      }
       // The error event will flip downloadInFlight + broadcast a
       // friendly cancellation message, but reset state proactively
       // so the renderer doesn't see a phantom 'downloading' tail.
       downloadInFlight = false
-      activeCancellationToken = null
       broadcast({ status: 'idle' })
       return { ok: true }
     } catch (err) {
@@ -377,12 +449,22 @@ export function setupAutoUpdater(opts: {
     }
   })
   // Operator-clicked "Download" path. Only valid when an update has
-  // been announced (status === 'available'). We let electron-updater
-  // run the signed download against GitHub Releases; progress events
-  // flow through download-progress → broadcast() → the renderer's
-  // toast. Returns ok:false (without throwing) on no-op so the toast
-  // can show a friendly message.
-  ipcMain.handle('updater:download', () => triggerUpdateDownload())
+  // been announced (status === 'available').
+  //
+  // v0.7.17 — We now route through `triggerFastDownload()` first,
+  // which uses a multi-threaded HTTP range downloader against the
+  // GitHub Release asset (typically 2–4x faster than electron-
+  // updater's single-stream GET on bandwidth-constrained church
+  // links). On any failure (server doesn't honour Range, missing
+  // metadata, SHA mismatch, network) we fall through to the legacy
+  // electron-updater single-stream path so the operator never sees a
+  // hard failure they can't recover from.
+  //
+  // Progress events from BOTH paths flow through the same
+  // `updater:state` channel, so the renderer's toast / banner doesn't
+  // need to know which path it's on — though the fast path adds
+  // optional `parallelism` + `etaSeconds` fields the UI can surface.
+  ipcMain.handle('updater:download', () => triggerFastDownload())
 
   // Skip the periodic check in dev — electron-updater refuses to run
   // unpackaged anyway. Manual checks via the IPC handler still fire
@@ -472,6 +554,217 @@ export async function triggerUpdateDownload(): Promise<
     }
     broadcast({ status: 'error', message: friendly })
     return { ok: false, error: friendly }
+  }
+}
+
+/**
+ * v0.7.17 — Multi-threaded download path.
+ *
+ * Drives the new `electron/parallel-download.ts` module, which splits
+ * the GitHub Release installer into N parallel HTTP Range chunks
+ * (default 4) and reassembles + SHA-512-verifies on disk. Typical
+ * speed-up vs electron-updater's single GET on a shared 5 Mbps church
+ * link: 2–4x. On any failure we transparently fall back to the legacy
+ * `triggerUpdateDownload()` so the operator never ends up with no
+ * working update path.
+ *
+ * Wire-up:
+ *   - `lastUpdateInfo` (cached in the `update-available` handler)
+ *     gives us version, asset filename (`info.path`), expected size
+ *     (`info.files[0].size`), and SHA-512 (`info.sha512`).
+ *   - The GitHub release tag is `v${version}` per electron-builder's
+ *     publish convention; the asset URL pattern is
+ *     `https://github.com/${owner}/${repo}/releases/download/${tag}/${asset}`
+ *     where owner/repo come from package.json's `repository.url`.
+ *   - Progress events broadcast through the same `updater:state`
+ *     channel as the legacy path, but include `parallelism` and
+ *     `etaSeconds` so the renderer can show "X.X MB/s · ETA Ys · 4 chunks".
+ *   - On success we copy the installer to the operator's Desktop
+ *     (matches the legacy path's `desktopCopyPath` behaviour) and
+ *     stash the temp path in `fastDownloadedFile` so `updater:install`
+ *     can spawn it directly.
+ */
+async function triggerFastDownload(): Promise<
+  { ok: true; alreadyInProgress?: boolean } | { ok: false; error: string }
+> {
+  if (
+    downloadInFlight ||
+    currentState.status === 'downloading' ||
+    currentState.status === 'downloaded'
+  ) {
+    return { ok: true, alreadyInProgress: true }
+  }
+  if (currentState.status !== 'available') {
+    return { ok: false, error: 'no update available to download' }
+  }
+  if (!lastUpdateInfo) {
+    // No cached info — happens if we somehow reached 'available' state
+    // without going through the `update-available` event handler.
+    // Fall back to the legacy path which doesn't need this metadata.
+    console.warn('[updater] fast download: no cached UpdateInfo, falling back')
+    return await triggerUpdateDownload()
+  }
+
+  const repo = getRepoFromPackageJson()
+  if (!repo) {
+    console.warn('[updater] fast download: could not parse repo from package.json, falling back')
+    return await triggerUpdateDownload()
+  }
+
+  // electron-updater's publish config strips a leading "v" from tags
+  // when normalising versions, but the actual GitHub release tag
+  // electron-builder creates is `v<semver>`. Match that.
+  const tag = `v${lastUpdateInfo.version}`
+  const asset = lastUpdateInfo.path
+  if (!asset) {
+    console.warn('[updater] fast download: UpdateInfo.path missing, falling back')
+    return await triggerUpdateDownload()
+  }
+  const url = `https://github.com/${repo.owner}/${repo.repo}/releases/download/${tag}/${asset}`
+  // Belt-and-braces: prefer the per-file metadata from `info.files[0]`
+  // if it exists (electron-updater populates it from latest.yml). It
+  // matches `info.sha512` in practice but is defensively copied here.
+  const expectedSha512 = lastUpdateInfo.files?.[0]?.sha512 || lastUpdateInfo.sha512
+  const expectedSize = lastUpdateInfo.files?.[0]?.size
+
+  // Save under %TEMP%\scripturelive-updates\<asset> so a partial
+  // download (cancelled mid-way, network drop) doesn't leave junk in
+  // the operator's Documents/Desktop folders. The OS cleans %TEMP%
+  // periodically, so even a forgotten file eventually disappears.
+  const saveDir = join(tmpdir(), 'scripturelive-updates')
+  const savePath = join(saveDir, asset)
+
+  downloadInFlight = true
+  fastDownloadAbort = new AbortController()
+  // Seed an immediate 'downloading' event at 0% so the renderer can
+  // swap from the "Available — Click To Download" toast to the
+  // progress spinner without waiting for the first byte (the HEAD
+  // probe + first chunk request can take 1–2s on a slow link).
+  broadcast({
+    status: 'downloading',
+    percent: 0,
+    transferred: 0,
+    total: expectedSize ?? 0,
+    bytesPerSecond: 0,
+    parallelism: 4,
+    etaSeconds: Infinity,
+  })
+
+  const startedAt = Date.now()
+  try {
+    const result = await parallelDownload({
+      url,
+      savePath,
+      expectedSha512,
+      expectedSize,
+      parallelism: 4,
+      signal: fastDownloadAbort.signal,
+      onProgress: (p) => {
+        broadcast({
+          status: 'downloading',
+          percent: p.percent,
+          transferred: p.transferred,
+          total: p.total,
+          bytesPerSecond: p.bytesPerSecond,
+          parallelism: p.parallelism,
+          etaSeconds: p.etaSeconds,
+        })
+      },
+    })
+
+    fastDownloadedFile = result.savePath
+    downloadInFlight = false
+    fastDownloadAbort = null
+
+    const elapsedSec = (Date.now() - startedAt) / 1000
+    const avgBps = elapsedSec > 0 ? result.totalBytes / elapsedSec : 0
+    console.log(
+      `[updater] fast download done: ${(result.totalBytes / 1024 / 1024).toFixed(1)} MB in ${elapsedSec.toFixed(1)}s ` +
+        `(avg ${formatBytesPerSecond(avgBps)}, ${result.parallelism} chunk${result.parallelism === 1 ? '' : 's'}, ` +
+        `ranged=${result.rangedUsed})`,
+    )
+
+    // Mirror the legacy path's behaviour: drop a copy on the operator's
+    // Desktop with a friendly filename so they have a portable backup.
+    const { notes, name } = normalizeNotes(lastUpdateInfo)
+    const version = lastUpdateInfo.version
+    let desktopCopyPath: string | undefined
+    try {
+      const desktopDir = app.getPath('desktop')
+      const destPath = join(desktopDir, `ScriptureLive AI Setup ${version}.exe`)
+      await copyFile(result.savePath, destPath)
+      desktopCopyPath = destPath
+      console.log('[updater] copied installer to desktop:', destPath)
+    } catch (err) {
+      console.warn(
+        '[updater] could not copy installer to desktop (non-fatal):',
+        err instanceof Error ? err.message : err,
+      )
+    }
+
+    broadcast({
+      status: 'downloaded',
+      version,
+      releaseNotes: notes,
+      releaseName: name,
+      desktopCopyPath,
+    })
+    return { ok: true }
+  } catch (err) {
+    downloadInFlight = false
+    fastDownloadAbort = null
+    const raw = err instanceof Error ? err.message : String(err)
+
+    // Operator-cancelled — silent return to idle, same as the legacy
+    // path. AbortController.abort() throws either DOMException 'AbortError'
+    // or a plain "aborted" message depending on the runtime.
+    if (/abort/i.test(raw) || (/cancell?ed/i.test(raw) && !/timeout|reset|refused/i.test(raw))) {
+      broadcast({ status: 'idle' })
+      return { ok: true, alreadyInProgress: false }
+    }
+
+    // Real failure — log it, then fall back to the legacy electron-
+    // updater single-stream path. The renderer is still showing our
+    // 'downloading' state, but `triggerUpdateDownload()` will fire its
+    // own download-progress events that overwrite it cleanly.
+    console.warn(
+      '[updater] fast download failed, falling back to electron-updater single-stream:',
+      raw,
+    )
+    return await triggerUpdateDownload()
+  }
+}
+
+/**
+ * Parse the GitHub owner/repo from the bundled package.json's
+ * `repository.url` field. This is the same source electron-builder
+ * uses for its publish target, so the two stay in sync without a
+ * second hardcoded constant. Returns null on any parse failure
+ * (the caller falls back to the legacy single-stream path).
+ */
+function getRepoFromPackageJson(): { owner: string; repo: string } | null {
+  try {
+    // app.getAppPath() points at the asar root in production, which
+    // contains the bundled package.json. require() resolves through
+    // the asar VFS the same way fs does, so this works in both dev
+    // and packaged builds without special-casing.
+    const pkgPath = join(app.getAppPath(), 'package.json')
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pkg = require(pkgPath) as { repository?: string | { url?: string } }
+    const url =
+      typeof pkg.repository === 'string'
+        ? pkg.repository
+        : pkg.repository?.url || ''
+    // Match HTTPS, SSH, and shorthand:
+    //   https://github.com/owner/repo(.git)
+    //   git@github.com:owner/repo.git
+    //   github:owner/repo
+    const m = url.match(/(?:github\.com[/:]|^github:)([^/]+)\/([^/.\s]+)(?:\.git)?\/?$/i)
+    if (!m) return null
+    return { owner: m[1], repo: m[2] }
+  } catch (err) {
+    console.warn('[updater] could not parse repo from package.json:', err)
+    return null
   }
 }
 

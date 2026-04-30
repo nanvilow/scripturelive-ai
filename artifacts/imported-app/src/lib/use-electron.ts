@@ -18,7 +18,19 @@ export type UpdateState =
   | { status: 'checking' }
   | { status: 'available'; version: string; releaseNotes?: string; releaseName?: string }
   | { status: 'not-available'; version: string }
-  | { status: 'downloading'; percent: number; transferred: number; total: number; bytesPerSecond: number }
+  | {
+      status: 'downloading'
+      percent: number
+      transferred: number
+      total: number
+      bytesPerSecond: number
+      // v0.7.17 — surfaced by the multi-threaded HTTP range downloader
+      // in electron/parallel-download.ts. Both optional because older
+      // desktop builds and the single-stream electron-updater fallback
+      // path don't populate them.
+      parallelism?: number
+      etaSeconds?: number
+    }
   | { status: 'downloaded'; version: string; releaseNotes?: string; releaseName?: string }
   | { status: 'error'; message: string }
 

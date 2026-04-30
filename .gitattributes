@@ -31,3 +31,4 @@ exports/ScriptureLive-AI-v0.7.10-source.zip filter=lfs diff=lfs merge=lfs -text
 exports/ScriptureLive-AI-v0.7.11-source.zip filter=lfs diff=lfs merge=lfs -text
 exports/ziUiQwUT filter=lfs diff=lfs merge=lfs -text
 exports/zifVA6nV filter=lfs diff=lfs merge=lfs -text
+exports/ScriptureLive-AI-v0.7.17-source.zip filter=lfs diff=lfs merge=lfs -text

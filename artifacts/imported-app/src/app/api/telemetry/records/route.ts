@@ -45,6 +45,9 @@ interface RecordsResponse {
   avgSessionMs?: number
   errorsToday: number
   topFeatures: { name: string; count: number }[]
+  /** v0.7.16 — Errors EXCLUDING errorType==='user_report'. Those go
+   *  to userReports below so the admin can see them as their own
+   *  panel (not buried with system errors). */
   recentErrors: {
     id: number | string
     errorType: string
@@ -53,6 +56,40 @@ interface RecordsResponse {
     installId: string
     code?: string
     appVersion?: string
+  }[]
+  /** v0.7.16 — User-submitted "Report an issue" entries from the
+   *  in-app Report button + lock-overlay. Last 24 h, max 50.
+   *  Sorted desc (newest first). */
+  userReports: {
+    id: number | string
+    message: string
+    ts: string
+    installId: string
+    code?: string
+    appVersion?: string
+  }[]
+  /** v0.7.16 — Top 100 installs by lastSeenAt desc. Powers the
+   *  "Active now" + "Total installs" drilldown dialogs. Active set
+   *  is filtered client-side via lastSeenAt within 5 min of the
+   *  generatedAt timestamp. */
+  installs: {
+    installId: string
+    firstSeenAt: string
+    lastSeenAt: string
+    appVersion?: string | null
+    os?: string | null
+    countryCode?: string | null
+  }[]
+  /** v0.7.16 — Today's session aggregates derived from heartbeats.
+   *  Sorted by endTs desc (most recently active first). Powers the
+   *  Sessions Today + Avg Session drilldown dialogs. */
+  sessionsList: {
+    installId: string
+    sessionId: string
+    startTs: string
+    endTs: string
+    durationMs: number
+    hbCount: number
   }[]
   systemStatus: {
     server: 'ok' | 'idle' | 'down'
@@ -194,8 +231,15 @@ export async function GET(req: NextRequest) {
       (r) => Date.parse(r.ts) >= todayStart,
     ).length
 
-    const recentErrors = validErrs
-      .sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts))
+    // v0.7.16 — Split user-submitted reports out of the system error
+    // stream so the admin Records dashboard can display them in their
+    // own panel (and so a noisy SMTP loop can't push real customer
+    // complaints off the visible list).
+    const sortedErrs = validErrs.sort(
+      (a, b) => Date.parse(b.ts) - Date.parse(a.ts),
+    )
+    const recentErrors = sortedErrs
+      .filter((e) => e.errorType !== 'user_report')
       .slice(0, 20)
       .map((e) => ({
         id: e.id,
@@ -206,6 +250,57 @@ export async function GET(req: NextRequest) {
         code: e.code ?? undefined,
         appVersion: e.appVersion ?? undefined,
       }))
+    const userReports = sortedErrs
+      .filter((e) => e.errorType === 'user_report')
+      .slice(0, 50)
+      .map((e) => ({
+        id: e.id,
+        message: e.message,
+        ts: e.ts,
+        installId: e.installId.slice(0, 8),
+        code: e.code ?? undefined,
+        appVersion: e.appVersion ?? undefined,
+      }))
+
+    // v0.7.16 — Top 100 installs by lastSeenAt (most-recently-seen
+    // first). Also surfaces firstSeenAt + appVersion + os to power
+    // the drilldown dialogs the operator opens by clicking on the
+    // Active Now / Total Installs KPI cards.
+    const installsList = validInstalls
+      .slice()
+      .sort(
+        (a, b) =>
+          (Date.parse(b.lastSeenAt) || 0) -
+          (Date.parse(a.lastSeenAt) || 0),
+      )
+      .slice(0, 100)
+      .map((r) => ({
+        installId: r.installId.slice(0, 12),
+        firstSeenAt: r.firstSeenAt,
+        lastSeenAt: r.lastSeenAt,
+        appVersion: r.appVersion ?? null,
+        os: r.os ?? null,
+        countryCode: r.countryCode ?? null,
+      }))
+
+    // v0.7.16 — Per-session list (today only, all sessions including
+    // single-poll ones — the avg KPI excludes 1-poll sessions but
+    // the drilldown shows everything so the operator can tell the
+    // difference between "5-min sessions" and "instant abandons").
+    const sessionsList = [...sessions.entries()]
+      .map(([key, agg]) => {
+        const [installId, sessionId] = key.split('::')
+        return {
+          installId: (installId ?? 'unknown').slice(0, 12),
+          sessionId: (sessionId ?? '').slice(0, 12),
+          startTs: new Date(agg.min).toISOString(),
+          endTs: new Date(agg.max).toISOString(),
+          durationMs: Math.max(0, agg.max - agg.min),
+          hbCount: agg.count,
+        }
+      })
+      .sort((a, b) => Date.parse(b.endTs) - Date.parse(a.endTs))
+      .slice(0, 200)
 
     const body: RecordsResponse = {
       ok: true,
@@ -217,6 +312,9 @@ export async function GET(req: NextRequest) {
       errorsToday,
       topFeatures,
       recentErrors,
+      userReports,
+      installs: installsList,
+      sessionsList,
       systemStatus: {
         server: 'ok',
         ai: activeNow > 0 ? 'ok' : 'idle',

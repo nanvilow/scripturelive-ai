@@ -228,3 +228,15 @@ id = "41j914zBw7Y0C22QB0ug6"
 uri = "file://exports/ScriptureLive-AI-v0.7.15-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.15 — source"
+
+[[outputs]]
+id = "nIk7BJT9sw0c_ld3WlCAg"
+uri = "file://artifacts/imported-app/exports/ScriptureLive-AI-v0.7.16-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.16 — source"
+
+[[outputs]]
+id = "egor1FOxqe86LA27cEjK_"
+uri = "file://exports/ScriptureLive-AI-v0.7.17-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.17 — Source"

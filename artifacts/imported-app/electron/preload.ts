@@ -48,7 +48,17 @@ export type UpdateState =
   | { status: 'checking' }
   | { status: 'available'; version: string; releaseNotes?: string; releaseName?: string }
   | { status: 'not-available'; version: string }
-  | { status: 'downloading'; percent: number; transferred: number; total: number; bytesPerSecond: number }
+  | {
+      status: 'downloading'
+      percent: number
+      transferred: number
+      total: number
+      bytesPerSecond: number
+      // v0.7.17 — multi-threaded downloader fields. Both optional so
+      // older renderers / fallback single-stream paths stay valid.
+      parallelism?: number
+      etaSeconds?: number
+    }
   | { status: 'downloaded'; version: string; releaseNotes?: string; releaseName?: string }
   | { status: 'error'; message: string }
 
