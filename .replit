@@ -1,29 +1,13 @@
 modules = ["nodejs-24", "python-3.11"]
 
-# v0.7.18 deploy fix — Autoscale needs the build and run commands to
-# live at the top level of [deployment] when only one production
-# service exists. Previously these were only declared inside the
-# imported-app's artifact.toml under [services.production], which
-# the autoscale validator reported as "No run command configured to
-# start the Next.js production server after build".
-#
-# Inlined env vars rather than [deployment.env] so they apply
-# regardless of whether this Replit version honors that subkey:
-#   • NODE_OPTIONS=--max-old-space-size=4096 — gives next build
-#     enough V8 heap headroom that the deploy sandbox doesn't
-#     OOM-kill it silently mid-compile.
-#   • NEXT_TELEMETRY_DISABLED=1 — skip the network roundtrip
-#     Next.js does on every build, which has been a source of
-#     hangs in CI environments.
-#   • PORT=${PORT:-25650} — use whatever port Replit assigns,
-#     falling back to 25650 to match the [[ports]] entry below
-#     when running outside of autoscale's PORT injector.
-#   • NODE_ENV=production — required by Next.js to pick up the
-#     prebuilt .next/standalone bundle instead of dev mode.
+# v0.7.18 deploy fix — In a pnpm workspace Replit reads the production
+# build/run from each artifact's `.replit-artifact/artifact.toml`, NOT
+# from this file. Putting `build` and `run` here causes them to run as
+# a PRE-build hook BEFORE each artifact's own build, doubling the work
+# and risking OOM. So we keep this section minimal and only declare the
+# deployment target.
 [deployment]
 deploymentTarget = "autoscale"
-build = ["sh", "-c", "NODE_OPTIONS='--max-old-space-size=4096' NEXT_TELEMETRY_DISABLED=1 NODE_ENV=production pnpm --filter @workspace/imported-app run build"]
-run = ["sh", "-c", "PORT=${PORT:-25650} NODE_ENV=production NODE_OPTIONS='--max-old-space-size=4096' pnpm --filter @workspace/imported-app run start"]
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
