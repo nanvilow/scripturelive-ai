@@ -7,22 +7,6 @@
     "type": "git",
     "url": "https://github.com/nanvilow/scripturelive-ai.git"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@parcel/watcher",
-      "@prisma/client",
-      "@prisma/engines",
-      "@swc/core",
-      "electron",
-      "electron-winstaller",
-      "es5-ext",
-      "esbuild",
-      "koffi",
-      "prisma",
-      "sharp",
-      "unrs-resolver"
-    ]
-  },
   "scripts": {
     "inject:keys": "node scripts/inject-keys.mjs",
     "predev": "node scripts/inject-keys.mjs",

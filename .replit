@@ -1,8 +1,29 @@
 modules = ["nodejs-24", "python-3.11"]
 
+# v0.7.18 deploy fix — Autoscale needs the build and run commands to
+# live at the top level of [deployment] when only one production
+# service exists. Previously these were only declared inside the
+# imported-app's artifact.toml under [services.production], which
+# the autoscale validator reported as "No run command configured to
+# start the Next.js production server after build".
+#
+# Inlined env vars rather than [deployment.env] so they apply
+# regardless of whether this Replit version honors that subkey:
+#   • NODE_OPTIONS=--max-old-space-size=4096 — gives next build
+#     enough V8 heap headroom that the deploy sandbox doesn't
+#     OOM-kill it silently mid-compile.
+#   • NEXT_TELEMETRY_DISABLED=1 — skip the network roundtrip
+#     Next.js does on every build, which has been a source of
+#     hangs in CI environments.
+#   • PORT=${PORT:-25650} — use whatever port Replit assigns,
+#     falling back to 25650 to match the [[ports]] entry below
+#     when running outside of autoscale's PORT injector.
+#   • NODE_ENV=production — required by Next.js to pick up the
+#     prebuilt .next/standalone bundle instead of dev mode.
 [deployment]
-router = "application"
 deploymentTarget = "autoscale"
+build = ["sh", "-c", "NODE_OPTIONS='--max-old-space-size=4096' NEXT_TELEMETRY_DISABLED=1 NODE_ENV=production pnpm --filter @workspace/imported-app run build"]
+run = ["sh", "-c", "PORT=${PORT:-25650} NODE_ENV=production NODE_OPTIONS='--max-old-space-size=4096' pnpm --filter @workspace/imported-app run start"]
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
@@ -19,14 +40,11 @@ expertMode = true
 path = "scripts/post-merge.sh"
 timeoutMs = 240000
 
-# v0.7.18 deploy fix — Autoscale rejects deployments that forward more
-# than one external port. Previously seven dev-time port forwards were
-# declared here (8080, 8081, 8082, 8083, 8084, 8085, 25650) — most of
-# them stale entries for artifacts that no longer exist. The Next.js
-# production server (artifacts/imported-app/server.mjs) listens on 25650
-# and serves both the UI/HTTP API AND the Deepgram WebSocket stream
-# from the same origin, so a single forward is all production needs.
-# The dev workflows for api-server (8080) and mockup-sandbox (8081)
+# v0.7.18 deploy fix — Autoscale requires exactly ONE externally
+# forwarded port. The Next.js production server (server.mjs) listens
+# on 25650 and serves both the UI/HTTP API AND the Deepgram WebSocket
+# stream from the same origin, so a single forward is all production
+# needs. Dev workflows for api-server (8080) and mockup-sandbox (8081)
 # bind their own internal ports and remain reachable in the workspace
 # preview pane via the path-based artifact router defined in their
 # respective .replit-artifact/artifact.toml files — they do NOT
