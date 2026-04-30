@@ -69,26 +69,28 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 .theme-christmas{background:linear-gradient(135deg,#3c0a0a,#4c0519)}
 .theme-praise{background:linear-gradient(135deg,#3c3a0a,#451a03)}
 .theme-minimal{background:linear-gradient(135deg,#0a0a0a,#171717)}
-.lower-third{position:absolute;left:0;right:0;display:flex;align-items:center;justify-content:center;padding:0 6%;container-type:size}
+/* v0.7.15 — Lower-third stretched to fill ~95% of the frame width.
+   Operator screenshot (red box covering near-edge-to-edge of preview)
+   showed the v0.7.8-restored 68rem max-width was capping the card at
+   ~56% of a 1920px frame — way smaller than the bottom band the
+   operator had marked up. We drop the side padding from 6% → 2.5%
+   AND remove the absolute max-width cap, so the card now spans
+   ~95vw on every surface (preview iframe + secondary screen + NDI
+   capture, since they share this renderer). Pixel-WYSIWYG is
+   preserved because the same defaults apply everywhere. */
+.lower-third{position:absolute;left:0;right:0;display:flex;align-items:center;justify-content:center;padding:0 2.5%;container-type:size}
 .lower-third.bottom{bottom:6%}.lower-third.top{top:6%}
 /* Lower-third is now a rounded "card" that holds the verses. The
    upper area outside it stays transparent (#000) so any background
-   change applies only to this rounded box, per spec. */
-.lt-box{position:relative;width:100%;max-width:68rem;padding:3% 5%;display:flex;flex-direction:column;justify-content:center;overflow:hidden;height:100%;box-sizing:border-box;border-radius:1.25rem;box-shadow:0 8px 28px rgba(0,0,0,.45);background:linear-gradient(135deg,#0a0a0a,#171717)}
-/* v0.7.8 — REVERTED v0.6.5 NDI full-width override. Operators were
-   reporting that the lower-third bar in OBS/vMix/Wirecast did NOT
-   match what the in-app NDI Output Preview showed — the captured
-   feed was significantly wider (max-width:none) and used a smaller
-   border-radius (.75rem instead of 1.25rem) and tighter side
-   padding (2% instead of 6%), so the bar covered far more of the
-   broadcast frame than the operator had set up. The v0.6.5 "fill
-   the frame" rationale conflicted with the WYSIWYG contract the
-   preview is supposed to provide. The .ndi-full class is now a
-   no-op (kept as a defensive empty selector so any persisted SSE
-   state that still tries to add it cannot accidentally re-grow the
-   card). The captured frame now uses the same .lower-third + .lt-box
-   defaults as the preview: max-width 68rem, padding 0 6%, border-
-   radius 1.25rem. Pixel-WYSIWYG. */
+   change applies only to this rounded box, per spec.
+   v0.7.15 — max-width cap removed (was 68rem). Width is now driven
+   by the .lower-third side padding above, so the card scales from
+   small previews up to full 1920px frames consistently. */
+.lt-box{position:relative;width:100%;padding:3% 5%;display:flex;flex-direction:column;justify-content:center;overflow:hidden;height:100%;box-sizing:border-box;border-radius:1.25rem;box-shadow:0 8px 28px rgba(0,0,0,.45);background:linear-gradient(135deg,#0a0a0a,#171717)}
+/* v0.7.15 — .ndi-full class kept as a no-op for backwards-compat
+   with any persisted SSE state that still tries to add it. The base
+   .lower-third + .lt-box now delivers the wide layout, so we no
+   longer need a separate "full" variant. */
 .lower-third.ndi-full{}
 .lt-box.ndi-full{}
 .lt-box.theme-worship{background:linear-gradient(135deg,#1e0a3c,#1e1b4b)}

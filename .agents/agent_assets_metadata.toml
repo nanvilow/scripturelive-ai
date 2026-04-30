@@ -222,3 +222,9 @@ id = "AZHgn4oAcVmykxH2x6O8w"
 uri = "file://exports/ScriptureLive-AI-v0.7.14-source.zip"
 type = "unspecified"
 title = "ScriptureLive-AI v0.7.14 — source bundle"
+
+[[outputs]]
+id = "41j914zBw7Y0C22QB0ug6"
+uri = "file://exports/ScriptureLive-AI-v0.7.15-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.15 — source"

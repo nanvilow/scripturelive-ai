@@ -182,6 +182,11 @@ function ChecksumRow({ sha256 }: { sha256: string | null }) {
     try {
       await navigator.clipboard.writeText(sha256)
       setCopied(true)
+      // v0.7.15 — Surface an explicit toast in addition to the inline
+      // checkmark indicator. Operators reported the inline state was
+      // easy to miss when the button is far down the page.
+      const { toast } = await import('sonner')
+      toast.success('SHA-256 copied to clipboard')
       setTimeout(() => setCopied(false), 1500)
     } catch {
       // ignore — clipboard may be unavailable in some browsers/contexts
