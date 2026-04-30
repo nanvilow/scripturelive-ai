@@ -240,3 +240,9 @@ id = "egor1FOxqe86LA27cEjK_"
 uri = "file://exports/ScriptureLive-AI-v0.7.17-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.17 — Source"
+
+[[outputs]]
+id = "1WPujfPqM4QkSdOXvbd0c"
+uri = "file://.local/patches/v0.7.17-hotfix-ndi-and-records.patch.txt"
+type = "text"
+title = "v0.7.17 hotfix patch (apply with: git am < this-file)"
