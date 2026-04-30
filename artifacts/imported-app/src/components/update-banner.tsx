@@ -12,6 +12,34 @@ function formatPercent(p: number): string {
   return `${Math.max(0, Math.min(100, Math.round(p)))}%`
 }
 
+// v0.7.17 — Mirrors the unit/format conventions of the toast in
+// update-notifier.tsx so the progress badge in the banner reads
+// identically across surfaces. Returns null when speed is 0 so the
+// caller can hide the line entirely (avoids "0 KB/s" flicker between
+// the rolling-window samples).
+function formatSpeed(bps: number | undefined): string | null {
+  const b = bps ?? 0
+  if (!Number.isFinite(b) || b <= 0) return null
+  if (b >= 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)} MB/s`
+  if (b >= 1024) return `${(b / 1024).toFixed(0)} KB/s`
+  return `${Math.round(b)} B/s`
+}
+
+function formatEta(eta: number | undefined): string | null {
+  if (eta == null || !Number.isFinite(eta) || eta < 1) return null
+  if (eta >= 60) {
+    const m = Math.floor(eta / 60)
+    const sec = Math.round(eta % 60)
+    return `ETA ${m}m ${sec}s`
+  }
+  return `ETA ${Math.round(eta)}s`
+}
+
+function formatMb(bytes: number | undefined): string | null {
+  if (bytes == null || !Number.isFinite(bytes)) return null
+  return `${(bytes / 1024 / 1024).toFixed(1)}`
+}
+
 function getNotes(state: UpdateState): string {
   if (state.status === 'available' || state.status === 'downloaded') {
     // Run the raw notes through cleanReleaseNotes so the GitHub
@@ -79,10 +107,39 @@ export function UpdateBanner() {
       </span>
     )
   } else if (state.status === 'downloading') {
+    // v0.7.17 — Surface the multi-threaded downloader's throughput so
+    // operators can see the bar is actually moving (and roughly how
+    // long it has left). Mirrors the toast layout in update-notifier
+    // so both surfaces read identically.
+    const pct = Math.max(0, Math.min(100, Math.round(state.percent || 0)))
+    const mbDone = formatMb(state.transferred)
+    const mbTotal = formatMb(state.total)
+    const sizeLine = mbDone && mbTotal ? `${mbDone} / ${mbTotal} MB` : null
+    const speedLine = formatSpeed(state.bytesPerSecond)
+    const etaLine = formatEta(state.etaSeconds)
+    const chunksLine =
+      state.parallelism && state.parallelism > 1
+        ? `${state.parallelism} chunks`
+        : null
+    const detail = [sizeLine, speedLine, etaLine, chunksLine]
+      .filter(Boolean)
+      .join(' · ')
     body = (
-      <span>
-        Downloading update… <strong>{formatPercent(state.percent)}</strong>
-      </span>
+      <div className="flex flex-col gap-1.5">
+        <span>
+          Downloading update… <strong>{pct}%</strong>
+        </span>
+        {/* Native <progress> respects OS theming and is GPU-cheap;
+            dropped to 6px height so the banner stays compact. */}
+        <progress
+          value={pct}
+          max={100}
+          className="h-1.5 w-full overflow-hidden rounded-full [&::-moz-progress-bar]:bg-primary [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary"
+        />
+        {detail && (
+          <span className="text-xs text-muted-foreground">{detail}</span>
+        )}
+      </div>
     )
   } else if (state.status === 'downloaded') {
     body = (

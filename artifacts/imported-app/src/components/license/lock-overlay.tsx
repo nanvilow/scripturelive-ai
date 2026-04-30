@@ -14,74 +14,48 @@
 //   • expired — red, "Subscription expired"
 // Both surfaces a single CTA that opens the Subscribe modal.
 //
-// v0.7.7 — Operator request: there must be a discoverable way for
-// users to cancel/stop their subscription right beside the activate
-// button. We add a secondary "Cancel Subscription" button that posts
-// to /api/license/deactivate after a confirm prompt. It's visible in
-// every locked state — when no active sub exists it serves as the
-// "exit" affordance (closes any in-flight activation attempt and
-// confirms there is nothing to cancel).
+// v0.7.17 — Activation UI cleanup:
+//   • Removed the "Cancel" / "Cancel Subscription" button. Operators
+//     can still cancel from Settings → Subscription → Deactivate; the
+//     lock screen is the wrong place to advertise it (every cancel
+//     click here was an accidental "I just wanted out of this dialog"
+//     that nuked their subscription).
+//   • Removed the "Have a reference code?" inline form. Reference
+//     codes are now entered exclusively from the Subscribe modal,
+//     which already has a dedicated input for them — keeping two
+//     surfaces in sync was confusing operators reading the customer
+//     a code over the phone.
+//   • The "Report an issue" entry button is always visible (no toggle
+//     switch needed) and opening it now pops a real Dialog modal with
+//     a textarea — easier to read what you're typing on a small
+//     church-PC screen than the cramped inline form. Submit posts to
+//     /api/license/report-issue (telemetry → admin Records dashboard,
+//     same backend as v0.7.14).
 
-import { Lock, Sparkles, XCircle, KeyRound, Loader2, Flag, Check } from 'lucide-react'
+import { Lock, Sparkles, Flag, Loader2, Check } from 'lucide-react'
 import { useState } from 'react'
 import { useLicense } from './license-provider'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 export function LiveTranscriptionLockOverlay() {
-  const { status, openSubscribe, isLocked, refresh } = useLicense()
-  const [cancelling, setCancelling] = useState(false)
-  // v0.7.8 — "Have a reference code?" inline form. Operator can
-  // mint a short-lived (≈30-min) reference code from the Admin
-  // panel and read it to a customer over WhatsApp / phone. The
-  // customer types it here and AI Detection unlocks immediately.
-  // Posts to /api/license/activate-reference; refresh()es on
-  // success so the lock overlay disappears.
-  const [refOpen, setRefOpen] = useState(false)
-  const [refValue, setRefValue] = useState('')
-  const [refBusy, setRefBusy] = useState(false)
-  // v0.7.14 — "Report Issue" inline form. Closes section 4 of the
-  // pastebin spec ("USER ISSUE REPORTING SYSTEM"). Sends the user's
-  // free-text description to /api/license/report-issue, which
-  // forwards it to the central /api/telemetry/error endpoint as
-  // errorType='user_report'. The admin Records dashboard surfaces
-  // it in the recent-errors panel within ~10s.
+  const { status, openSubscribe, isLocked } = useLicense()
+  // v0.7.17 — Report Issue dialog state. Self-contained: open/value/
+  // busy/sent flags are all local because nothing else in the app
+  // needs to drive this surface.
   const [reportOpen, setReportOpen] = useState(false)
   const [reportValue, setReportValue] = useState('')
   const [reportBusy, setReportBusy] = useState(false)
   const [reportSent, setReportSent] = useState(false)
   if (!isLocked) return null
-
-  const hasSub = !!status.activeSubscription
-  const cancelLabel = hasSub ? 'Cancel Subscription' : 'Cancel'
-
-  const handleCancel = async () => {
-    const ok = window.confirm(
-      hasSub
-        ? 'Cancel your active subscription? Live Transcription will stop on this PC.\n\nYour activation code is released — you can re-enter it later on this or any other PC and the SAME remaining time will be restored (provided it has not expired).'
-        : 'You have no active subscription to cancel. This will clear any pending activation state on this PC. Continue?'
-    )
-    if (!ok) return
-    setCancelling(true)
-    try {
-      const r = await fetch('/api/license/deactivate', {
-        method: 'POST',
-        cache: 'no-store',
-        credentials: 'same-origin',
-      })
-      if (r.ok) {
-        toast.success(hasSub ? 'Subscription cancelled.' : 'Cleared.')
-        await refresh()
-      } else {
-        const j = (await r.json().catch(() => ({}))) as { error?: string }
-        toast.error(j.error || 'Could not cancel — try again or contact support.')
-      }
-    } catch {
-      toast.error('Network error — could not reach the licensing service.')
-    } finally {
-      setCancelling(false)
-    }
-  }
 
   const expired = status.state === 'expired'
   const palette = expired
@@ -98,9 +72,7 @@ export function LiveTranscriptionLockOverlay() {
         icon: <Sparkles className="h-7 w-7" />,
       }
 
-  const title = expired
-    ? 'Subscription Expired'
-    : 'Free Trial Ended'
+  const title = expired ? 'Subscription Expired' : 'Free Trial Ended'
   // v0.6.0 — operator reverted the v0.5.57 paywall copy: NO direct
   // MoMo recipient/number text on the lock screen. Generic call to
   // action only; the recipient details live exclusively inside the
@@ -109,209 +81,178 @@ export function LiveTranscriptionLockOverlay() {
     ? 'Your activation has expired. Tap Activate to enter your code.'
     : 'Your 1-hour free trial has ended. Tap Activate to enter your code.'
 
+  const submitReport = async () => {
+    const message = reportValue.trim()
+    if (!message || reportBusy) return
+    setReportBusy(true)
+    try {
+      const r = await fetch('/api/license/report-issue', {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          context: `lock-overlay:${status.state}`,
+        }),
+      })
+      if (r.ok) {
+        // Close the modal first so the success badge below the
+        // Activate button can surface (which auto-clears after 6s).
+        setReportSent(true)
+        setReportValue('')
+        setReportOpen(false)
+        setTimeout(() => setReportSent(false), 6000)
+      } else {
+        toast.error('Could not send report — try again or contact support.')
+      }
+    } catch {
+      toast.error('Network error — could not reach the licensing service.')
+    } finally {
+      setReportBusy(false)
+    }
+  }
+
   return (
-    <div
-      className={cn(
-        'absolute inset-0 z-20 flex flex-col items-center justify-center p-6 text-center',
-        'backdrop-blur-md bg-background/70 ring-1 ring-inset',
-        palette.ring,
-      )}
-      role="dialog"
-      aria-label="Live Transcription locked"
-    >
-      <span className={cn('inline-flex items-center justify-center h-14 w-14 rounded-full border', palette.badge)}>
-        {palette.icon}
-      </span>
-      <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
-      <p className="mt-1.5 max-w-sm text-[12px] text-foreground leading-relaxed">{subtitle}</p>
+    <>
+      <div
+        className={cn(
+          'absolute inset-0 z-20 flex flex-col items-center justify-center p-6 text-center',
+          'backdrop-blur-md bg-background/70 ring-1 ring-inset',
+          palette.ring,
+        )}
+        role="dialog"
+        aria-label="Live Transcription locked"
+      >
+        <span className={cn('inline-flex items-center justify-center h-14 w-14 rounded-full border', palette.badge)}>
+          {palette.icon}
+        </span>
+        <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
+        <p className="mt-1.5 max-w-sm text-[12px] text-foreground leading-relaxed">{subtitle}</p>
 
-      <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-        <button
-          type="button"
-          onClick={openSubscribe}
-          className={cn(
-            'inline-flex items-center gap-2 h-9 px-4 rounded-md text-[11px] font-semibold uppercase tracking-wider',
-            'border shadow-lg transition-colors',
-            palette.button,
-          )}
-        >
-          <Lock className="h-3.5 w-3.5" />
-          Activate AI Detection Now
-        </button>
-        <button
-          type="button"
-          onClick={handleCancel}
-          disabled={cancelling}
-          className={cn(
-            'inline-flex items-center gap-2 h-9 px-4 rounded-md text-[11px] font-semibold uppercase tracking-wider',
-            'border shadow-lg transition-colors',
-            'border-rose-500/40 bg-rose-950/30 text-rose-200 hover:bg-rose-900/40 hover:text-rose-100',
-            'disabled:opacity-50 disabled:cursor-not-allowed',
-          )}
-        >
-          <XCircle className="h-3.5 w-3.5" />
-          {cancelling ? 'Cancelling…' : cancelLabel}
-        </button>
-      </div>
-
-      <div className="mt-3 w-full max-w-sm">
-        {!refOpen ? (
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
           <button
             type="button"
-            onClick={() => setRefOpen(true)}
-            className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground underline-offset-2 hover:underline inline-flex items-center gap-1.5"
+            onClick={openSubscribe}
+            className={cn(
+              'inline-flex items-center gap-2 h-9 px-4 rounded-md text-[11px] font-semibold uppercase tracking-wider',
+              'border shadow-lg transition-colors',
+              palette.button,
+            )}
           >
-            <KeyRound className="h-3 w-3" />
-            Have a reference code?
+            <Lock className="h-3.5 w-3.5" />
+            Activate AI Detection Now
           </button>
-        ) : (
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault()
-              const code = refValue.trim()
-              if (!code || refBusy) return
-              setRefBusy(true)
-              try {
-                const r = await fetch('/api/license/activate-reference', {
-                  method: 'POST',
-                  cache: 'no-store',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ code }),
-                })
-                const j = (await r.json().catch(() => ({}))) as { error?: string; ok?: boolean }
-                if (r.ok && j.ok) {
-                  toast.success('Reference code accepted — AI Detection unlocked.')
-                  setRefValue('')
-                  setRefOpen(false)
-                  await refresh()
-                } else {
-                  toast.error(j.error || 'Could not validate the reference code.')
-                }
-              } catch {
-                toast.error('Network error — could not reach the licensing service.')
-              } finally {
-                setRefBusy(false)
-              }
-            }}
-            className="flex items-center gap-1.5"
-          >
-            <input
-              type="text"
-              autoFocus
-              autoComplete="off"
-              spellCheck={false}
-              value={refValue}
-              onChange={(e) => setRefValue(e.target.value.toUpperCase())}
-              placeholder="XXXX-XXXX"
-              maxLength={9}
-              className="flex-1 h-8 px-2.5 rounded-md text-[12px] font-mono uppercase tracking-widest bg-background/80 border border-border focus:outline-none focus:ring-1 focus:ring-emerald-400 text-foreground placeholder:text-muted-foreground/50"
-            />
-            <button
-              type="submit"
-              disabled={refBusy || !refValue.trim()}
-              className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400/40 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {refBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Unlock'}
-            </button>
+        </div>
+
+        {/* v0.7.17 — Report an Issue is the ONLY secondary affordance
+            on the lock screen now. Always visible (no toggle), and
+            opens a proper Dialog modal instead of an inline form so
+            users have room to actually describe the problem. The
+            "sent" badge replaces the button briefly after a successful
+            submit and self-clears after 6s so the overlay returns to
+            its calm default state. */}
+        <div className="mt-4 w-full max-w-sm">
+          {reportSent ? (
+            <div className="text-[10px] font-medium uppercase tracking-wider text-emerald-300 inline-flex items-center gap-1.5">
+              <Check className="h-3 w-3" />
+              Sent — thank you. The operator has been notified.
+            </div>
+          ) : (
             <button
               type="button"
-              onClick={() => { setRefOpen(false); setRefValue('') }}
-              className="text-[10px] text-muted-foreground hover:text-foreground px-1.5"
+              onClick={() => setReportOpen(true)}
+              className="inline-flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
             >
-              ×
+              <Flag className="h-3.5 w-3.5" />
+              Report an Issue
             </button>
-          </form>
-        )}
+          )}
+        </div>
+
+        <p className="mt-4 text-[10px] text-muted-foreground">
+          ScriptureLive AI helps churches display scripture instantly without typing.<br />
+          Activate today and transform your worship experience.
+        </p>
       </div>
 
-      {/* v0.7.14 — Report Issue: optional user-side bug report.
-           When the user can't activate (rate-limited SMS, MoMo
-           dispute, unfamiliar error), this is their bridge to the
-           operator without going through WhatsApp / phone. */}
-      <div className="mt-3 w-full max-w-sm">
-        {!reportOpen ? (
-          <button
-            type="button"
-            onClick={() => { setReportOpen(true); setReportSent(false) }}
-            className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground underline-offset-2 hover:underline inline-flex items-center gap-1.5"
-          >
-            <Flag className="h-3 w-3" />
-            Report an issue
-          </button>
-        ) : reportSent ? (
-          <div className="text-[10px] font-medium uppercase tracking-wider text-emerald-300 inline-flex items-center gap-1.5">
-            <Check className="h-3 w-3" />
-            Sent — thank you. The operator has been notified.
-          </div>
-        ) : (
+      {/* v0.7.17 — Report Issue dialog. Submits to the same
+          /api/license/report-issue endpoint the v0.7.14 inline form
+          used; only the surface changed. Tagged with
+          context="lock-overlay:<state>" so the admin Records dashboard
+          can tell where the report came from (vs. the topbar Report
+          button shipped in v0.7.16). */}
+      <Dialog
+        open={reportOpen}
+        onOpenChange={(open) => {
+          if (!reportBusy) {
+            setReportOpen(open)
+            if (!open) setReportValue('')
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Flag className="h-4 w-4 text-violet-500" />
+              Report an Issue
+            </DialogTitle>
+            <DialogDescription>
+              Describe what you&rsquo;re seeing and the operator will be notified
+              right away. Include any error message, what you were doing, and
+              your activation code or phone number if relevant.
+            </DialogDescription>
+          </DialogHeader>
           <form
-            onSubmit={async (e) => {
+            onSubmit={(e) => {
               e.preventDefault()
-              const message = reportValue.trim()
-              if (!message || reportBusy) return
-              setReportBusy(true)
-              try {
-                const r = await fetch('/api/license/report-issue', {
-                  method: 'POST',
-                  cache: 'no-store',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    message,
-                    context: `lock-overlay:${status.state}`,
-                  }),
-                })
-                if (r.ok) {
-                  setReportSent(true)
-                  setReportValue('')
-                  setReportOpen(false)
-                  // Auto-dismiss the "sent" badge after 6s so the
-                  // overlay doesn't permanently advertise it.
-                  setTimeout(() => setReportSent(false), 6000)
-                } else {
-                  toast.error('Could not send report — try again or contact support.')
-                }
-              } catch {
-                toast.error('Network error — could not reach the licensing service.')
-              } finally {
-                setReportBusy(false)
-              }
+              void submitReport()
             }}
-            className="flex flex-col gap-1.5 text-left"
+            className="flex flex-col gap-3"
           >
             <textarea
               autoFocus
               value={reportValue}
               onChange={(e) => setReportValue(e.target.value.slice(0, 1500))}
-              placeholder="Describe the issue you're hitting (e.g. 'Paid via MoMo 2h ago, no SMS yet'). Up to 1500 chars."
-              rows={3}
-              className="w-full px-2.5 py-1.5 rounded-md text-[11px] bg-background/80 border border-border focus:outline-none focus:ring-1 focus:ring-emerald-400 text-foreground placeholder:text-muted-foreground/50 resize-none"
+              placeholder="e.g. Paid via MoMo 2 hours ago, no activation SMS yet. My number is 024XXXXXXX."
+              rows={6}
+              disabled={reportBusy}
+              className="w-full px-3 py-2 rounded-md text-sm bg-background border border-input focus:outline-none focus:ring-2 focus:ring-ring text-foreground placeholder:text-muted-foreground/60 resize-none disabled:opacity-60"
             />
-            <div className="flex items-center gap-1.5">
-              <span className="text-[9px] text-muted-foreground font-mono">{reportValue.length}/1500</span>
-              <div className="flex-1" />
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-muted-foreground font-mono">
+                {reportValue.length} / 1500
+              </span>
+            </div>
+            <DialogFooter className="gap-2 sm:gap-2">
               <button
                 type="button"
-                onClick={() => { setReportOpen(false); setReportValue('') }}
-                className="text-[10px] text-muted-foreground hover:text-foreground px-2 h-7"
+                onClick={() => {
+                  setReportOpen(false)
+                  setReportValue('')
+                }}
+                disabled={reportBusy}
+                className="inline-flex items-center justify-center h-9 px-4 rounded-md text-xs font-semibold uppercase tracking-wider border border-border bg-background hover:bg-muted text-foreground disabled:opacity-50"
               >
-                Cancel
+                Close
               </button>
               <button
                 type="submit"
                 disabled={reportBusy || !reportValue.trim()}
-                className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-violet-600 hover:bg-violet-500 text-white border border-violet-400/40 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center justify-center gap-1.5 h-9 px-4 rounded-md text-xs font-semibold uppercase tracking-wider bg-violet-600 hover:bg-violet-500 text-white border border-violet-400/40 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {reportBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Send'}
+                {reportBusy ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Sending…
+                  </>
+                ) : (
+                  'Send Report'
+                )}
               </button>
-            </div>
+            </DialogFooter>
           </form>
-        )}
-      </div>
-
-      <p className="mt-4 text-[10px] text-muted-foreground">
-        ScriptureLive AI helps churches display scripture instantly without typing.<br />
-        Activate today and transform your worship experience.
-      </p>
-    </div>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
