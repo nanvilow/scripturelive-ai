@@ -149,7 +149,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ text })
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Transcription failed'
-      console.error('[transcribe] direct OpenAI call failed:', msg)
+      // v0.7.18-hotfix — include the loaded key's last-6 suffix in the
+      // log so we can distinguish "deployment loaded the new key but
+      // OpenAI still rejects it" from "deployment never picked up the
+      // new env var". OpenAI's own 401 response already echoes the same
+      // suffix, so this leaks no extra information.
+      const keyTail = (process.env.OPENAI_API_KEY || '').trim().slice(-6) || '(unset)'
+      console.error(`[transcribe] direct OpenAI call failed (loaded key tail=...${keyTail}):`, msg)
       if (/Incorrect API key|401|Invalid.*api.*key|authentication/i.test(msg)) {
         return NextResponse.json(
           { error: 'OpenAI rejected the API key configured on the server.' },
