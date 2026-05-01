@@ -52,12 +52,22 @@ import type { DetectedVerse } from '@/lib/store'
 // v0.5.52 — TWO-ENGINE chain. Web Speech API removed entirely; the
 // desktop build ships with baked Deepgram + OpenAI keys so the
 // browser engine is no longer a useful fallback rung.
+//
+// v0.7.19 — OpenAI/Whisper engine removed from the runtime chain. The
+// operator's OpenAI project key was rotated and the rotation never
+// propagated cleanly to the deployed proxy, so Whisper-routed chunks
+// were 401-ing for every customer in the field. Rather than maintain
+// two STT vendors (one of which we couldn't keep healthy), we
+// consolidated on Deepgram for both the streaming WS path AND the
+// batched HTTP path. The whisper hook stays mounted for now (cheap)
+// and the type still includes it so any persisted preferences stay
+// load-safe; ENGINE_CHAIN simply no longer fans out to it.
 type EngineName = 'deepgram' | 'whisper'
 
 // Ordered fallback chain. Index 0 is the preferred engine. nextEngine
 // returns the name of the next engine in the chain, or null if we're
-// at the end.
-const ENGINE_CHAIN: EngineName[] = ['deepgram', 'whisper']
+// at the end. v0.7.19: Deepgram is the only entry — see header note.
+const ENGINE_CHAIN: EngineName[] = ['deepgram']
 function nextEngine(cur: EngineName): EngineName | null {
   const i = ENGINE_CHAIN.indexOf(cur)
   if (i < 0) return null
@@ -142,7 +152,15 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // never silently switches to another one.
   const preferredEngine = useAppStore((s) => s.preferredEngine)
   const setActiveEngineNameInStore = useAppStore((s) => s.setActiveEngineName)
-  const initialEngine: EngineName = preferredEngine === 'auto' ? 'deepgram' : preferredEngine
+  // v0.7.19 — Coerce any persisted 'whisper' preference to 'deepgram'.
+  // Old installs may have a saved preference of 'whisper' from a prior
+  // version where the operator pinned Whisper; that engine is no longer
+  // wired up (see ENGINE_CHAIN comment), so silently route them to
+  // Deepgram instead of leaving them in a never-starts state.
+  const initialEngine: EngineName =
+    preferredEngine === 'auto' || preferredEngine === 'whisper'
+      ? 'deepgram'
+      : preferredEngine
   // Currently active engine. With preferredEngine === 'auto' the
   // auto-fallback effect below advances it through ENGINE_CHAIN
   // whenever the active engine surfaces a structural error within the

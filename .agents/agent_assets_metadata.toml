@@ -246,3 +246,9 @@ id = "1WPujfPqM4QkSdOXvbd0c"
 uri = "file://.local/patches/v0.7.17-hotfix-ndi-and-records.patch.txt"
 type = "text"
 title = "v0.7.17 hotfix patch (apply with: git am < this-file)"
+
+[[outputs]]
+id = "H7c7UkiHkCGbjmbIqb-d2"
+uri = "file://screenshots/v0.7.19-welcome-dialog.jpg"
+type = "image"
+title = "Welcome popup on first launch (v0.7.19)"

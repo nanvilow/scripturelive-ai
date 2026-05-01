@@ -447,10 +447,17 @@ function LiveTranscriptionCard() {
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-[14rem]">
+            {/* v0.7.19 — OpenAI Whisper option removed. The OpenAI
+                project key was rotated and never propagated cleanly to
+                the deployed proxy, so Whisper-routed chunks 401-ed for
+                every customer in the field. We've consolidated on
+                Deepgram for both the streaming and batched HTTP paths
+                — the picker now reflects that. 'Auto' is kept so old
+                presets keep working; with only Deepgram in the chain
+                it behaves identically to picking 'Deepgram' directly. */}
             {([
-              { v: 'auto',     label: 'Auto (recommended)',    sub: 'Deepgram → Whisper fallback' },
+              { v: 'auto',     label: 'Auto (recommended)',    sub: 'Deepgram-only (single engine)' },
               { v: 'deepgram', label: 'Deepgram (streaming)',  sub: 'Lowest latency, requires WSS' },
-              { v: 'whisper',  label: 'OpenAI Whisper',        sub: '~2.5 s chunks via HTTPS' },
             ] as const).map((opt) => (
               <DropdownMenuItem
                 key={opt.v}

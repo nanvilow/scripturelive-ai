@@ -270,7 +270,21 @@ function storagePath(): string {
 // the budget keeps "evaluation" honest while still giving the user
 // time to demo a service. Combined with `everActivated` lockout below,
 // the reinstall-to-reset workaround is now closed.
-const TRIAL_DURATION_MS = 30 * 60 * 1000 // 30 min
+//
+// v0.7.19 — Bumped 30 min → 180 min (3 hours) per operator request.
+// 30 min was too short to evaluate the app over a real Sunday service
+// (which can run 90–150 minutes by itself). 3 hours covers a full
+// service plus pre/post-service walkthrough so the operator can
+// genuinely decide whether to subscribe. The `everActivated` lockout
+// still prevents the reinstall-to-reset workaround.
+//
+// upgradeStaleTrialDuration() (called from load()) lifts any
+// previously-persisted `trialDurationMs` that's BELOW this number to
+// the new value, but ONLY for trials that haven't yet been activated
+// and haven't yet expired — so an operator that's mid-trial when they
+// install v0.7.19 gets the full new budget instead of being stuck on
+// the smaller window from the previous release.
+const TRIAL_DURATION_MS = 180 * 60 * 1000 // 180 min (3 h)
 // v0.7.3 — Bumped from 15 min → 7 days. Operator's bug report:
 // "Active subscriptions are killed... it deletes active codes by
 // itself while I didn't give that command." The 15-minute window
@@ -399,6 +413,49 @@ function load(): LicenseFile {
       // is the whole point. Default falsy for fresh installs.
       everActivated: parsed.everActivated === true ? true : undefined,
       lockdownAfterDeactivation: parsed.lockdownAfterDeactivation === true ? true : undefined,
+    }
+    // v0.7.19 — Trial bump migration. If the persisted trial budget is
+    // smaller than the current TRIAL_DURATION_MS, AND the user has not
+    // yet activated a paid subscription, AND the trial they were on
+    // hadn't already expired, lift it. This ensures operators
+    // mid-trial when v0.7.19 lands get the full 180 min budget
+    // instead of being capped at the old (30 min) ceiling.
+    //
+    // Guards we deliberately apply (each one is load-bearing):
+    //   (a) trialDurationMs < TRIAL_DURATION_MS — only need to act
+    //       when the persisted budget is actually smaller than the
+    //       new ceiling. Idempotent: once lifted, this branch never
+    //       runs again.
+    //   (b) everActivated !== true — never touch installs that have
+    //       ever been on a paid subscription. Sticky-lockdown after
+    //       paid-sub-ends is a separate post-paid behaviour and we
+    //       must not silently extend any window in that flow.
+    //   (c) !activeSubscription — defensive double-check; if a
+    //       subscription is somehow still flagged active, leave the
+    //       trial counter alone.
+    //   (d) trialMsUsed < cache.trialDurationMs — CRITICAL. The
+    //       activity-gated trial considers the user expired/locked
+    //       once trialMsUsed >= trialDurationMs. Without this guard,
+    //       a user whose 30-min trial already ran out (and who
+    //       therefore should be locked) would be silently re-opened
+    //       to a fresh 150 min when 0.7.19 first launches. We only
+    //       lift trials that are still in progress at migration time.
+    if (
+      cache.trialDurationMs < TRIAL_DURATION_MS &&
+      cache.everActivated !== true &&
+      !cache.activeSubscription &&
+      cache.trialMsUsed < cache.trialDurationMs
+    ) {
+      // eslint-disable-next-line no-console
+      console.log(
+        '[licensing] migrating trialDurationMs',
+        cache.trialDurationMs,
+        '→',
+        TRIAL_DURATION_MS,
+        '(v0.7.19 trial bump)',
+      )
+      cache.trialDurationMs = TRIAL_DURATION_MS
+      persist(cache)
     }
     return cache
   } catch (e) {
