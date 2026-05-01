@@ -258,3 +258,9 @@ id = "SlBS6S_xq7X5OdUJ6G6ip"
 uri = "file://screenshots/v0.7.19-voice-commands-final.jpg"
 type = "image"
 title = "v0.7.19 — App boots cleanly with welcome dialog (final voice-command build)"
+
+[[outputs]]
+id = "QeJDSWB6JDKNX_O8IGo5J"
+uri = "file://screenshots/v0.7.19-final-with-training-dataset.jpg"
+type = "image"
+title = "v0.7.19 final — app boots with welcome popup, Deepgram engine, training dataset wired in"

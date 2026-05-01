@@ -28,6 +28,7 @@
 //     null.
 
 import { parseExplicitReference, type DetectedReference } from '@/lib/bibles/reference-engine'
+import { DATASET_FILLERS } from './training-runtime'
 
 export type CommandKind =
   | 'next_verse'
@@ -294,7 +295,18 @@ const STRIPPABLE_PREFIXES = [
 // the trailing "media" gets picked up as a wake word and we end up
 // trying to interpret an empty command. Listed explicitly so we
 // don't have to special-case wake-word stripping later.
-const FILLER_UTTERANCES = new Set([
+//
+// v0.7.19 (training-dataset hookup): the canonical list now lives
+// in src/data/voice-training.json under the "Ignore" intent. The
+// generator (scripts/voice-training/generate.mjs) emits a small
+// training-runtime.ts shim with just the normalized strings so we
+// can merge them in without bloating the client bundle with the
+// 1.3 MB full corpus. The hard-coded set below is kept as a
+// fallback / quick-edit surface so a parser change doesn't require
+// regenerating the dataset to land — the merge is additive (see
+// import at top of file).
+
+const _BASELINE_FILLERS = [
   'okay',
   'ok',
   'okay okay',
@@ -314,6 +326,11 @@ const FILLER_UTTERANCES = new Set([
   'um',
   'er',
   'eh',
+] as const
+
+const FILLER_UTTERANCES = new Set<string>([
+  ..._BASELINE_FILLERS,
+  ...DATASET_FILLERS,
 ])
 
 function isFillerUtterance(s: string): boolean {
