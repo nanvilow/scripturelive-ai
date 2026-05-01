@@ -17,6 +17,78 @@ Format rules (so the workflow's extractor keeps working):
 - Write for the operator, not the engineer. "Verses now appear within
   ~250ms" beats "reduced CHUNK_MS from 4500 to 2500".
 
+## v0.7.20 — 2026-05-01
+
+This release rolls up everything from v0.7.19 (which was committed but
+never tagged as a release) plus the operator-requested OpenAI cleanup.
+
+### Added
+
+- **You get a real 3-hour trial.** New installs now get a full 3 hours
+  of unactivated runtime, up from the old 30 minutes. If you're
+  already in a running trial it's automatically extended; paid
+  installs are not affected.
+- **Welcome popup on first launch.** The very first time the app
+  opens on a PC you'll see a short "Welcome to ScriptureLive AI"
+  dialog explaining the trial and how to activate. It dismisses
+  permanently after the first close — you'll never see it again on
+  that PC.
+- **Voice commands understand more of what you say.**
+  - **"Change to NIV"** (or NLT, ESV, MSG, AMP, KJV, NKJV, NASB,
+    CSB, NRSV, RSV, ASV, NCV, GNT, CEV, ERV, WEB) — switches the
+    on-screen Bible translation immediately, no clicking required.
+  - **"Delete previous verse"** — removes the last verse you sent
+    to the screen.
+  - **"Show verse 7"** (or any number) — re-displays a specific
+    verse from the chapter currently on screen.
+  - **"Media, [command]"** — say "media" first to disambiguate from
+    sermon speech, e.g. *"media, change to NIV"*.
+  - You can chain commands: *"show John 3:16, change to NIV, show
+    verse 17"* runs all three back-to-back.
+- **Smarter, more accurate voice command recognition.** A 5,300-
+  example training dataset was added so the engine handles
+  natural phrasing variants ("turn to", "open to", "let's read")
+  in addition to the exact phrases.
+- **The packaged installer ships with a default admin password
+  baked in.** Operators reported that the admin password they set
+  on PC1 (e.g. "1234") didn't carry over to PC2 — every fresh
+  install fell back to "admin". Now every PC running the same
+  installer shares the same default password the operator set at
+  build time. You can still override it per-PC via Admin →
+  Settings if you want different passwords on different PCs.
+
+### Changed
+
+- **Startup test email is now opt-in instead of opt-out.** Previously
+  the server sent a test email on every cold-start (boot, redeploy,
+  workflow restart). Operators reported being spammed by these once
+  SMTP was already verified. Now you have to set
+  `SEND_STARTUP_TEST_EMAIL=1` in the deployment secrets to receive
+  one. For ad-hoc re-testing, POST `/api/license/test-email` fires a
+  single email without restarting the server.
+- **Transcription is Deepgram-only.** OpenAI Whisper has been removed
+  from the engine fallback chain — every PC now goes straight to
+  Deepgram for the streaming-fast latency you saw in v0.5.35+. The
+  engine picker no longer offers "Whisper".
+
+### Removed
+
+- **OpenAI is no longer used anywhere in the build.** The OpenAI key
+  is no longer baked into the installer, no longer required as a
+  deployment secret, and no longer printed in the startup
+  diagnostic. v0.7.19 already cut OpenAI from transcription;
+  v0.7.20 finishes the job by stripping it from the build pipeline
+  entirely.
+
+### Notes for operators
+
+- If you previously set `OPENAI_API_KEY` in your Replit deployment
+  secrets, you can delete it — it's no longer read by anything in
+  the app.
+- The desktop installer is now ~558 MB (unchanged from v0.7.18).
+  Existing installs on v0.7.17+ will auto-update in the background
+  via electron-updater.
+
 ## v0.5.36 — 2026-04-26
 
 ### Fixed
