@@ -24,3 +24,243 @@ id = "8815SC27fc00eS6F8As_0"
 uri = "file://exports/ScriptureLive-AI-v0.5.29-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.5.29 — source (run BUILD.bat on Windows)"
+
+[[outputs]]
+id = "Yux8S5j7mPMkTAOPeIEnw"
+uri = "file://exports/ScriptureLive-AI-v0.5.31-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.31 — source (Cancel button + smooth installer)"
+
+[[outputs]]
+id = "QJ28nqr1yiJS68cLEZEMC"
+uri = "file://exports/ScriptureLive-AI-v0.5.32-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.32 — Source ZIP (with hotfix)"
+
+[[outputs]]
+id = "Qeeen8jlrstBM-RcWQduj"
+uri = "file://exports/ScriptureLive-AI-v0.5.33-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.33 — source ZIP"
+
+[[outputs]]
+id = "SXHIvEZMjDwrSqEHC5NbM"
+uri = "file://exports/scripturelive-ai-v0.5.34.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.34 (auto-go-live default ON)"
+
+[[outputs]]
+id = "iuVTIdqe9IdNeWgopps9y"
+uri = "file://exports/scripturelive-ai-v0.5.35.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.35 source (Deepgram streaming)"
+
+[[outputs]]
+id = "R_7Rf4zR2U0ZUZD5p_i25"
+uri = "file://exports/scripturelive-ai-v0.5.36.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.36 source (drain + unexpected-close fix — supersedes v0.5.35)"
+
+[[outputs]]
+id = "sC2-REACE7QX-tp0Pox7L"
+uri = "file://exports/ScriptureLive-AI-v0.5.37-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.37 — source ZIP"
+
+[[outputs]]
+id = "NFAmg-6F3KrWBHC8zXotR"
+uri = "file://exports/ScriptureLive-AI-v0.5.39-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.39 — Deepgram WS 1006 disconnect fix"
+
+[[outputs]]
+id = "Z7aGOhm6y2UAUiUyCAQr0"
+uri = "file://exports/ScriptureLive-AI-v0.5.40-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.40 — single-deployment desktop endpoint"
+
+[[outputs]]
+id = "-IYYY9KLdsUkKN-GWCAo6"
+uri = "file://.local/release/v0.5.41/scripturelive-ai-v0.5.41.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.41 — fixes mangled NDI text + dead detection in dev preview"
+
+[[outputs]]
+id = "6-VGD1sSgCM6c2Mg1Q66z"
+uri = "file://.local/release/v0.5.42/scripturelive-ai-v0.5.42.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.42 — source ZIP"
+
+[[outputs]]
+id = "d7RUp0wDeXP_Cv9wbdLLv"
+uri = "file://screenshots/transcribe-test-page-loaded.jpg"
+type = "image"
+title = "Diagnostic page proof (v0.5.42)"
+
+[[outputs]]
+id = "28DXnZH5GqMpCPqbfAuPz"
+uri = "file://exports/ScriptureLive-AI-v0.5.44-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.44 source (inline pill + dual-engine speech)"
+
+[[outputs]]
+id = "lkkL-kWeqO433npo3zBug"
+uri = "file://screenshots/v0.5.44-pill-top-left.jpg"
+type = "image"
+title = "v0.5.44 — pill moved to top-left next to logo"
+
+[[outputs]]
+id = "va6nW_7wkK-4hBWLuIjLX"
+uri = "file://exports/ScriptureLive-AI-v0.5.45-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.45 — Triple-engine speech (Deepgram → Whisper → Browser)"
+
+[[outputs]]
+id = "DPGsET-F8IXE8PbT0zTeA"
+uri = "file://exports/ScriptureLive-AI-v0.5.46-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.46 — startup SMTP self-test (test email PROVEN delivered to nanvilow@gmail.com)"
+
+[[outputs]]
+id = "RxjezFHwslVGIH0rTr9TY"
+uri = "file://.local/exports/scripturelive-ai-v0.5.47.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.47 (Arkesel SMS)"
+
+[[outputs]]
+id = "hhbxbyi_LauvPuH3PFCJI"
+uri = "file://.local/exports/scripturelive-ai-v0.5.48.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.48 — source ZIP"
+
+[[outputs]]
+id = "pdCUgT6ukFjzaJv4yOGEj"
+uri = "file://.local/exports/scripturelive-ai-v0.5.49.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.49 source"
+
+[[outputs]]
+id = "KHHiOob-gCPrIeP2v5DM2"
+uri = "file://exports/ScriptureLive-AI-v0.5.50-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.50 — source ZIP"
+
+[[outputs]]
+id = "fWLZztr3dbZhjm_4Qn8A-"
+uri = "file://exports/ScriptureLive-AI-v0.5.51-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.51 — source ZIP"
+
+[[outputs]]
+id = "vE-vJqcqax4YzaotWfLyU"
+uri = "file://exports/ScriptureLive-AI-v0.5.52-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.52 source (architect-fixup)"
+
+[[outputs]]
+id = "xQEh3HVqx9BKS4G_i37I0"
+uri = "file://exports/ScriptureLive-AI-v0.5.54-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.54 source (SMTP + SMS baked)"
+
+[[outputs]]
+id = "aiOJsmDcpcWIb0TbBJzj4"
+uri = "file://exports/ScriptureLive-AI-v0.5.55-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.5.55 — source ZIP (build hotfix, final)"
+
+[[outputs]]
+id = "kNdi8OFzl-CzXxx918ncv"
+uri = "file://exports/ScriptureLive-AI-v0.7.5-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.5 — source zip (run BUILD.bat on Windows)"
+
+[[outputs]]
+id = "IhLS5xrjyjsRsVWfiAvyp"
+uri = "file://exports/ScriptureLive-AI-v0.7.5.1-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.5.1 source — NDI parity + restart-guard hotfix"
+
+[[outputs]]
+id = "DcZ3YO2CEiAObKbTesfA7"
+uri = "file://exports/ScriptureLive-AI-v0.7.6-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.6 source — NDI parity hotfix (semver fix)"
+
+[[outputs]]
+id = "TZXDL1vnEDBUScoAH6ITL"
+uri = "file://exports/ScriptureLive-AI-v0.7.8-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.8 source (run BUILD.bat on Windows)"
+
+[[outputs]]
+id = "6sXxXRo-ly2gIoHjzN-FM"
+uri = "file://exports/ScriptureLive-AI-v0.7.9-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.9 source (run BUILD.bat on Windows)"
+
+[[outputs]]
+id = "ghAnlq4CCMYYE4LKb5tww"
+uri = "file://exports/ScriptureLive-AI-v0.7.10-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.10 source (run BUILD.bat on Windows)"
+
+[[outputs]]
+id = "Y6l_SLyK002-e4XvRwUQX"
+uri = "file://exports/ScriptureLive-AI-v0.7.11-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.11 — source zip"
+
+[[outputs]]
+id = "G_8cCDPiQfAD4rXQ2YzLQ"
+uri = "file://exports/ScriptureLive-AI-v0.7.12-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.12 — source bundle"
+
+[[outputs]]
+id = "AZHgn4oAcVmykxH2x6O8w"
+uri = "file://exports/ScriptureLive-AI-v0.7.14-source.zip"
+type = "unspecified"
+title = "ScriptureLive-AI v0.7.14 — source bundle"
+
+[[outputs]]
+id = "41j914zBw7Y0C22QB0ug6"
+uri = "file://exports/ScriptureLive-AI-v0.7.15-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.15 — source"
+
+[[outputs]]
+id = "nIk7BJT9sw0c_ld3WlCAg"
+uri = "file://artifacts/imported-app/exports/ScriptureLive-AI-v0.7.16-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.16 — source"
+
+[[outputs]]
+id = "egor1FOxqe86LA27cEjK_"
+uri = "file://exports/ScriptureLive-AI-v0.7.17-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.17 — Source"
+
+[[outputs]]
+id = "1WPujfPqM4QkSdOXvbd0c"
+uri = "file://.local/patches/v0.7.17-hotfix-ndi-and-records.patch.txt"
+type = "text"
+title = "v0.7.17 hotfix patch (apply with: git am < this-file)"
+
+[[outputs]]
+id = "H7c7UkiHkCGbjmbIqb-d2"
+uri = "file://screenshots/v0.7.19-welcome-dialog.jpg"
+type = "image"
+title = "Welcome popup on first launch (v0.7.19)"
+
+[[outputs]]
+id = "SlBS6S_xq7X5OdUJ6G6ip"
+uri = "file://screenshots/v0.7.19-voice-commands-final.jpg"
+type = "image"
+title = "v0.7.19 — App boots cleanly with welcome dialog (final voice-command build)"
+
+[[outputs]]
+id = "QeJDSWB6JDKNX_O8IGo5J"
+uri = "file://screenshots/v0.7.19-final-with-training-dataset.jpg"
+type = "image"
+title = "v0.7.19 final — app boots with welcome popup, Deepgram engine, training dataset wired in"

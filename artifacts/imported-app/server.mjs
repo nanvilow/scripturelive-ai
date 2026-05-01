@@ -19,6 +19,8 @@
 // ─────────────────────────────────────────────────────────────────────
 
 import { createServer } from "node:http";
+import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
 import next from "next";
 import { attachTranscribeStream } from "./server-transcribe-stream.mjs";
 
@@ -26,7 +28,13 @@ const dev = process.env.NODE_ENV !== "production";
 const hostname = process.env.HOST || "0.0.0.0";
 const port = Number(process.env.PORT || 25650);
 
-const app = next({ dev, hostname, port });
+// Pin Next's project dir to wherever this file lives, so it works whether
+// we're running from the artifact root in dev (`node server.mjs`) or from
+// the standalone bundle in production
+// (`node .next/standalone/artifacts/imported-app/server.mjs`).
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const app = next({ dev, hostname, port, dir: __dirname });
 const handle = app.getRequestHandler();
 
 await app.prepare();

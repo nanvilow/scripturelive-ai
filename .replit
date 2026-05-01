@@ -1,7 +1,12 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-24", "python-3.11"]
 
+# v0.7.18 deploy fix — In a pnpm workspace Replit reads the production
+# build/run from each artifact's `.replit-artifact/artifact.toml`, NOT
+# from this file. Putting `build` and `run` here causes them to run as
+# a PRE-build hook BEFORE each artifact's own build, doubling the work
+# and risking OOM. So we keep this section minimal and only declare the
+# deployment target.
 [deployment]
-router = "application"
 deploymentTarget = "autoscale"
 
 [deployment.postBuild]
@@ -19,6 +24,9 @@ expertMode = true
 path = "scripts/post-merge.sh"
 timeoutMs = 240000
 
+[nix]
+channel = "stable-25_05"
+
 [[ports]]
 localPort = 8080
 externalPort = 8080
@@ -28,24 +36,13 @@ localPort = 8081
 externalPort = 80
 
 [[ports]]
-localPort = 8082
-externalPort = 3002
-
-[[ports]]
-localPort = 8083
-externalPort = 3001
-
-[[ports]]
-localPort = 8084
-externalPort = 3003
-
-[[ports]]
-localPort = 8085
-externalPort = 4200
-
-[[ports]]
 localPort = 25650
 externalPort = 3000
 
-[nix]
-channel = "stable-25_05"
+[userenv]
+
+[userenv.shared]
+
+[userenv.development]
+
+[userenv.production]

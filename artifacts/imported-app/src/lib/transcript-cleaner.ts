@@ -61,7 +61,16 @@ const HALLUCINATION_RE = new RegExp(
 // "you", "you.", "Thanks.", lone interjections) the chunk is dropped
 // entirely — don't pollute the transcript with phantom one-word
 // utterances the speaker never produced.
-const FILLER_ONLY_RE = /^[\s.,!?;:'"\-]*(?:you|thanks?|thank you|hi|hello|um|uh|hmm|mm|mhm|okay|ok|so|bye|bye bye|good\s*bye|the|and)[\s.,!?;:'"\-]*$/i
+//
+// v0.7.19 — removed bare "the" and "and" from this list. They were
+// added in v0.5.30 specifically to suppress Whisper's silent-chunk
+// hallucinations, but v0.7.19 dropped Whisper from the engine chain
+// entirely (Deepgram-only). Keeping them here had a side-effect of
+// nuking legitimate single-word survivors after dedupe — e.g. when
+// the speaker actually stutters "the the" the dedupe pass collapses
+// it to "the", which the filler test then drops to "". Now both
+// real stutters and isolated short content words make it through.
+const FILLER_ONLY_RE = /^[\s.,!?;:'"\-]*(?:you|thanks?|thank you|hi|hello|um|uh|hmm|mm|mhm|okay|ok|so|bye|bye bye|good\s*bye)[\s.,!?;:'"\-]*$/i
 
 export function cleanTranscriptText(raw: string): string {
   if (!raw) return ''

@@ -12,18 +12,14 @@ kind = "api"
   [services.development]
   run = "pnpm --filter @workspace/api-server run dev"
 
-  [services.production]
-
-  [services.production.build]
-  args = ["pnpm", "--filter", "@workspace/api-server", "run", "build"]
-
-  [services.production.build.env]
-  NODE_ENV = "production"
-
-  [services.production.run]
-  args = ["node", "--enable-source-maps", "artifacts/api-server/dist/index.mjs"]
-
-  [services.production.run.env]
-  PORT = "8080"
-  NODE_ENV = "production"
-  
+  # NOTE (v0.7.18 deploy fix): The api-server is a workspace template
+  # leftover and is NOT part of the ScriptureLive production deployment.
+  # In production, `server.mjs` in artifacts/imported-app attaches the
+  # Deepgram streaming WebSocket upgrade handler directly to the Next.js
+  # HTTP server at /api/transcribe-stream — see server-transcribe-stream.mjs.
+  # The api-server here only exists to make dev iteration easier, and
+  # publishing it alongside the Next.js app caused Autoscale to reject
+  # the deploy with "Multiple ports are being forwarded" because it
+  # cannot expose more than one service. Leaving [services.production]
+  # absent means Replit's deployer ignores this artifact and only
+  # promotes the imported-app to scripturelive.replit.app.

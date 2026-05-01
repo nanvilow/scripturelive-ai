@@ -68,10 +68,41 @@ catalog:
 autoInstallPeers: false
 
 onlyBuiltDependencies:
+  # Build tools used by every artifact's TS/JS pipeline.
   - '@swc/core'
   - esbuild
   - msw
   - unrs-resolver
+  # ──────────────────────────────────────────────────────────────────
+  # v0.7.18 deploy fix — these MUST live here at the workspace root,
+  # not in any artifact's package.json. pnpm only honors
+  # onlyBuiltDependencies at the workspace root; an artifact-level
+  # entry triggers the warning "This will not take effect" and the
+  # native postinstall scripts are silently skipped. Skipping these
+  # particular scripts is what kept the Replit deploy from starting:
+  #   • prisma / @prisma/client / @prisma/engines — without their
+  #     postinstall the @prisma/client/.prisma generated types are
+  #     missing, so `next build` would error on every import of
+  #     `@prisma/client`. (Our build script also runs
+  #     `prisma generate` explicitly, but @prisma/client also needs
+  #     its own postinstall to set up its node_modules layout.)
+  #   • sharp — Next.js image optimization needs the native binary,
+  #     and without sharp's postinstall the binary is never fetched
+  #     and `next start` either crashes or silently falls back.
+  #   • @parcel/watcher / es5-ext / koffi / electron / electron-
+  #     winstaller — also rely on postinstall hooks; harmless on the
+  #     server but kept here so a single source of truth covers both
+  #     the Replit web deploy AND the Windows installer build.
+  # ──────────────────────────────────────────────────────────────────
+  - '@parcel/watcher'
+  - '@prisma/client'
+  - '@prisma/engines'
+  - electron
+  - electron-winstaller
+  - es5-ext
+  - koffi
+  - prisma
+  - sharp
 
 overrides:
   # replit uses linux-x64 only, we can exclude all other platforms

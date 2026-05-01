@@ -12,6 +12,8 @@ import { SettingsView } from '@/components/views/settings'
 import { LicenseProvider } from '@/components/license/license-provider'
 import { SubscriptionModal } from '@/components/license/subscription-modal'
 import { AdminModal } from '@/components/license/admin-modal'
+// v0.7.19 — One-time welcome dialog for first-time users.
+import { WelcomeDialog } from '@/components/providers/welcome-dialog'
 import { useAppStore } from '@/lib/store'
 import { ArrowLeft } from 'lucide-react'
 
@@ -107,6 +109,14 @@ export default function Home() {
             Settings overlay (z-50). */}
         <SubscriptionModal />
         <AdminModal />
+        {/* v0.7.19 — One-time welcome popup. Renders nothing on
+            repeat launches; only fires the first time a given browser
+            profile / Electron userData sees the app. Sits inside the
+            LicenseProvider so it can layer above the lock overlay if
+            both happen to mount at the same moment (a fresh install
+            with no trial budget would still see it before the lock,
+            which is the right ordering). */}
+        <WelcomeDialog />
       </LicenseProvider>
     </SpeechProvider>
   )
