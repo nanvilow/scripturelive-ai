@@ -5,6 +5,18 @@ const api = {
     isDesktop: true,
     getInfo: () => electron_1.ipcRenderer.invoke('app:info'),
     /**
+     * v0.6.6 — Open the Windows "Apps & features" Settings page so the
+     * operator can uninstall the previous ScriptureLive build before
+     * installing a new one. The update dialog surfaces a button that
+     * calls this. We deliberately do NOT auto-uninstall via NSIS hook:
+     * uninstalling the running app would tear down its own activation
+     * data and the operator might have just generated a new MoMo
+     * payment ref. Manual prompt + open-Settings is the safer flow.
+     */
+    app: {
+        openUninstall: () => electron_1.ipcRenderer.invoke('app:open-uninstall'),
+    },
+    /**
      * Launch-at-login (a.k.a. "start with Windows"). The renderer-side
      * Settings toggle in src/components/views/settings.tsx calls these.
      * Both reads and writes go through Electron's
@@ -50,6 +62,11 @@ const api = {
         // toast description with percent.
         download: () => electron_1.ipcRenderer.invoke('updater:download'),
         install: () => electron_1.ipcRenderer.invoke('updater:install'),
+        // v0.5.31 — operator-cancellable download. Aborts the in-flight
+        // signed download via the CancellationToken passed into
+        // `downloadUpdate()` and broadcasts an 'idle' state so the
+        // available-update popup can re-appear naturally.
+        cancel: () => electron_1.ipcRenderer.invoke('updater:cancel'),
         onState: (cb) => {
             const handler = (_e, state) => cb(state);
             electron_1.ipcRenderer.on('updater:state', handler);

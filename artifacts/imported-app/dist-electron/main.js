@@ -42,6 +42,7 @@ const node_child_process_1 = require("node:child_process");
 const node_net_1 = require("node:net");
 const node_fs_1 = __importDefault(require("node:fs"));
 const ndi_service_1 = require("./ndi-service");
+const telemetry_1 = require("./telemetry");
 let logFilePath = '';
 function setupFileLogging() {
     try {
@@ -73,8 +74,26 @@ function setupFileLogging() {
             resourcesPath: process.resourcesPath,
             userData: dir,
         });
-        process.on('uncaughtException', (err) => { console.error('uncaughtException', err); });
-        process.on('unhandledRejection', (err) => { console.error('unhandledRejection', err); });
+        // v0.7.14 — Central error reporting. Forward main-process
+        // crashes / unhandled rejections to the api-server's
+        // /api/telemetry/error endpoint so the operator's admin Records
+        // dashboard surfaces them in real time. Both calls are
+        // fire-and-forget with a 4-second timeout — a telemetry outage
+        // never blocks crash logging or app shutdown.
+        process.on('uncaughtException', (err) => {
+            console.error('uncaughtException', err);
+            try {
+                (0, telemetry_1.pingThrown)('uncaughtException', err);
+            }
+            catch { /* ignore */ }
+        });
+        process.on('unhandledRejection', (err) => {
+            console.error('unhandledRejection', err);
+            try {
+                (0, telemetry_1.pingThrown)('unhandledRejection', err);
+            }
+            catch { /* ignore */ }
+        });
     }
     catch (e) {
         // best-effort: file logging optional
@@ -119,6 +138,14 @@ electron_1.app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
 electron_1.app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 const ndi = new ndi_service_1.NdiService();
 let frameCapture = null;
+// v0.6.6 — Tracks the layout/transparent/lowerThird flags the current
+// FrameCapture window was started with. We store them at module scope
+// (rather than exposing getters on FrameCapture) so the ndi:start
+// short-circuit can detect operator-toggled changes (e.g. "Transparent
+// ON → OFF while broadcasting") and rebuild the BrowserWindow with
+// the new flags. Pre-v0.6.6 only source/geometry/fps were tracked, so
+// transparent-toggle changes were silently ignored.
+let frameCaptureFlags = null;
 let mainWindow = null;
 let tray = null;
 let nextProcess = null;
@@ -1389,13 +1416,49 @@ function setupIpc() {
             // playing <video>, makes vMix / OBS lose the source for a
             // beat, and re-acquire — the very flicker we are trying to
             // fix. Short-circuit when nothing has changed.
+            // v0.6.6 — extend equality to include layout/transparent/lowerThird.
+            // Pre-v0.6.6 the short-circuit only checked source+geometry+fps,
+            // so flipping the Transparent toggle WHILE NDI was running would
+            // call ndi:start with the same {name,width,height,fps}, hit this
+            // branch, and bail out without rebuilding the BrowserWindow with
+            // the new transparent flag. Operator's complaint that the toggle
+            // "did nothing while broadcasting" was this short-circuit.
             const cur = ndi.getStatus();
+            const wantLayout = opts.layout === 'ndi' ? 'ndi' : 'mirror';
+            const wantTransparent = wantLayout === 'ndi' && opts.transparent !== false;
+            const wantLT = wantLayout === 'ndi' && Boolean(opts.lowerThird?.enabled);
+            const wantLTPos = opts.lowerThird?.position === 'top' ? 'top' : 'bottom';
+            // v0.7.5.1 — extend equality to lower-third height/scale.
+            // Without this, an operator dragging the height bucket or
+            // scale slider WHILE NDI is broadcasting would re-call
+            // ndi:start with the same {name,w,h,fps,transparent,LT,pos}
+            // and hit the short-circuit below — leaving the FrameCapture
+            // BrowserWindow loading the OLD ?lh=&sc= URL forever.
+            const wantLTHeight = wantLT
+                ? (() => {
+                    const h = opts.lowerThird?.height;
+                    return h === 'sm' || h === 'md' || h === 'lg' ? h : null;
+                })()
+                : null;
+            const wantLTScale = wantLT
+                ? (() => {
+                    const s = opts.lowerThird?.scale;
+                    return typeof s === 'number' && s >= 0.5 && s <= 2 ? s : null;
+                })()
+                : null;
             if (cur.running &&
                 frameCapture &&
+                frameCaptureFlags &&
                 cur.source === (opts.name || 'ScriptureLive AI') &&
                 cur.width === opts.width &&
                 cur.height === opts.height &&
-                cur.fps === opts.fps) {
+                cur.fps === opts.fps &&
+                frameCaptureFlags.layout === wantLayout &&
+                frameCaptureFlags.transparent === wantTransparent &&
+                frameCaptureFlags.lowerThird === wantLT &&
+                (!wantLT || frameCaptureFlags.lowerThirdPosition === wantLTPos) &&
+                (!wantLT || frameCaptureFlags.lowerThirdHeight === wantLTHeight) &&
+                (!wantLT || frameCaptureFlags.lowerThirdScale === wantLTScale)) {
                 broadcastNdiStatus(cur);
                 return { ok: true, status: cur };
             }
@@ -1436,6 +1499,23 @@ function setupIpc() {
                     params.set('lowerThird', '1');
                 if (lt.position === 'top')
                     params.set('position', 'top');
+                // v0.7.5.1 — Bake the operator's lower-third HEIGHT bucket and
+                // SCALE multiplier into the URL itself. This is the fix for the
+                // "in-app NDI Live Preview shows small card but vMix/OBS receive
+                // an oversized bar" bug: the captured BrowserWindow used to wait
+                // for the SSE state push before applying the operator's slider
+                // values, so vMix grabbed the FIRST few frames at the renderer's
+                // default state (md / 1.0×) — leaving the broadcast feed visibly
+                // out of sync with what the iframe preview promised. Now both
+                // surfaces carry the same params from the URL on the very first
+                // paint and SSE only handles subsequent operator drags.
+                const lh = lt.height;
+                if (lh === 'sm' || lh === 'md' || lh === 'lg')
+                    params.set('lh', lh);
+                const sc = lt.scale;
+                if (typeof sc === 'number' && sc >= 0.5 && sc <= 2) {
+                    params.set('sc', String(sc));
+                }
             }
             const capturePath = `/api/output/congregation?${params.toString()}`;
             await frameCapture.start({
@@ -1445,6 +1525,20 @@ function setupIpc() {
                 path: capturePath,
                 transparent,
             });
+            // v0.6.6 — Record what flags this FrameCapture was started
+            // with so the next ndi:start can detect operator-toggled
+            // changes (transparent ON/OFF, lower-third position swap)
+            // and trigger a true rebuild instead of short-circuiting.
+            frameCaptureFlags = {
+                layout,
+                transparent,
+                lowerThird: layout === 'ndi' && Boolean(opts.lowerThird?.enabled),
+                lowerThirdPosition: opts.lowerThird?.position === 'top' ? 'top' : 'bottom',
+                // v0.7.5.1 — persist what we baked into the URL so the next
+                // ndi:start can detect operator-dragged changes.
+                lowerThirdHeight: wantLTHeight,
+                lowerThirdScale: wantLTScale,
+            };
             broadcastNdiStatus(ndi.getStatus());
             return { ok: true, status: ndi.getStatus() };
         }
@@ -1455,6 +1549,7 @@ function setupIpc() {
             }
             catch { /* ignore */ }
             frameCapture = null;
+            frameCaptureFlags = null;
             try {
                 await ndi.stop();
             }
@@ -1466,11 +1561,22 @@ function setupIpc() {
     }));
     electron_1.ipcMain.handle('ndi:stop', () => serializeNdi(async () => {
         try {
+            // v0.7.12 — Stop the frame capture FIRST so no new frames
+            // arrive into nativeSendFrame while we're emitting the
+            // black-frame fadeout. Then call gracefulStop() so downstream
+            // receivers (OBS, vMix, Wirecast, NDI Studio Monitor) get a
+            // clean ~200ms fade-to-black on the wire instead of a frozen
+            // last-frame, and have a clear "source went off-air" event
+            // they can react to without the operator needing to close /
+            // reopen them. Plain stop() is reserved for emergency shutdown
+            // paths (before-quit, crash) where adding 200ms would risk
+            // losing the exit deadline.
             if (frameCapture) {
                 await frameCapture.stop();
                 frameCapture = null;
             }
-            await ndi.stop();
+            frameCaptureFlags = null;
+            await ndi.gracefulStop();
             broadcastNdiStatus(ndi.getStatus());
             return { ok: true };
         }
@@ -1478,6 +1584,27 @@ function setupIpc() {
             return { ok: false, error: err instanceof Error ? err.message : String(err) };
         }
     }));
+    // v0.6.6 — Open Windows "Apps & features" so operators can uninstall
+    // the previous ScriptureLive build before installing the new one.
+    // Surfaced from the update dialog's "Uninstall first" red banner.
+    // shell.openExternal accepts the ms-settings: scheme on Windows 10/11;
+    // on Linux/macOS we no-op gracefully so the React handler doesn't
+    // throw when the operator clicks the button on a non-Windows host.
+    electron_1.ipcMain.handle('app:open-uninstall', async () => {
+        try {
+            if (process.platform !== 'win32') {
+                return { ok: false, error: 'Uninstall page is Windows-only' };
+            }
+            await electron_1.shell.openExternal('ms-settings:appsfeatures');
+            return { ok: true };
+        }
+        catch (err) {
+            return {
+                ok: false,
+                error: err instanceof Error ? err.message : String(err),
+            };
+        }
+    });
     // List physical displays so the renderer can show a "send to which screen?" picker
     electron_1.ipcMain.handle('output:list-displays', () => {
         try {
@@ -1627,6 +1754,14 @@ function setupIpc() {
     });
     ndi.on('error', (msg) => {
         broadcastNdiStatus({ ...ndi.getStatus(), error: msg });
+        // v0.7.14 — Forward NDI native binding errors to the central
+        // /api/telemetry/error endpoint so the operator's admin Records
+        // dashboard sees them. Anonymous installId only, message + a
+        // small "ndi" type tag — no frame data or PII.
+        void (0, telemetry_1.pingErrorMain)({
+            errorType: 'ndi_native',
+            message: typeof msg === 'string' ? msg : String(msg),
+        });
     });
 }
 // ── Single-instance enforcement ─────────────────────────────────────
@@ -1762,7 +1897,14 @@ electron_1.app.whenReady().then(async () => {
         return;
     }
     try {
-        (0, updater_1.setupAutoUpdater)({ getMainWindow: () => mainWindow });
+        (0, updater_1.setupAutoUpdater)({
+            getMainWindow: () => mainWindow,
+            // v0.5.31 — let the updater flip our `isQuitting` flag right
+            // before `quitAndInstall()` so the hide-to-tray close handler
+            // doesn't veto the install (causing "ScriptureLive AI cannot
+            // be closed; please close it manually").
+            setIsQuitting: (v) => { isQuitting = v; },
+        });
     }
     catch (err) {
         console.error('[updater] init failed (non-fatal):', err);
@@ -1779,51 +1921,21 @@ electron_1.app.whenReady().then(async () => {
     catch (err) {
         console.error('[tray] init failed (non-fatal):', err);
     }
-    // ── Auto-start NDI sender ─────────────────────────────────────
-    // The whole point of "one-click NDI" is that the user shouldn't have
-    // to click anything. As soon as the app is up and the NDI runtime is
-    // present, fire up the sender on its own with sensible defaults so
-    // the source appears in vMix / Wirecast / OBS / NDI Studio Monitor
-    // immediately on the LAN. The user can stop it from the NDI panel
-    // if they don't want it.
+    // ── NDI sender is OPT-IN as of v0.5.49 ────────────────────────
+    // Earlier builds auto-started the NDI sender at app launch so the
+    // source appeared on the LAN with no clicks. Customer feedback
+    // (April 2026): they don't want the desktop app broadcasting their
+    // service to the LAN until they explicitly say so — auto-broadcast
+    // pushed slides into vMix / OBS sessions that were preparing
+    // unrelated content. The sender now starts ONLY when the operator
+    // clicks "Start NDI Output" in the NDI Output panel; the IPC
+    // handlers (`ndi:start` / `ndi:stop`) below remain wired to the
+    // same FrameCapture pipeline so manual start works identically.
     if (ndi.isAvailable()) {
-        try {
-            await ndi.start({ name: 'ScriptureLive AI', width: 1920, height: 1080, fps: 30 });
-            frameCapture = new frame_capture_1.FrameCapture({
-                baseUrl: appBaseUrl,
-                onFrame: (buf, w, h) => ndi.sendFrame(buf, w, h),
-                onStatus: (msg) => broadcastNdiStatus({ ...ndi.getStatus(), captureMessage: msg }),
-            });
-            await frameCapture.start({
-                width: 1920,
-                height: 1080,
-                fps: 30,
-                // ?ndi=1 → renderer treats this as the NDI surface and uses
-                // settings.ndiDisplayMode (Full / Lower Third) instead of the
-                // projector's displayMode, so the operator's choice in
-                // Settings → NDI actually takes effect.
-                path: '/api/output/congregation?ndi=1',
-                transparent: false,
-            });
-            broadcastNdiStatus(ndi.getStatus());
-            console.log('[ndi] auto-started sender "ScriptureLive AI" @ 1080p30');
-        }
-        catch (err) {
-            console.error('[ndi] auto-start failed (non-fatal):', err);
-            try {
-                if (frameCapture)
-                    await frameCapture.stop();
-            }
-            catch { /* ignore */ }
-            frameCapture = null;
-            try {
-                await ndi.stop();
-            }
-            catch { /* ignore */ }
-        }
+        console.log('[ndi] runtime detected — sender NOT started (manual start required as of v0.5.49)');
     }
     else {
-        console.log('[ndi] runtime not detected — sender not auto-started:', ndi.unavailableReason());
+        console.log('[ndi] runtime not detected:', ndi.unavailableReason());
     }
 });
 // ── Shutdown ──────────────────────────────────────────────────────
