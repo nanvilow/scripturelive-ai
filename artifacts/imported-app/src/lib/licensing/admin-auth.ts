@@ -27,6 +27,7 @@ import {
   getPendingAdminReset,
   consumePendingAdminReset,
 } from './storage'
+import { getBakedAdminPassword } from '../baked-credentials'
 
 // Cookie + session config. The cookie name is intentionally
 // app-specific so it can coexist with other tools on the same
@@ -46,9 +47,19 @@ function sweep(now = Date.now()): void {
 
 /** Resolve the active admin password from highest-priority source.
  *  1. Operator-set value in admin-config (saved via Settings tab)
- *  2. SCRIPTURELIVE_ADMIN_PASSWORD env var
- *  3. Baked fallback 'admin' (with a one-time console warning so
- *     the operator notices they're using the default)
+ *     — per-PC override; lets one operator pick a custom local
+ *     password on a single PC without affecting other installs.
+ *  2. SCRIPTURELIVE_ADMIN_PASSWORD env var (live override on this
+ *     box — useful for emergency lockout recovery without rebuild).
+ *  3. v0.7.19 — Build-time baked password from
+ *     getBakedAdminPassword(). Operator sets ADMIN_PASSWORD (or
+ *     SCRIPTURELIVE_ADMIN_PASSWORD) once in deployment secrets,
+ *     scripts/inject-keys.mjs bakes it into the .exe at build
+ *     time, and every PC running the same build now defaults to
+ *     the same password. This fixes the "I set 1234 on PC1 but
+ *     PC2 still asks for the default 'admin'" report.
+ *  4. Hard-coded 'admin' fallback (only if nothing above is set).
+ *     Logs a one-time loud warning so the operator notices.
  */
 let warnedDefault = false
 export function resolveAdminPassword(): string {
@@ -56,10 +67,16 @@ export function resolveAdminPassword(): string {
   if (cfg && cfg.trim()) return cfg.trim()
   const env = process.env.SCRIPTURELIVE_ADMIN_PASSWORD
   if (env && env.trim()) return env.trim()
+  // v0.7.19 — Baked default from BUILD.bat. Empty when the operator
+  // never set ADMIN_PASSWORD before building, in which case we fall
+  // through to the legacy 'admin' default below for back-compat.
+  let baked = ''
+  try { baked = getBakedAdminPassword() } catch { /* baked module missing — ignore */ }
+  if (baked && baked.trim()) return baked.trim()
   if (!warnedDefault) {
     warnedDefault = true
     // eslint-disable-next-line no-console
-    console.warn('[admin-auth] No admin password set — using default "admin". Set one in the Admin → Settings tab.')
+    console.warn('[admin-auth] No admin password set — using default "admin". Set ADMIN_PASSWORD before BUILD.bat (so every PC ships with the same one) or change it per-PC in Admin → Settings.')
   }
   return 'admin'
 }

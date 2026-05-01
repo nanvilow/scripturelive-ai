@@ -107,6 +107,25 @@ fs.mkdirSync(path.dirname(RENDERER_TARGET), { recursive: true })
 fs.writeFileSync(RENDERER_TARGET, rendererBanner + rendererBody, 'utf8')
 
 // ── Server credentials (Node-side) ─────────────────────────────────
+//
+// v0.7.19 — ADMIN_PASSWORD baking. Operator reported that the admin
+// password they save on PC1 (e.g. "1234") doesn't carry over to
+// PC2 — every fresh install fell back to the legacy "admin" default.
+// Solution: bake the operator-chosen password into the .exe at
+// build time so every PC running the same build shares the same
+// default. Per-PC overrides via Admin → Settings still win, so an
+// operator can still pick a different local password on one PC if
+// they want. Resolution order at runtime (in admin-auth.ts):
+//   1. license.json adminPassword (per-PC operator override)
+//   2. process.env.SCRIPTURELIVE_ADMIN_PASSWORD (env override)
+//   3. BAKED_ADMIN_PASSWORD (this value, shipped in the .exe)
+//   4. legacy "admin" default (only if literally nothing is set)
+// readBaked envName='ADMIN_PASSWORD' engages the placeholder guard
+// so an accidentally-pasted literal "ADMIN_PASSWORD" from a secret-
+// manager template is self-healed on the next build instead of
+// being preserved as the actual password.
+const adminPwd   = pickEnv('SCRIPTURELIVE_ADMIN_PASSWORD', 'ADMIN_PASSWORD')
+                  || readBaked(SERVER_TARGET, 'BAKED_ADMIN_PASSWORD', 'ADMIN_PASSWORD')
 const mailHost   = pickEnv('MAIL_HOST')   || readBaked(SERVER_TARGET, 'BAKED_MAIL_HOST',   'MAIL_HOST')
 const mailUser   = pickEnv('MAIL_USER')   || readBaked(SERVER_TARGET, 'BAKED_MAIL_USER',   'MAIL_USER')
 const mailPass   = pickEnv('MAIL_PASS')   || readBaked(SERVER_TARGET, 'BAKED_MAIL_PASS',   'MAIL_PASS')
@@ -130,15 +149,16 @@ const serverBanner =
   '// environment. Gitignored — never reaches GitHub.\n\n'
 
 const serverBody =
-  `export const BAKED_MAIL_HOST   = ${JSON.stringify(mailHost)};\n` +
-  `export const BAKED_MAIL_USER   = ${JSON.stringify(mailUser)};\n` +
-  `export const BAKED_MAIL_PASS   = ${JSON.stringify(mailPass)};\n` +
-  `export const BAKED_MAIL_FROM   = ${JSON.stringify(mailFrom)};\n` +
-  `export const BAKED_MAIL_PORT   = ${JSON.stringify(mailPort)};\n` +
-  `export const BAKED_MAIL_SECURE = ${JSON.stringify(mailSecure)};\n` +
-  `export const BAKED_SMS_API_KEY = ${JSON.stringify(smsApiKey)};\n` +
-  `export const BAKED_SMS_SENDER  = ${JSON.stringify(smsSender)};\n` +
-  `export const BAKED_SMS_SANDBOX = ${JSON.stringify(smsSandbox)};\n` +
+  `export const BAKED_MAIL_HOST    = ${JSON.stringify(mailHost)};\n` +
+  `export const BAKED_MAIL_USER    = ${JSON.stringify(mailUser)};\n` +
+  `export const BAKED_MAIL_PASS    = ${JSON.stringify(mailPass)};\n` +
+  `export const BAKED_MAIL_FROM    = ${JSON.stringify(mailFrom)};\n` +
+  `export const BAKED_MAIL_PORT    = ${JSON.stringify(mailPort)};\n` +
+  `export const BAKED_MAIL_SECURE  = ${JSON.stringify(mailSecure)};\n` +
+  `export const BAKED_SMS_API_KEY  = ${JSON.stringify(smsApiKey)};\n` +
+  `export const BAKED_SMS_SENDER   = ${JSON.stringify(smsSender)};\n` +
+  `export const BAKED_SMS_SANDBOX  = ${JSON.stringify(smsSandbox)};\n` +
+  `export const BAKED_ADMIN_PASSWORD = ${JSON.stringify(adminPwd)};\n` +
   '\n' +
   'function pick(envValue: string | undefined, baked: string): string {\n' +
   '  const e = (envValue || "").trim();\n' +
@@ -156,6 +176,16 @@ const serverBody =
   'export const getSmsSender  = () => pick(process.env.SMS_SENDER,  BAKED_SMS_SENDER);\n' +
   'export const getSmsSandbox = () => pick(process.env.SMS_SANDBOX, BAKED_SMS_SANDBOX);\n' +
   '\n' +
+  '/** v0.7.19 — Returns the build-baked default admin password,\n' +
+  ' *  or empty string if the operator never set one. Honoured by\n' +
+  ' *  resolveAdminPassword() in licensing/admin-auth.ts as a\n' +
+  ' *  fallback BEFORE the legacy hard-coded "admin" default, so\n' +
+  ' *  every install of the same .exe build shares the same default\n' +
+  ' *  password. Per-PC overrides saved into license.json still\n' +
+  ' *  win — operators can pick a different local password on one\n' +
+  ' *  PC without affecting any other install. */\n' +
+  'export const getBakedAdminPassword = () => BAKED_ADMIN_PASSWORD || "";\n' +
+  '\n' +
   '/** Diagnostic — used by the admin panel to render the green/amber\n' +
   ' *  delivery banner. SMTP needs host + user + pass at minimum;\n' +
   ' *  MAIL_FROM falls back to MAIL_USER inside the sender. */\n' +
@@ -169,5 +199,5 @@ fs.writeFileSync(SERVER_TARGET, serverBanner + serverBody, 'utf8')
 
 console.log(
   `[inject-keys] renderer: OPENAI=${mask(openai)} DEEPGRAM=${mask(deepgram)}\n` +
-  `[inject-keys] server:   MAIL_HOST=${mailHost ? 'SET' : 'EMPTY'} MAIL_USER=${mailUser ? 'SET' : 'EMPTY'} MAIL_PASS=${mask(mailPass)} MAIL_FROM=${mailFrom ? 'SET' : 'EMPTY'} SMS_API_KEY=${mask(smsApiKey)} SMS_SENDER=${smsSender ? 'SET' : 'EMPTY'}`
+  `[inject-keys] server:   MAIL_HOST=${mailHost ? 'SET' : 'EMPTY'} MAIL_USER=${mailUser ? 'SET' : 'EMPTY'} MAIL_PASS=${mask(mailPass)} MAIL_FROM=${mailFrom ? 'SET' : 'EMPTY'} SMS_API_KEY=${mask(smsApiKey)} SMS_SENDER=${smsSender ? 'SET' : 'EMPTY'} ADMIN_PASSWORD=${adminPwd ? `SET (${adminPwd.length} chars)` : 'EMPTY (default "admin" will apply)'}`
 )
