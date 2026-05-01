@@ -44,7 +44,5 @@ externalPort = 3000
 [userenv.shared]
 
 [userenv.development]
-OPENAI_API_KEY = "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"
 
 [userenv.production]
-OPENAI_API_KEY = "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"
