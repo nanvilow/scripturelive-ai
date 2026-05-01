@@ -444,7 +444,7 @@ function load(): LicenseFile {
       cache.trialDurationMs < TRIAL_DURATION_MS &&
       cache.everActivated !== true &&
       !cache.activeSubscription &&
-      cache.trialMsUsed < cache.trialDurationMs
+      (cache.trialMsUsed ?? 0) < cache.trialDurationMs
     ) {
       // eslint-disable-next-line no-console
       console.log(

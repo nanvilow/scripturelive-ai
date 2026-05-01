@@ -8,7 +8,7 @@ import { lookupRange, lookupVerse, isTranslationBundled } from '@/lib/bibles/loc
 // v0.7.4 — chapter metadata for "next chapter" / "previous chapter"
 // voice commands. Same JSON the reference engine uses for validation.
 import bibleStructure from '@/data/bible-structure.json'
-import { detectCommand, type VoiceCommand } from '@/lib/voice/commands'
+import { detectCommand, detectCommandChain, type VoiceCommand } from '@/lib/voice/commands'
 import { pickBestVerse, type VerseLine } from '@/lib/voice/speaker-follow'
 // v0.5.45 — TRIPLE-ENGINE WITH AUTO-FALLBACK CHAIN.
 //
@@ -733,6 +733,148 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         s.setLiveSlideIndex(-1)
         break
       }
+      // ── v0.7.19 — Translation switch ───────────────────────────────
+      // Calls setSelectedTranslation. live-translation-sync.tsx watches
+      // selectedTranslation + liveSlideIndex and refetches the active
+      // verse slide's text in the new translation, then patches it
+      // in place via replaceSlide — that's what makes the live output
+      // / NDI feed update without "send to live again". The NDI
+      // payload picks up the change automatically because it's
+      // sourced from slides[liveSlideIndex].
+      case 'change_translation': {
+        if (!cmd.translation) break
+        // Idempotent: don't churn the live slide if the operator just
+        // re-stated the same translation.
+        if (s.selectedTranslation === cmd.translation) break
+        s.setSelectedTranslation(cmd.translation)
+        break
+      }
+      // ── v0.7.19 — Delete previous verse ───────────────────────────
+      // Pops the most-recently-pushed slide off the deck. Used by
+      // operators to recover from a misfired auto-detection without
+      // touching the keyboard. We:
+      //   1. Refuse if there are no slides (no-op + toast).
+      //   2. Splice off the LAST slide.
+      //   3. Move preview/live indices back to the new last slide,
+      //      OR -1 (blank) when the deck is now empty.
+      //   4. Reset liveActiveVerseIndex so the next render doesn't
+      //      try to highlight a verse that no longer exists.
+      // The setSlides + setLive*Index combo triggers the
+      // output-broadcaster watcher, which re-broadcasts to /api/output
+      // and propagates to NDI / preview / congregation screens.
+      case 'delete_previous_verse': {
+        const cur = useAppStore.getState().slides
+        if (!cur.length) {
+          toast.error('Nothing to delete on the deck', { duration: 1500, position: 'bottom-right' })
+          break
+        }
+        const next = cur.slice(0, -1)
+        const newIdx = next.length - 1
+        useAppStore.getState().setSlides(next)
+        useAppStore.getState().setPreviewSlideIndex(newIdx)
+        useAppStore.getState().setLiveSlideIndex(newIdx)
+        useAppStore.getState().setLiveActiveVerseIndex(0)
+        if (newIdx < 0) {
+          // Deck is now empty; bring the live output to a clean state
+          // rather than leaving a stale frame on screen.
+          useAppStore.getState().setIsLive(false)
+        }
+        break
+      }
+      // ── v0.7.19 — Show verse N within current chapter ─────────────
+      // Two cases:
+      //   (A) The current live slide IS a multi-verse passage (e.g.
+      //       loaded "John 3:1-30") — just move the highlight cursor
+      //       to verse N within that slide. No fetch needed.
+      //   (B) The current live slide is a single verse OR not a
+      //       Bible passage at all — we need a chapter context to
+      //       know which verse N to load. Try to parse the live
+      //       slide's title as a reference and fetch <book> <chapter>:N
+      //       in the active translation, then push as a new slide.
+      // If we can't recover any chapter context (no live verse
+      // currently), surface a toast — the operator probably meant to
+      // wake-prefix this with a book/chapter first.
+      case 'show_verse_n': {
+        if (!cmd.verseNumber) break
+        const n = cmd.verseNumber
+        const slide = liveIdx >= 0 ? slides[liveIdx] : null
+        // We need to know the passage anchor (book/chapter/verseStart)
+        // for BOTH branches: Case A uses verseStart to map "show verse
+        // 17" against a "John 3:16-18" slide to range-index 1 (NOT
+        // index 16). Case B reuses the same parse to fetch
+        // <book> <chapter>:N in the active translation.
+        const refFromSlide = slide && slide.type === 'verse' && slide.title
+          ? parseExplicitReference(slide.title)
+          : null
+        if (
+          slide &&
+          slide.type === 'verse' &&
+          (slide.content?.length ?? 0) > 1 &&
+          refFromSlide
+        ) {
+          // Case A — passage already loaded as a multi-verse range.
+          // Map the requested verse number to its position WITHIN the
+          // loaded range. If the request falls outside the loaded
+          // range we deliberately fall through to Case B, which will
+          // fetch the requested verse and append it as a new slide
+          // — matches operator expectation ("show verse 30" should
+          // load verse 30, not silently clamp to the last loaded one).
+          const start = refFromSlide.verseStart
+          const end = refFromSlide.verseEnd ?? refFromSlide.verseStart
+          if (n >= start && n <= end) {
+            const target = n - start
+            s.setLiveActiveVerseIndex(target)
+            break
+          }
+          // else: fall through to Case B fetch.
+        }
+        // Case B — need to fetch <currentBook> <currentChapter>:N.
+        if (!slide || slide.type !== 'verse' || !slide.title) {
+          toast.error(`No live passage to anchor verse ${n} against`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const ref = refFromSlide
+        if (!ref) {
+          toast.error(`Cannot parse current passage: ${slide.title}`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const struct = (bibleStructure as unknown as Record<string, number[]>)[ref.book]
+        const verseCount = struct?.[ref.chapter - 1] ?? 0
+        if (verseCount && (n < 1 || n > verseCount)) {
+          toast.error(`${ref.book} ${ref.chapter} only has ${verseCount} verses`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const tx = s.selectedTranslation
+        const refKey = `${ref.book} ${ref.chapter}:${n}`
+        let textOut: string | null = lookupVerse(ref.book, ref.chapter, n, tx)
+        if (!textOut && !isTranslationBundled(tx)) {
+          try {
+            const v = await fetchBibleVerse(refKey, tx)
+            if (v) textOut = v.text
+          } catch { /* fall through */ }
+        }
+        if (!textOut) {
+          toast.error(`Could not load ${refKey}`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const slideNew = {
+          id: `slide-${Date.now()}`,
+          type: 'verse' as const,
+          title: refKey,
+          subtitle: tx,
+          content: textOut.split('\n').filter(Boolean),
+          background: s.settings.congregationScreenTheme,
+        }
+        const cur = useAppStore.getState().slides
+        const next = cur.length > 0 ? [...cur, slideNew] : [slideNew]
+        const idx = next.length - 1
+        useAppStore.getState().setSlides(next)
+        useAppStore.getState().setPreviewSlideIndex(idx)
+        useAppStore.getState().setLiveSlideIndex(idx)
+        useAppStore.getState().setIsLive(true)
+        useAppStore.getState().setLiveActiveVerseIndex(0)
+        break
+      }
     }
   }, [])
 
@@ -851,18 +993,78 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       // matches with confidence ≥80, we dispatch + suppress all
       // downstream processing on this transcript so a sentence like
       // "next verse" never accidentally triggers a "verse" detection.
+      //
+      // v0.7.19 — Now chain-aware. If the operator chains commands
+      // ("John 3:16, message version, next verse" or "media, KJV,
+      // clear screen"), detectCommandChain returns each segment as
+      // its own VoiceCommand and we dispatch them in order with a
+      // tiny delay so the live-translation-sync watcher and the
+      // output-broadcaster have a chance to settle between actions.
+      // The single-command path is kept as a fast path for the
+      // overwhelming majority of utterances that AREN'T chains.
       if (state.voiceControlEnabled) {
         const tail = text.trim().slice(-200) // command must be near the end
+
+        // Chain-mode: only fires when the utterance has explicit
+        // separators AND yields ≥ 2 dispatchable commands. Anything
+        // less falls through to single-command detection so we don't
+        // change behaviour for the common case.
+        const hasSeparator = /[,;]|\bthen\b/i.test(tail)
+        if (hasSeparator) {
+          const chain = detectCommandChain(tail)
+          if (chain.length >= 2) {
+            const now = Date.now()
+            // Single dedupe key for the WHOLE chain so a re-spoken
+            // chain doesn't fire twice in the 4 s window.
+            const sig = 'chain|' + chain.map((c) => {
+              const refSig = c.reference
+                ? `${c.reference.book}|${c.reference.chapter}|${c.reference.verseStart}|${c.reference.verseEnd ?? ''}`
+                : ''
+              return `${c.kind}|${refSig}|${c.translation ?? ''}|${c.verseNumber ?? ''}`
+            }).join(';')
+            // v0.7.19 — Wake-word bypass also applies to chains. If
+            // ANY segment was wake-prefixed, the operator explicitly
+            // re-issued the chain and we should always fire — matches
+            // the single-command behaviour. Without this, "Media,
+            // NKJV, clear screen" repeated within 4 s would only fire
+            // once.
+            const chainWoke = chain.some((c) => c.wakeWord === true)
+            if (chainWoke || lastVoiceCmdRef.current.sig !== sig || now - lastVoiceCmdRef.current.at > 4000) {
+              lastVoiceCmdRef.current = { sig, at: now }
+              speakerFollowSuspendedUntilRef.current = Date.now() + 2000
+              for (const c of chain) {
+                await dispatchVoiceCommand(c)
+                // Stagger by 120 ms so the live-translation-sync
+                // refetch (triggered by setSelectedTranslation) and
+                // the slide-broadcast settle before the next action
+                // mutates state again. Without the gap, a chain like
+                // "John 3:16, message version, next verse" can race:
+                // next_verse advances the cursor BEFORE the
+                // translation-swap re-fetch finishes and the
+                // resulting NDI frame briefly shows the wrong text.
+                await new Promise((res) => setTimeout(res, 120))
+                toast.message(c.label, { duration: 1200, position: 'bottom-right' })
+              }
+              state.setDetectionStatus('detected')
+              return
+            }
+          }
+        }
+
         const cmd = detectCommand(tail)
         if (cmd && cmd.confidence >= 80) {
           // Dedup: ignore the same command if we already executed it
           // with the same parameter signature in the last 4 s.
+          // v0.7.19 — Wake-word commands ("Media, ...") bypass dedupe
+          // because the operator explicitly invoked them. Without
+          // this, saying "Media, next verse" twice in quick
+          // succession would only fire once.
           const refSig = cmd.reference
             ? `${cmd.reference.book}|${cmd.reference.chapter}|${cmd.reference.verseStart}|${cmd.reference.verseEnd ?? ''}`
             : ''
-          const sig = `${cmd.kind}|${refSig}`
+          const sig = `${cmd.kind}|${refSig}|${cmd.translation ?? ''}|${cmd.verseNumber ?? ''}`
           const now = Date.now()
-          if (lastVoiceCmdRef.current.sig !== sig || now - lastVoiceCmdRef.current.at > 4000) {
+          if (cmd.wakeWord || lastVoiceCmdRef.current.sig !== sig || now - lastVoiceCmdRef.current.at > 4000) {
             lastVoiceCmdRef.current = { sig, at: now }
             speakerFollowSuspendedUntilRef.current = Date.now() + 2000
             await dispatchVoiceCommand(cmd)

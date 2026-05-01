@@ -252,3 +252,9 @@ id = "H7c7UkiHkCGbjmbIqb-d2"
 uri = "file://screenshots/v0.7.19-welcome-dialog.jpg"
 type = "image"
 title = "Welcome popup on first launch (v0.7.19)"
+
+[[outputs]]
+id = "SlBS6S_xq7X5OdUJ6G6ip"
+uri = "file://screenshots/v0.7.19-voice-commands-final.jpg"
+type = "image"
+title = "v0.7.19 — App boots cleanly with welcome dialog (final voice-command build)"
