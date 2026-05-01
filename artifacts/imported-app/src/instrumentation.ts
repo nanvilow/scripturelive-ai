@@ -29,6 +29,32 @@ export async function register() {
   // run our nodemailer / fs / nodejs-only code on the Node runtime.
   if (process.env.NEXT_RUNTIME !== 'nodejs') return
 
+  // v0.7.18-hotfix — OPENAI_API_KEY load diagnostic.
+  //
+  // After the v0.7.18 ship a Ghana operator's transcription kept
+  // failing with "OpenAI rejected the API key configured on the
+  // server." even after the deployment OPENAI_API_KEY secret was
+  // updated and the deployment was redeployed/stopped+started.
+  // The 401 logs continued to show the OLD key suffix, suggesting
+  // the running container wasn't picking up the new env var.
+  //
+  // This block prints the loaded key's LAST 6 CHARS (never the full
+  // key) on every cold-start so we can grep deployment logs and see
+  // exactly which key the runtime is using. OpenAI's own 401 error
+  // message already echoes the same suffix back, so this leaks no
+  // information not already in the logs.
+  //
+  // Once the rotation is fully verified the entire block can be
+  // removed (it's < 30 lines and self-contained).
+  const oaiKey = (process.env.OPENAI_API_KEY || '').trim()
+  const oaiTail = oaiKey ? `...${oaiKey.slice(-6)}` : '(unset)'
+  const oaiLen = oaiKey.length
+  console.log(
+    `[startup-key-check] OPENAI_API_KEY loaded: tail=${oaiTail} len=${oaiLen} ` +
+      `(if this prints the same tail OpenAI is rejecting, the deployment secret ` +
+      `update never propagated to the runtime)`,
+  )
+
   // Operator opt-out for after they're done verifying.
   if (process.env.SKIP_STARTUP_TEST_EMAIL === '1') {
     console.log('[startup-test-email] skipped (SKIP_STARTUP_TEST_EMAIL=1)')
