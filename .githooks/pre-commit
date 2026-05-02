@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+#
+# Pre-commit secret scan.
+#
+# Refuses commits that introduce credentials matching the rules in
+# `.gitleaks.toml` (OpenAI sk-…, Deepgram, Anthropic, AWS, GCP, Stripe,
+# generic high-entropy strings, private keys, etc.).
+#
+# Installed automatically by the root `package.json` `prepare` script,
+# which runs `git config core.hooksPath .githooks` after every
+# `pnpm install` (including the post-merge install in
+# `scripts/post-merge.sh`).
+#
+# To bypass intentionally (e.g. you are committing a documentation snippet
+# that legitimately looks like a key and you've already added an allow-rule
+# for it in `.gitleaks.toml`):
+#
+#     git commit --no-verify
+#
+# CI still re-runs the same scan on every push / PR (see
+# `.github/workflows/secret-scan.yml`), so `--no-verify` only skips the
+# *local* check.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CONFIG="${REPO_ROOT}/.gitleaks.toml"
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  cat >&2 <<'MSG'
+[pre-commit] gitleaks is not installed locally — skipping the secret scan.
+[pre-commit] CI will still block leaks before they reach `main`, but you
+[pre-commit] should install it locally so the check fails fast at commit
+[pre-commit] time. Install instructions:
+[pre-commit]
+[pre-commit]   macOS:    brew install gitleaks
+[pre-commit]   Linux:    https://github.com/gitleaks/gitleaks/releases
+[pre-commit]   Windows:  scoop install gitleaks
+[pre-commit]             (or `winget install gitleaks.gitleaks`)
+[pre-commit]
+[pre-commit] See `.github/workflows/README.md` ("Secret scanning") for
+[pre-commit] details on the policy and how to allow-list a documented
+[pre-commit] false positive.
+MSG
+  exit 0
+fi
+
+# `protect --staged` only inspects the diff that is about to be committed,
+# which is fast and matches what CI's `detect` would flag for the same
+# changes. `--redact` keeps the matched secret out of the terminal output
+# (and out of any shell history / scrollback).
+if ! gitleaks protect \
+  --staged \
+  --config "${CONFIG}" \
+  --redact \
+  --no-banner; then
+  cat >&2 <<'MSG'
+
+[pre-commit] gitleaks found one or more potential secrets in the staged
+[pre-commit] changes (see the report above). The commit was blocked.
+[pre-commit]
+[pre-commit] Next steps:
+[pre-commit]   1. If this is a real key, REMOVE it from the file and put
+[pre-commit]      it in an environment variable / GitHub Actions secret
+[pre-commit]      instead. See `.github/workflows/README.md`.
+[pre-commit]   2. If this is a documented false positive (e.g. a
+[pre-commit]      placeholder in a README), add an allow-rule to
+[pre-commit]      `.gitleaks.toml` and re-stage.
+[pre-commit]   3. To bypass this check for a single commit (NOT
+[pre-commit]      recommended — CI will still block the push):
+[pre-commit]        git commit --no-verify
+MSG
+  exit 1
+fi

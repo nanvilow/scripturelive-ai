@@ -1,0 +1,107 @@
+title = "ScriptureLive AI — secret scanner config"
+
+# Inherit gitleaks' built-in rule set (OpenAI sk-…, Anthropic, Deepgram,
+# AWS, GCP, Stripe, GitHub PATs, generic high-entropy strings, private
+# keys, etc.). Custom additions and allow-rules layer on top.
+#
+# See the upstream rules:
+# https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
+[extend]
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Custom rules (in addition to the default ruleset above)
+# ---------------------------------------------------------------------------
+
+# Deepgram API keys are 40 hex chars. The default ruleset doesn't ship a
+# dedicated Deepgram detector, so add one — Deepgram is a credential this
+# repo actively bakes into the Windows .exe at release time, so we want a
+# named rule for it rather than relying on the generic high-entropy fallback.
+[[rules]]
+id = "deepgram-api-key"
+description = "Deepgram API key (40-char hex)"
+regex = '''(?i)(deepgram[_-]?(api[_-]?)?key|DG_API_KEY)['"\s:=]{1,5}['"]?([a-f0-9]{40})['"]?'''
+secretGroup = 3
+keywords = ["deepgram", "dg_api_key"]
+
+# ---------------------------------------------------------------------------
+# Global allowlist — known-safe occurrences
+# ---------------------------------------------------------------------------
+[allowlist]
+description = "Known-safe documentation, fixtures, and placeholders"
+
+# Exclude generated / vendored content the scanner doesn't need to look at.
+# These paths either contain no human-authored secrets or are large binary
+# blobs that would slow the scan with no real signal.
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)pnpm-lock\.yaml$''',
+  '''(^|/)dist/''',
+  '''(^|/)dist-electron/''',
+  '''(^|/)dist-electron-ui/''',
+  '''(^|/)\.next/''',
+  '''(^|/)\.turbo/''',
+  '''(^|/)\.cache/''',
+  '''(^|/)\.local/''',
+  '''(^|/)\.pythonlibs/''',
+  '''(^|/)attached_assets/''',
+  '''(^|/)screenshots/''',
+  '''(^|/)exports/''',
+  '''(^|/)downloads?/''',
+  '''(^|/)release/''',
+  '''(^|/)whisper-bundle/''',
+  '''\.lock$''',
+  '''\.tsbuildinfo$''',
+  '''\.(png|jpg|jpeg|gif|webp|ico|svg|pdf|zip|tar|gz|7z|exe|dll|dmg|wav|mp3|mp4|mov|woff2?|ttf|otf)$''',
+]
+
+# Substrings / patterns that look like secrets but aren't.
+# Keep this list narrow — every entry is a documented exception.
+#
+# NOTE on syntax: gitleaks 8.21 honors regex allowlists on the global
+# `[allowlist]` for ALL rules (including built-in ones inherited via
+# `extend.useDefault`). The per-rule `[[allowlists]]` + `targetRules`
+# syntax does NOT apply to extended rules in this version, so anything
+# that needs to allowlist a built-in rule's hit lives here as a content
+# regex instead. (Historical fingerprints live in `.gitleaksignore`.)
+regexes = [
+  # The redacted prefix used in `replit.md`'s post-mortem changelog when
+  # describing the v0.7.32 leak incident. The real key was rotated; only
+  # this 11-character prefix appears in the prose, which on its own is not
+  # a usable credential. The default OpenAI rule still tries to flag any
+  # token that looks like `sk-proj-…`, so allow this exact incident-note
+  # prefix.
+  '''sk-proj-Ydk[A-Za-z0-9_-]{0,8}''',
+
+  # `BAKED_REFERENCE_SECRET` in `reference-code.ts` is an intentionally-
+  # committed cross-install obfuscation token used to derive license
+  # reference codes deterministically across every v0.7.8+ desktop
+  # install. It is NOT a network credential — it doesn't grant access to
+  # any service. The token follows a stable `SL-REF-v<version>-<rand>`
+  # shape; any new committed token of that shape is by-construction the
+  # rotation marker the licensing code expects, not a leaked secret.
+  # (Without this rule, every commit that touches `reference-code.ts`
+  # would re-trip the generic-api-key detector at line 86.)
+  '''SL-REF-v\d+-[A-Za-z0-9]{20,80}''',
+
+  # GitHub Actions secret references — `${{ secrets.OPENAI_API_KEY }}` is
+  # a placeholder, not a credential.
+  '''\$\{\{\s*secrets\.[A-Z0-9_]+\s*\}\}''',
+
+  # Common placeholder strings used in docs / examples / error messages.
+  '''(?i)(your[_-]?(api[_-]?)?key[_-]?here|placeholder|example[_-]?key|xxxx+|<your[_-]?\w+>)''',
+]
+
+# ---------------------------------------------------------------------------
+# Per-rule path allowlisting note
+#
+# Earlier drafts of this file used `[[allowlists]]` with `targetRules` to
+# allowlist specific rules on specific paths (e.g. ignore `generic-api-key`
+# only on `replit.md`). That syntax does not apply to extended/inherited
+# rules in gitleaks 8.21 — it only works for rules defined inline. The
+# equivalent guard is now expressed as content `regexes` in the global
+# `[allowlist]` block above, scoped to the exact (rotated / placeholder)
+# values that legitimately appear in this repo's docs and source. That is
+# strictly tighter than a path-wide allowlist: a different secret pasted
+# into the same file would still trip the scan.
+# ---------------------------------------------------------------------------

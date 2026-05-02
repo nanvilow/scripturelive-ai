@@ -387,6 +387,72 @@ Full setup, key-rotation, and end-user verification instructions live in
 `artifacts/imported-app/DESKTOP_BUILD.md` →
 **End-to-end verification with `minisign`**.
 
+## Secret scanning (`secret-scan.yml`)
+
+A separate workflow, [`secret-scan.yml`](./secret-scan.yml), runs
+[gitleaks](https://github.com/gitleaks/gitleaks) on every push and pull
+request to block credential leaks before they reach `main`. It exists
+because v0.7.32 of the desktop app shipped with an OpenAI key
+accidentally pasted into `.replit`, which tripped GitHub's secret-scanning
+push protection and broke the entire signed-Windows release pipeline (see
+the post-mortem in `replit.md`). The same scanner runs locally on
+`git commit` and `git push` via the hooks in [`.githooks/`](../../.githooks)
+— those hooks are activated automatically by the root `package.json`
+`prepare` script the next time `pnpm install` runs (which happens
+post-merge for every contributor via `scripts/post-merge.sh`).
+
+### Configuration
+
+The ruleset is defined in [`.gitleaks.toml`](../../.gitleaks.toml) at the
+repo root. It extends gitleaks' default rule set (OpenAI `sk-…`,
+Anthropic, AWS, GCP, Stripe, GitHub PATs, generic high-entropy strings,
+private keys, etc.) and adds:
+
+- A dedicated **Deepgram** detector (40-char hex), since this repo bakes
+  a Deepgram key into the Windows `.exe` at release time.
+- An allow-rule for the redacted `sk-proj-Ydk…` prefix that appears in
+  `replit.md`'s post-mortem changelog. This is documentation, not a live
+  credential — the real key was rotated. The allow-rule is scoped to the
+  OpenAI rule on `replit.md` / `CHANGELOG.md` / `docs/*.md` only, so a
+  *different* class of secret pasted into the same file would still trip
+  the scan.
+
+### Where real secrets belong
+
+Never commit a literal credential. The supported homes are:
+
+- **Local development** → Replit secrets / environment variables (managed
+  through the workspace's environment-secrets tooling). They are injected
+  at runtime, never written to disk.
+- **CI builds** → GitHub Actions repo secrets, referenced as
+  `${{ secrets.NAME }}` in workflow YAML. The release workflow above
+  already uses `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, the mail / SMS
+  secrets, and the Windows / macOS code-signing material this way.
+- **Distributed `.exe`** → injected at build time from the GitHub Actions
+  secrets above by `scripts/inject-keys.mjs`. The literals never appear
+  in source.
+
+### Bypassing a false positive
+
+If gitleaks flags something it shouldn't (a doc snippet, a fixture, a
+test placeholder):
+
+1. **Preferred** — add a narrow allow-rule to `.gitleaks.toml`. Scope it
+   by `targetRules` and by `paths` so the exception is as small as
+   possible. Re-stage the change; the commit will then succeed.
+2. **One-off bypass** — `git commit --no-verify` skips the local
+   pre-commit hook (and `git push --no-verify` skips the pre-push hook).
+   CI will still re-run the same scan on the resulting push, so this
+   only buys you a faster local commit; it does not let a real leak
+   through.
+
+If a real secret has already been committed locally (i.e. the pre-commit
+hook caught it but only after `git add`), treat the credential as
+compromised the moment it touched a working tree, **rotate it
+immediately**, and remove it from history before pushing (`git
+filter-repo` or an interactive rebase + `--force-with-lease`). See the
+v0.7.32 post-mortem in `replit.md` for the recovery playbook.
+
 ## Caveats
 
 - The NDI SDK download is fetched from <https://downloads.ndi.tv> at build

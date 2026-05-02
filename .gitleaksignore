@@ -1,0 +1,51 @@
+# Accepted historical findings — DO NOT use this file for new leaks.
+#
+# Each line is a gitleaks fingerprint of the form
+#   <commit-sha>:<path>:<rule-id>:<line-number>
+# that the scanner should treat as already-reviewed.
+#
+# This file exists for one reason only: gitleaks scans the *full git
+# history* on every CI run, so a credential that was leaked in the past
+# (even if it has since been rotated, removed from the working tree, and
+# .gitignored) will keep tripping the scan forever unless the commit is
+# rewritten out of `main`. Rewriting `main`'s history is operator-owned
+# and politically expensive (force-push, every fork must reclone, GitHub
+# Actions cache invalidation, etc.) — see the v0.7.32 post-mortem in
+# `replit.md`. Until that cleanup happens, listing the exact historical
+# fingerprints here keeps the CI gate green for *new* commits while
+# leaving the rules themselves armed.
+#
+# Adding a new line here REQUIRES a comment explaining why. If a new
+# credential ends up in a commit, the answer is almost always "rotate
+# the key, remove the value from the file, and re-commit" — NOT "add a
+# fingerprint here". This file should be append-only for genuine
+# historical leaks, not a way to silence inconvenient findings.
+
+# v0.7.32 post-mortem — `BAKED_SMS_API_KEY` value committed inline in
+# `artifacts/imported-app/src/lib/baked-credentials.ts` before that file
+# was moved to `.gitignore`. The Arkesel SMS key has been rotated and
+# the file is now generated at build time by
+# `artifacts/imported-app/scripts/inject-keys.mjs` from a GitHub Actions
+# secret instead of being committed. See `replit.md` for the full
+# incident write-up. Cannot be removed from history without a force-push
+# of `main`.
+6319a9a31b636fa43091f221f9203b52764dbe71:artifacts/imported-app/src/lib/baked-credentials.ts:generic-api-key:18
+
+# v0.6.x mNotify migration post-mortem prose — `replit.md` historically
+# contained a literal `BAKED_SMS_API_KEY=…` value (mNotify rotation
+# marker, prefix `5ZJmQCAJ05…`, full value intentionally NOT quoted
+# here so this comment file itself doesn't trip the scan) inside the
+# T306 changelog narrative. The value has been rotated, no longer
+# appears in the current working tree (only in these two historical
+# commits), and the file is no longer documented this way. Cannot be
+# removed from history without a force-push of `main`.
+dda88d7cce081d6d85e4d43f66f9b2084616ced5:replit.md:generic-api-key:19
+1440cf6cb3919e8cc45d8e2ac187b2c5db649046:replit.md:generic-api-key:19
+
+# Self-referential — when this file was first added in commit 8dd6f1eb,
+# the comment block above (now redacted to the `5ZJmQCAJ05…` truncated
+# form) quoted the full mNotify rotation marker verbatim while
+# explaining what it was. The full value is no longer in the working
+# tree but persists in that one historical commit. Same rotation
+# rationale as the entries above; same force-push constraint.
+8dd6f1ebf7f83d8fac2f94b0970bbbea99e584f8:.gitleaksignore:generic-api-key:35

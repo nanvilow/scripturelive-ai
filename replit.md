@@ -1,5 +1,29 @@
 # Recent Changes
 
+## v0.7.34 — Pre-commit / CI secret scanning (May 2, 2026)
+
+**The product change**: a `gitleaks` secret scanner now runs on every `git commit` (local pre-commit hook), every `git push` (local pre-push hook), and every push / PR in GitHub Actions (`.github/workflows/secret-scan.yml`). All three layers share the same `.gitleaks.toml` ruleset at the repo root, so a contributor cannot leak an OpenAI / Deepgram / Anthropic / AWS / GCP / Stripe / GitHub-PAT / generic-API-key / private-key into a commit without all three layers screaming first. Direct response to the v0.7.32 incident where an OpenAI key in `.replit:47-50` (commit `aa514257`) tripped GitHub's push protection and broke the entire signed-Windows release pipeline.
+
+**Three defence layers** (any one alone is sufficient; all three together is defence-in-depth):
+1. **Pre-commit hook** (`.githooks/pre-commit`) runs `gitleaks protect --staged` against the staged diff. Blocks the commit before it even enters local history. Bypassable with `git commit --no-verify` for documented false positives.
+2. **Pre-push hook** (`.githooks/pre-push`) runs a full `gitleaks detect` against the working tree before the push leaves the laptop — catches anything `--no-verify` skipped at the per-commit level.
+3. **CI workflow** (`.github/workflows/secret-scan.yml`) installs gitleaks 8.21.2 from upstream releases (avoids the paid `gitleaks/gitleaks-action@v2` license check) and runs `gitleaks detect` on the full repo history for every push and PR. Authoritative gate.
+
+**Auto-installed for every contributor**: the root `package.json` `prepare` script runs `git config core.hooksPath .githooks` after every `pnpm install`. Since `scripts/post-merge.sh` already runs `pnpm install --no-frozen-lockfile` after every merge, hooks activate automatically the first time a contributor pulls — no manual setup, no checked-in symlinks. The hook scripts gracefully no-op (with install instructions) if `gitleaks` isn't on the contributor's PATH.
+
+**Configuration** (`.gitleaks.toml`):
+- `[extend].useDefault = true` inherits the upstream ruleset.
+- Adds a dedicated **Deepgram** detector (40-char hex) — the upstream rules don't cover Deepgram and this repo bakes a Deepgram key into the `.exe` at release time.
+- Allowlist `regexes` cover (a) the redacted `sk-proj-Ydk…` post-mortem prefix in `replit.md`, (b) the `SL-REF-v<n>-<rand>` shape of the intentional `BAKED_REFERENCE_SECRET` cross-install obfuscation token in `reference-code.ts`, (c) `${{ secrets.NAME }}` GitHub Actions placeholders, (d) generic placeholder strings (`your-api-key-here`, `xxxx`, `<your-token>`).
+- Allowlist `paths` skip `node_modules/`, `pnpm-lock.yaml`, `dist*/`, `.next/`, `.cache/`, `.local/`, large media binaries, and the whisper bundle — same skip set as `.replitignore`.
+- Discovery: the `[[allowlists]]` + `targetRules` syntax (per-rule path allowlisting) does NOT apply to extended rules in gitleaks 8.21 — only to rules defined inline in the same file. Switched to content-regex allowlists in the global `[allowlist]` block instead, which is strictly tighter (a different secret class pasted into the same file would still trip).
+
+**`.gitleaksignore` for accepted history**: gitleaks scans the *full git history* on every CI run, so credentials that were leaked in past commits (now rotated, removed, and `.gitignore`d) keep tripping forever unless the commits are rewritten out of `main`. Three historical fingerprints are explicitly listed there with rotation rationale: the v0.7.32 `BAKED_SMS_API_KEY` Arkesel commit, and two `replit.md` post-mortem prose commits that quoted the rotated mNotify (`5ZJmQCAJ05…`) key inside the T306 changelog. The file is documented as append-only and only for genuine accepted historical findings.
+
+**Files**: `.gitleaks.toml` (74 lines), `.gitleaksignore` (45 lines, append-only), `.githooks/pre-commit`, `.githooks/pre-push`, `.github/workflows/secret-scan.yml`, `prepare` script in `package.json`, full "Secret scanning" section appended to `.github/workflows/README.md` covering policy, where real secrets belong (Replit env vars / GH Actions secrets / `inject-keys.mjs` build-time bake), and how to bypass a documented false positive.
+
+**Verified**: full-history scan (`gitleaks detect` over 825 commits) reports `no leaks found` with the new config. Positive-control test confirms a freshly-pasted `sk-proj-…`-shaped key would still be caught.
+
 ## v0.7.33 — Repeatable Linux cross-build of the Windows .exe (May 2, 2026)
 
 **The product change**: `scripts/linux-build-windows-exe.sh` is now a one-shot, idempotent emergency builder. After v0.7.32 had to be hand-cranked from Linux with two undocumented hacks (a fake `~/.local/bin/wine` shell stub + a manual `nsis`→`portable` flip in `electron-builder.yml`), this script bakes the working flow into git so the next "GitHub push is blocked but I need an .exe NOW" emergency takes minutes instead of hours. See `docs/EMERGENCY_LINUX_BUILD.md` for the full story.
