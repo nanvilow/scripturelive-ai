@@ -1,5 +1,32 @@
 # Recent Changes
 
+## v0.7.35 — Deep dep trim to fit Cloud Run cr-2-4 build OOM (May 2, 2026)
+
+**Problem**: Even after v0.7.34 disconnected the marketing site, the next deploy still failed. Build logs (build id `5a4b3bba-b93e-4ad2-bb4a-a02c088cc691`, runner = `cr-2-4` = 4 GB) showed only 35 lines total, ending with `Creating an optimized production build...` followed immediately by `Exit status 1` — no stack trace, no error message. That's the textbook fingerprint of a kernel OOM SIGKILL inside the cgroup: the kernel terminates webpack mid-compile and pnpm reports the exit. All four memory levers (`NODE_OPTIONS=2048`, `cpus:1`, `webpackMemoryOptimizations`, `DISABLE_MINIFY=1`) plus Task #92's earlier 120 MB dep trim were not enough.
+
+**Fix — surgical removal of confirmed-unused deps**: ran `rg` across `src/`, `app/`, `electron/`, root configs, and middleware/instrumentation to find every dep with **zero** importers. Removed 17 deps from `artifacts/imported-app/package.json`:
+
+- `next-auth` (huge — pulls jose, oauth4webapi, openid-client, preact, preact-render-to-string)
+- `next-intl` (huge i18n runtime, ICU message AST, plural-rule data)
+- `@tanstack/react-query`, `@tanstack/react-table`
+- `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities`
+- `@hookform/resolvers`, `react-hook-form`
+- `@reactuses/core`, `cmdk`, `date-fns`, `embla-carousel-react`, `input-otp`, `react-day-picker`, `vaul`, `yjs`
+
+**Architect-flagged save**: an initial pass also removed `ws`, but the architect code review caught that `server-transcribe-stream.mjs` (the Deepgram WebSocket proxy attached to the standalone Next prod server in `server.mjs`) imports `WebSocketServer, WebSocket` from `"ws"`. Removing it would have crashed prod at startup. `ws` and `@types/ws` were re-added before this entry was written.
+
+**Also deleted 6 dead shadcn UI wrappers** (each had zero importers anywhere in the codebase): `src/components/ui/{carousel,drawer,calendar,input-otp,command,form}.tsx`. These wrappers were the *only* importers of the corresponding deps above — removing both ends together is what makes the trim safe.
+
+**Verification**: `pnpm --filter @workspace/imported-app exec tsc --noEmit` passed cleanly with zero errors after the removal. The Turbopack panic on `globals.css` in dev mode is unchanged (pre-existing) and irrelevant for prod, which uses `next build --webpack`.
+
+**Why this should finally fit**: webpack's working set during compile is dominated by the module graph it has to trace. `next-auth` + `next-intl` alone account for hundreds of resolved modules (their internal dependency closures are vast). Combined with the 5 unused shadcn wrappers (each pulling its own runtime + types), removing them is the difference between webpack's heap fitting in 3.5 GB and overflowing the 4 GB cgroup. If this *still* SIGKILLs, the only remaining lever is bumping the build runner to **cr-4-8 (8 GB)** in the Replit Deployments pane (UI-only setting, agent cannot do this).
+
+**Bumped version**: `0.7.32 → 0.7.35`.
+
+**User next step**: click Republish.
+
+---
+
 ## v0.7.34 — Marketing site disconnected from this project (May 2, 2026)
 
 **Decision**: After many failed Cloud Run deploys (cr-2-4 build VM = 4 GB,
