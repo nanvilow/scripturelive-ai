@@ -73,6 +73,32 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: false,
+  // v0.7.33 — Cloud Run autoscale build OOM fix. The deploy build
+  // machine has finite RAM and the Next 16 webpack build was
+  // SIGKILL'd by the kernel even at NODE_OPTIONS=--max-old-space-size=8192
+  // because the build VM itself caps below that. Two settings work
+  // together to keep webpack inside a smaller working set:
+  //
+  //   - webpackMemoryOptimizations: opts into Next's tree-of-modules
+  //     reuse + early generator GC, trading ~10-20% longer builds for
+  //     a noticeably smaller resident set during the optimizer pass.
+  //   - cpus: 1 forces a single build worker so we don't multiply the
+  //     working set by the host's CPU count. Cloud Run build runners
+  //     usually report 4-8 logical cores but only have ~4 GB of usable
+  //     RAM after Linux + the Next runtime; one worker still finishes
+  //     in under 3 minutes for an app this size.
+  //
+  // Both knobs are dev-mode no-ops, so local `next dev` and the
+  // Electron desktop build keep their original parallelism.
+  experimental: {
+    webpackMemoryOptimizations: true,
+    cpus: 1,
+  },
+  // Disable production source maps. They were already off by default
+  // (Next 16 omits them unless you opt in) — making it explicit so a
+  // future toggle can't silently bring back the OOM by serialising a
+  // few hundred MB of source maps to disk.
+  productionBrowserSourceMaps: false,
   // v0.5.53 — Cloud keys are now baked into src/lib/keys.baked.ts via
   // scripts/inject-keys.mjs (runs as predev/prebuild and inside
   // BUILD.bat). The renderer imports the literal constants directly,
