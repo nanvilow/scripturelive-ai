@@ -17,6 +17,36 @@ Format rules (so the workflow's extractor keeps working):
 - Write for the operator, not the engineer. "Verses now appear within
   ~250ms" beats "reduced CHUNK_MS from 4500 to 2500".
 
+## v0.7.23 — 2026-05-02
+
+### Added
+
+- **AI Verse Search by voice.** Operators can now describe a verse in
+  their own words and ScriptureLive will find it using AI. Speak any
+  of these forms (with or without the "Media" wake word):
+  - *"Find the verse about loving your enemies"* → Matthew 5:44
+  - *"What's the scripture that says love is patient"* → 1 Corinthians 13:4
+  - *"Where does the bible say be still and know"* → Psalm 46:10
+  - *"Show me the verse about a city on a hill"* → Matthew 5:14
+  The match is found via the same OpenAI embeddings engine that
+  already powers the live AI scripture detection in the sermon
+  panel — so paraphrased and out-of-order quotes are recognised.
+  The found verse is loaded in your currently-selected translation
+  and pushed to live, exactly as if you had said the canonical
+  reference. Falls back to a clear toast message when no good match
+  is found, when there's no internet, or when the OpenAI key is
+  missing — never a silent failure.
+
+### Notes
+
+- AI Verse Search currently searches the popular-verses corpus
+  (~480 of the most-quoted verses across the whole Bible). Verses
+  outside that corpus will not be matched in this release; we'll
+  expand coverage in v0.8.0.
+- AI features need an `OPENAI_API_KEY` configured in your
+  environment. If you already have AI Scripture Detection working
+  in the live sermon panel, AI Verse Search will work too.
+
 ## v0.7.22 — 2026-05-02
 
 ### Fixed

@@ -663,6 +663,130 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         }
         break
       }
+      // ── v0.7.23 — AI Verse Search ──────────────────────────────────
+      // Operator described a verse instead of citing it ("find the
+      // verse about loving your enemies"). We hand the quote to the
+      // existing semantic matcher endpoint (OpenAI embeddings against
+      // POPULAR_VERSES_KJV), accept the top match if its confidence
+      // is HIGH or MEDIUM, re-fetch in the operator's currently-
+      // selected translation, and push it as a live slide. Mirrors
+      // the go_to_reference dispatch shape so the live behaviour is
+      // identical from the operator's point of view.
+      //
+      // Failure modes are spoken to the operator via toast so a quiet
+      // failure (no internet / no API key / no good match) doesn't
+      // leave them wondering what happened.
+      case 'find_by_quote': {
+        const quote = (cmd.quoteText || '').trim()
+        if (!quote) {
+          toast.error('No quote to search', { duration: 1500, position: 'bottom-right' })
+          break
+        }
+        toast.loading(`AI: searching for "${quote.length > 40 ? quote.slice(0, 38) + '…' : quote}"…`, {
+          id: 'ai-verse-search',
+          duration: 4000,
+          position: 'bottom-right',
+        })
+        let match: {
+          reference: string
+          book: string
+          chapter: number
+          verseStart: number
+          verseEnd?: number
+          confidence: 'high' | 'medium' | 'low'
+        } | null = null
+        try {
+          const resp = await fetch('/api/scripture/semantic-match', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: quote, topK: 1 }),
+          })
+          if (resp.ok) {
+            const j = (await resp.json()) as {
+              ok?: boolean
+              matches?: Array<{
+                reference: string
+                book: string
+                chapter: number
+                verseStart: number
+                verseEnd?: number
+                confidence: 'high' | 'medium' | 'low'
+              }>
+              status?: { hasApiKey?: boolean }
+            }
+            if (j.ok && j.matches && j.matches.length > 0) {
+              match = j.matches[0]!
+            } else if (j.status && j.status.hasApiKey === false) {
+              toast.error('AI Verse Search needs an OpenAI key (Settings → AI)', {
+                id: 'ai-verse-search',
+                duration: 4000,
+                position: 'bottom-right',
+              })
+              break
+            }
+          }
+        } catch {
+          /* network error — fall through to "no match" toast */
+        }
+        if (!match) {
+          toast.error(`No match for "${quote.length > 32 ? quote.slice(0, 30) + '…' : quote}"`, {
+            id: 'ai-verse-search',
+            duration: 2500,
+            position: 'bottom-right',
+          })
+          break
+        }
+        const refKey = `${match.book} ${match.chapter}:${match.verseStart}${
+          match.verseEnd && match.verseEnd !== match.verseStart ? `-${match.verseEnd}` : ''
+        }`
+        const tx = s.selectedTranslation
+        let textOut: string | null = null
+        const vEnd = match.verseEnd ?? match.verseStart
+        if (vEnd > match.verseStart) {
+          const rr = lookupRange(match.book, match.chapter, match.verseStart, vEnd, tx)
+          if (rr) textOut = rr.text
+        } else {
+          const v = lookupVerse(match.book, match.chapter, match.verseStart, tx)
+          if (v) textOut = v
+        }
+        if (!textOut) {
+          try {
+            const v = await fetchBibleVerse(refKey, tx)
+            if (v) textOut = v.text
+          } catch {
+            /* ignore — handled below */
+          }
+        }
+        if (!textOut) {
+          toast.error(`Found ${refKey} but couldn't load text`, {
+            id: 'ai-verse-search',
+            duration: 2500,
+            position: 'bottom-right',
+          })
+          break
+        }
+        const slide = {
+          id: `slide-${Date.now()}`,
+          type: 'verse' as const,
+          title: refKey,
+          subtitle: tx,
+          content: textOut.split('\n').filter(Boolean),
+          background: s.settings.congregationScreenTheme,
+        }
+        const cur = useAppStore.getState().slides
+        const next = cur.length > 0 ? [...cur, slide] : [slide]
+        const idx = next.length - 1
+        useAppStore.getState().setSlides(next)
+        useAppStore.getState().setPreviewSlideIndex(idx)
+        useAppStore.getState().setLiveSlideIndex(idx)
+        useAppStore.getState().setIsLive(true)
+        useAppStore.getState().setLiveActiveVerseIndex(0)
+        toast.success(
+          `${refKey} (${match.confidence === 'high' ? 'AI: high match' : 'AI: best match'})`,
+          { id: 'ai-verse-search', duration: 2200, position: 'bottom-right' },
+        )
+        break
+      }
       case 'scroll_up': {
         s.setLiveActiveVerseIndex(Math.max(0, s.liveActiveVerseIndex - 1))
         break

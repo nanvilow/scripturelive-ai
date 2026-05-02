@@ -265,3 +265,128 @@ describe('detectCommandChain — multi-command chaining', () => {
     expect(detectCommandChain('okay, thank you, very good')).toEqual([])
   })
 })
+
+// ── v0.7.23 — AI Verse Search detector ────────────────────────────────
+describe('detectCommand — find_by_quote (AI Verse Search)', () => {
+  it('"find the verse about loving your enemies" → find_by_quote', () => {
+    const c = detectCommand('find the verse about loving your enemies')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('loving your enemies')
+    expect(c?.confidence).toBeGreaterThanOrEqual(80)
+  })
+
+  it('"find that scripture about being born again" works', () => {
+    const c = detectCommand('find that scripture about being born again')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('being born again')
+  })
+
+  it('"find me the verse about faith" works', () => {
+    const c = detectCommand('find me the verse about faith')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('faith')
+  })
+
+  it('"what is the verse that says love is patient" works', () => {
+    const c = detectCommand('what is the verse that says love is patient')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('love is patient')
+  })
+
+  it("\"what's the scripture about the city on a hill\" works", () => {
+    const c = detectCommand("what's the scripture about the city on a hill")
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('the city on a hill')
+  })
+
+  it('"the verse about loving your neighbor" works', () => {
+    const c = detectCommand('the verse about loving your neighbor')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('loving your neighbor')
+  })
+
+  it('"where does the bible say be still and know" works', () => {
+    const c = detectCommand('where does the bible say be still and know')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('be still and know')
+  })
+
+  it('"which verse talks about love" works', () => {
+    const c = detectCommand('which verse talks about love')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('love')
+  })
+
+  it('"show me the verse about prayer" works', () => {
+    const c = detectCommand('show me the verse about prayer')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('prayer')
+  })
+
+  it('with wake word "Media, the verse about grace" works', () => {
+    const c = detectCommand('Media, the verse about grace')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('grace')
+    expect(c?.wakeWord).toBe(true)
+  })
+
+  it('with wake word, bare "verse about love" form works', () => {
+    const c = detectCommand('Media, verse about love')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('love')
+    expect(c?.wakeWord).toBe(true)
+  })
+
+  it('without wake word, bare "verse about love" does NOT match', () => {
+    const c = detectCommand('verse about love')
+    expect(c?.kind).not.toBe('find_by_quote')
+  })
+
+  it('strips trailing "please" from quote', () => {
+    const c = detectCommand('find the verse about love please')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('love')
+  })
+
+  it('strips trailing punctuation', () => {
+    const c = detectCommand('find the verse about hope.')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('hope')
+  })
+
+  it('rejects too-short quote', () => {
+    const c = detectCommand('find the verse about it')
+    expect(c?.kind).not.toBe('find_by_quote')
+  })
+
+  it('does NOT misfire on "find john 3:16"', () => {
+    // Operator said an explicit reference — should NOT be quote search.
+    // (It also won't match find_by_quote because there's no "verse"/"scripture" keyword.)
+    const c = detectCommand('find john 3 16')
+    expect(c?.kind).not.toBe('find_by_quote')
+  })
+
+  it('does NOT misfire on plain "next verse"', () => {
+    const c = detectCommand('next verse')
+    expect(c?.kind).toBe('next_verse')
+  })
+
+  it('does NOT misfire on "show verse 16"', () => {
+    // Existing show_verse_n behaviour must still win.
+    const c = detectCommand('show verse 16')
+    expect(c?.kind).toBe('show_verse_n')
+    expect(c?.verseNumber).toBe(16)
+  })
+
+  it('caps a runaway long quote at 240 chars', () => {
+    const long = 'love '.repeat(80) // 400 chars
+    const c = detectCommand(`find the verse about ${long}`)
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText?.length).toBeLessThanOrEqual(240)
+  })
+
+  it('label preview is reasonable', () => {
+    const c = detectCommand('find the verse about loving your enemies')
+    expect(c?.label).toMatch(/^Find: /)
+  })
+})
