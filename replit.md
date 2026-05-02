@@ -1,5 +1,26 @@
 # Recent Changes
 
+## v0.7.45 — Hotfix #2: gate the WHOLE Cloud-Run config block from the Windows build (May 2, 2026)
+
+**v0.7.44 didn't fix it.** The narrow gate (just `experimental`) shipped, the new release run came up, and the Windows installer crashed at the **identical** spot, 9 seconds into `next build --webpack`:
+
+```
+▲ Next.js 16.2.4 (webpack)
+  Creating an optimized production build ...
+glob error [Error: EPERM: operation not permitted, scandir
+  'C:\Users\runneradmin\Application Data']
+Failed to compile.
+```
+
+The `recharts`/`optimizePackageImports` theory was wrong — the experimental block was demonstrably gated off (Next no longer printed the "Experiments" banner), and the EPERM still reproduced. So the trigger is one of the OTHER post-v0.7.32 additions to `next.config.ts`: `outputFileTracingExcludes`, `productionBrowserSourceMaps`, or the `DISABLE_MINIFY` `webpack` callback. Rather than bisect each one across 15-minute Windows CI cycles, v0.7.45 takes the conservative path: rewrite `next.config.ts` so the WHOLE Cloud-Run-only stack is gated behind `!enableStandalone`. The Electron Windows build now runs the literal v0.7.32-shaped config — the last release we have evidence of building cleanly on Windows.
+
+**What changed in `artifacts/imported-app/next.config.ts`:**
+- Base config (applied to both Cloud Run and Electron paths): `output` (conditional), `outputFileTracingRoot`, `serverExternalPackages`, `turbopack`, `allowedDevOrigins`, `typescript`, `reactStrictMode`. Mirrors v0.7.32 exactly except `serverExternalPackages` is kept on the Electron path because `instrumentation.ts` imports nodemailer/better-sqlite3/@prisma/client at server startup and webpack must externalise them.
+- Cloud-Run-only block (gated behind `!enableStandalone`): `outputFileTracingExcludes`, `experimental.{webpackMemoryOptimizations, cpus, optimizePackageImports}`, `productionBrowserSourceMaps: false`, the `DISABLE_MINIFY` webpack callback. None of these influence the Electron build at all.
+- `recharts` stays out of `optimizePackageImports` permanently — it's not a dep of this app.
+
+**Surgical scope:** still just one file. `package.json` version bump to 0.7.45. No source code, no dep changes, no Cloud Run regression risk.
+
 ## v0.7.44 — Hotfix: unblock Windows release CI (May 2, 2026)
 
 **Problem:** v0.7.43 shipped to GitHub successfully (main + tag), but the GHA Release workflow failed within 8 seconds of starting `next build --webpack` on the Windows runner:
