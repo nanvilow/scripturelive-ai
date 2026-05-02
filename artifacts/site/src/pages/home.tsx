@@ -1,6 +1,7 @@
 import { SEO } from "@/components/seo";
 import { ArrowRight, Download, Monitor, Mic, RefreshCw, Zap, CheckCircle2, ShieldCheck, Cpu, HardDrive, Wifi, Volume2, Globe, MessagesSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DownloadButton } from "@/components/download-button";
 
 // Import assets from attached_assets using the alias defined in vite.config.ts
 import logoSvg from "@assets/scripturelive/logo.svg";
@@ -27,11 +28,10 @@ export default function Home() {
             <Button asChild variant="ghost" className="hidden sm:inline-flex text-muted-foreground hover:text-foreground">
               <a href="https://wa.me/233246798526" target="_blank" rel="noopener noreferrer">Contact Support</a>
             </Button>
-            <Button asChild className="bg-primary text-primary-foreground hover:bg-primary/90 font-semibold shadow-[0_0_20px_-5px_oklch(var(--primary))]">
-              <a href="https://github.com/nanvilow/scripturelive-ai/releases/latest" target="_blank" rel="noopener noreferrer">
-                Download Trial
-              </a>
-            </Button>
+            <DownloadButton
+              className="bg-primary text-primary-foreground hover:bg-primary/90 font-semibold shadow-[0_0_20px_-5px_oklch(var(--primary))]"
+              label="Download Trial"
+            />
           </div>
         </div>
       </nav>
@@ -53,12 +53,12 @@ export default function Home() {
               ScriptureLive AI is the Sunday-morning operator console built for Ghanaian churches who livestream — it hears the preacher, finds the verse, and puts it on the screen before the congregation even thinks to look it up.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
-              <Button asChild size="lg" className="h-14 px-8 text-lg bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_30px_-5px_oklch(var(--primary))] w-full sm:w-auto">
-                <a href="https://github.com/nanvilow/scripturelive-ai/releases/latest" target="_blank" rel="noopener noreferrer">
-                  <Download className="mr-2 h-5 w-5" />
-                  Download for Windows
-                </a>
-              </Button>
+              <DownloadButton
+                size="lg"
+                showIcon
+                className="h-14 px-8 text-lg bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_30px_-5px_oklch(var(--primary))] w-full sm:w-auto"
+                label="Download for Windows"
+              />
               <div className="flex flex-col items-center sm:items-start text-sm text-muted-foreground">
                 <span className="font-medium text-foreground">Free 7-day trial</span>
                 <span>~570 MB • v0.7.32 • Code-signed</span>
@@ -278,12 +278,12 @@ export default function Home() {
               Download the free 7-day trial. No credit card required. Install it, run it, and see the difference it makes for your media team.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
-              <Button asChild size="lg" className="h-14 px-8 text-lg bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_30px_-5px_oklch(var(--primary))] w-full sm:w-auto">
-                <a href="https://github.com/nanvilow/scripturelive-ai/releases/latest" target="_blank" rel="noopener noreferrer">
-                  <Download className="mr-2 h-5 w-5" />
-                  Download Free Trial
-                </a>
-              </Button>
+              <DownloadButton
+                size="lg"
+                showIcon
+                className="h-14 px-8 text-lg bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_30px_-5px_oklch(var(--primary))] w-full sm:w-auto"
+                label="Download Free Trial"
+              />
               <Button asChild size="lg" variant="outline" className="h-14 px-8 text-lg w-full sm:w-auto border-border hover:bg-muted">
                 <a href="https://wa.me/233246798526" target="_blank" rel="noopener noreferrer">
                   WhatsApp Support
