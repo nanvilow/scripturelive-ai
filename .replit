@@ -14,27 +14,6 @@ args = ["pnpm", "store", "prune"]
 env = { "CI" = "true" }
 
 [workflows]
-runButton = "Project"
-
-[[workflows.workflow]]
-name = "Project"
-mode = "parallel"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Win Build"
-
-[[workflows.workflow]]
-name = "Win Build"
-author = "agent"
-
-[workflows.workflow.metadata]
-outputType = "console"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "bash -c 'cd /home/runner/workspace/artifacts/imported-app && echo \"=== build start: $(date) ===\" && /home/runner/workspace/node_modules/.bin/electron-builder --config electron-builder.yml --win --publish never; echo \"=== EXIT_CODE=$? at $(date) ===\"'"
 
 [agent]
 stack = "PNPM_WORKSPACE"

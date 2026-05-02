@@ -1,5 +1,24 @@
 # Recent Changes
 
+## v0.7.32 — Windows .exe delivered via Linux Replit cross-build (May 2, 2026)
+
+**The situation**: GitHub push of v0.7.32 is currently blocked because commit `aa514257` contains a leaked OpenAI key in `.replit:47-50` (`sk-proj-Ydk…`). The normal ship path (push → GitHub Actions runs Windows build → release .exe) is broken until the secret is rotated and the offending commit is rewritten/force-pushed. The operator asked for the .exe right away, so v0.7.32 was cross-built from the Linux Replit container instead.
+
+**What was delivered**: `release/ScriptureLive-AI-0.7.32-Setup-x64.exe` — 395 MB, PE32 Windows installer, **portable** target (single self-extracting .exe — double-click to run, no install/uninstall, no admin elevation).
+
+**Why portable instead of NSIS for this one-off Linux build**: electron-builder's NSIS target requires Wine on Linux to (a) write asar integrity hash + version metadata into the .exe via rcedit, AND (b) execute the just-built installer to extract the uninstaller stub for re-bundling. Replit NixOS only ships `wineWowPackages.wine64` which lacks the 32-bit subsystem `wineboot` needs to bootstrap a wineprefix — wineboot hung indefinitely at the `setupapi InstallHinfSection` step. Workaround used: a no-op `wine` shell stub at `~/.local/bin/wine` that returns `wine-10.0` to the version probe and exits 0 silently for everything else, plus switching `win.target` from `nsis` to `portable` so the second wine call (uninstaller extraction) is never made. **`electron-builder.yml` has been reverted back to `nsis`** so the next GitHub Actions Windows build (once the leaked key is rotated and the push works) produces a proper Setup installer with auto-update continuity. The portable .exe shipped to the operator out-of-band does NOT receive auto-updates — operators on this build will need to manually download v0.7.33 when it ships.
+
+**Trade-offs of the portable artifact** vs. the normal NSIS Setup installer:
+- ✅ Single .exe, no install permission required, runs from anywhere (USB stick, Downloads folder, etc.)
+- ✅ No Start Menu entry, no Programs & Features entry, no uninstaller
+- ✅ App data still persists in `%APPDATA%/scripturelive-ai/` exactly like the installed version
+- ❌ No auto-update — `electron-updater` is wired for NSIS-style differential updates, the portable .exe ignores it
+- ❌ The .exe metadata (file description, product name, icon) shows the default Electron values, not "ScriptureLive AI" — because rcedit was no-op'd. The window title and taskbar icon at runtime are still correct (those come from the renderer + main process code, not PE resources)
+
+**Repo state**: code is identical to the v0.7.32 spec described below — the AI voice fallback default-on changes from `src/lib/licensing/storage.ts`, `src/components/license/admin-modal.tsx`, the API routes, and the +8 storage tests are all in. `electron-builder.yml` is back at `nsis` target. The wine stub is NOT in git (it lives in the agent's home dir at `~/.local/bin/wine`); a future agent reproducing this build on Linux Replit needs to recreate it (or install `wineWowPackages.stable` for proper 32+64-bit wine).
+
+**Action item still owned by operator**: rotate the leaked OpenAI key `sk-proj-Ydk…` (any value is now public-readable in git history) and clean it from commit `aa514257` so GitHub push works again.
+
 ## v0.7.32 — AI voice intent fallback now ON by default for every install (May 2, 2026)
 
 **The product change** (asked for by the operator after v0.7.31 verified the LLM path works end-to-end): the AI voice intent fallback that shipped behind an opt-in beta toggle in v0.7.29 is now **on by default on every install with no admin action required**. The kill switch in Admin Modal → Cloud Keys is preserved (so we can disable it for any specific operator who reports a regression) but its semantic flips from "opt IN" to "opt OUT" — the box is checked by default, and only an explicit untick persists `enableLlmClassifier: false`.

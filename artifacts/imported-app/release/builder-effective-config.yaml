@@ -51,7 +51,7 @@ extraResources:
 afterSign: build-resources/notarize.js
 win:
   target:
-    - target: nsis
+    - target: portable
       arch:
         - x64
   icon: build-resources/icon.ico
