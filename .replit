@@ -54,3 +54,23 @@ channel = "stable-25_05"
 [userenv.development]
 
 [userenv.production]
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
+
+[[ports]]
+localPort = 8082
+externalPort = 3001
+
+[[ports]]
+localPort = 21238
+externalPort = 80
+
+[[ports]]
+localPort = 25650
+externalPort = 3000

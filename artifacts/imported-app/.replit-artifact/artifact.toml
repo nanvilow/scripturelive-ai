@@ -26,27 +26,34 @@ kind = "web"
   NODE_ENV = "production"
   # Cloud Run autoscale build runner is `cr-2-4` (2 vCPU, 4 GB RAM).
   # See artifacts/imported-app/DEPLOY.md for the full breakdown of how
-  # the four memory levers (dep prune, marketing-prebuild skip, V8
-  # heap cap, webpack experimentals) keep the Next 16 webpack build
-  # inside the 4 GB cgroup. The user-side escape hatch when this app
-  # outgrows cr-2-4 is bumping the build resources to cr-4-8 in the
-  # Replit deployment pane.
+  # the memory levers (dep prune, marketing-prebuild skip, V8 heap cap,
+  # webpack experimentals, terser disable) keep the Next 16 webpack
+  # build inside the 4 GB cgroup. The user-side escape hatch when this
+  # app outgrows cr-2-4 is bumping the build resources to cr-4-8 in
+  # the Replit deployment pane.
   #
   # SKIP_MARKETING_PREBUILD: short-circuits scripts/maybe-build-
   # marketing.mjs so we don't run the @workspace/site Vite build
-  # back-to-back with the Next webpack build on the same VM. The
-  # scriptureliveai.com host rewrite falls through to Next's default
-  # response while the marketing site is wired into the Replit-level
-  # proxy as a separate artifact in a follow-up. Local desktop builds
-  # (BUILD.bat / package:win / package:mac) leave this unset, so the
-  # Electron .exe still ships with the bundled marketing SPA.
+  # back-to-back with the Next webpack build on the same VM.
   #
-  # NODE_OPTIONS: caps V8's old-space heap at 3584 MB, leaving ~512 MB
-  # of cgroup headroom for native allocs (SWC, Prisma generate,
-  # terser). The matching webpack memory knobs (cpus=1,
-  # webpackMemoryOptimizations) live in next.config.ts.
+  # NODE_OPTIONS: caps V8's old-space heap at 2048 MB (was 3584 — the
+  # higher cap let webpack's optimizer overshoot the 4 GB cgroup and
+  # get SIGKILL'd, see Task #90 deploy attempt). 2048 is the smallest
+  # heap that still fits Next's module graph for this app, leaving
+  # ~2 GB of cgroup headroom for terser-disabled webpack passes and
+  # native allocs (SWC, Prisma generate).
+  #
+  # DISABLE_MINIFY: hard-disables webpack's terser pass via the
+  # callback in next.config.ts. Terser is the single most memory-
+  # intensive build step (each parallel worker holds the full module
+  # AST in RAM). With it off the client bundle is unminified — gzip
+  # still cuts ~70% off transfer size and Cloud Run handles gzip at
+  # the edge, so the user-visible effect is negligible. The toggle is
+  # the LAST resort before bumping the build runner; remove it once
+  # the app is on cr-4-8.
   SKIP_MARKETING_PREBUILD = "1"
-  NODE_OPTIONS = "--max-old-space-size=3584"
+  NODE_OPTIONS = "--max-old-space-size=2048"
+  DISABLE_MINIFY = "1"
   NEXT_TELEMETRY_DISABLED = "1"
 
   [services.production.run]
