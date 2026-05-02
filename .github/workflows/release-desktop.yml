@@ -64,6 +64,24 @@ jobs:
             ~\AppData\Local\electron-builder\Cache
           key: electron-builder-${{ runner.os }}-electron-33.4.11
 
+      # Defense in depth: even after Task #95 stopped tracking
+      # installer binaries in git, a future revert / squash / cherry-
+      # pick could re-introduce a stale release/*.exe under some tag.
+      # Wipe the dir before electron-builder so the upload-artifact
+      # step at the end can only ever pick up files this run produced.
+      - name: Clean stale installer dir before build
+        shell: pwsh
+        run: |
+          $rel = "artifacts/imported-app/release"
+          if (Test-Path $rel) {
+            Write-Host "Pre-existing files in $rel (will be deleted):"
+            Get-ChildItem -Path $rel -Recurse -File | ForEach-Object {
+              Write-Host ("  {0,12} bytes  {1}" -f $_.Length, $_.FullName)
+            }
+            Remove-Item -Path $rel -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $rel | Out-Null
+
       # v0.7.46 — Workaround for Next.js 16.2.x webpack EPERM on Windows.
       #
       # Starting with Next 16.2.x (the version pnpm now resolves from our
@@ -351,7 +369,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: artifacts/imported-app/release/*.exe
+          # Pinned to the version-specific filename so a stray
+          # leftover .exe from a different tag can never piggy-back
+          # into the windows-installer artifact (see release-body
+          # builder for the symmetric guard on the consumer side).
+          path: artifacts/imported-app/release/ScriptureLive-AI-${{ steps.tag.outputs.name && steps.tag.outputs.name || github.ref_name }}-Setup-*.exe
           if-no-files-found: error
           retention-days: 14
 
@@ -893,21 +915,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 1. Locate the actual .exe filename in dist/ — globbed so a
-          #    rename of the electron-builder artifactName never
-          #    silently breaks the download link in the release body.
-          exe_path=$(ls dist/*Setup*.exe 2>/dev/null | head -1 || true)
-          if [ -n "$exe_path" ]; then
-            exe_name=$(basename "$exe_path")
-            exe_size=$(du -h --apparent-size "$exe_path" 2>/dev/null | cut -f1 \
-                       || du -h "$exe_path" | cut -f1)
-            echo "Found installer: $exe_name ($exe_size)"
-          else
-            ver="${TAG_NAME#v}"
-            exe_name="ScriptureLive-AI-${ver}-Setup-x64.exe"
-            exe_size=""
-            echo "::warning::No .exe in dist/; falling back to conventional filename '$exe_name'."
+          # 1. Locate the .exe matching THIS tag's version. The glob
+          #    is pinned to ${ver} (not generic *Setup*.exe) so a
+          #    stale older-version installer accidentally present in
+          #    dist/ — e.g. from a tag whose checkout still contained
+          #    an older artifacts/imported-app/release/*.exe — can
+          #    never win an alphabetical `head -1` race and end up
+          #    in the release body's download link. Hard-fail if no
+          #    matching .exe is found rather than silently falling
+          #    back to a guessed filename that points at a 404.
+          ver="${TAG_NAME#v}"
+          exe_path=$(ls "dist/ScriptureLive-AI-${ver}-Setup-"*.exe 2>/dev/null | head -1 || true)
+          if [ -z "$exe_path" ]; then
+            echo "::error title=No installer matching tag in dist/::Expected dist/ScriptureLive-AI-${ver}-Setup-*.exe but found:"
+            ls -la dist/ || true
+            exit 1
           fi
+          exe_name=$(basename "$exe_path")
+          exe_size=$(du -h --apparent-size "$exe_path" 2>/dev/null | cut -f1 \
+                     || du -h "$exe_path" | cut -f1)
+          echo "Found installer: $exe_name ($exe_size)"
           download_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}/${exe_name}"
 
           # 2. Optional: pull the matching CHANGELOG.md section.

@@ -1,5 +1,44 @@
 # Recent Changes
 
+## v0.7.51 — Release body pointed users at a 134-byte stub (May 2, 2026)
+
+The v0.7.49 release page rendered "Download ScriptureLive AI v0.7.49 Setup for Windows (134)" — link text said v0.7.49 but the URL pointed at `ScriptureLive-AI-0.7.32-Setup-x64.exe`, a 134-byte stub left over from the original failed v0.7.32 build. Users clicking the headline download got a non-functional 134-byte file.
+
+**Root cause:** the v0.7.49 tag's checkout still contained a tracked stale `artifacts/imported-app/release/ScriptureLive-AI-0.7.32-Setup-x64.exe`. The Windows build job uploaded `release/*.exe` (both the new 490 MB installer AND the stub) into the `windows-installer` artifact. The release-body builder ran `ls dist/*Setup*.exe | head -1` which alphabetically picked `0.7.32`. Wrong filename baked into the body markdown.
+
+**Live fix (already applied via API):** patched the v0.7.49 release body to point at the real `ScriptureLive-AI-0.7.49-Setup-x64.exe` and deleted the 134-byte asset. Users now see the correct 490 MB installer.
+
+**Permanent fix (this commit) — three independent guards in `.github/workflows/release-desktop.yml`:**
+
+1. **Body builder pinned to ${ver}.** `ls dist/*Setup*.exe` → `ls dist/ScriptureLive-AI-${ver}-Setup-*.exe`. Even if a stale older-version .exe leaks into the artifact, it can't win the glob. Hard-fails if no matching .exe is found rather than silently falling back.
+2. **Pre-build cleanup of `release/`.** Pwsh step wipes `artifacts/imported-app/release/` before electron-builder runs, so upload at end of build can only see files this run produced.
+3. **Upload artifact pinned to ${tag}.** `release/*.exe` → `release/ScriptureLive-AI-${tag}-Setup-*.exe`. Symmetric guard on the producer side.
+
+Task #95 (cleanup of tracked installer binaries on `main`) addresses the root cause for tags built on top of `main`. These three workflow guards are belt-and-suspenders for any tag that points at an older commit.
+
+## v0.7.50 — Stop secrets in `.replit` from blocking ship-to-GitHub (Task #94, May 2, 2026)
+
+**Recurring problem.** v0.7.32 *and* v0.7.43 were both blocked at ship time by GitHub Push Protection because a Replit auto-checkpoint commit had captured a literal `OPENAI_API_KEY = "sk-proj-..."` inside `.replit` (most recently commit `aa5142570d`, in the `[userenv.development]` and `[userenv.production]` blocks). Each time, the operator had to (a) click the secret-scanning unblock URL, then (b) rotate the key, then (c) re-ship — an avoidable ~15 min of toil per release.
+
+**Why it kept happening.** An earlier agent edited `.replit` and pasted the key as a TOML literal, thinking that was the way to make `process.env.OPENAI_API_KEY` available inside the Replit container. The Replit auto-checkpointer then snapshots `.replit` verbatim into git, so the key lands in history, and GitHub's secret scanner refuses the push.
+
+**Correct pattern (mandatory for every secret going forward).**
+- Store secrets ONLY in the Replit Secrets pane (Tools → Secrets, or `view_env_vars` / `ask_secrets` from an agent). Replit injects those into `process.env` at runtime WITHOUT writing them into `.replit` or any other tracked file.
+- The `[userenv.development]` and `[userenv.production]` blocks in `.replit` MUST stay empty. They are deliberately kept present-but-empty so a diff reviewer can spot any accidental re-introduction of a literal value at a glance.
+- App-side resolvers already read from `process.env` first — see `artifacts/imported-app/src/lib/ai/semantic-matcher.ts` (OpenAI), `src/hooks/use-whisper-speech-recognition.ts` (Deepgram via the `/api/transcribe` proxy), and `src/lib/licensing/notifications.ts` (SMTP). On Cloud Run the same env vars are wired through the deploy panel.
+- `artifacts/imported-app/scripts/inject-keys.mjs` IS allowed to write literal values, but only into `src/lib/keys.baked.ts` and `src/lib/baked-credentials.ts`, both of which are `.gitignore`d (see `artifacts/imported-app/.gitignore` lines 58–66). That script exists for the *desktop installer* build (BUILD.bat / package:win) so the .exe ships with working keys; it is NEVER part of the Cloud Run build path. Cloud Run picks the keys up directly from `process.env` set by Replit Secrets.
+- `.gitleaks.toml` + `.github/workflows/secret-scan.yml` remain the safety net, but they are second-line — the first line is "do not write the literal into a tracked file in the first place."
+- A dedicated structural guard now runs in both pre-commit and CI: `scripts/src/check-replit-secrets.mjs` (also exposed as `pnpm --filter @workspace/scripts run check-replit-secrets`). It fails the build if any line under a `[userenv.*]` table in `.replit` is a key=value assignment, OR if any line in `.replit` matches a well-known secret pattern (OpenAI sk-, Anthropic, Stripe, AWS, Google AI, GitHub, Slack). Wired into `.githooks/pre-commit` (local fast feedback) and `.github/workflows/secret-scan.yml` (server-side authoritative gate, runs before gitleaks).
+
+**If you (a future agent) think you need to add a secret to `.replit` to make it available at runtime: stop.** Use the Secrets pane instead. Editing `.replit` directly is also blocked by the agent platform; the only legitimate way to change run/port/service config is through the matching agent skill (workflows / artifacts / environment-secrets).
+
+**Verified after this task.**
+- `.replit` userenv blocks are empty (`grep -nE '^[A-Z_]+\s*=' .replit` → nothing under any `[userenv.*]` section).
+- `process.env.OPENAI_API_KEY` is set in this Repl via the Secrets pane (confirmed at runtime), so the semantic matcher, AI Verse Search, and AI Scripture Detection continue to work in dev.
+- Cloud Run deploy continues to read `OPENAI_API_KEY` from the deployment's env, unchanged.
+
+**Note on numbering.** This entry was originally drafted as v0.7.44 but renumbered to v0.7.50 during rebase because v0.7.44 was concurrently used for the Windows release-CI hotfix series (v0.7.44 → v0.7.49) on `main`. The follow-up commit's structural-guard script tightening (added in this task) references "replit.md v0.7.50" in its error output.
+
 ## v0.7.49 — Hotfix #6: physically strip `node_modules/@workspace` before electron-builder (May 2, 2026)
 
 **v0.7.48's exclude pattern didn't help.** Same exact failure:
