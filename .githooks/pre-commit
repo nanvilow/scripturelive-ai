@@ -26,6 +26,19 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 CONFIG="${REPO_ROOT}/.gitleaks.toml"
 
+# Task #94 — refuse commits that re-introduce literal env values into
+# `.replit`'s [userenv.*] blocks (or any known-secret pattern in
+# `.replit`). This runs unconditionally — no extra dependency required,
+# just Node, which is already present for everything else in this repo.
+if command -v node >/dev/null 2>&1; then
+  if ! node "${REPO_ROOT}/scripts/src/check-replit-secrets.mjs"; then
+    echo >&2
+    echo "[pre-commit] .replit secret guard FAILED — see message above." >&2
+    echo "[pre-commit] Pattern doc: replit.md → v0.7.44 section." >&2
+    exit 1
+  fi
+fi
+
 if ! command -v gitleaks >/dev/null 2>&1; then
   cat >&2 <<'MSG'
 [pre-commit] gitleaks is not installed locally — skipping the secret scan.
