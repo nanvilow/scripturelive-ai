@@ -95,6 +95,87 @@ function resolveOpenAIKey(): string | undefined {
 const EMBEDDING_MODEL = 'text-embedding-3-small'
 const EMBEDDING_DIM = 1536
 
+// v0.7.28 — Strip operator "introducing" preambles before embedding.
+//
+// Operator-reported regression: when the preacher said "here's a
+// verse about loving your enemies" the passive AI Scripture Detection
+// chip never surfaced. Root cause: the matcher embedded the FULL
+// sentence (meta-wrapper included) and computed cosine similarity
+// against the embedded popular verses. The wrapper words ("here's a
+// verse about") dominate the embedding vector and drag the
+// similarity score below the 0.50 medium threshold even when the
+// trailing topic ("loving your enemies") is a near-perfect match
+// for Matthew 5:44 ("Love your enemies, bless them that curse
+// you…").
+//
+// The active find_by_quote VOICE COMMAND already extracts just the
+// topic (because it parses "find the verse about X" with a regex
+// that captures group 1). This fix gives the PASSIVE detector the
+// same advantage by stripping the same family of preamble phrases
+// before embedding.
+//
+// We are deliberately CONSERVATIVE about which preambles to strip:
+// every pattern requires an explicit "verse|scripture|passage" token
+// followed by an "about|on|that says|where|which" continuation. This
+// guarantees we never strip leading words from a real paraphrased
+// verse like "the Lord is my shepherd I shall not want" or "for God
+// so loved the world" — both of which start with words our preamble
+// regexes would otherwise match (the / for) but lack the
+// verse/scripture/passage signal.
+//
+// If no preamble matches, the original phrase is returned unchanged
+// so genuine paraphrases keep working exactly as they did before.
+const PREAMBLE_PATTERNS: RegExp[] = [
+  // "here's a verse about X", "here is the verse about X", "this is
+  // a scripture about X", "there's a passage about X".
+  /^(?:here'?s|here\s+is|there'?s|there\s+is|this\s+is)\s+(?:a|an|the|that|another|one)\s+(?:verse|scripture|passage|bible\s+verse)\s+(?:about|on|that\s+says|that\s+talks?\s+about|that\s+mentions?|where|which|saying)\s+/i,
+  // "let me read a verse about X", "let's look at a passage about X",
+  // "I want to share a verse about X", "I'll read the scripture
+  // where X".
+  /^(?:let'?s|let\s+me|let\s+us|i\s+(?:want|need|will|am\s+going|would\s+like)(?:\s+to)?|i'?ll|we\s+(?:want|need|will)(?:\s+to)?|we'?ll)\s+(?:read|share|look\s+at|see|find|hear|consider|examine|study)\s+(?:a|an|the|that|another)\s+(?:verse|scripture|passage|bible\s+verse)\s+(?:about|on|that\s+says|that\s+talks?\s+about|that\s+mentions?|where|which|saying)\s+/i,
+  // "we have a verse about X", "I have a verse where X", "I've got
+  // a scripture about X".
+  /^(?:we\s+have|i\s+have|i'?ve\s+got|we'?ve\s+got)\s+(?:a|an|the|that|another)\s+(?:verse|scripture|passage|bible\s+verse)\s+(?:about|on|that\s+says|that\s+talks?\s+about|that\s+mentions?|where|which|saying)\s+/i,
+  // "the verse about X" / "the scripture about X" / "the passage
+  // where X". Bare opener — only stripped when an explicit
+  // verse-token is present, so "the Lord is my shepherd" survives.
+  /^the\s+(?:verse|scripture|passage|bible\s+verse)\s+(?:about|on|that\s+says|that\s+talks?\s+about|that\s+mentions?|where|which|saying)\s+/i,
+  // "a verse about X" / "another scripture where X".
+  /^(?:a|an|another)\s+(?:verse|scripture|passage|bible\s+verse)\s+(?:about|on|that\s+says|that\s+talks?\s+about|that\s+mentions?|where|which|saying)\s+/i,
+  // Bare "scripture about X" / "passage about X" — unprefixed.
+  /^(?:scripture|passage|bible\s+verse)\s+(?:about|on|that\s+says|that\s+talks?\s+about|that\s+mentions?|where|which|saying)\s+/i,
+]
+
+/**
+ * v0.7.28 — Public for unit testing. Returns the topic phrase with
+ * any recognised "operator introducing a verse" preamble stripped.
+ * Returns the original (trimmed) text if no preamble matched. The
+ * minimum-length guard (≥ 3 word characters in the result) prevents
+ * stripping that would leave nothing useful to embed.
+ */
+export function stripIntroducingPreamble(text: string): string {
+  const trimmed = (text || '').trim()
+  if (!trimmed) return ''
+  for (const re of PREAMBLE_PATTERNS) {
+    if (!re.test(trimmed)) continue
+    const stripped = trimmed.replace(re, '').trim()
+    // Strip a trailing courtesy / punctuation tail too — preachers
+    // often follow the topic with "right?" / "you know" / "amen".
+    // Two-pass: strip trailing punctuation, then any trailing
+    // courtesy word ("right", "amen", "you know"), then punctuation
+    // again so a sequence like "salvation, amen" → "salvation".
+    const cleaned = stripped
+      .replace(/[\s,.;:!?]+$/, '')
+      .replace(/[\s,.;:!?]*(?:right|you\s+know|amen|please|okay|ok)\s*[.!?]?\s*$/i, '')
+      .replace(/[\s,.;:!?]+$/, '')
+      .trim()
+    const wordChars = cleaned.replace(/[^a-zA-Z0-9]/g, '')
+    if (wordChars.length < 3) return trimmed
+    return cleaned
+  }
+  return trimmed
+}
+
 /** Confidence buckets per the v0.6.0 spec. */
 export type ConfidenceLevel = 'high' | 'medium' | 'low'
 export const CONFIDENCE_HIGH_THRESHOLD = 0.75
@@ -224,6 +305,14 @@ export async function matchTranscriptToVerses(
   const trimmed = (text || '').trim()
   if (trimmed.length < 8) return []
 
+  // v0.7.28 — Strip operator introducing preamble ("here's a verse
+  // about X" → "X") before embedding so the cosine similarity is
+  // computed against the actual topic phrase, not the meta-wrapper.
+  // No-op when no preamble matches, so genuine paraphrases are
+  // unaffected.
+  const queryText = stripIntroducingPreamble(trimmed)
+  if (queryText.length < 3) return []
+
   const client = getClient()
   if (!client) return []
 
@@ -235,7 +324,7 @@ export async function matchTranscriptToVerses(
   try {
     const resp = await client.embeddings.create({
       model: EMBEDDING_MODEL,
-      input: trimmed,
+      input: queryText,
     })
     const e = resp.data[0]?.embedding as number[] | undefined
     if (!e || e.length !== EMBEDDING_DIM) return []

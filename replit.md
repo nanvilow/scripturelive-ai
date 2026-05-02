@@ -1,5 +1,37 @@
 # Recent Changes
 
+## v0.7.28 — AI Verse Search hotfix: strip "here's a verse about" preamble before embedding (May 2, 2026)
+
+**Operator-reported regression**: when the preacher said *"here's a verse about loving your enemies"* the passive AI Scripture Detection chip never surfaced, even though Matthew 5:44 ("Love your enemies, bless them that curse you...") is right there in `POPULAR_VERSES_KJV`. The active `find_by_quote` voice command path worked fine for the same content because its regex already extracts just the topic (group 1 of "find the verse about X"). The passive detector did not have that advantage.
+
+**Root cause** (one-line version): the matcher embedded the FULL sentence — meta-wrapper included — so the words "here's a verse about" dominated the embedding vector and dragged the cosine similarity below the 0.50 medium-confidence threshold. Investigation files: `artifacts/imported-app/src/components/views/scripture-detection.tsx` (passive detector L110-169 → POSTs to `/api/scripture/semantic-match`) → `artifacts/imported-app/src/app/api/scripture/semantic-match/route.ts` → `artifacts/imported-app/src/lib/ai/semantic-matcher.ts:matchTranscriptToVerses` (the embedding call at ~L300). No preamble stripping existed anywhere in that pipeline.
+
+**The fix** (`artifacts/imported-app/src/lib/ai/semantic-matcher.ts`):
+- New exported pure helper `stripIntroducingPreamble(text)` runs 6 conservative regex patterns against the leading text. If one matches, the wrapper is removed; otherwise the input is returned unchanged.
+- Patterns covered:
+  - "here's / here is / there's / this is" + (a|an|the|that|another|one) + (verse|scripture|passage|bible verse) + (about|on|that says|that talks about|that mentions|where|which|saying)
+  - "let me / let's / I want to / I'll / I am going to / we'll" + (read|share|look at|see|find|hear|consider|examine|study) + (a|the|...) + (verse|scripture|passage) + (about|...)
+  - "we have / I have / I've got" + (a|the|...) + (verse|scripture|passage) + (about|...)
+  - Bare openers: "the verse about X", "a scripture about X", "scripture about X", "passage about X"
+- After stripping, a trailing courtesy filler is also dropped: "right?", "you know", "amen", "please", "okay", "ok" plus surrounding punctuation. Two-pass cleanup so "salvation, amen" → "salvation".
+- **Conservative-by-design safety net**: every pattern REQUIRES the explicit "verse|scripture|passage|bible verse" token. This is the critical correctness property — it guarantees we never strip leading words from a real paraphrased verse like "the Lord is my shepherd I shall not want", "for God so loved the world", or "love is patient love is kind". All 5 of those genuine paraphrases are pinned by tests as no-ops.
+- Minimum-length guard: if the stripped result has fewer than 3 word characters (e.g. preacher said "here's a verse about it"), the helper returns the ORIGINAL trimmed text so the matcher at least gets the full sentence to work with.
+- Wired into `matchTranscriptToVerses` immediately before the OpenAI embeddings call. The `input:` passed to `client.embeddings.create` is now the stripped phrase, not the raw transcript.
+
+**Test coverage** (`artifacts/imported-app/src/lib/ai/semantic-matcher.test.ts`, 37 new tests, all passing — full project total now 352/352):
+- The exact operator-reported phrase "here's a verse about loving your enemies" is pinned in test 1 → "loving your enemies".
+- 5 alternative wrapper forms (here is / there's / this is / that says).
+- 5 "let me / I want / I'll / I am going to" verb-led forms.
+- 3 "we have / I have / I've got" possessive forms.
+- 5 bare-opener forms ("the verse about", "scripture about", etc.).
+- 6 "do NOT strip" guards for real paraphrased verses (the Shepherd, John 3:16, 1 Cor 13, Ps 46:10, Phil 4:13, plus a "this verse really speaks" mid-sentence usage).
+- 4 trailing-filler tests (right?, you know, amen, "...").
+- 9 degenerate-input tests (empty, whitespace-only, no-preamble, too-short-after-strip, case-insensitivity, every continuation alternative).
+
+**Why no embedder/cosine integration test in this hotfix**: the embedding + cosine math requires a live OpenAI call, which we deliberately do NOT run in unit tests for cost and determinism reasons. The reported failure mode is fully captured at the stripper layer — once the wrapper is gone, the already-shipped (and operator-tested since v0.7.23) matcher pipeline embeds the topic phrase against `POPULAR_VERSES_KJV` exactly the way it always has, so the chip will surface.
+
+Behaviour change is intentionally narrow: passive AI Scripture Detection only. Voice commands, regex classifier, find_by_quote, slide rendering, and the upcoming v0.7.27 LLM classifier scaffold are unchanged. Phase 2 of the v0.8.0 plan (wiring `classifyIntent` into the dispatcher behind a feature flag) lands separately as v0.7.29.
+
 ## v0.7.27 — LLM intent classifier scaffold (Phase 1 of v0.8.0 advanced voice) (May 2, 2026)
 
 **Scope of this release: infrastructure only, zero behaviour change.** A new module `artifacts/imported-app/src/lib/voice/llm-classifier.ts` and its 57-test unit suite land in the build, but **no call site in the dispatch pipeline has been wired in**. Production voice command handling still goes exclusively through the regex classifier (`commands.ts → detectCommand()`) and the v0.7.23-25 semantic-match fallback. Operators will see no functional difference — this release is reviewable and rollback-able on its own.
