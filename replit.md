@@ -1,5 +1,17 @@
 # Recent Changes
 
+## v0.7.46 — Hotfix #3: redirect HOME on the Windows GHA runner to dodge a Next 16.2.x webpack EPERM (May 2, 2026)
+
+**v0.7.45 didn't fix it either.** The standalone-path `next.config.ts` in v0.7.45 is essentially identical to v0.7.32's (which built clean on Windows). Same EPERM, same time-to-failure (9 s into `next build --webpack`). So the trigger isn't in the config at all — it's a regression in **Next.js 16.2.x** itself.
+
+**Root cause:** `package.json` declares `"next": "^16.1.1"` and v0.7.32's lockfile resolved that to a 16.1.x. Today pnpm resolves the same `^16.1.1` constraint to **16.2.4** (the GHA build log prints `▲ Next.js 16.2.4 (webpack)`). Starting with 16.2.x, webpack's build snapshotter walks `os.homedir()` looking for cache state. On Windows that's `process.env.USERPROFILE` = `C:\Users\<user>`, which contains the legacy XP-era junction `Application Data` that the OS always denies read access to. The walk crashes with `EPERM: operation not permitted, scandir 'C:\Users\runneradmin\Application Data'` and the build dies. Linux/Cloud Run has no equivalent junction in `/`, so the same code path is fine there.
+
+**Fix in `.github/workflows/release-desktop.yml`:** add a pre-build step that creates a fresh dir under `${{ runner.temp }}\nohome`, junctions in `AppData\Local\electron` and `AppData\Local\electron-builder` from the real home (so the `actions/cache@v4` restore is still visible to electron-builder later), and exports `HOME` and `USERPROFILE` via `$GITHUB_ENV`. From that point on `os.homedir()` returns the fake path, the equivalent `Application Data` simply doesn't exist there (clean ENOENT, which webpack handles), and the build proceeds.
+
+This workaround is independent of the Next.js version — if 16.3.x ever fixes the regression, the redirect is a harmless no-op. We deliberately did NOT downgrade `next` to a 16.1.x patch because that would risk silently affecting Cloud Run too, where Next 16.2.4 builds cleanly.
+
+**Surgical scope:** one new step in `.github/workflows/release-desktop.yml`. `package.json` version bump to 0.7.46. No code, no deps, no Cloud Run impact, no `next.config.ts` changes.
+
 ## v0.7.45 — Hotfix #2: gate the WHOLE Cloud-Run config block from the Windows build (May 2, 2026)
 
 **v0.7.44 didn't fix it.** The narrow gate (just `experimental`) shipped, the new release run came up, and the Windows installer crashed at the **identical** spot, 9 seconds into `next build --webpack`:

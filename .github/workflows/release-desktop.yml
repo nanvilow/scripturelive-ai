@@ -64,6 +64,48 @@ jobs:
             ~\AppData\Local\electron-builder\Cache
           key: electron-builder-${{ runner.os }}-electron-33.4.11
 
+      # v0.7.46 — Workaround for Next.js 16.2.x webpack EPERM on Windows.
+      #
+      # Starting with Next 16.2.x (the version pnpm now resolves from our
+      # `^16.1.1` constraint), `next build --webpack` deterministically
+      # crashes ~9 s into "Creating an optimized production build" with:
+      #
+      #   glob error [Error: EPERM: operation not permitted, scandir
+      #     'C:\Users\runneradmin\Application Data']
+      #   Failed to compile.
+      #
+      # `C:\Users\<user>\Application Data` is an XP-era junction Windows
+      # always denies read access to. Webpack's snapshotter walks
+      # `os.homedir()` (which on Windows = `process.env.USERPROFILE`) for
+      # cache discovery and trips on the junction. Pointing HOME and
+      # USERPROFILE at a fresh dir under RUNNER_TEMP avoids the junction
+      # entirely (`os.homedir()` returns the fake path; the equivalent
+      # "Application Data" simply doesn't exist there → ENOENT, which
+      # webpack handles cleanly). The same Next config builds fine on
+      # Linux/Cloud Run because Linux has no such junction in / .
+      #
+      # We junction the real electron-builder cache dirs into the fake
+      # home so the existing `actions/cache@v4` restore still reaches
+      # electron-builder when it later runs `os.homedir()` itself —
+      # otherwise we'd re-download the 121 MB electron 33.4.11 archive
+      # on every run.
+      - name: Redirect HOME for Windows webpack EPERM workaround
+        shell: pwsh
+        run: |
+          $fake = Join-Path $env:RUNNER_TEMP 'nohome'
+          New-Item -ItemType Directory -Force -Path (Join-Path $fake 'AppData\Local') | Out-Null
+          foreach ($name in @('electron','electron-builder')) {
+            $src = Join-Path $env:USERPROFILE "AppData\Local\$name"
+            $dst = Join-Path $fake "AppData\Local\$name"
+            if ((Test-Path $src) -and -not (Test-Path $dst)) {
+              New-Item -ItemType Junction -Path $dst -Target $src | Out-Null
+              Write-Host "junctioned $dst -> $src"
+            }
+          }
+          "HOME=$fake"        | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "USERPROFILE=$fake" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "HOME and USERPROFILE → $fake"
+
       - name: Build & package Windows installer
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
