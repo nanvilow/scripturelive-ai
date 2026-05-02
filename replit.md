@@ -1,5 +1,39 @@
 # Recent Changes
 
+## v0.7.42 — Runtime fix: enable Next.js standalone output so Cloud Run can resolve `next` (May 2, 2026)
+
+**v0.7.41 finally got the build to pass** (after 10+ failed deploys) by bounding the Tailwind v4 content scanner. The container then started up — and immediately crashed at `node server.mjs` with:
+
+```
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'next' imported from
+  /home/runner/workspace/artifacts/imported-app/server.mjs
+```
+
+So we traded a build hang for a runtime crash. Better, but still broken.
+
+**Why**: The author's comment in `next.config.ts` explicitly assumed `next` would resolve via the workspace-hoisted `node_modules` at runtime: *"Because pnpm hoists, the artifact directory has full access to every dep at runtime"*. That assumption holds in dev (`require.resolve('next')` correctly returns `/home/runner/workspace/node_modules/next/...`) — but it fails in production. **Replit Autoscale's runtime container ships ONLY the artifact directory.** The workspace-root `node_modules` (where pnpm hoists `next` and 2.3 GB of other deps) is not in the deployed image. Node ESM resolution walks up from `server.mjs`, never finds `node_modules/next` at any level, and crashes 0.6 s after boot. site/ doesn't hit this because it's a pure-Vite static site with no runtime Node dependencies — only `imported-app/`'s custom Node server has this problem.
+
+**Fix**: enable Next.js `output: "standalone"` for the Cloud Run build. Standalone is the official Next.js solution for exactly this case — it traces every runtime dep, copies them into `.next/standalone/node_modules/`, and produces a self-contained tree at `.next/standalone/artifacts/imported-app/` that resolves correctly when run as cwd.
+
+Pleasant surprise during the diagnosis: the artifact already had a `postbuild` script (`scripts/copy-standalone-assets.mjs`) that handled most of the standalone-graft work — it copies `.next/static`, `public/`, the runtime `ws` dep, AND the dynamically-required `next/dist/compiled/{@babel,webpack}` deps that Next's `loadWebpackHook` does `require.resolve()` on but the tracer can't see (this last one is the same bug that took down v0.7.13–v0.7.17). The script was just gated on `NEXT_OUTPUT_STANDALONE=1`, which the Electron `package*` scripts had been setting but the Cloud Run build hadn't.
+
+Three minimal changes:
+
+1. `artifact.toml` — added `NEXT_OUTPUT_STANDALONE = "1"` to `[services.production.build.env]`. That single env var both flips on `output: "standalone"` in `next.config.ts` AND wakes up the existing postbuild copy script.
+2. `scripts/copy-standalone-assets.mjs` — extended the postbuild to also copy `server.mjs` + `server-transcribe-stream.mjs` into the standalone tree. These are the artifact's CUSTOM server entry files, which sit outside Next's source graph and would otherwise be missing — so the postbuild would happily build a "complete" tree with no entry point. (Same script, same `dereference: true` semantics, two new lines via `copyFile`.)
+3. `artifact.toml` — changed `[services.production.run].args` to `cd artifacts/imported-app/.next/standalone/artifacts/imported-app && node server.mjs`. From that cwd, Node walks up and finds `next` at `.next/standalone/node_modules/next` ✓. `DATABASE_URL` keeps its literal `file:../db/custom.db` value because Prisma resolves `file:` URLs relative to schema.prisma's location, and the standalone tree mirrors `prisma/` at the same relative position to `db/` as the source tree.
+
+**Why standalone now works on the build runner when v0.7.34–v0.7.36 OOM-killed it**: those failures were the wrong diagnosis. v0.7.41 proved the actual culprit was Tailwind v4's content scanner wedging on `imported-app/`'s Electron Windows build outputs (`release/win-unpacked/ScriptureLive AI.exe` and friends). With that fixed, the build is fast and well within the cgroup — local repro builds with standalone ON in **23 seconds** and produces a 191 MB standalone tree. Plus the user is on cr-4-8 (8 GB) now, so there's headroom either way. The bonus: the runtime image goes from 2.3 GB (full workspace `node_modules`) to ~191 MB (only traced runtime deps).
+
+**Local verification before shipping** (the discipline finally paying off):
+
+- `next build --webpack` with `NEXT_OUTPUT_STANDALONE=1`: ✓ Compiled in 23 s, BUILD_EXIT=0, 17 static pages + 60+ API routes, **no OOM**.
+- `.next/standalone/node_modules/next/package.json` exists ✓.
+- After grafting `server.mjs` + `.next/static` into the standalone tree, `cd .next/standalone/artifacts/imported-app && node server.mjs` boots cleanly: `[server.mjs] ready http://0.0.0.0:15999 (NODE_ENV=production, transcribe-stream=ENABLED)`. BOOT_EXIT=0.
+- ESM `import next from "next"` from the standalone path resolves to `.next/standalone/node_modules/next/dist/server/next.js` ✓ — the same path Node will find in the Cloud Run runtime container.
+
+This is the runtime equivalent of v0.7.41's lesson: **dev-mode resolution and prod-runtime resolution are not the same in a pnpm monorepo**. shamefully-hoist puts everything at the workspace root in dev, but the deployed image only contains the artifact dir. Standalone is what bridges that gap.
+
 ## v0.7.41 — THE ACTUAL FIX: bound Tailwind v4 content scanner so it doesn't choke on Electron build outputs (May 2, 2026)
 
 **Every diagnosis from v0.7.34 through v0.7.40 was wrong.** It was never OOM, never heap size, never webpack memory, never standalone mode, never the 3,433-line god component, never Prisma in the build. The real bug, finally reproduced locally with full RAM available:

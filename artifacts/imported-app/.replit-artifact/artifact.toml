@@ -53,6 +53,24 @@ kind = "web"
   #            kernel even at heap=3584. This gives webpack ~512 MB
   #            more V8 heap than v0.7.38 — should clear the
   #            optimization-phase OOM that v0.7.38 hit.
+  #   v0.7.41: heap=3584 MB. Standalone OFF. Build SUCCEEDED for the
+  #            first time after 10 failed attempts because the actual
+  #            root cause (Tailwind v4 scanner hanging on Electron
+  #            build outputs in imported-app/) was finally fixed via
+  #            an `@source "./src";` directive in globals.css and a
+  #            .gitignore for release/, uploads/, etc. Runtime then
+  #            crashed with ERR_MODULE_NOT_FOUND for `next` because
+  #            the Cloud Run runtime image ships only the artifact
+  #            dir, not the workspace-root hoisted node_modules.
+  #   v0.7.42: heap=3584 MB. Standalone ON again. With the Tailwind
+  #            content-scanner fix in v0.7.41, the build is fast and
+  #            light enough that the standalone trace step no longer
+  #            blows the cgroup — local repro builds in 23 s on a
+  #            cr-2-4-equivalent. The build runner has 8 GB if the
+  #            user kept the cr-4-8 bump from the v0.7.36 incident,
+  #            so there's headroom either way. Standalone produces
+  #            the self-contained `.next/standalone/` tree the runtime
+  #            needs to resolve `next` and other deps locally.
   #
   # DISABLE_MINIFY: hard-disables webpack's terser pass via the
   # callback in next.config.ts. Terser is the single most memory-
@@ -72,9 +90,35 @@ kind = "web"
   NODE_OPTIONS = "--max-old-space-size=3584"
   DISABLE_MINIFY = "1"
   NEXT_TELEMETRY_DISABLED = "1"
+  # v0.7.42 — Re-enable Next.js standalone output for the Cloud Run
+  # build. The `next.config.ts` already gates `output: "standalone"`
+  # on this env var (Electron's `package*` scripts set it too), and
+  # the artifact's `postbuild` script (scripts/copy-standalone-assets.mjs)
+  # already grafts `.next/static`, `public/`, the `ws` runtime dep, the
+  # dynamically-required `next/dist/compiled/{@babel,webpack}` deps,
+  # AND (added in v0.7.42) `server.mjs` + `server-transcribe-stream.mjs`
+  # into the standalone tree. With this flag set the build produces a
+  # self-contained `.next/standalone/artifacts/imported-app/` directory
+  # that the runtime container can `cd` into and run `node server.mjs`
+  # from — solving v0.7.41's ERR_MODULE_NOT_FOUND for `next` (the
+  # Cloud Run runtime image ships only the artifact dir, not the
+  # workspace-root node_modules where pnpm hoisted `next`).
+  NEXT_OUTPUT_STANDALONE = "1"
 
   [services.production.run]
-  args = ["pnpm", "--filter", "@workspace/imported-app", "run", "start"]
+  # v0.7.42 — Run from the standalone tree so Node ESM resolution
+  # walks up from server.mjs and finds `next` at
+  # `.next/standalone/node_modules/next` (and `ws` and the compiled
+  # webpack/babel deps the postbuild script grafted in). DATABASE_URL
+  # keeps the literal `file:../db/custom.db` value because Prisma
+  # resolves `file:` URLs relative to schema.prisma's location, and
+  # the standalone tree includes `prisma/schema.prisma` at the same
+  # relative position to `db/` as the source tree.
+  args = [
+    "bash",
+    "-lc",
+    "cd artifacts/imported-app/.next/standalone/artifacts/imported-app && DATABASE_URL=file:../db/custom.db NODE_ENV=production HOST=0.0.0.0 PORT=${PORT:-25650} node server.mjs"
+  ]
 
   [services.production.run.env]
   PORT = "25650"

@@ -63,12 +63,66 @@ copyDir(
   ".next/static",
 );
 
+// server.mjs and server-transcribe-stream.mjs are this artifact's CUSTOM
+// server entrypoint (server.mjs wraps Next via `next({ dev:false })` and
+// attaches the Deepgram WebSocket via attachTranscribeStream). They live
+// outside Next's source graph, so the standalone tracer never copies them
+// — but the Cloud Run runtime image (and the Electron-packaged server
+// child process) needs them present in the standalone tree because that
+// is the directory cwd's into for `node server.mjs`. Copy by file (not
+// dir) since they're individual entry files. v0.7.42: this is the missing
+// piece that made v0.7.41's runtime crash with ERR_MODULE_NOT_FOUND once
+// we flipped NEXT_OUTPUT_STANDALONE=1 on for the Cloud Run deploy too.
+function copyFile(src, dst, label) {
+  if (!fs.existsSync(src)) {
+    console.warn(`[copy-standalone-assets] skipped ${label}: ${src} missing`);
+    return;
+  }
+  fs.mkdirSync(path.dirname(dst), { recursive: true });
+  fs.copyFileSync(src, dst);
+  console.log(`[copy-standalone-assets] copied ${label} -> ${dst}`);
+}
+for (const entry of ["server.mjs", "server-transcribe-stream.mjs"]) {
+  copyFile(
+    path.join(artifactRoot, entry),
+    path.join(standaloneArtifact, entry),
+    entry,
+  );
+}
+
 // public/ is occasionally auto-copied but we mirror it for safety.
 copyDir(
   path.join(artifactRoot, "public"),
   path.join(standaloneArtifact, "public"),
   "public",
 );
+
+// db/ holds the SQLite database that Prisma's `file:../db/custom.db`
+// DATABASE_URL points at (resolved relative to schema.prisma's location,
+// which lands at .next/standalone/artifacts/imported-app/db/custom.db).
+// SQLite creates the FILE on first connection but it does NOT create
+// missing parent directories — it just throws "unable to open database
+// file". `db/` is gitignored, so production source ships without it,
+// which means on first DB access in the runtime container the app
+// would crash. Mirror the source `db/` if it exists (preserves any
+// dev/seed data); otherwise just create the empty directory so SQLite
+// can lay down custom.db on first use.
+const srcDbDir = path.join(artifactRoot, "db");
+const dstDbDir = path.join(standaloneArtifact, "db");
+if (fs.existsSync(srcDbDir)) {
+  copyDir(srcDbDir, dstDbDir, "db");
+} else {
+  fs.mkdirSync(dstDbDir, { recursive: true });
+  console.log(`[copy-standalone-assets] created empty db dir -> ${dstDbDir}`);
+}
+if (!fs.existsSync(dstDbDir) || !fs.statSync(dstDbDir).isDirectory()) {
+  console.error(
+    "[copy-standalone-assets] FATAL: standalone db/ directory is missing.",
+    "Prisma SQLite cannot create parent directories — production deploy",
+    "WILL crash on first DB access with 'unable to open database file'.",
+  );
+  process.exit(1);
+}
 
 // `ws` is imported by server-transcribe-stream.mjs but Next's tracer
 // doesn't see it (custom server file outside the Next graph). Copy from
