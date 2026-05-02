@@ -5,82 +5,42 @@
 This artifact deploys to Replit's **autoscale** target, which runs the
 production build on Cloud Run's **`cr-2-4`** runner (2 vCPU, 4 GB RAM).
 The Next 16 webpack build is the binding constraint — it's RAM-bound,
-not CPU-bound, on a runner that small. Four levers keep it inside the
+not CPU-bound, on a runner that small. These levers keep it inside the
 4 GB cgroup:
 
 | Lever | Where | Effect |
 | --- | --- | --- |
-| Desktop deps in `devDependencies` | `package.json` | `electron-updater` and `koffi` are no longer installed or traced into the Cloud Run build, since both are only imported from `electron/` (main process). Cuts hundreds of MB out of `node_modules` on the build VM. |
-| `SKIP_MARKETING_PREBUILD=1` | `.replit-artifact/artifact.toml` (`services.production.build.env`) | Short-circuits `scripts/maybe-build-marketing.mjs` when invoked from imported-app's own `prebuild` npm script, so the @workspace/site Vite build does **not** run back-to-back with the Next webpack build inside the same per-artifact build process tree. The Replit-level pre-build hook in `.replit` (`[deployment.build]`) has already populated `public/__marketing/` by then — see "Marketing site flow" below. |
-| `NODE_OPTIONS=--max-old-space-size=3584` | `.replit-artifact/artifact.toml` (`services.production.build.env`) | Caps V8's old-space heap at 3584 MB, leaving ~512 MB of cgroup headroom for native allocs (SWC, Prisma generate, terser's Rust binaries). |
+| Heavy UI libraries removed (Task #92) | `package.json` | `framer-motion`, `recharts`, `@mdxeditor/editor`, and `react-syntax-highlighter` were unused by any live route and have been deleted along with the 7 dead-code files that imported them. Roughly 120 MB of dependency code is no longer downloaded, traced, or parsed by webpack on the build VM. |
+| Desktop deps in `devDependencies` | `package.json` | `electron-updater` and `koffi` are only imported from `electron/` (main process), so they live in `devDependencies` and Cloud Run still installs them at build time but they don't get bundled into the Next runtime trace. |
+| `NODE_OPTIONS=--max-old-space-size=2048` | `.replit-artifact/artifact.toml` (`services.production.build.env`) | Caps V8's old-space heap at 2048 MB — the smallest heap that still fits Next's module graph for this app — leaving ~2 GB of cgroup headroom for native allocs (SWC, Prisma generate). |
+| `DISABLE_MINIFY=1` | `.replit-artifact/artifact.toml` (`services.production.build.env`) | Hard-disables webpack's terser pass via the callback in `next.config.ts`. Terser is the single most memory-intensive build step (each worker holds the full module AST in RAM). The client bundle ships unminified, but gzip at Cloud Run's edge still cuts ~70% off transfer size. Remove once the build runner is bumped to `cr-4-8`. |
 | `experimental.webpackMemoryOptimizations` + `experimental.cpus = 1` | `next.config.ts` | Opts into Next's tree-of-modules reuse + early generator GC, and forces a single build worker so we don't multiply the working set by the host's CPU count. |
-| Heavyweight UI libs trimmed (Task #92) | `package.json` | `@mdxeditor/editor`, `react-syntax-highlighter`, `recharts`, and `framer-motion` were removed. The audit (see below) found all four were imported only by dead-code components that no live route reaches. Cuts another ~120 MB out of the build VM's `node_modules` and shrinks webpack's module graph. |
 
-With all four in place, terser/minification is back on by default —
-the shipped client bundle is minified again. There's still a
-`DISABLE_MINIFY=1` escape hatch in `next.config.ts`'s webpack callback
-in case a future, much larger version of the app pushes back over the
-limit before someone has a chance to upsize the runner.
+## Marketing site (scriptureliveai.com)
 
-## Marketing site flow (Task #91)
+The marketing site at `scriptureliveai.com` is moving to its own
+standalone Replit project. As of v0.7.34 this artifact **does not**
+build, bundle, or rewrite to it:
 
-The @workspace/site Vite app hosts the marketing landing page that
-`scriptureliveai.com` (and `www.scriptureliveai.com`) serve via the
-`async rewrites()` block in `next.config.ts`. Because Replit Autoscale
-only promotes ONE service per deploy (see the comment in
-`artifacts/api-server/.replit-artifact/artifact.toml` about "Multiple
-ports are being forwarded") and the shared proxy routes by path only
-(no host-based routing layer below the Next.js app), the marketing
-bundle has to live on disk inside this artifact's `public/__marketing/`
-folder at deploy time. There is no separate marketing deploy.
+- `next.config.ts` no longer has a host-based rewrite for
+  `scriptureliveai.com` / `www.scriptureliveai.com`.
+- `package.json`'s `prebuild` no longer runs the marketing Vite build —
+  it only runs `inject-keys.mjs`.
+- `public/__marketing/` has been removed.
+- `scripts/copy-marketing.mjs` has been deleted.
+- `scripts/maybe-build-marketing.mjs` has been reduced to a no-op stub
+  that exits 0 immediately, because the `[deployment.build]` hook in
+  `.replit` invokes it by path and the agent sandbox doesn't allow
+  removing that hook line from `.replit` automatically. Once the line
+  is removed from `.replit` via the Files pane the stub file can be
+  deleted too.
+- `artifact.toml` no longer sets `SKIP_MARKETING_PREBUILD=1` — there
+  is nothing to skip.
 
-To avoid the cr-2-4 OOM that bit us when the Vite build ran inside the
-imported-app `prebuild` npm script, the production build flow is:
-
-1. **`.replit`'s `[deployment.build]` pre-build hook** invokes
-   `node artifacts/imported-app/scripts/maybe-build-marketing.mjs` at
-   the workspace root. SKIP_MARKETING_PREBUILD is unset at this layer,
-   so the Vite build runs and `copy-marketing.mjs` populates
-   `artifacts/imported-app/public/__marketing/`. The peak Vite memory
-   (~400 MB) is reclaimed when this hook's process tree exits.
-2. **Per-artifact build phase** runs `pnpm --filter
-   @workspace/imported-app run build`. Its `prebuild` script also calls
-   `maybe-build-marketing.mjs`, but this time SKIP_MARKETING_PREBUILD=1
-   from `[services.production.build.env]` short-circuits the rebuild —
-   `public/__marketing/` is already populated from step 1.
-3. **Standalone postbuild** (`scripts/copy-standalone-assets.mjs`)
-   copies `public/` into the standalone tree, which now includes
-   `public/__marketing/`.
-
-When step 1 succeeds, `scriptureliveai.com` renders the marketing site;
-when it ever fails the host rewrite falls through to Next's default for
-`/` (the previous failure mode).
-
-Local desktop builds (`BUILD.bat`, `pnpm --filter @workspace/imported-app
-run package:win`, `... package:mac`) never go through `.replit`. They
-rely entirely on imported-app's own `prebuild` script with
-`SKIP_MARKETING_PREBUILD` unset, so the Electron .exe still ships with
-the marketing bundle baked into `public/__marketing/` exactly as
-before.
-
-## Heavyweight UI library audit (Task #92)
-
-Four libraries were called out as dominating the bundle / webpack
-working set: `@mdxeditor/editor`, `react-syntax-highlighter`,
-`recharts`, and `framer-motion`. A full `rg` sweep across `src/`,
-`electron/`, and `scripts/` showed:
-
-| Library | Reachable usage | Action |
-| --- | --- | --- |
-| `@mdxeditor/editor` | Zero imports anywhere. | Removed from `package.json`. |
-| `react-syntax-highlighter` | Zero imports anywhere. | Removed from `package.json`. |
-| `recharts` | Imported only by `src/components/ui/chart.tsx`. That shadcn wrapper itself has zero importers. | Deleted `src/components/ui/chart.tsx`; removed `recharts` from `package.json`. |
-| `framer-motion` | Imported by `views/{live-presenter,scripture-detection,slide-generator,worship-lyrics}.tsx`, `dashboard/Dashboard.tsx`, and `bible/BibleLookup.tsx`. **None of those components are imported by any live route.** The mounted shell is `LogosShell` → `easyworship-shell` → `library-compact.tsx` (the `*Compact` variants), which use no framer-motion at all. | Deleted the six dead components; removed `framer-motion` from `package.json`. |
-
-Result: no behaviour change in the running app (the deleted files
-were unreachable), but the build VM no longer downloads, traces, or
-parses ~120 MB of unused dependency code, which directly reduces peak
-webpack memory on `cr-2-4`.
+The `@workspace/site` Vite app is still in the monorepo for now and
+runs as the `artifacts/site` dev workflow. It will be moved to its own
+Replit project (where `scriptureliveai.com` will be pointed) in a
+follow-up; until then it has no production deploy path here.
 
 ## User-side escape hatch
 
@@ -90,4 +50,22 @@ dependency or feature bump), the operator-friendly fix is to bump the
 (4 vCPU, 8 GB RAM). The runtime machine size is independent — only the
 build runner is the bottleneck this doc is about. After bumping, the
 `NODE_OPTIONS` cap can be raised proportionally (a good rule of thumb
-is `runner_ram_mb - 1024`, e.g. `7168` on `cr-4-8`).
+is `runner_ram_mb - 1024`, e.g. `7168` on `cr-4-8`) and `DISABLE_MINIFY`
+can be removed so the client bundle ships minified again.
+
+## Heavyweight UI library audit (Task #92, May 2026)
+
+Full sweep across `src/`, `electron/`, and `scripts/` confirmed these
+libraries had zero live importers and were removed:
+
+- `@mdxeditor/editor` — zero imports anywhere.
+- `react-syntax-highlighter` — zero imports anywhere.
+- `recharts` — only imported by `src/components/ui/chart.tsx`, which
+  had zero importers (the whole shadcn chart wrapper was dead).
+- `framer-motion` — only imported by 6 components in `src/components/`
+  and `src/views/`, none of which were mounted by any live route. The
+  mounted UI is `LogosShell → easyworship-shell → library-compact.tsx`,
+  which uses no `framer-motion`.
+
+The 7 dead-code files were also deleted; `tsc --noEmit` passes after
+the removal.

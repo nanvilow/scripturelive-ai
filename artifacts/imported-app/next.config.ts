@@ -17,10 +17,7 @@ const nextConfig: NextConfig = {
   // hits dev mode for the Bible-app `/` route too. Webpack mode needs these
   // server-only deps EXTERNALIZED so it leaves them as plain `require()`s
   // (otherwise it tries to bundle nodemailer and fails resolving the Node
-  // built-in `stream` module pulled in by `instrumentation.ts`). Dev mode
-  // keeps using Turbopack via `next dev` (no --webpack flag) for speed —
-  // the marketing route works there, only the Bible homepage panics, which
-  // doesn't matter for production builds.
+  // built-in `stream` module pulled in by `instrumentation.ts`).
   serverExternalPackages: [
     "nodemailer",
     "better-sqlite3",
@@ -41,34 +38,15 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: process.env.REPLIT_DEV_DOMAIN
     ? [process.env.REPLIT_DEV_DOMAIN]
     : [],
-  // Host-based routing for two-domain deploy:
-  //   scriptureliveai.com (+ www) → marketing site (static SPA bundled at /__marketing/)
-  //   all other hosts (scripturelive.replit.app, dev domain) → existing Next.js app
-  // /__marketing/*, /api/*, /_next/* always pass through so the SPA's bundled
-  // assets and the desktop app's API calls keep working on every host.
-  async rewrites() {
-    // Segment-bounded exclusion: only paths whose first segment is exactly
-    // __marketing, api, _next, .well-known, or root files robots.txt /
-    // sitemap.xml / favicon.ico bypass the rewrite. `/apiary`, `/_nextfoo`
-    // etc. still rewrite to marketing on marketing hosts.
-    const passthrough =
-      "(?:__marketing(?:/.*)?|api(?:/.*)?|_next(?:/.*)?|\\.well-known(?:/.*)?|robots\\.txt|sitemap\\.xml|favicon\\.ico)";
-    const source = `/:path((?!${passthrough}$).*)`;
-    return {
-      beforeFiles: [
-        {
-          source,
-          has: [{ type: "host", value: "scriptureliveai.com" }],
-          destination: "/__marketing/index.html",
-        },
-        {
-          source,
-          has: [{ type: "host", value: "www.scriptureliveai.com" }],
-          destination: "/__marketing/index.html",
-        },
-      ],
-    };
-  },
+  // Host-based marketing-site rewrite REMOVED (v0.7.34). The marketing
+  // site at scriptureliveai.com is being moved to its own standalone
+  // Replit project, so this app no longer needs to handle that domain
+  // — every host (scripturelive.replit.app, the Replit dev domain,
+  // the desktop app's loopback) now serves the Bible app directly.
+  // The companion changes are: prebuild no longer runs the marketing
+  // Vite build, public/__marketing/ is gone, the .replit
+  // [deployment.build] pre-build hook is gone, and SKIP_MARKETING_PREBUILD
+  // / DISABLE_MINIFY env vars are gone from artifact.toml.
   typescript: {
     ignoreBuildErrors: true,
   },

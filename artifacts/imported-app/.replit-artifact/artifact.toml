@@ -26,44 +26,32 @@ kind = "web"
   NODE_ENV = "production"
   # Cloud Run autoscale build runner is `cr-2-4` (2 vCPU, 4 GB RAM).
   # See artifacts/imported-app/DEPLOY.md for the full breakdown of how
-  # the memory levers (dep prune, marketing-prebuild skip, V8 heap cap,
+  # the memory levers (heavy-dep audit by Task #92, V8 heap cap,
   # webpack experimentals, terser disable) keep the Next 16 webpack
-  # build inside the 4 GB cgroup. The user-side escape hatch when this
-  # app outgrows cr-2-4 is bumping the build resources to cr-4-8 in
-  # the Replit deployment pane.
+  # build inside the 4 GB cgroup. The user-side escape hatch when
+  # this app outgrows cr-2-4 is bumping the build resources to
+  # cr-4-8 in the Replit deployment pane.
   #
-  # SKIP_MARKETING_PREBUILD (Task #91): short-circuits
-  # scripts/maybe-build-marketing.mjs WHEN it's invoked from
-  # imported-app's own `prebuild` npm script during the per-artifact
-  # build phase, so the @workspace/site Vite build does NOT run
-  # contiguously with the Next webpack build inside the same
-  # `pnpm --filter @workspace/imported-app run build` process tree
-  # (which is what blew the 4 GB cgroup). The marketing site is
-  # already on disk by the time this artifact builds — the
-  # Replit-level pre-build hook in `.replit`'s `[deployment.build]`
-  # builds @workspace/site and copies its dist into
-  # `public/__marketing/` BEFORE the per-artifact build starts, so
-  # short-circuiting here is fine. Local desktop builds (BUILD.bat /
-  # package:win / package:mac) leave this unset and never go through
-  # `.replit`, so the Electron .exe still ships with the bundled
-  # marketing SPA.
-  #
-  # NODE_OPTIONS: caps V8's old-space heap at 2048 MB (was 3584 — the
-  # higher cap let webpack's optimizer overshoot the 4 GB cgroup and
-  # get SIGKILL'd, see Task #90 deploy attempt). 2048 is the smallest
-  # heap that still fits Next's module graph for this app, leaving
-  # ~2 GB of cgroup headroom for terser-disabled webpack passes and
-  # native allocs (SWC, Prisma generate).
+  # NODE_OPTIONS: caps V8's old-space heap at 2048 MB. 2048 is the
+  # smallest heap that still fits Next's module graph for this app,
+  # leaving ~2 GB of cgroup headroom for native allocs (SWC, Prisma
+  # generate) on a 4 GB runner.
   #
   # DISABLE_MINIFY: hard-disables webpack's terser pass via the
   # callback in next.config.ts. Terser is the single most memory-
-  # intensive build step (each parallel worker holds the full module
-  # AST in RAM). With it off the client bundle is unminified — gzip
-  # still cuts ~70% off transfer size and Cloud Run handles gzip at
-  # the edge, so the user-visible effect is negligible. The toggle is
-  # the LAST resort before bumping the build runner; remove it once
-  # the app is on cr-4-8.
-  SKIP_MARKETING_PREBUILD = "1"
+  # intensive build step (each parallel worker holds the full
+  # module AST in RAM). With it off the client bundle is unminified
+  # — gzip still cuts ~70% off transfer size at Cloud Run's edge,
+  # so the user-visible effect is negligible. Remove this once the
+  # app is on cr-4-8.
+  #
+  # SKIP_MARKETING_PREBUILD removed in v0.7.34 — the marketing site
+  # at scriptureliveai.com is moving to its own standalone Replit
+  # project, so this artifact no longer touches @workspace/site.
+  # The companion `[deployment.build]` hook in `.replit` now invokes
+  # a no-op stub (see scripts/maybe-build-marketing.mjs); the hook
+  # line can be deleted from `.replit` via the Files pane to fully
+  # excise it.
   NODE_OPTIONS = "--max-old-space-size=2048"
   DISABLE_MINIFY = "1"
   NEXT_TELEMETRY_DISABLED = "1"

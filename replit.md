@@ -1,5 +1,49 @@
 # Recent Changes
 
+## v0.7.34 — Marketing site disconnected from this project (May 2, 2026)
+
+**Decision**: After many failed Cloud Run deploys (cr-2-4 build VM = 4 GB,
+Next 16 webpack build of imported-app + scriptureliveai.com marketing
+bundle = > 4 GB, terser the worst offender), the user decided to move
+the marketing site to its own standalone Replit project. This project
+now deploys **only the Bible app** (imported-app), served on
+`scripturelive.replit.app`. `scriptureliveai.com` will be pointed at the
+new marketing-site project.
+
+**Removed from imported-app**:
+- `next.config.ts`: deleted the `async rewrites()` block that routed
+  `scriptureliveai.com` / `www.scriptureliveai.com` → `/__marketing/index.html`.
+- `package.json`: `prebuild` simplified from `inject-keys.mjs && maybe-build-marketing.mjs` to just `inject-keys.mjs`.
+- `public/__marketing/` directory deleted (4.6 MB freed).
+- `scripts/copy-marketing.mjs` deleted.
+- `scripts/maybe-build-marketing.mjs` reduced to a 3-line `process.exit(0)`
+  no-op stub. The `[deployment.build]` hook in `.replit` still calls it
+  by path; the agent sandbox blocks direct `.replit` edits, so the stub
+  shims the call until the user removes the hook line via the Files pane.
+- `artifact.toml`: removed `SKIP_MARKETING_PREBUILD=1` env var (nothing
+  to skip). Kept `NODE_OPTIONS=--max-old-space-size=2048` and
+  `DISABLE_MINIFY=1` because terser is still memory-heavy and 2048 is
+  the proven safe heap cap on cr-2-4.
+
+**Kept**:
+- Task #92's heavy-dep removal (framer-motion, recharts, mdx-editor,
+  react-syntax-highlighter and 7 dead-code files — ~120 MB of deps).
+- Task #90's electron-updater + koffi → devDependencies.
+- `webpackMemoryOptimizations` + `cpus: 1` experimentals in next.config.ts.
+
+**`@workspace/site` (artifacts/site)** stays in the monorepo for now as
+a dev-only workflow; it has no production deploy path here. The user
+will copy it into a new Replit project where `scriptureliveai.com` will
+be pointed.
+
+**User next step**: click Republish in the Deployments pane. Build is
+now leaner and more focused — no marketing Vite build, no host
+rewrites, no 4.6 MB of bundled SPA assets, ~120 MB fewer deps. If it
+still SIGKILLs the only remaining lever is bumping the build runner to
+`cr-4-8` in the deployment pane.
+
+---
+
 ## Host-based routing for two-domain deploy (May 2, 2026)
 
 **The autoscale-only-deploys-one-artifact reality**: production logs from the prior publish revealed `artifact mode enabled runnable=1 static=0` — Replit autoscale rejects multi-artifact deploys silently, picking only the first runnable. Site's `serve = "static"` config was ignored; both `scriptureliveai.com` and `scripturelive.replit.app` were serving imported-app's Next.js. The api-server toml's prior comment about "Multiple ports being forwarded" was the canary.

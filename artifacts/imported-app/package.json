@@ -10,7 +10,7 @@
   "scripts": {
     "inject:keys": "node scripts/inject-keys.mjs",
     "predev": "node scripts/inject-keys.mjs",
-    "prebuild": "node scripts/inject-keys.mjs && node scripts/maybe-build-marketing.mjs",
+    "prebuild": "node scripts/inject-keys.mjs",
     "dev": "cross-env DATABASE_URL=file:../db/custom.db next dev -H 0.0.0.0 -p ${PORT:-3000}",
     "build": "cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build --webpack",
     "start": "DATABASE_URL=file:../db/custom.db NODE_ENV=production HOST=0.0.0.0 PORT=${PORT:-3000} node .next/standalone/artifacts/imported-app/server.mjs",
