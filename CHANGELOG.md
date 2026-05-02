@@ -17,6 +17,32 @@ Format rules (so the workflow's extractor keeps working):
 - Write for the operator, not the engineer. "Verses now appear within
   ~250ms" beats "reduced CHUNK_MS from 4500 to 2500".
 
+## v0.7.22 — 2026-05-02
+
+### Fixed
+
+- **"Next verse" / "previous verse" voice commands now actually
+  advance through scripture.** Operator bug report on v0.7.21:
+  *"When it's on John 3:3 and a voice command is given for 'next
+  verse', it should move to John 3:4."* The old handler only moved
+  the highlight inside multi-verse passages and silently did nothing
+  on single-verse slides — which is what most operators are on.
+  Now saying *"next verse"* on John 3:3 loads John 3:4 from the
+  Bible and pushes it live (same for the entire Bible — book + chapter
+  boundaries are respected, so it won't try to load John 3:37 or jump
+  past Revelation 22). *"Previous verse"* works the same way going
+  backwards.
+
+### Changed
+
+- **Trial shortened from 3 hours to 70 minutes.** Operators reported
+  that 3 hours was effectively letting trial users get through a full
+  Sunday service for free. 70 minutes is enough to walk through the
+  installer, see verses appear in a short test, and decide whether
+  to activate — without covering an entire service. **Existing
+  trials keep their original 180-minute budget** (the change applies
+  to fresh installs only); paid installs are not affected.
+
 ## v0.7.21 — 2026-05-01
 
 ### Fixed
