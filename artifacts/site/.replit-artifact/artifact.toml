@@ -5,6 +5,16 @@ version = "1.0.0"
 id = "artifacts/site"
 router = "path"
 
+# v0.7.34 — This artifact is dev-only. There is intentionally NO
+# `[services.production]` section, so Replit autoscale will not promote
+# this service when the project is published. The marketing site is
+# being moved to its own standalone Replit project pointed at
+# scriptureliveai.com; the workflow below stays so the site can still
+# be previewed in this workspace until that move happens, but it is
+# NOT part of any production deploy of this project. The deployed
+# Repl serves only `artifacts/imported-app` (the Bible app) on
+# `scripturelive.replit.app`.
+
 [[integratedSkills]]
 name = "react-vite"
 version = "1.0.0"

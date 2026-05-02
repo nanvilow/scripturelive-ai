@@ -18,8 +18,11 @@ new marketing-site project.
 - `scripts/copy-marketing.mjs` deleted.
 - `scripts/maybe-build-marketing.mjs` reduced to a 3-line `process.exit(0)`
   no-op stub. The `[deployment.build]` hook in `.replit` still calls it
-  by path; the agent sandbox blocks direct `.replit` edits, so the stub
-  shims the call until the user removes the hook line via the Files pane.
+  by absolute path; the Replit agent sandbox hard-blocks ALL writes to
+  `.replit` (edit/write/sed all rejected) and the deployment skill
+  exposes no callback to remove the hook, so the stub is the agent's
+  only workaround. The user can delete the `[deployment.build]` lines
+  from `.replit` via the Files pane in ~5 seconds, then delete the stub.
 - `artifact.toml`: removed `SKIP_MARKETING_PREBUILD=1` env var (nothing
   to skip). Kept `NODE_OPTIONS=--max-old-space-size=2048` and
   `DISABLE_MINIFY=1` because terser is still memory-heavy and 2048 is

@@ -43,10 +43,15 @@ const nextConfig: NextConfig = {
   // Replit project, so this app no longer needs to handle that domain
   // — every host (scripturelive.replit.app, the Replit dev domain,
   // the desktop app's loopback) now serves the Bible app directly.
-  // The companion changes are: prebuild no longer runs the marketing
-  // Vite build, public/__marketing/ is gone, the .replit
-  // [deployment.build] pre-build hook is gone, and SKIP_MARKETING_PREBUILD
-  // / DISABLE_MINIFY env vars are gone from artifact.toml.
+  // Companion changes: prebuild no longer runs the marketing Vite
+  // build, public/__marketing/ is gone, copy-marketing.mjs is gone,
+  // and SKIP_MARKETING_PREBUILD is gone from artifact.toml. The
+  // .replit `[deployment.build]` hook still calls
+  // scripts/maybe-build-marketing.mjs (the agent sandbox blocks
+  // direct edits to `.replit`), but that script is now a 3-line
+  // no-op stub that exits 0 in milliseconds, so the hook is
+  // effectively dead weight. The user can delete the hook line
+  // (and then the stub) via the Files pane to fully excise it.
   typescript: {
     ignoreBuildErrors: true,
   },
