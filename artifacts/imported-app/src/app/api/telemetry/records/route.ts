@@ -59,7 +59,10 @@ interface RecordsResponse {
   }[]
   /** v0.7.16 — User-submitted "Report an issue" entries from the
    *  in-app Report button + lock-overlay. Last 24 h, max 50.
-   *  Sorted desc (newest first). */
+   *  Sorted desc (newest first).
+   *  v0.7.43 — Now includes reporterName/Phone/Location, which
+   *  are compulsory on the form (so they're always present on
+   *  reports submitted ≥ v0.7.43; older reports just lack them). */
   userReports: {
     id: number | string
     message: string
@@ -67,6 +70,9 @@ interface RecordsResponse {
     installId: string
     code?: string
     appVersion?: string
+    reporterName?: string
+    reporterPhone?: string
+    reporterLocation?: string
   }[]
   /** v0.7.16 — Top 100 installs by lastSeenAt desc. Powers the
    *  "Active now" + "Total installs" drilldown dialogs. Active set
@@ -310,6 +316,12 @@ export async function GET(req: NextRequest) {
         installId: e.installId.slice(0, 8),
         code: e.code ?? undefined,
         appVersion: e.appVersion ?? undefined,
+        // v0.7.43 — Compulsory reporter contact fields, so the
+        // operator can follow up directly. Reports written before
+        // v0.7.43 won't have these, so they remain undefined.
+        reporterName: e.reporterName ?? undefined,
+        reporterPhone: e.reporterPhone ?? undefined,
+        reporterLocation: e.reporterLocation ?? undefined,
       }))
 
     // v0.7.16 — Top 100 installs by lastSeenAt (most-recently-seen

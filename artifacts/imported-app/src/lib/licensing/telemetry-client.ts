@@ -117,6 +117,16 @@ export interface ErrorPayload {
   errorType: string
   message: string
   stack?: string
+  /** v0.7.43 — Reporter contact fields. Required when
+   *  errorType === 'user_report' so the operator can follow up
+   *  with the customer; ignored for system-generated error rows
+   *  (uncaught exceptions, SMTP failures, etc.) which have no
+   *  human reporter to contact. Validated upstream in
+   *  /api/license/report-issue and stored as part of the
+   *  ErrorRow so the admin Records dashboard can surface them. */
+  reporterName?: string
+  reporterPhone?: string
+  reporterLocation?: string
 }
 export function pingError(p: ErrorPayload): Promise<void> {
   return postFireAndForget('/error', p)

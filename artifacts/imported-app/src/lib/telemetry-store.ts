@@ -168,6 +168,12 @@ export interface ErrorRow {
   message: string
   stack?: string | null
   ts: string
+  /** v0.7.43 — Reporter contact fields, populated only when
+   *  errorType === 'user_report' (in-app Report an Issue form).
+   *  System-generated errors leave these null. */
+  reporterName?: string | null
+  reporterPhone?: string | null
+  reporterLocation?: string | null
 }
 
 export interface CodeLastSeenRow {

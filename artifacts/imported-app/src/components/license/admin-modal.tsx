@@ -231,7 +231,10 @@ export function AdminModal() {
       appVersion?: string
     }[]
     /** v0.7.16 — User-submitted reports from the in-app + lock-overlay
-     *  Report Issue buttons. Sorted desc, max 50, last 24h. */
+     *  Report Issue buttons. Sorted desc, max 50, last 24h.
+     *  v0.7.43 — Compulsory reporter contact fields, so operators
+     *  can follow up by phone. Older reports (pre-v0.7.43) won't
+     *  have these. */
     userReports?: {
       id: number | string
       message: string
@@ -239,6 +242,9 @@ export function AdminModal() {
       installId: string
       code?: string
       appVersion?: string
+      reporterName?: string
+      reporterPhone?: string
+      reporterLocation?: string
     }[]
     /** v0.7.16 — Top 100 installs by lastSeenAt desc. Powers the
      *  Active Now / Total Installs drilldown dialogs. */
@@ -1391,7 +1397,7 @@ export function AdminModal() {
                     {records.userReports.map((r) => (
                       <div
                         key={r.id}
-                        className="text-[11px] flex flex-col gap-0.5 rounded border border-violet-500/30 bg-violet-950/15 px-2 py-1"
+                        className="text-[11px] flex flex-col gap-1 rounded border border-violet-500/30 bg-violet-950/15 px-2 py-1.5"
                       >
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-mono text-violet-200 uppercase tracking-wider text-[10px]">user_report</span>
@@ -1404,6 +1410,40 @@ export function AdminModal() {
                             <span className="text-[9px] font-mono text-muted-foreground">code {r.code}</span>
                           )}
                         </div>
+                        {/* v0.7.43 — Reporter contact card. The whole
+                            point of making name/phone/location compulsory
+                            is so the operator can call/text back. Render
+                            them prominently with a tel: link on the phone
+                            so a single tap (on a tablet) starts the call.
+                            Reports submitted pre-v0.7.43 lack these; we
+                            simply omit the block in that case. */}
+                        {(r.reporterName || r.reporterPhone || r.reporterLocation) && (
+                          <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap rounded bg-violet-950/40 border border-violet-500/20 px-2 py-1">
+                            {r.reporterName && (
+                              <span className="text-[10px] text-violet-100">
+                                <span className="text-muted-foreground uppercase tracking-wider mr-1">Name:</span>
+                                <span className="font-medium">{r.reporterName}</span>
+                              </span>
+                            )}
+                            {r.reporterPhone && (
+                              <span className="text-[10px] text-violet-100">
+                                <span className="text-muted-foreground uppercase tracking-wider mr-1">Phone:</span>
+                                <a
+                                  href={`tel:${r.reporterPhone.replace(/[^\d+]/g, '')}`}
+                                  className="font-mono font-medium underline-offset-2 hover:underline"
+                                >
+                                  {r.reporterPhone}
+                                </a>
+                              </span>
+                            )}
+                            {r.reporterLocation && (
+                              <span className="text-[10px] text-violet-100">
+                                <span className="text-muted-foreground uppercase tracking-wider mr-1">Location:</span>
+                                <span>{r.reporterLocation}</span>
+                              </span>
+                            )}
+                          </div>
+                        )}
                         <div className="text-violet-50 break-words whitespace-pre-wrap">{r.message}</div>
                       </div>
                     ))}

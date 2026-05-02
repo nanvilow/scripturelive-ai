@@ -1,5 +1,28 @@
 # Recent Changes
 
+## v0.7.43 — "Report an Issue" form: name, phone, location now compulsory (May 2, 2026)
+
+**Operator request:** the central admin Records dashboard (Ctrl+Shift+P → Overview → User reports) was getting too many anonymous "something is broken" reports with no way to follow up. From v0.7.43 every user report MUST include the reporter's name, phone, and location before it can be sent.
+
+**Surfaces touched (both share the same API contract):**
+- `src/components/report-issue-button.tsx` — topbar Report Issue dialog (always visible, every view).
+- `src/components/license/lock-overlay.tsx` — Report Issue dialog on the trial-ended / subscription-expired lock screen.
+
+**Data path (8 files end-to-end):**
+- `lib/licensing/telemetry-client.ts` — `ErrorPayload` extended with `reporterName/Phone/Location` (optional at this layer; required upstream for `errorType: 'user_report'`).
+- `lib/telemetry-store.ts` — `ErrorRow` carries the same three fields (nullable, since system errors don't have them).
+- `app/api/license/report-issue/route.ts` — full rewrite with strict validation; returns distinct error codes (`name_required`, `phone_required`, `phone_invalid`, `location_required`, `message_required`, plus `*_too_long` variants) so the client can highlight the offending field.
+- `app/api/telemetry/error/route.ts` — zod schema accepts the three optional fields; ErrorRow construction stores them.
+- `app/api/telemetry/records/route.ts` — `userReports[]` now surfaces `reporterName/Phone/Location`. Older reports (pre-v0.7.43) simply have these undefined.
+- `components/license/admin-modal.tsx` — User reports panel now renders a dedicated reporter contact card per report. Phone is wrapped in a `tel:` link so a single tap on a tablet starts the call.
+
+**UX:**
+- Phone validation is loose by design: 7-20 digits anywhere in the string (so `024 555 1234`, `+233 24 555 1234`, and `(024) 555-1234` all pass). Strict E.164 would reject too many valid domestic numbers in our customer base.
+- All three contact fields persist to `localStorage` under `sl.reportContact.v1` after the first successful submission, and are re-hydrated on next dialog open. So a returning user only types their contact details once across the whole app — both the topbar and the lock-overlay surfaces share the same key.
+- Server returns distinct error codes per missing/invalid field; the client maps them to actionable toast copy (e.g. `phone_invalid` → "That phone number does not look right — please re-enter it.").
+
+**Smoke-tested live**, all 5 paths verified: `name_required` → `phone_required` → `phone_invalid` → `location_required` → `ok:true`. Typecheck passes.
+
 ## v0.7.42 — Runtime fix: enable Next.js standalone output so Cloud Run can resolve `next` (May 2, 2026)
 
 **v0.7.41 finally got the build to pass** (after 10+ failed deploys) by bounding the Tailwind v4 content scanner. The container then started up — and immediately crashed at `node server.mjs` with:

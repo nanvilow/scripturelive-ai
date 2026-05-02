@@ -33,7 +33,7 @@
 //     same backend as v0.7.14).
 
 import { Lock, Sparkles, Flag, Loader2, Check } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useLicense } from './license-provider'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -51,8 +51,15 @@ export function LiveTranscriptionLockOverlay() {
   // v0.7.17 — Report Issue dialog state. Self-contained: open/value/
   // busy/sent flags are all local because nothing else in the app
   // needs to drive this surface.
+  // v0.7.43 — Name/phone/location are now compulsory. Fields persist
+  // in localStorage between submissions (key shared with the topbar
+  // ReportIssueButton via the 'sl.reportContact.v1' key) so a
+  // returning user only types their contact details once.
   const [reportOpen, setReportOpen] = useState(false)
   const [reportValue, setReportValue] = useState('')
+  const [reportName, setReportName] = useState('')
+  const [reportPhone, setReportPhone] = useState('')
+  const [reportLocation, setReportLocation] = useState('')
   const [reportBusy, setReportBusy] = useState(false)
   const [reportSent, setReportSent] = useState(false)
   if (!isLocked) return null
@@ -81,9 +88,45 @@ export function LiveTranscriptionLockOverlay() {
     ? 'Your activation has expired. Tap Activate to enter your code.'
     : 'Your 1-hour free trial has ended. Tap Activate to enter your code.'
 
+  // v0.7.43 — Restore saved contact details whenever the dialog opens
+  // (and only if the fields are blank — don't overwrite mid-edit
+  // values). Shares the 'sl.reportContact.v1' localStorage key with
+  // the topbar ReportIssueButton so users only type contact info once
+  // for the whole app.
+  useEffect(() => {
+    if (!reportOpen) return
+    if (reportName || reportPhone || reportLocation) return
+    try {
+      if (typeof window === 'undefined') return
+      const raw = window.localStorage.getItem('sl.reportContact.v1')
+      if (!raw) return
+      const s = JSON.parse(raw) as { name?: string; phone?: string; location?: string }
+      if (typeof s.name === 'string' && s.name) setReportName(s.name)
+      if (typeof s.phone === 'string' && s.phone) setReportPhone(s.phone)
+      if (typeof s.location === 'string' && s.location) setReportLocation(s.location)
+    } catch {
+      /* ignore — storage may be disabled */
+    }
+  }, [reportOpen, reportName, reportPhone, reportLocation])
+
+  const trimmedReport = reportValue.trim()
+  const trimmedReportName = reportName.trim()
+  const trimmedReportPhone = reportPhone.trim()
+  const trimmedReportLocation = reportLocation.trim()
+  const reportPhoneDigits = trimmedReportPhone.replace(/\D/g, '')
+  const reportPhoneLooksValid =
+    trimmedReportPhone.length === 0 ||
+    (reportPhoneDigits.length >= 7 && reportPhoneDigits.length <= 20)
+  const canSubmitReport =
+    !reportBusy &&
+    trimmedReport.length > 0 &&
+    trimmedReportName.length > 0 &&
+    trimmedReportPhone.length > 0 &&
+    trimmedReportLocation.length > 0 &&
+    reportPhoneLooksValid
+
   const submitReport = async () => {
-    const message = reportValue.trim()
-    if (!message || reportBusy) return
+    if (!canSubmitReport) return
     setReportBusy(true)
     try {
       const r = await fetch('/api/license/report-issue', {
@@ -91,11 +134,28 @@ export function LiveTranscriptionLockOverlay() {
         cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message,
+          message: trimmedReport,
           context: `lock-overlay:${status.state}`,
+          reporterName: trimmedReportName,
+          reporterPhone: trimmedReportPhone,
+          reporterLocation: trimmedReportLocation,
         }),
       })
-      if (r.ok) {
+      const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string }
+      if (r.ok && j.ok) {
+        // Persist contact details so next submission is one-click.
+        try {
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem(
+              'sl.reportContact.v1',
+              JSON.stringify({
+                name: trimmedReportName,
+                phone: trimmedReportPhone,
+                location: trimmedReportLocation,
+              }),
+            )
+          }
+        } catch { /* ignore */ }
         // Close the modal first so the success badge below the
         // Activate button can surface (which auto-clears after 6s).
         setReportSent(true)
@@ -103,7 +163,14 @@ export function LiveTranscriptionLockOverlay() {
         setReportOpen(false)
         setTimeout(() => setReportSent(false), 6000)
       } else {
-        toast.error('Could not send report — try again or contact support.')
+        const map: Record<string, string> = {
+          name_required: 'Please enter your name.',
+          phone_required: 'Please enter a phone number we can reach you on.',
+          phone_invalid: 'That phone number does not look right — please re-enter it.',
+          location_required: 'Please enter your location (city / town).',
+          message_required: 'Please describe the issue.',
+        }
+        toast.error(map[j.error ?? ''] || 'Could not send report — try again or contact support.')
       }
     } catch {
       toast.error('Network error — could not reach the licensing service.')
@@ -209,18 +276,82 @@ export function LiveTranscriptionLockOverlay() {
             }}
             className="flex flex-col gap-3"
           >
-            <textarea
-              autoFocus
-              value={reportValue}
-              onChange={(e) => setReportValue(e.target.value.slice(0, 1500))}
-              placeholder="e.g. Paid via MoMo 2 hours ago, no activation SMS yet. My number is 024XXXXXXX."
-              rows={6}
-              disabled={reportBusy}
-              className="w-full px-3 py-2 rounded-md text-sm bg-background border border-input focus:outline-none focus:ring-2 focus:ring-ring text-foreground placeholder:text-muted-foreground/60 resize-none disabled:opacity-60"
-            />
+            {/* v0.7.43 — Compulsory contact fields, so the operator can
+                follow up by phone. Restored from localStorage on
+                re-open so returning users only type these once. */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <label className="space-y-1">
+                <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Name <span className="text-rose-400">*</span>
+                </span>
+                <input
+                  type="text"
+                  value={reportName}
+                  onChange={(e) => setReportName(e.target.value.slice(0, 120))}
+                  placeholder="e.g. Kwame Mensah"
+                  required
+                  disabled={reportBusy}
+                  autoComplete="name"
+                  className="w-full px-3 py-1.5 rounded-md text-sm bg-background border border-input focus:outline-none focus:ring-2 focus:ring-ring text-foreground placeholder:text-muted-foreground/60 disabled:opacity-60"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Phone <span className="text-rose-400">*</span>
+                </span>
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  value={reportPhone}
+                  onChange={(e) => setReportPhone(e.target.value.slice(0, 40))}
+                  placeholder="e.g. 024 555 1234"
+                  required
+                  disabled={reportBusy}
+                  autoComplete="tel"
+                  aria-invalid={trimmedReportPhone.length > 0 && !reportPhoneLooksValid}
+                  className={cn(
+                    'w-full px-3 py-1.5 rounded-md text-sm bg-background border focus:outline-none focus:ring-2 text-foreground placeholder:text-muted-foreground/60 disabled:opacity-60',
+                    trimmedReportPhone.length > 0 && !reportPhoneLooksValid
+                      ? 'border-rose-500/60 focus:ring-rose-500/40'
+                      : 'border-input focus:ring-ring',
+                  )}
+                />
+              </label>
+            </div>
+            <label className="space-y-1 block">
+              <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
+                Location (city / town, country) <span className="text-rose-400">*</span>
+              </span>
+              <input
+                type="text"
+                value={reportLocation}
+                onChange={(e) => setReportLocation(e.target.value.slice(0, 160))}
+                placeholder="e.g. Accra, Ghana"
+                required
+                disabled={reportBusy}
+                autoComplete="address-level2"
+                className="w-full px-3 py-1.5 rounded-md text-sm bg-background border border-input focus:outline-none focus:ring-2 focus:ring-ring text-foreground placeholder:text-muted-foreground/60 disabled:opacity-60"
+              />
+            </label>
+            <label className="space-y-1 block">
+              <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
+                What went wrong? <span className="text-rose-400">*</span>
+              </span>
+              <textarea
+                value={reportValue}
+                onChange={(e) => setReportValue(e.target.value.slice(0, 1500))}
+                placeholder="e.g. Paid via MoMo 2 hours ago, no activation SMS yet."
+                rows={5}
+                disabled={reportBusy}
+                className="w-full px-3 py-2 rounded-md text-sm bg-background border border-input focus:outline-none focus:ring-2 focus:ring-ring text-foreground placeholder:text-muted-foreground/60 resize-none disabled:opacity-60"
+              />
+            </label>
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-muted-foreground font-mono">
                 {reportValue.length} / 1500
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                All fields marked * are required.
               </span>
             </div>
             <DialogFooter className="gap-2 sm:gap-2">
@@ -237,7 +368,7 @@ export function LiveTranscriptionLockOverlay() {
               </button>
               <button
                 type="submit"
-                disabled={reportBusy || !reportValue.trim()}
+                disabled={!canSubmitReport}
                 className="inline-flex items-center justify-center gap-1.5 h-9 px-4 rounded-md text-xs font-semibold uppercase tracking-wider bg-violet-600 hover:bg-violet-500 text-white border border-violet-400/40 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {reportBusy ? (

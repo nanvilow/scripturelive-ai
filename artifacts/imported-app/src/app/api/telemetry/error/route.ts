@@ -25,6 +25,13 @@ const schema = z.object({
   errorType: z.string().min(1).max(64),
   message: z.string().min(1).max(2000),
   stack: z.string().max(8000).optional(),
+  // v0.7.43 — Reporter contact fields. OPTIONAL at this layer
+  // (system errors don't have them); the upstream /api/license/
+  // report-issue route enforces them as REQUIRED for user
+  // reports before it forwards here.
+  reporterName: z.string().max(120).optional(),
+  reporterPhone: z.string().max(40).optional(),
+  reporterLocation: z.string().max(160).optional(),
 })
 
 export async function POST(req: NextRequest) {
@@ -50,6 +57,9 @@ export async function POST(req: NextRequest) {
     message: p.message,
     stack: p.stack ?? null,
     ts: tsIso,
+    reporterName: p.reporterName ?? null,
+    reporterPhone: p.reporterPhone ?? null,
+    reporterLocation: p.reporterLocation ?? null,
   }
   try {
     await dbSet(`err:${tsIso}:${randSuffix()}`, JSON.stringify(row))
