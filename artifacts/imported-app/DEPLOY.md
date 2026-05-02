@@ -14,6 +14,7 @@ not CPU-bound, on a runner that small. Four levers keep it inside the
 | `SKIP_MARKETING_PREBUILD=1` | `.replit-artifact/artifact.toml` (`services.production.build.env`) | Short-circuits `scripts/maybe-build-marketing.mjs` when invoked from imported-app's own `prebuild` npm script, so the @workspace/site Vite build does **not** run back-to-back with the Next webpack build inside the same per-artifact build process tree. The Replit-level pre-build hook in `.replit` (`[deployment.build]`) has already populated `public/__marketing/` by then — see "Marketing site flow" below. |
 | `NODE_OPTIONS=--max-old-space-size=3584` | `.replit-artifact/artifact.toml` (`services.production.build.env`) | Caps V8's old-space heap at 3584 MB, leaving ~512 MB of cgroup headroom for native allocs (SWC, Prisma generate, terser's Rust binaries). |
 | `experimental.webpackMemoryOptimizations` + `experimental.cpus = 1` | `next.config.ts` | Opts into Next's tree-of-modules reuse + early generator GC, and forces a single build worker so we don't multiply the working set by the host's CPU count. |
+| Heavyweight UI libs trimmed (Task #92) | `package.json` | `@mdxeditor/editor`, `react-syntax-highlighter`, `recharts`, and `framer-motion` were removed. The audit (see below) found all four were imported only by dead-code components that no live route reaches. Cuts another ~120 MB out of the build VM's `node_modules` and shrinks webpack's module graph. |
 
 With all four in place, terser/minification is back on by default —
 the shipped client bundle is minified again. There's still a
@@ -61,6 +62,25 @@ rely entirely on imported-app's own `prebuild` script with
 `SKIP_MARKETING_PREBUILD` unset, so the Electron .exe still ships with
 the marketing bundle baked into `public/__marketing/` exactly as
 before.
+
+## Heavyweight UI library audit (Task #92)
+
+Four libraries were called out as dominating the bundle / webpack
+working set: `@mdxeditor/editor`, `react-syntax-highlighter`,
+`recharts`, and `framer-motion`. A full `rg` sweep across `src/`,
+`electron/`, and `scripts/` showed:
+
+| Library | Reachable usage | Action |
+| --- | --- | --- |
+| `@mdxeditor/editor` | Zero imports anywhere. | Removed from `package.json`. |
+| `react-syntax-highlighter` | Zero imports anywhere. | Removed from `package.json`. |
+| `recharts` | Imported only by `src/components/ui/chart.tsx`. That shadcn wrapper itself has zero importers. | Deleted `src/components/ui/chart.tsx`; removed `recharts` from `package.json`. |
+| `framer-motion` | Imported by `views/{live-presenter,scripture-detection,slide-generator,worship-lyrics}.tsx`, `dashboard/Dashboard.tsx`, and `bible/BibleLookup.tsx`. **None of those components are imported by any live route.** The mounted shell is `LogosShell` → `easyworship-shell` → `library-compact.tsx` (the `*Compact` variants), which use no framer-motion at all. | Deleted the six dead components; removed `framer-motion` from `package.json`. |
+
+Result: no behaviour change in the running app (the deleted files
+were unreachable), but the build VM no longer downloads, traces, or
+parses ~120 MB of unused dependency code, which directly reduces peak
+webpack memory on `cr-2-4`.
 
 ## User-side escape hatch
 
