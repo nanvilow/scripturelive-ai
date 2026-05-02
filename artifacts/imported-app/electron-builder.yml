@@ -35,6 +35,21 @@ files:
   - "!node_modules/.pnpm/@parcel+watcher-*/**/*"
   - "!node_modules/fsevents/**/*"
   - "!node_modules/.pnpm/fsevents@*/**/*"
+  # v0.7.48 — Exclude pnpm workspace packages from the asar.
+  #
+  # `@workspace/pricing` is symlinked from
+  # `artifacts/imported-app/node_modules/@workspace/pricing` to the workspace
+  # source at `lib/pricing/` (4 levels up). electron-builder's asar packager
+  # follows the symlink and sees absolute paths OUTSIDE the app dir, then
+  # crashes with:
+  #   D:\...\lib\pricing\package.json must be under D:\...\artifacts\imported-app\
+  # We don't actually need the symlink in the asar at all — `@workspace/pricing`
+  # is consumed only by `src/lib/licensing/plans.ts`, which webpack bundles
+  # into the .next standalone tree (shipped via extraResources). The Electron
+  # main process never requires it directly. So excluding the symlink leaves
+  # the runtime fully functional and sidesteps the cross-dir asar error.
+  # Any future `@workspace/*` lib added to deps gets the same treatment.
+  - "!node_modules/@workspace/**/*"
 asarUnpack:
   # koffi ships native .node binaries that MUST live on the real
   # filesystem (not inside an asar) so Electron can dlopen them at runtime.

@@ -1,5 +1,19 @@
 # Recent Changes
 
+## v0.7.48 — Hotfix #5: exclude `@workspace/pricing` symlink from electron-builder asar (May 2, 2026)
+
+**v0.7.47 cleared the missing-module error.** Next.js compiled successfully in 22.6 s, all 17 pages prerendered cleanly, the standalone bundle was assembled. The build then advanced into electron-builder for the first time in five attempts and failed with:
+
+```
+⨯ D:\...\lib\pricing\package.json must be under D:\...\artifacts\imported-app\
+```
+
+This is a pnpm-monorepo + electron-builder interaction. `artifacts/imported-app/package.json` declares `"@workspace/pricing": "workspace:*"`, and pnpm satisfies that by symlinking `artifacts/imported-app/node_modules/@workspace/pricing` → `../../../../lib/pricing`. electron-builder's asar packager follows the symlink, discovers files at absolute paths OUTSIDE the app dir, and refuses to package them.
+
+`@workspace/pricing` is only imported by `src/lib/licensing/plans.ts` — server/app code that webpack already bundles into the `.next/standalone/` tree (which we ship via electron-builder's `extraResources`). The Electron main process (`electron/`) never requires it directly. So the symlink in the asar is purely redundant — adding `"!node_modules/@workspace/**/*"` to electron-builder.yml's `files` list excludes it without affecting runtime behaviour, and the asar packager has nothing left outside the app dir to choke on.
+
+**Surgical scope:** one new exclude pattern in `electron-builder.yml`. `package.json` version bump to 0.7.48. No code changes, no Next config changes.
+
 ## v0.7.47 — Hotfix #4: restore deleted `src/lib/bibles/local-bible.ts` (May 2, 2026)
 
 **v0.7.46's HOME redirect WORKED.** No more EPERM on the Windows runner — the build got past webpack snapshotting and finally surfaced the **actual** error that was hiding behind it the whole time:
