@@ -65,3 +65,22 @@ src/generated/
 src/lib/keys.baked.ts
 src/lib/baked-credentials.ts
 public/__marketing/
+
+# v0.7.41 — Electron build outputs and runtime upload dirs. These contain
+# multi-hundred-MB Windows binaries (.exe, .dll, app.asar, .pak), the
+# Chromium LICENSES.chromium.html, .mp4 video uploads, and source zips.
+# Tailwind v4's content scanner walks the artifact tree by default and
+# wedges trying to read these as text searching for class names — that
+# was the silent build hang we chased through v0.7.34–v0.7.40. The
+# `@source "./src"` directive in src/app/globals.css is the primary fix;
+# this gitignore entry is belt-and-braces and good hygiene anyway.
+release/
+dist-electron/
+dist-electron-ui/
+uploads/
+upload/
+exports/
+download/
+build-resources/
+db/
+

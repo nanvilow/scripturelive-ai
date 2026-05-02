@@ -1,25 +1,27 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* v0.7.41 — Explicit @source directives. THIS IS THE FIX for the silent
-   build hang that v0.7.34–v0.7.40 chased as a memory problem. Tailwind v4
-   defaults to "automatic content detection" which walks the entire project
-   tree from the location of this CSS file looking for class names. With no
-   bound, the scanner happily walks into `src/generated/prisma-client/`
-   (21 MB, including a 17 MB Linux native binary `.node` file) and tries
-   to read those as text. The oxide native scanner wedges trying to parse
-   binary garbage looking for Tailwind classes, the worker process hangs
-   forever, and the parent build eventually kills it — producing the silent
-   "exit 1 after ~1m44s with no error message" that we saw in every failed
-   Cloud Run build (and that we just reproduced locally with full RAM
-   available). When `@source` is specified explicitly, Tailwind v4 disables
-   automatic detection and only scans the listed paths. site/ and
-   mockup-sandbox/ don't hit this because they don't have a generated/
-   directory of native binaries inside src/. Two `@source not` lines are
-   belt-and-braces in case content detection is ever re-enabled. */
-@source "./src/**/*.{js,jsx,ts,tsx,mdx,html}";
-@source not "./src/generated";
-@source not "./src/data";
+/* v0.7.41 — THE REAL FIX for the silent build hang that v0.7.34–v0.7.40
+   incorrectly diagnosed as memory pressure. By default Tailwind v4 walks
+   the entire artifact tree from the directory containing this CSS file,
+   looking for class names. imported-app/ contains `release/` (full
+   Electron Windows build output: a hundreds-of-MB ScriptureLive AI.exe,
+   the Chromium LICENSES.chromium.html, app.asar, .dll, .pak, etc.),
+   `uploads/` (multi-MB .mp4 files), `exports/` (zips), `dist-electron/`,
+   `dist-electron-ui/`, and `build-resources/`. The oxide native content
+   scanner wedges trying to parse multi-hundred-MB binaries as text. site/
+   and mockup-sandbox/ never hit this because their tree contains only
+   src/, public/, dist/. We proved this locally: with `base` set to site/,
+   the same minimal CSS + @tailwindcss/postcss completes in 633 ms. With
+   `base` set to imported-app/, it hangs indefinitely. Specifying
+   `@source "./src"` tells Tailwind to use auto-detection ROOTED IN ./src
+   instead of walking the whole artifact root. Auto-detection inside src/
+   already skips node_modules and gitignored files automatically — and
+   src/generated + src/data are small enough that scanning them is
+   trivial. Companion change: added release/, uploads/, exports/, etc.
+   to .gitignore so even if @source is ever removed, gitignore would
+   prevent the same hang from coming back. */
+@source "./src";
 
 @custom-variant dark (&:is(.dark *));
 

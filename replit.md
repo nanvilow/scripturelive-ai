@@ -1,6 +1,42 @@
 # Recent Changes
 
-## v0.7.40 — Real fix: code-split the two giant page components, move Prisma out of build (May 2, 2026)
+## v0.7.41 — THE ACTUAL FIX: bound Tailwind v4 content scanner so it doesn't choke on Electron build outputs (May 2, 2026)
+
+**Every diagnosis from v0.7.34 through v0.7.40 was wrong.** It was never OOM, never heap size, never webpack memory, never standalone mode, never the 3,433-line god component, never Prisma in the build. The real bug, finally reproduced locally with full RAM available:
+
+`@tailwindcss/postcss` running on `src/app/globals.css` from imported-app's directory **hangs forever**. Same plugin, same minimal CSS, same Node process from `artifacts/site/` completes in 633 ms. The only difference is the directory tree the scanner sees.
+
+**Why**: Tailwind v4's content scanner is enabled by default and walks the artifact tree from the location of the source CSS file looking for class names in every text-like file. `imported-app/` contains the entire Electron Windows build output sitting next to the Next.js source:
+
+- `release/win-unpacked/ScriptureLive AI.exe` (hundreds of MB)
+- `release/win-unpacked/resources/app.asar` (electron archive)
+- `release/win-unpacked/LICENSES.chromium.html` (massive Chromium legal text)
+- `release/ScriptureLive-AI-0.7.32-Setup-x64.exe` and matching `.zip`
+- `release/win-unpacked/*.dll` and `*.pak`
+- `uploads/*.mp4` (5 video files, multi-MB each)
+- `exports/ScriptureLive-AI-v0.7.16-source.zip`
+- `dist-electron/`, `dist-electron-ui/`, `build-resources/`, `db/`, `download/`
+
+None of these were in `.gitignore`, so Tailwind didn't skip them. The oxide native scanner wedges trying to parse a hundreds-of-MB Windows binary as text. The Next.js worker hangs forever, and the parent build kills it after some timeout — producing the silent "exit 1 with no error message after ~1m44s" fingerprint we saw in every failed Cloud Run build. We chased that fingerprint as a memory problem because it looks identical to a cgroup OOM-kill from the outside. It is not. Bumping to cr-4-8 (8 GB) didn't help because giving more RAM to a process that's wedged in an infinite scan loop just makes it wedge with more RAM available.
+
+site/ and mockup-sandbox/ never hit this because their trees contain only `src/`, `public/`, `dist/`, `node_modules/` — nothing for the scanner to choke on.
+
+**The fix** is two lines and a `.gitignore` update:
+
+1. `artifacts/imported-app/src/app/globals.css` — added `@source "./src";` immediately after the `@import "tw-animate-css";` line. This tells Tailwind v4 to use auto-detection rooted in `./src` instead of walking the whole artifact root. Auto-detection inside `src/` already skips `node_modules` and gitignored files automatically.
+2. `artifacts/imported-app/.gitignore` — added `release/`, `dist-electron/`, `dist-electron-ui/`, `uploads/`, `upload/`, `exports/`, `download/`, `build-resources/`, `db/`. These are runtime/build outputs that should never have been tracked in the first place. Belt-and-braces in case the `@source` directive is ever removed.
+
+**Local verification before shipping** (something I should have done at v0.7.34 instead of guessing through six deploys):
+
+- Before fix: `@tailwindcss/postcss` on globals.css from imported-app hangs past 60 s and is killed by `timeout`.
+- After fix: same call completes in 543 ms with 233 KB of generated CSS.
+- Full `next build --webpack` in imported-app: ✓ Compiled successfully in 19.1 s. 17 static pages, 60+ API routes, all generated. `BUILD_EXIT=0`.
+
+The v0.7.40 changes (dynamic imports for `LogosShell` + `SettingsView`, Prisma generate moved to `postinstall`, `optimizePackageImports` for lucide-react and Radix) all stay — they're real improvements to startup time and bundle size, just not what was breaking the build.
+
+**Lesson worth keeping**: a silent SIGKILL with no stderr output looks identical whether the killer is the kernel OOM-killer or a parent process timing out a wedged worker. Don't assume which one it is from logs alone — reproduce locally before changing config six times.
+
+## v0.7.40 — code-split the two giant page components, move Prisma out of build (May 2, 2026)
 
 **The real root cause that v0.7.34–v0.7.39 missed**: I confirmed via Replit's deployment-builds API that v0.7.38 and v0.7.39 both ran on cr-2-4 and both died with the exact same fingerprint — silent kill mid-compile, exit 1 from the pnpm wrapper, no error output of any kind. That fingerprint is the kernel cgroup OOM-killer. The heap bump from 3072 → 3584 made zero difference because the killer was never V8; it was always the cgroup. After exhausting every config-side memory lever, I went into the actual app source and found:
 
