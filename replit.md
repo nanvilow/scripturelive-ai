@@ -1,5 +1,20 @@
 # Recent Changes
 
+## v0.7.47 — Hotfix #4: restore deleted `src/lib/bibles/local-bible.ts` (May 2, 2026)
+
+**v0.7.46's HOME redirect WORKED.** No more EPERM on the Windows runner — the build got past webpack snapshotting and finally surfaced the **actual** error that was hiding behind it the whole time:
+
+```
+./src/components/providers/speech-provider.tsx
+Module not found: Can't resolve '@/lib/bibles/local-bible'
+```
+
+`speech-provider.tsx` imports `lookupRange`, `lookupVerse`, and `isTranslationBundled` from `@/lib/bibles/local-bible`. That file was last in git history at v0.5.52 and was deleted from the repo somewhere between then and now, but nobody updated the import. v0.7.32 still had the file on origin (so its build passed); every commit since does not. The Cloud Run autoscale build never tripped on this because... actually it would have tripped on this too — the import is unconditional and webpack-resolved. The most likely explanation is that the most recent Cloud Run deploys were also failing silently and nobody noticed because the Replit deploy was the last one anyone exercised before the install-base started coming from the GitHub releases.
+
+The local sandbox happens to have a perfectly good 4 KB copy of the file from an earlier checkpoint restore — it was sitting on disk untracked the entire time. v0.7.47 just adds it back to the repo as a 5th blob. No code edits, just a file resurrection.
+
+This is the third independent root cause that was masking the first two: every "fix" we shipped before this was correct on its own merits, but the build still failed because there was always a deeper problem behind it (v0.7.43 → red CI; v0.7.44 narrowed config gate → still red; v0.7.45 widened config gate → still red; v0.7.46 fixed the EPERM → red but a different error; v0.7.47 fixes the actual missing module).
+
 ## v0.7.46 — Hotfix #3: redirect HOME on the Windows GHA runner to dodge a Next 16.2.x webpack EPERM (May 2, 2026)
 
 **v0.7.45 didn't fix it either.** The standalone-path `next.config.ts` in v0.7.45 is essentially identical to v0.7.32's (which built clean on Windows). Same EPERM, same time-to-failure (9 s into `next build --webpack`). So the trigger isn't in the config at all — it's a regression in **Next.js 16.2.x** itself.
