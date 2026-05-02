@@ -328,7 +328,14 @@ export function AdminModal() {
   // because they're operator preferences, not secrets. fLlmFloor is
   // a string so we can distinguish "" (no override → server uses the
   // classifier's compiled-in default of 70) from "0" / numeric input.
-  const [fEnableLlmClassifier, setFEnableLlmClassifier] = useState(false)
+  // v0.7.32 — Default ON to match the new server-side default. The
+  // hydration step below will overwrite this with the persisted value
+  // (treating undefined as ON via the `!== false` check), so this
+  // initial value only matters during the brief render before
+  // loadCfg() resolves. Keeping it true here prevents a flash of an
+  // unchecked box for the (very common) operator who has never
+  // touched this setting.
+  const [fEnableLlmClassifier, setFEnableLlmClassifier] = useState(true)
   const [fLlmFloor, setFLlmFloor] = useState('')
 
   // v0.7.0 — Codes tab. Operator dashboard listing every activation
@@ -881,7 +888,8 @@ export function AdminModal() {
       setFDeepgramKey('')
       // v0.7.29 — Hydrate LLM classifier opt-in fields. Both default
       // to the "off / no override" state if the config never set them.
-      setFEnableLlmClassifier(j.config.enableLlmClassifier === true)
+      // v0.7.32 — Default-ON semantics: treat undefined as ON.
+      setFEnableLlmClassifier(j.config.enableLlmClassifier !== false)
       setFLlmFloor(
         typeof j.config.llmClassifierConfidenceFloor === 'number'
           ? String(j.config.llmClassifierConfidenceFloor)
@@ -972,7 +980,8 @@ export function AdminModal() {
       // v0.7.29 — Refresh from canonical server response so the
       // checkbox + floor reflect what's actually persisted (e.g. the
       // server may have clamped the floor to 1..100).
-      setFEnableLlmClassifier(j.config.enableLlmClassifier === true)
+      // v0.7.32 — Default-ON semantics: treat undefined as ON.
+      setFEnableLlmClassifier(j.config.enableLlmClassifier !== false)
       setFLlmFloor(
         typeof j.config.llmClassifierConfidenceFloor === 'number'
           ? String(j.config.llmClassifierConfidenceFloor)
@@ -2316,12 +2325,13 @@ export function AdminModal() {
                     </div>
                   </div>
 
-                  {/* v0.7.29 — Phase 2 of v0.8.0 advanced voice. Opt-in
+                  {/* v0.7.29 (introduced) / v0.7.32 (default flipped to ON).
                       LLM fallback that runs AFTER the regex classifier
                       returns null/low-confidence and a cheap local
                       command-likeness gate accepts the utterance.
-                      Default OFF so existing installs keep their exact
-                      v0.7.x voice behaviour. The confidence floor input
+                      Default ON so every install gets it without operator
+                      action; unticking the box persists `false` and acts
+                      as a kill switch. The confidence floor input
                       controls how strict the LLM must be (raise → fewer
                       false positives; lower → fewer missed commands).
                       Floor blank = use the classifier's compiled-in
@@ -2337,14 +2347,15 @@ export function AdminModal() {
                         htmlFor="llm-classifier-toggle"
                         className="text-[11px] uppercase tracking-wider text-muted-foreground select-none cursor-pointer flex items-center gap-2"
                       >
-                        AI voice intent fallback (beta)
-                        <Badge className="bg-muted text-muted-foreground border-border text-[9px]">v0.7.29</Badge>
+                        AI voice intent fallback (on by default)
+                        <Badge className="bg-muted text-muted-foreground border-border text-[9px]">v0.7.32</Badge>
                       </label>
                     </div>
                     <p className="text-[10px] text-muted-foreground -mt-1 pl-6">
                       When the regex matcher misses a phrasing the operator clearly intended as a command,
-                      send the utterance to OpenAI for a second opinion. Adds up to ~1.5 s on missed-command
-                      utterances; never blocks a regex-detected command. Requires a working OpenAI key above.
+                      send the utterance to OpenAI for a second opinion. On by default; untick to disable
+                      if it ever misfires. Adds up to ~1.5 s on missed-command utterances; never blocks
+                      a regex-detected command. Requires a working OpenAI key above.
                     </p>
                     <div className="flex items-center gap-2 pl-6">
                       <label className="text-[10px] uppercase tracking-wider text-muted-foreground">

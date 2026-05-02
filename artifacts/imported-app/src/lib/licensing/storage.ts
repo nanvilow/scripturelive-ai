@@ -185,16 +185,20 @@ export interface RuntimeConfig {
   /** v0.5.52 — Override the BAKED Deepgram key. When empty,
    *  the renderer uses NEXT_PUBLIC_SCRIPTURELIVE_DEEPGRAM_KEY. */
   adminDeepgramKey?: string
-  /** v0.7.29 — Phase 2 of v0.8.0 advanced voice. When `true`, the
-   *  speech-provider invokes the LLM voice intent classifier
-   *  (src/lib/voice/llm-classifier.ts, scaffold shipped v0.7.27)
+  /** v0.7.29 (introduced) / v0.7.32 (default flipped to ON).
+   *  When the resolved value is true, the speech-provider invokes
+   *  the LLM voice intent classifier (src/lib/voice/llm-classifier.ts)
    *  as a FALLBACK after the regex classifier returns null or
    *  low-confidence AND the utterance passes the command-likeness
-   *  gate (src/lib/voice/llm-gate.ts). Default `false` — operators
-   *  must opt in via Admin Modal → Cloud Keys → "AI voice intent
-   *  fallback (beta)". When false, no /api/voice/classify call is
-   *  ever made and the regex path is the sole command source
-   *  (existing v0.7.x behaviour, unchanged). */
+   *  gate (src/lib/voice/llm-gate.ts).
+   *
+   *  IMPORTANT: read this field via `isLlmClassifierEnabled(cfg)`
+   *  (below) — never inline-check `cfg.enableLlmClassifier === true`,
+   *  because as of v0.7.32 the semantics are "ON unless explicitly
+   *  set to false". A missing/undefined value MUST be treated as ON.
+   *  The kill switch in Admin Modal → Cloud Keys persists `false`
+   *  when an operator unticks it; the absence of the field means
+   *  "operator never touched it → use the default (ON)". */
   enableLlmClassifier?: boolean
   /** v0.7.29 — Per-PC override for the LLM classifier confidence
    *  floor (1..100). Below this threshold, classifyIntent returns
@@ -1622,4 +1626,24 @@ export function __testReset(): void {
   cache = null
   const p = storagePath()
   if (fs.existsSync(p)) fs.unlinkSync(p)
+}
+
+// v0.7.32 — Single source of truth for the LLM-classifier on/off
+// decision. The flag is "ON unless explicitly set to false", so a
+// fresh install (no config file or no field) gets the LLM fallback
+// automatically. Operators who experience regressions can untick the
+// kill switch in Admin Modal → Cloud Keys, which persists `false`,
+// and only that explicit false value disables the path.
+//
+// Every callsite (server routes, admin modal hydration, future
+// renderer reads) MUST use this helper rather than open-coding the
+// `=== true` check, or the default-on contract will silently break.
+//
+// Accepts a partial config so callers can pass either a full
+// `RuntimeConfig`, the admin-config endpoint's response shape, or
+// `null`/`undefined` (treated the same as a missing field → ON).
+export function isLlmClassifierEnabled(
+  cfg?: { enableLlmClassifier?: boolean | null } | null,
+): boolean {
+  return cfg?.enableLlmClassifier !== false
 }

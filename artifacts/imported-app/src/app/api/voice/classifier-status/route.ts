@@ -15,7 +15,7 @@
 
 import { NextResponse } from 'next/server'
 
-import { getConfig } from '@/lib/licensing/storage'
+import { getConfig, isLlmClassifierEnabled } from '@/lib/licensing/storage'
 import { getOpenAIKey as getBakedOpenAIKey } from '@/lib/baked-credentials'
 
 export const runtime = 'nodejs'
@@ -44,7 +44,10 @@ export async function GET() {
   return NextResponse.json(
     {
       ok: true,
-      enabled: cfg?.enableLlmClassifier === true,
+      // v0.7.32 — default ON; only an explicit `false` from a
+      // dismissed kill switch returns false here. Helper enforces
+      // the default-on contract — see storage.ts.
+      enabled: isLlmClassifierEnabled(cfg),
       hasApiKey: hasResolvableKey(),
     },
     { headers: { 'Cache-Control': 'no-store' } },

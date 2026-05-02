@@ -34,7 +34,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 import { classifyIntent, type LlmClassifierContext } from '@/lib/voice/llm-classifier'
-import { getConfig } from '@/lib/licensing/storage'
+import { getConfig, isLlmClassifierEnabled } from '@/lib/licensing/storage'
 import { getOpenAIKey as getBakedOpenAIKey } from '@/lib/baked-credentials'
 
 export const runtime = 'nodejs'
@@ -81,11 +81,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'transcript is required' }, { status: 400 })
   }
 
-  // Gate on the per-PC enable flag. Defensive against a stale client
-  // cache; the speech-provider also caches the flag value so most
-  // disabled installs never hit this endpoint at all.
+  // Gate on the per-PC enable flag. As of v0.7.32 the default is ON,
+  // so this only short-circuits when an operator has explicitly
+  // unticked the kill switch in Admin Modal → Cloud Keys (which
+  // persists `enableLlmClassifier: false`). Use the helper rather
+  // than an inline `=== true` check — see storage.ts for rationale.
+  // Defensive against a stale client cache; the speech-provider also
+  // caches the flag value so most disabled installs never hit this
+  // endpoint at all.
   const cfg = getConfig()
-  if (cfg?.enableLlmClassifier !== true) {
+  if (!isLlmClassifierEnabled(cfg)) {
     return NextResponse.json(
       { ok: true, command: null, reason: 'disabled' as const },
       { headers: { 'Cache-Control': 'no-store' } },

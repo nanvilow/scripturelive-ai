@@ -1,5 +1,31 @@
 # Recent Changes
 
+## v0.7.32 — AI voice intent fallback now ON by default for every install (May 2, 2026)
+
+**The product change** (asked for by the operator after v0.7.31 verified the LLM path works end-to-end): the AI voice intent fallback that shipped behind an opt-in beta toggle in v0.7.29 is now **on by default on every install with no admin action required**. The kill switch in Admin Modal → Cloud Keys is preserved (so we can disable it for any specific operator who reports a regression) but its semantic flips from "opt IN" to "opt OUT" — the box is checked by default, and only an explicit untick persists `enableLlmClassifier: false`.
+
+**Why this is safe to flip the default on now**: v0.7.31's live smoke test proved all four canonical transcript classes work end-to-end against the real OpenAI endpoint (`next_verse`, `go_to_reference` with parsed `DetectedReference`, `change_translation`, sermon-line null). The cost discipline from v0.7.29 — the 35-trigger-verb command-likeness gate that drops ~95% of sermon utterances before any OpenAI call — is unchanged, so flipping the default doesn't change the cost story. The dedupe + 2 s abort + speaker-follow-suspension safety nets from v0.7.29/v0.7.30 are also unchanged.
+
+**The implementation**: a single new helper `isLlmClassifierEnabled(cfg)` in `src/lib/licensing/storage.ts` codifies the new contract — *"ON unless explicitly set to false"* — so undefined / null / missing / true all resolve to enabled, only an explicit `false` returns false. Every callsite that previously open-coded `cfg.enableLlmClassifier === true` now routes through this helper:
+- `/api/voice/classifier-status` (the cheap probe the renderer reads on mount to flip its cached `llmClassifierEnabledRef`)
+- `/api/voice/classify` (the defensive server-side gate against a stale renderer cache)
+- `admin-modal.tsx` (both the initial `useState` value AND both hydration callbacks after `loadCfg()` / save)
+
+**The admin modal copy** is updated: the checkbox label now reads "AI voice intent fallback (on by default)" with a v0.7.32 badge, and the helper text explicitly says "On by default; untick to disable if it ever misfires." So an operator who opens the Cloud Keys panel sees the new state and the kill-switch path immediately.
+
+**Migration semantics for existing installs**:
+- An operator who never touched the toggle in v0.7.29/v0.7.30/v0.7.31 → field is undefined → resolves to ON automatically after the v0.7.32 update. No admin action.
+- An operator who opted IN explicitly during the v0.7.29 beta → field is `true` → stays ON.
+- An operator who opted OUT explicitly (rare, given the beta defaulted to off) → field is `false` → stays OFF. We respect the explicit kill switch; we don't reset opt-outs on update.
+
+**Why a centralised helper instead of just changing the defaults inline**: three different surfaces (server route, client status probe, admin modal hydration) all decide on this flag, and v0.7.29's bug surface was exactly the kind of "one place got updated and one didn't" mismatch we want to make impossible. The JSDoc on `RuntimeConfig.enableLlmClassifier` now explicitly forbids inline `=== true` checks and points readers at the helper. A new `storage.test.ts` file pins the contract with 8 tests covering undefined / null / missing-field / explicit-true / null (admin clear-to-default) / explicit-false / extra-fields scenarios, so a future contributor who tries to revert the default-on semantics will fail the test before any operator sees the regression.
+
+**Test coverage delta**: +8 tests in the new `storage.test.ts`. Full project: 404/404 green (was 396 in v0.7.31 — net +8), tsc clean.
+
+**Files**: `src/lib/licensing/storage.ts` (new `isLlmClassifierEnabled` helper + updated JSDoc), NEW `src/lib/licensing/storage.test.ts` (8 tests pinning the default-on contract), `src/app/api/voice/classify/route.ts` (use helper), `src/app/api/voice/classifier-status/route.ts` (use helper), `src/components/license/admin-modal.tsx` (default state `true`, both hydration callbacks updated, label + helper text + version badge), `package.json` (0.7.31 → 0.7.32).
+
+**No effect on the regex voice path**: the regex classifier still runs first and still wins on confident matches. The LLM only fires when the regex returns null OR sub-80 confidence AND the command-likeness gate accepts the utterance — exactly the v0.7.30 wiring. v0.7.32 only changes who gets that fallback path active by default; it does NOT change what the path does or when it runs.
+
 ## v0.7.31 — LLM voice classifier hotfix: switch default model from `gpt-5-nano` to `gpt-4o-mini` (May 2, 2026)
 
 **The bug** (caught in live Replit-dev smoke testing of v0.7.30, BEFORE any operator turned the flag on): with `enableLlmClassifier: true`, every utterance — including obvious commands like *"next verse"*, *"could you bring up John 3:16"*, *"swap to NIV"* — came back from `/api/voice/classify` as `{ok: true, command: null}`. HTTP 200, plausible 0.1–1.8 s timings, but the classifier was silently dropping every single intent. The opt-in feature shipped in v0.7.29 was 100% non-functional in practice.
