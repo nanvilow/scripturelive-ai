@@ -24,7 +24,15 @@ kind = "web"
 
   [services.production.build.env]
   NODE_ENV = "production"
-  NODE_OPTIONS = "--max-old-space-size=8192"
+  # v0.7.34 — Cloud Run build VM has ~4 GB usable RAM. Setting V8's
+  # heap to 8192 made V8 think it could grow to 8 GB and it never
+  # GC'd aggressively enough — the kernel OOM-killed the Next build
+  # worker (SIGKILL, exit code null) before V8's own GC kicked in.
+  # Lowering to 3584 forces V8 to start GCing around ~3 GB which
+  # keeps the worker comfortably inside the cgroup limit. Combined
+  # with next.config's webpackMemoryOptimizations + cpus:1 this
+  # is the canonical containerized-Node fix.
+  NODE_OPTIONS = "--max-old-space-size=3584"
   NEXT_TELEMETRY_DISABLED = "1"
 
   [services.production.run]
