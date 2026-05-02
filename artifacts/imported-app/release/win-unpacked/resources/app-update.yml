@@ -1,0 +1,5 @@
+owner: nanvilow
+repo: scripturelive-ai
+provider: github
+releaseType: release
+updaterCacheDirName: '@workspaceimported-app-updater'

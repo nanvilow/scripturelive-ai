@@ -32,3 +32,5 @@ exports/ScriptureLive-AI-v0.7.11-source.zip filter=lfs diff=lfs merge=lfs -text
 exports/ziUiQwUT filter=lfs diff=lfs merge=lfs -text
 exports/zifVA6nV filter=lfs diff=lfs merge=lfs -text
 exports/ScriptureLive-AI-v0.7.17-source.zip filter=lfs diff=lfs merge=lfs -text
+artifacts/imported-app/release/win-unpacked/ScriptureLive[[:space:]]AI.exe filter=lfs diff=lfs merge=lfs -text
+artifacts/imported-app/release/win-unpacked/resources/app.asar filter=lfs diff=lfs merge=lfs -text

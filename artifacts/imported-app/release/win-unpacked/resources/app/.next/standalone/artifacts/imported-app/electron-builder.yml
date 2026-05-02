@@ -1,0 +1,158 @@
+appId: ai.scripturelive.desktop
+productName: ScriptureLive AI
+copyright: ScriptureLive AI
+# Pinned because electron-builder cannot reliably auto-detect the
+# electron version in a pnpm workspace (the package is hoisted to the
+# repo root, not under artifacts/imported-app/node_modules), which
+# triggers: "Cannot compute electron version from installed node modules".
+electronVersion: 33.4.11
+# electron-updater pulls signed installers from this GitHub repo.
+# `owner` and `repo` are intentionally NOT inlined here — electron-builder
+# auto-detects them from the `repository` field in package.json, which is
+# the single source of truth shared with the renderer (see
+# src/lib/github-repo.ts). To move the project to a different repo, update
+# package.json's `repository.url` and both this build config and the
+# in-app links will follow. The Build Windows Installer GH workflow uses
+# GITHUB_TOKEN so no extra config is required.
+publish:
+  - provider: github
+    releaseType: release
+directories:
+  output: release
+  buildResources: build-resources
+files:
+  - dist-electron/**/*
+  - package.json
+  - "node_modules/**/*"
+  - "!node_modules/**/{*.md,*.markdown,*.ts,*.map,test,tests,__tests__,docs,doc,example,examples,LICENSE*}"
+  - "!node_modules/.cache/**/*"
+  # Exclude dev-only native watchers Next.js drags in transitively. They are
+  # only used in `next dev` and trip electron-builder's node-gyp rebuild on
+  # Windows machines without Python / VS Build Tools installed.
+  - "!node_modules/@parcel/watcher/**/*"
+  - "!node_modules/@parcel/watcher-*/**/*"
+  - "!node_modules/.pnpm/@parcel+watcher@*/**/*"
+  - "!node_modules/.pnpm/@parcel+watcher-*/**/*"
+  - "!node_modules/fsevents/**/*"
+  - "!node_modules/.pnpm/fsevents@*/**/*"
+asarUnpack:
+  # koffi ships native .node binaries that MUST live on the real
+  # filesystem (not inside an asar) so Electron can dlopen them at runtime.
+  # We unpack BOTH the hoisted top-level path AND the pnpm-isolated path
+  # because pnpm 10 stores the real files under node_modules/.pnpm/ and
+  # only symlinks them into node_modules/.
+  - "node_modules/koffi/**/*"
+  - "node_modules/.pnpm/koffi@*/**/*"
+  - "node_modules/.pnpm/koffi@*/node_modules/koffi/**/*"
+  # sharp (used by electron/tray-badges.ts to composite the colored
+  # update-state dot onto the tray icon) ships per-platform native
+  # bindings as @img/sharp-{platform}-{arch} optionalDependencies.
+  # These dlopen .node files at require time and would fail with
+  # "Could not load the sharp module" if left inside the asar.
+  # The Windows runner only needs the win32 variants but we unpack
+  # all of them so the same config works for any platform we package
+  # from in the future.
+  - "node_modules/sharp/**/*"
+  - "node_modules/@img/sharp-*/**/*"
+  - "node_modules/@img/sharp-libvips-*/**/*"
+  - "node_modules/.pnpm/sharp@*/**/*"
+  - "node_modules/.pnpm/@img+sharp-*/**/*"
+  - "node_modules/.pnpm/@img+sharp-libvips-*/**/*"
+# Skip electron-builder's automatic `npm rebuild` step. We have ZERO
+# native modules that need compiling — koffi (the only native dep we
+# ship) bundles precompiled win32-x64 binaries inside its npm tarball.
+# Disabling rebuild eliminates the need for Python / Visual Studio
+# Build Tools / node-gyp on the user's machine entirely.
+npmRebuild: false
+buildDependenciesFromSource: false
+extraResources:
+  # Next.js (with output: "standalone" + outputFileTracingRoot pinned to the
+  # workspace root) emits the standalone bundle at
+  # `.next/standalone/artifacts/imported-app/server.js`. We copy the WHOLE
+  # standalone tree as-is so the relative node_modules layout inside it
+  # remains valid. The Electron launcher (electron/main.ts) is aware of the
+  # nested `artifacts/imported-app/` segment and spawns server.js there.
+  - from: .next/standalone
+    to: app/.next/standalone
+    filter: ["**/*"]
+  # Static assets must sit next to server.js (cwd-relative), so they go into
+  # the same nested `artifacts/imported-app/` location, not the top of the
+  # standalone tree.
+  - from: .next/static
+    to: app/.next/standalone/artifacts/imported-app/.next/static
+    filter: ["**/*"]
+  - from: public
+    to: app/.next/standalone/artifacts/imported-app/public
+    filter: ["**/*"]
+  - from: db/custom.db
+    to: app-db/custom.db
+# A small hook that runs after electron-builder finishes signing each platform
+# package. For macOS it submits the .app to Apple's notarytool when notarization
+# credentials are present in the environment. For all other platforms (and when
+# credentials are missing) it is a no-op.
+afterSign: build-resources/notarize.js
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build-resources/icon.ico
+  # IMPORTANT: do NOT use ${productName} in artifactName here.
+  # `productName` is "ScriptureLive AI" (with a space). electron-builder
+  # normalizes that space inconsistently across the two places it gets
+  # written: the actual asset filename uploaded to GitHub Releases ends
+  # up using a dot ("ScriptureLive.AI-..."), while the URL written into
+  # latest.yml uses a hyphen ("ScriptureLive-AI-..."). The result is
+  # that electron-updater fetches latest.yml, follows the URL inside,
+  # and gets a 404 — so auto-update silently fails. Hardcoding a
+  # slug-safe name keeps both names identical.
+  artifactName: "ScriptureLive-AI-${version}-Setup-${arch}.${ext}"
+  # Authenticode code signing.
+  # electron-builder reads the certificate from these standard env vars:
+  #   CSC_LINK            path to .pfx, base64-encoded .pfx contents, or https URL
+  #   CSC_KEY_PASSWORD    password for the .pfx
+  # If both are absent the installer is built unsigned and SmartScreen will warn.
+  signtoolOptions:
+    signingHashAlgorithms:
+      - sha256
+    rfc3161TimeStampServer: http://timestamp.digicert.com
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  icon: build-resources/icon.png
+  category: public.app-category.productivity
+  # Same reason as `win.artifactName` above: avoid ${productName} so the
+  # asset filename and the URL inside latest-mac.yml stay byte-identical
+  # and electron-updater can actually find the .dmg it advertises.
+  artifactName: "ScriptureLive-AI-${version}-${arch}.${ext}"
+  # Required for Apple Developer ID signing + notarization to succeed.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build-resources/entitlements.mac.plist
+  entitlementsInherit: build-resources/entitlements.mac.plist
+  # electron-builder reads the signing identity from these standard env vars:
+  #   CSC_LINK            path to .p12, base64-encoded .p12 contents, or https URL
+  #   CSC_KEY_PASSWORD    password for the .p12
+  # If absent, the .app is left unsigned and the afterSign hook skips notarization.
+  # Notarization (handled in build-resources/notarize.js via @electron/notarize)
+  # reads these env vars:
+  #   APPLE_ID                     Apple developer account email
+  #   APPLE_APP_SPECIFIC_PASSWORD  app-specific password from appleid.apple.com
+  #   APPLE_TEAM_ID                10-character Team ID from developer.apple.com
+  notarize: false
+dmg:
+  writeUpdateInfo: true
+  # The DMG is signed with the same Developer ID identity electron-builder
+  # picks up from CSC_LINK. Combined with the notarization ticket stapled to
+  # the inner .app, this gives Gatekeeper a clean install on first launch.
+  sign: true
+# (Single `publish:` block lives at the top of this file. A second
+#  block here would silently override it under YAML merge semantics
+#  and point auto-update to the wrong GitHub repo, so it has been
+#  removed.)

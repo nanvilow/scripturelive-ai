@@ -67,6 +67,14 @@ const api = {
         // `downloadUpdate()` and broadcasts an 'idle' state so the
         // available-update popup can re-appear naturally.
         cancel: () => electron_1.ipcRenderer.invoke('updater:cancel'),
+        // v0.7.26 — Background auto-download opt-out. The main process
+        // schedules a parallel download 60s after `update-available`
+        // fires so the installer is on disk before the operator clicks
+        // Download. Calling setAutoDownload(false) cancels any pending
+        // timer and prevents the next one from being scheduled for the
+        // rest of the session. Resets to true on app restart.
+        getAutoDownload: () => electron_1.ipcRenderer.invoke('updater:get-auto-download'),
+        setAutoDownload: (enabled) => electron_1.ipcRenderer.invoke('updater:set-auto-download', enabled),
         onState: (cb) => {
             const handler = (_e, state) => cb(state);
             electron_1.ipcRenderer.on('updater:state', handler);

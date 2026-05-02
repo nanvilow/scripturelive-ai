@@ -1,0 +1,85 @@
+directories:
+  output: release
+  buildResources: build-resources
+appId: ai.scripturelive.desktop
+productName: ScriptureLive AI
+copyright: ScriptureLive AI
+electronVersion: 33.4.11
+publish:
+  - provider: github
+    releaseType: release
+files:
+  - filter:
+      - dist-electron/**/*
+      - package.json
+      - node_modules/**/*
+      - '!node_modules/**/{*.md,*.markdown,*.ts,*.map,test,tests,__tests__,docs,doc,example,examples,LICENSE*}'
+      - '!node_modules/.cache/**/*'
+      - '!node_modules/@parcel/watcher/**/*'
+      - '!node_modules/@parcel/watcher-*/**/*'
+      - '!node_modules/.pnpm/@parcel+watcher@*/**/*'
+      - '!node_modules/.pnpm/@parcel+watcher-*/**/*'
+      - '!node_modules/fsevents/**/*'
+      - '!node_modules/.pnpm/fsevents@*/**/*'
+asarUnpack:
+  - node_modules/koffi/**/*
+  - node_modules/.pnpm/koffi@*/**/*
+  - node_modules/.pnpm/koffi@*/node_modules/koffi/**/*
+  - node_modules/sharp/**/*
+  - node_modules/@img/sharp-*/**/*
+  - node_modules/@img/sharp-libvips-*/**/*
+  - node_modules/.pnpm/sharp@*/**/*
+  - node_modules/.pnpm/@img+sharp-*/**/*
+  - node_modules/.pnpm/@img+sharp-libvips-*/**/*
+npmRebuild: false
+buildDependenciesFromSource: false
+extraResources:
+  - from: .next/standalone
+    to: app/.next/standalone
+    filter:
+      - '**/*'
+  - from: .next/static
+    to: app/.next/standalone/artifacts/imported-app/.next/static
+    filter:
+      - '**/*'
+  - from: public
+    to: app/.next/standalone/artifacts/imported-app/public
+    filter:
+      - '**/*'
+  - from: db/custom.db
+    to: app-db/custom.db
+afterSign: build-resources/notarize.js
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build-resources/icon.ico
+  artifactName: ScriptureLive-AI-${version}-Setup-${arch}.${ext}
+  signtoolOptions:
+    signingHashAlgorithms:
+      - sha256
+    rfc3161TimeStampServer: http://timestamp.digicert.com
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  icon: build-resources/icon.png
+  category: public.app-category.productivity
+  artifactName: ScriptureLive-AI-${version}-${arch}.${ext}
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build-resources/entitlements.mac.plist
+  entitlementsInherit: build-resources/entitlements.mac.plist
+  notarize: false
+dmg:
+  writeUpdateInfo: true
+  sign: true
