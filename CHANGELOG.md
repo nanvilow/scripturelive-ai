@@ -17,6 +17,17 @@ Format rules (so the workflow's extractor keeps working):
 - Write for the operator, not the engineer. "Verses now appear within
   ~250ms" beats "reduced CHUNK_MS from 4500 to 2500".
 
+## v0.7.21 — 2026-05-01
+
+### Fixed
+
+- **Packaging hotfix.** The v0.7.20 Windows build failed to compile
+  because one source file (`local-bible.ts`, the offline KJV/NIV/ESV
+  lookup module) was present locally but had never been committed to
+  git. v0.7.21 ships the missing file. There are no other code or
+  feature changes vs v0.7.20 — see the v0.7.20 notes below for the
+  full list of what's new since v0.7.18.
+
 ## v0.7.20 — 2026-05-01
 
 This release rolls up everything from v0.7.19 (which was committed but
