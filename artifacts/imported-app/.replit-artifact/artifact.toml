@@ -24,20 +24,19 @@ kind = "web"
 
   [services.production.build.env]
   NODE_ENV = "production"
-  # v0.7.35 — Cloud Run build still SIGKILL'd at heap=3584 MB, so we
-  # drop further per architect's fallback advice. The build VM total
-  # RSS = V8 old-space (capped here) + V8 young/code (~150 MB) +
-  # native allocs by SWC/webpack/terser (~600 MB) + Node overhead
-  # (~100 MB). At cap=3584 we were peaking ~4.5 GB on a ~4 GB cgroup.
-  # cap=3072 leaves enough headroom for the native side.
+  # v0.7.36 — Build VM has ~4 GB usable RAM. V8 old-space cap of 3072 MB
+  # leaves ~1 GB headroom for native allocations from SWC/webpack/terser
+  # plus V8 young-gen + code-space + Node overhead. 8192 was too high
+  # (V8 deferred GC and kernel SIGKILL'd at ~6 GB), 3584 was still
+  # marginal (peaked ~4.5 GB), 3072 should sit safely under the cgroup.
   #
-  # --gc-interval=100 forces V8 to run GC more frequently regardless
-  # of heap pressure (every 100 allocations vs adaptive). Trades a
-  # few % build time for a much steadier RSS curve.
+  # Note: --gc-interval is REJECTED by Node 24 in NODE_OPTIONS for
+  # security reasons ("--gc-interval= is not allowed in NODE_OPTIONS").
+  # Only --max-old-space-size is allowed via this env var.
   #
-  # If this still OOMs, next step is cap=2560 + disabling SWC
-  # minification via swcMinify:false in next.config.ts.
-  NODE_OPTIONS = "--max-old-space-size=3072 --gc-interval=100"
+  # If this still OOMs, next escalation is cap=2560 MB combined with
+  # disabling SWC minification in next.config.ts.
+  NODE_OPTIONS = "--max-old-space-size=3072"
   NEXT_TELEMETRY_DISABLED = "1"
 
   [services.production.run]
