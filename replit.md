@@ -1,5 +1,27 @@
 # Recent Changes
 
+## v0.7.26 — Faster updater UX: background auto-download + parallelism 4 → 6 (May 2, 2026)
+
+Operator pain point this addresses: on Ghana office links, even with the v0.7.17 4-way parallel downloader, a 70 MB installer takes 1-3 minutes between the operator clicking "Download" and the "Restart to install" button enabling. Operators were either restarting the app mid-download (losing the partial transfer because v0.7.17 doesn't resume) or abandoning the update entirely and staying on an older version.
+
+Two independent improvements, both in `artifacts/imported-app/electron/updater.ts`. Both are low-risk additions on top of the v0.7.17 fast path — the slow electron-updater fallback is unchanged.
+
+**1. Background auto-download (the perceived speedup).** When `update-available` fires, the main process now schedules a `triggerFastDownload()` call after a 60-second grace period. By the time the operator clicks the "Update Available — Click To Download" popup, the installer is usually already on disk and the UI flips straight to "Update ready — restart to install". The grace period exists so an operator who is one minute away from a service start can dismiss the popup or hit "Cancel" before the background download begins consuming bandwidth. Implementation:
+  - New module-level `autoDownloadEnabled` (default `true`) and `autoDownloadTimer` with `AUTO_DOWNLOAD_DELAY_MS = 60_000`.
+  - `scheduleAutoDownload()` is called from the existing `update-available` handler. It honours the in-flight guard (`downloadInFlight`), the current state (won't schedule if already `downloading` / `downloaded`), and the opt-out flag.
+  - Re-checks all three gates inside the `setTimeout` callback so an operator click during the 60s window cleanly takes priority over the auto path.
+  - New IPC pair `updater:set-auto-download` / `updater:get-auto-download`, surfaced on `window.api.updater.setAutoDownload(boolean)` / `getAutoDownload()`. Renderer can wire this into a Settings toggle or onto the popup's "Cancel" button. The flag lives in module memory and resets to `true` on app restart — a persisted-across-launches version is deferred to a follow-up release that adds the Settings card UI.
+
+**2. Parallelism bumped 4 → 6 (the actual transfer speedup).** Both call sites in `updater.ts` (the initial `downloading` broadcast and the `parallelDownload({ parallelism: ... })` invocation) now request 6 concurrent HTTP Range chunks instead of 4. The `parallel-download.ts` library cap stays at 8 — going higher hits diminishing returns and starts tripping per-source connection limits on the GitHub release CDN. On the Ghana office link the bottleneck is per-TCP-connection server-side congestion window, not the link's true ceiling, so adding two more chunks reliably helps without becoming visibly worse on faster links.
+
+**Why not other tactics:** Differential downloads (electron-updater's blockmap path) are intentionally bypassed by the v0.7.17 fast path and are not re-introduced here — re-wiring the differential code through `parallelDownload` is non-trivial and would need its own QA cycle. Multi-CDN downloads aren't possible because GitHub releases redirect to a single Fastly origin. Adaptive parallelism (start at 4, escalate based on early throughput) was scoped out as too clever for the operator value it would add over the flat 4 → 6 bump.
+
+**Files**
+- `artifacts/imported-app/electron/updater.ts` (auto-download timer + scheduler + IPC handlers + parallelism 4 → 6)
+- `artifacts/imported-app/electron/preload.ts` (expose `getAutoDownload` / `setAutoDownload` on `window.api.updater`)
+- `artifacts/imported-app/src/lib/use-electron.ts` (type signature for the two new optional methods, gated with `?.` so older bundled preloads stay safe)
+- `artifacts/imported-app/package.json` (0.7.25 → 0.7.26)
+
 ## v0.7.18 — Hotfix roll-up of three v0.7.17 operator escalations (Apr 30, 2026)
 
 Pure hotfix release. No new features, no behavioural changes outside the three reported bugs. Version bumped from 0.7.17 → 0.7.18 only so operators can tell the fixed `.exe` apart from the original v0.7.17 `.exe` they already have installed (the bugs below were all present in the originally signed v0.7.17 installer; bumping the version is the cleanest way to make the auto-updater pick this build up and to make the About dialog show operators which build is on disk).

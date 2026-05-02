@@ -149,6 +149,16 @@ const api = {
     // `downloadUpdate()` and broadcasts an 'idle' state so the
     // available-update popup can re-appear naturally.
     cancel: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('updater:cancel'),
+    // v0.7.26 — Background auto-download opt-out. The main process
+    // schedules a parallel download 60s after `update-available`
+    // fires so the installer is on disk before the operator clicks
+    // Download. Calling setAutoDownload(false) cancels any pending
+    // timer and prevents the next one from being scheduled for the
+    // rest of the session. Resets to true on app restart.
+    getAutoDownload: (): Promise<{ enabled: boolean }> =>
+      ipcRenderer.invoke('updater:get-auto-download'),
+    setAutoDownload: (enabled: boolean): Promise<{ ok: boolean; enabled: boolean }> =>
+      ipcRenderer.invoke('updater:set-auto-download', enabled),
     onState: (cb: (s: UpdateState) => void): (() => void) => {
       const handler = (_e: unknown, state: UpdateState) => cb(state)
       ipcRenderer.on('updater:state', handler)
