@@ -1,5 +1,68 @@
 # The format of this file is identical to `.dockerignore`.
-# It is used to reduce the size of deployed images to make the process of publishing faster.
+#
+# CRITICAL: This file filters BOTH (a) the source upload from the local
+# workspace to Replit's build container AND (b) the final runtime layer
+# packaged into the Autoscale container image. Anything ignored here is
+# ALSO missing at runtime. The previous version of this file used
+# `.next/` and `**/node_modules/`, which silently stripped the
+# freshly-built Next.js standalone bundle and `next` package itself
+# from every deploy and made the autoscale container fail to start
+# (`Cannot find module '.next/standalone/.../server.mjs'`,
+# `Cannot find package 'next'`). Do NOT add `.next/` here.
+# Do NOT add unanchored `**/node_modules/` here.
 
-# No need to store the pnpm store twice.
+# Replit-internal scratch dir
 .local
+
+# Replit local pnpm store / build cache (~1.5 GB). Replit's deploy
+# rebuilds whatever it needs; shipping our local copy just bloats the
+# upload past the publish-size limit.
+.cache/
+.config/
+
+# Source-control history (deploy doesn't need it)
+.git/
+
+# Editor / OS noise
+.DS_Store
+*.log
+*.tsbuildinfo
+
+# Screenshots from chat / local screenshot dir (not referenced by the
+# production server)
+attached_assets/
+screenshots/
+
+# Workspace-root release output dirs. `exports/` at the repo root is
+# ~3 GB of historical ScriptureLive-AI-v*.zip builds; `download/` and
+# `release/` are operator-distribution staging dirs. None of these are
+# served by the web app — the app reads downloads from
+# `artifacts/imported-app/download/` instead.
+/exports/
+/download/
+/downloads/
+/release/
+
+# Local-only Windows Electron desktop build artifacts. The production
+# Linux autoscale server never serves these — they are built locally
+# by BUILD.bat for distribution to Windows operators.
+artifacts/imported-app/dist-electron/
+artifacts/imported-app/dist-electron-ui/
+artifacts/imported-app/exports/
+artifacts/imported-app/download/
+
+# Turbopack cache (regenerated on each build)
+artifacts/imported-app/.turbo/
+.turbo/
+
+# Hoisted workspace `node_modules` — re-installed by the deploy build
+# phase. We use ANCHORED paths (NOT `**/node_modules`) because the
+# globbed pattern would also strip `.next/standalone/node_modules/`,
+# which is the production bundle's self-contained dependency tree
+# (next, ws, prisma client, etc.). Stripping that breaks the
+# standalone server entirely — that exact bug cost six failed deploys.
+/node_modules
+/artifacts/*/node_modules
+/lib/*/node_modules
+/scripts/node_modules
+/packages/*/node_modules

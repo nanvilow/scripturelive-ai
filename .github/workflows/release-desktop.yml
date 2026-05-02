@@ -823,59 +823,95 @@ jobs:
           done
           cat SHA256SUMS.txt
 
-      # Extract the section of CHANGELOG.md matching the tag we're releasing.
-      # The convention (documented in CHANGELOG.md itself) is one section per
-      # version headed by `## v<X.Y.Z>`. We grab everything from that heading
-      # up to the next `## v` heading and feed it to softprops/action-gh-release
-      # as `body`. If no match is found (forgot to update CHANGELOG before
-      # tagging), we fall back to GitHub's auto-generated "Full Changelog"
-      # link instead of failing the release.
-      - name: Extract changelog section for this tag
+      # Build the release body that softprops/action-gh-release will publish.
+      #
+      # The body ALWAYS opens with one big "Download Setup" link pointing at
+      # the .exe in dist/. Operators landing on
+      #   https://github.com/<owner>/<repo>/releases/latest
+      # then see a single obvious download button, even though
+      # `latest.yml`, the `.blockmap`, and `SHA256SUMS.txt` are also
+      # attached as assets (electron-updater needs them to do
+      # background auto-updates of existing installs — removing them
+      # would break in-place upgrades for every Ghana church already on
+      # 0.7.17+).
+      #
+      # If CHANGELOG.md has a `## v<X.Y.Z>` section matching the tag
+      # being released, that section is appended verbatim under the
+      # download block. The full git compare link is always appended as
+      # a footer.
+      #
+      # `found=true` is always emitted so the "Publish GitHub Release"
+      # step never falls back to GitHub's auto-generated notes (which
+      # would clobber the download header).
+      - name: Build release notes body
         id: changelog
         shell: bash
         env:
           TAG_NAME: ${{ steps.tag.outputs.name }}
         run: |
           set -euo pipefail
-          if [ ! -f CHANGELOG.md ]; then
-            echo "::warning title=Missing CHANGELOG.md::No CHANGELOG.md at repo root; release body will use GitHub's auto-generated notes."
-            echo "found=false" >> "$GITHUB_OUTPUT"
-            exit 0
+
+          # 1. Locate the actual .exe filename in dist/ — globbed so a
+          #    rename of the electron-builder artifactName never
+          #    silently breaks the download link in the release body.
+          exe_path=$(ls dist/*Setup*.exe 2>/dev/null | head -1 || true)
+          if [ -n "$exe_path" ]; then
+            exe_name=$(basename "$exe_path")
+            exe_size=$(du -h --apparent-size "$exe_path" 2>/dev/null | cut -f1 \
+                       || du -h "$exe_path" | cut -f1)
+            echo "Found installer: $exe_name ($exe_size)"
+          else
+            ver="${TAG_NAME#v}"
+            exe_name="ScriptureLive-AI-${ver}-Setup-x64.exe"
+            exe_size=""
+            echo "::warning::No .exe in dist/; falling back to conventional filename '$exe_name'."
           fi
-          # Pull lines from `## ${TAG_NAME}` (with optional trailing chars
-          # like ` — date`) up to but not including the next `## v` heading.
-          section="$(awk -v tag="$TAG_NAME" '
-            BEGIN { found=0 }
-            /^## v/ {
-              if (found) { exit }
-              # Match "## v0.5.28" or "## v0.5.28 — ..." but not "## v0.5.280".
-              if ($0 ~ "^## " tag "([^0-9].*)?$") { found=1; next }
-            }
-            found { print }
-          ' CHANGELOG.md)"
-          # Trim leading/trailing blank lines.
-          section="$(printf '%s' "$section" | sed -e '/./,$!d' | tac | sed -e '/./,$!d' | tac)"
-          if [ -z "$section" ]; then
-            echo "::warning title=No changelog entry for $TAG_NAME::CHANGELOG.md has no '## $TAG_NAME' section; release body will use GitHub's auto-generated notes."
-            echo "found=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          download_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}/${exe_name}"
+
+          # 2. Optional: pull the matching CHANGELOG.md section.
+          section=""
+          if [ -f CHANGELOG.md ]; then
+            section="$(awk -v tag="$TAG_NAME" '
+              BEGIN { found=0 }
+              /^## v/ {
+                if (found) { exit }
+                if ($0 ~ "^## " tag "([^0-9].*)?$") { found=1; next }
+              }
+              found { print }
+            ' CHANGELOG.md)"
+            section="$(printf '%s' "$section" | sed -e '/./,$!d' | tac | sed -e '/./,$!d' | tac)"
           fi
-          echo "found=true" >> "$GITHUB_OUTPUT"
-          # Use a randomised heredoc delimiter so user-supplied content can't
-          # close the GITHUB_OUTPUT block prematurely.
+
+          # 3. Compose body. Heredoc with a randomised delimiter so
+          #    user-supplied changelog text can't close the
+          #    GITHUB_OUTPUT block prematurely.
           delim="EOF_$(openssl rand -hex 8)"
+          size_suffix=""
+          if [ -n "$exe_size" ]; then size_suffix=" (${exe_size})"; fi
+          prev_tag=$(git describe --tags --abbrev=0 "$TAG_NAME^" 2>/dev/null || echo 'HEAD')
           {
             echo "body<<$delim"
-            printf '%s\n' "$section"
-            # Append the auto-generated diff link as a footer so operators
-            # can still drill into the commit list if they want to.
+            echo "## Download"
+            echo ""
+            echo "### [Download ScriptureLive AI ${TAG_NAME} Setup for Windows](${download_url})${size_suffix}"
+            echo ""
+            echo "**This is the only file you need.** Click the link above, run the installer, and you're done."
+            echo ""
+            echo "<sub>The other files attached to this release (\`latest.yml\`, \`*.blockmap\`, \`SHA256SUMS.txt\`) are used by ScriptureLive AI's built-in auto-updater to upgrade existing installations and to verify integrity. You can safely ignore them.</sub>"
             echo ""
             echo "---"
             echo ""
-            echo "**Full commit history:** https://github.com/${GITHUB_REPOSITORY}/compare/$(git describe --tags --abbrev=0 "$TAG_NAME^" 2>/dev/null || echo 'HEAD')...$TAG_NAME"
+            if [ -n "$section" ]; then
+              printf '%s\n' "$section"
+              echo ""
+              echo "---"
+              echo ""
+            fi
+            echo "**Full commit history:** https://github.com/${GITHUB_REPOSITORY}/compare/${prev_tag}...${TAG_NAME}"
             echo "$delim"
           } >> "$GITHUB_OUTPUT"
-          echo "Extracted $(printf '%s' "$section" | wc -l) lines of release notes for $TAG_NAME."
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          echo "Built release notes body for $TAG_NAME (download URL: $download_url)"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

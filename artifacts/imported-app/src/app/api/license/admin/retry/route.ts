@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
   // the wa.me wrapper doesn't double-encode it on the next pass.
   let body = original.body
   if (original.channel === 'whatsapp') {
-    body = body.replace(/\n\nhttps:\/\/wa\.me\/.*$/s, '')
+    body = body.replace(/\n\nhttps:\/\/wa\.me\/[\s\S]*$/, '')
   }
 
   let note

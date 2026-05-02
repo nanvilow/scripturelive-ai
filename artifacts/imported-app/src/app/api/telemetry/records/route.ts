@@ -146,20 +146,23 @@ export async function GET(req: NextRequest) {
       return row
     })
     const validInstalls = installs.filter((r): r is InstallRow => !!r)
-    const activeNow = validInstalls.filter((r) => {
-      const t = Date.parse(r.lastSeenAt)
-      return Number.isFinite(t) && t >= fiveMinAgo
-    }).length
     const totalInstalls = validInstalls.length
 
     // ── 2. Heartbeats (sessions today, top features, avg session) ──
     const hbKeys = await dbList('hb:')
     // Filter by ts in the key (cheap) before fetching the body.
-    const todayHbKeys = hbKeys.filter((k) => {
+    //
+    // v0.7.17 — Use min(todayStart, fiveMinAgo) as the cutoff so
+    // the activeNow KPI doesn't under-count in the first 5 min
+    // after midnight. Without this, a heartbeat that landed at
+    // 23:58 yesterday would be excluded at 00:01 today even
+    // though it's well within the 5-minute "active" window.
+    const hbCutoffMs = Math.min(todayStart, fiveMinAgo)
+    const recentHbKeys = hbKeys.filter((k) => {
       const ts = k.slice(3, k.lastIndexOf(':'))
-      return Date.parse(ts) >= todayStart
+      return Date.parse(ts) >= hbCutoffMs
     })
-    const heartbeats = await pMap(todayHbKeys, 16, async (k) => {
+    const heartbeats = await pMap(recentHbKeys, 16, async (k) => {
       return await safeParse<HeartbeatRow>(await dbGet(k).catch(() => null))
     })
     const validHbs = heartbeats.filter((r): r is HeartbeatRow => !!r)
@@ -171,20 +174,47 @@ export async function GET(req: NextRequest) {
       string,
       { min: number; max: number; count: number }
     >()
+    // v0.7.17 — Per-install MAX heartbeat timestamp + most recent
+    // heartbeat metadata (appVersion). The activeNow KPI and the
+    // installsList drilldown both prefer this signal over the
+    // inst:* row's lastSeenAt, because the heartbeat write
+    // (`hb:{ts}:{rand}`) is a fresh key that always lands, while
+    // the inst:* upsert is a read-modify-write that can lose
+    // updates under concurrent load. Symptom before this fix:
+    // active-now KPI under-counted, App ver column showed the
+    // version from the install ping rather than from the most
+    // recent heartbeat (so a client that upgraded mid-session
+    // appeared stuck on the old version).
+    const lastHbMs = new Map<string, number>()
+    const lastHbAppVersion = new Map<string, string>()
 
     for (const h of validHbs) {
-      distinctInstallsToday.add(h.installId)
-      // Top features
-      if (h.features) {
+      const tMs = Date.parse(h.ts)
+      // v0.7.17 — Heartbeat list now includes the prior day's
+      // last-5-min window for accurate post-midnight activeNow,
+      // so gate the today-only aggregates (distinctInstallsToday,
+      // featureCounts, sessions) on the heartbeat actually
+      // landing in today's date range. lastHbMs is intentionally
+      // NOT gated — it powers the 5-minute activeNow window.
+      const isToday = Number.isFinite(tMs) && tMs >= todayStart
+      if (isToday) distinctInstallsToday.add(h.installId)
+      if (Number.isFinite(tMs)) {
+        const cur = lastHbMs.get(h.installId) ?? 0
+        if (tMs > cur) {
+          lastHbMs.set(h.installId, tMs)
+          if (h.appVersion) lastHbAppVersion.set(h.installId, h.appVersion)
+        }
+      }
+      // Top features (today only)
+      if (isToday && h.features) {
         for (const [k, v] of Object.entries(h.features)) {
           const n =
             typeof v === 'number' ? v : typeof v === 'boolean' && v ? 1 : 0
           if (n > 0) featureCounts[k] = (featureCounts[k] ?? 0) + n
         }
       }
-      // Per-session aggregates (only when sessionId present)
-      if (h.sessionId) {
-        const tMs = Date.parse(h.ts)
+      // Per-session aggregates (today only, only when sessionId present)
+      if (isToday && h.sessionId) {
         if (!Number.isFinite(tMs)) continue
         const key = `${h.installId}::${h.sessionId}`
         const cur = sessions.get(key)
@@ -197,6 +227,26 @@ export async function GET(req: NextRequest) {
         }
       }
     }
+
+    // v0.7.17 — activeNow = distinct installs whose effective
+    // last-activity (max of inst:lastSeenAt and most-recent
+    // hb.ts) is within the 5 min window. Counting via the union
+    // catches both:
+    //   (a) installs that just sent the install ping but haven't
+    //       heartbeat yet (only inst:lastSeenAt is recent), and
+    //   (b) installs whose inst:* upsert lost a write but whose
+    //       hb:* row landed (only hb.ts is recent).
+    // The previous implementation only checked (a) which is why
+    // the KPI under-counted active customers under load.
+    const activeIds = new Set<string>()
+    for (const [installId, ms] of lastHbMs) {
+      if (ms >= fiveMinAgo) activeIds.add(installId)
+    }
+    for (const r of validInstalls) {
+      const t = Date.parse(r.lastSeenAt)
+      if (Number.isFinite(t) && t >= fiveMinAgo) activeIds.add(r.installId)
+    }
+    const activeNow = activeIds.size
 
     const sessionsToday = distinctInstallsToday.size
     const topFeatures = Object.entries(featureCounts)
@@ -266,22 +316,43 @@ export async function GET(req: NextRequest) {
     // first). Also surfaces firstSeenAt + appVersion + os to power
     // the drilldown dialogs the operator opens by clicking on the
     // Active Now / Total Installs KPI cards.
+    //
+    // v0.7.17 — Use the EFFECTIVE last-seen timestamp (max of the
+    // inst:* row's lastSeenAt and the most recent hb.ts seen
+    // today) for both sorting AND the Last seen column the admin
+    // sees. Same fallback for App ver: prefer the most recent
+    // heartbeat's version so a customer who upgrades mid-session
+    // doesn't show the stale version they had at install time.
+    // Without this, when the inst:* upsert lost a write under
+    // load, the dashboard would show "Last seen 2h ago" for an
+    // install that was actively heartbeating right now.
     const installsList = validInstalls
       .slice()
-      .sort(
-        (a, b) =>
-          (Date.parse(b.lastSeenAt) || 0) -
-          (Date.parse(a.lastSeenAt) || 0),
-      )
+      .map((r) => {
+        const instMs = Date.parse(r.lastSeenAt) || 0
+        const hbMs = lastHbMs.get(r.installId) ?? 0
+        const effectiveMs = Math.max(instMs, hbMs)
+        const effectiveLastSeenAt = effectiveMs > 0
+          ? new Date(effectiveMs).toISOString()
+          : r.lastSeenAt
+        const effectiveAppVersion =
+          (hbMs > instMs && lastHbAppVersion.get(r.installId)) ||
+          r.appVersion ||
+          lastHbAppVersion.get(r.installId) ||
+          null
+        return {
+          installId: r.installId.slice(0, 12),
+          firstSeenAt: r.firstSeenAt,
+          lastSeenAt: effectiveLastSeenAt,
+          appVersion: effectiveAppVersion,
+          os: r.os ?? null,
+          countryCode: r.countryCode ?? null,
+          _sortMs: effectiveMs,
+        }
+      })
+      .sort((a, b) => b._sortMs - a._sortMs)
       .slice(0, 100)
-      .map((r) => ({
-        installId: r.installId.slice(0, 12),
-        firstSeenAt: r.firstSeenAt,
-        lastSeenAt: r.lastSeenAt,
-        appVersion: r.appVersion ?? null,
-        os: r.os ?? null,
-        countryCode: r.countryCode ?? null,
-      }))
+      .map(({ _sortMs: _, ...rest }) => rest)
 
     // v0.7.16 — Per-session list (today only, all sessions including
     // single-poll ones — the avg KPI excludes 1-poll sessions but

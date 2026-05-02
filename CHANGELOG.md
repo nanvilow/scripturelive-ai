@@ -17,6 +17,225 @@ Format rules (so the workflow's extractor keeps working):
 - Write for the operator, not the engineer. "Verses now appear within
   ~250ms" beats "reduced CHUNK_MS from 4500 to 2500".
 
+## v0.7.25 — 2026-05-02
+
+### Changed
+
+- **AI features now work out of the box on every install — no
+  operator setup required.** Operator feedback on v0.7.24: "I
+  don't want every church having to paste an OpenAI key into
+  Admin → Keys; do it the same way Deepgram works." This release
+  restores the build-time OpenAI key bake (which v0.7.20 had
+  removed when the project was Deepgram-only). Now:
+  - The build-time OpenAI key is shipped inside the installer the
+    same way the Deepgram key is.
+  - On every operator's PC, AI Verse Search ("find the verse that
+    says love your enemies") and passive AI Scripture Detection
+    activate the moment they launch v0.7.25 — no Admin → Keys
+    step, no env vars, no extra configuration.
+  - The per-PC override path added in v0.7.24 still works — a
+    church that wants to bill against their own OpenAI account
+    can still paste their own key in the Admin modal and it
+    takes precedence over the bundled default.
+  - The OpenAI key stays on the server side only (it's used by
+    the `/api/scripture/semantic-match` Next.js API route, never
+    by the renderer), so it doesn't appear in the browser bundle
+    where end users could read it from devtools.
+
+### Notes
+
+- For maintainers: the GitHub Actions release workflow already
+  forwards `OPENAI_API_KEY` from the repo secret of the same
+  name (release-desktop.yml line 79). If that secret isn't set,
+  the bake will be empty and operators will fall back to either
+  their per-PC license override or the silent no-op behaviour
+  that was in v0.7.24. Set `OPENAI_API_KEY` as a GitHub repo
+  secret on `nanvilow/scripturelive-ai` if you haven't already.
+- Same trust and cost model as Deepgram: every install hits
+  OpenAI on the build-owner's account. The matcher uses
+  text-embedding-3-small at roughly $0.02 per million tokens
+  with most voice commands under 20 tokens, so usage is
+  negligible even across many churches.
+
+## v0.7.24 — 2026-05-02
+
+### Fixed
+
+- **"Next verse" / "previous verse" now rolls into the next chapter
+  automatically.** Operator bug report: when the live screen showed
+  John 3:36 (last verse of chapter 3) and the operator said "next
+  verse", nothing happened — they had to use a separate "next
+  chapter" command. Now "next verse" on John 3:36 correctly advances
+  to John 4:1, and "previous verse" on John 4:1 rolls back to John
+  3:36. A small toast announces the chapter change so the operator
+  knows the rollover happened. Rollover stays within the same book
+  — at a book boundary (Revelation 22:21 + next, Genesis 1:1 +
+  previous) the existing legacy behaviour kicks in. The standalone
+  "next chapter" / "previous chapter" commands still work exactly
+  as before.
+
+- **AI Scripture Detection and AI Verse Search now actually use the
+  OpenAI key admins set in the in-app Admin modal.** Operator bug
+  report after v0.7.23: the AI features stayed silent even though
+  the key was configured under Admin → Keys. Root cause: the matcher
+  was reading `process.env.OPENAI_API_KEY` only, and the admin-set
+  key was being saved to the license config without ever being
+  wired through to the matcher. v0.7.24 resolves the OpenAI key
+  from BOTH sources (env first, then admin license config), so:
+  - If you already entered your OpenAI key in Admin → Keys, AI
+    Scripture Detection and AI Verse Search start working
+    immediately on next launch (no env var, no env file, no
+    restart of anything else).
+  - The matcher rebuilds its OpenAI client automatically when you
+    rotate the key in Admin, no app restart needed.
+  - The status flag (`/api/scripture/semantic-match` GET) now
+    returns `hasApiKey: true` when EITHER source is populated.
+
+### Notes
+
+- If you don't already have an OpenAI key configured, open the
+  Admin modal (license/admin entry point) → Keys → paste your key.
+  AI features will activate within a few seconds.
+
+## v0.7.23 — 2026-05-02
+
+### Added
+
+- **AI Verse Search by voice.** Operators can now describe a verse in
+  their own words and ScriptureLive will find it using AI. Speak any
+  of these forms (with or without the "Media" wake word):
+  - *"Find the verse about loving your enemies"* → Matthew 5:44
+  - *"What's the scripture that says love is patient"* → 1 Corinthians 13:4
+  - *"Where does the bible say be still and know"* → Psalm 46:10
+  - *"Show me the verse about a city on a hill"* → Matthew 5:14
+  The match is found via the same OpenAI embeddings engine that
+  already powers the live AI scripture detection in the sermon
+  panel — so paraphrased and out-of-order quotes are recognised.
+  The found verse is loaded in your currently-selected translation
+  and pushed to live, exactly as if you had said the canonical
+  reference. Falls back to a clear toast message when no good match
+  is found, when there's no internet, or when the OpenAI key is
+  missing — never a silent failure.
+
+### Notes
+
+- AI Verse Search currently searches the popular-verses corpus
+  (~480 of the most-quoted verses across the whole Bible). Verses
+  outside that corpus will not be matched in this release; we'll
+  expand coverage in v0.8.0.
+- AI features need an `OPENAI_API_KEY` configured in your
+  environment. If you already have AI Scripture Detection working
+  in the live sermon panel, AI Verse Search will work too.
+
+## v0.7.22 — 2026-05-02
+
+### Fixed
+
+- **"Next verse" / "previous verse" voice commands now actually
+  advance through scripture.** Operator bug report on v0.7.21:
+  *"When it's on John 3:3 and a voice command is given for 'next
+  verse', it should move to John 3:4."* The old handler only moved
+  the highlight inside multi-verse passages and silently did nothing
+  on single-verse slides — which is what most operators are on.
+  Now saying *"next verse"* on John 3:3 loads John 3:4 from the
+  Bible and pushes it live (same for the entire Bible — book + chapter
+  boundaries are respected, so it won't try to load John 3:37 or jump
+  past Revelation 22). *"Previous verse"* works the same way going
+  backwards.
+
+### Changed
+
+- **Trial shortened from 3 hours to 70 minutes.** Operators reported
+  that 3 hours was effectively letting trial users get through a full
+  Sunday service for free. 70 minutes is enough to walk through the
+  installer, see verses appear in a short test, and decide whether
+  to activate — without covering an entire service. **Existing
+  trials keep their original 180-minute budget** (the change applies
+  to fresh installs only); paid installs are not affected.
+
+## v0.7.21 — 2026-05-01
+
+### Fixed
+
+- **Packaging hotfix.** The v0.7.20 Windows build failed to compile
+  because one source file (`local-bible.ts`, the offline KJV/NIV/ESV
+  lookup module) was present locally but had never been committed to
+  git. v0.7.21 ships the missing file. There are no other code or
+  feature changes vs v0.7.20 — see the v0.7.20 notes below for the
+  full list of what's new since v0.7.18.
+
+## v0.7.20 — 2026-05-01
+
+This release rolls up everything from v0.7.19 (which was committed but
+never tagged as a release) plus the operator-requested OpenAI cleanup.
+
+### Added
+
+- **You get a real 3-hour trial.** New installs now get a full 3 hours
+  of unactivated runtime, up from the old 30 minutes. If you're
+  already in a running trial it's automatically extended; paid
+  installs are not affected.
+- **Welcome popup on first launch.** The very first time the app
+  opens on a PC you'll see a short "Welcome to ScriptureLive AI"
+  dialog explaining the trial and how to activate. It dismisses
+  permanently after the first close — you'll never see it again on
+  that PC.
+- **Voice commands understand more of what you say.**
+  - **"Change to NIV"** (or NLT, ESV, MSG, AMP, KJV, NKJV, NASB,
+    CSB, NRSV, RSV, ASV, NCV, GNT, CEV, ERV, WEB) — switches the
+    on-screen Bible translation immediately, no clicking required.
+  - **"Delete previous verse"** — removes the last verse you sent
+    to the screen.
+  - **"Show verse 7"** (or any number) — re-displays a specific
+    verse from the chapter currently on screen.
+  - **"Media, [command]"** — say "media" first to disambiguate from
+    sermon speech, e.g. *"media, change to NIV"*.
+  - You can chain commands: *"show John 3:16, change to NIV, show
+    verse 17"* runs all three back-to-back.
+- **Smarter, more accurate voice command recognition.** A 5,300-
+  example training dataset was added so the engine handles
+  natural phrasing variants ("turn to", "open to", "let's read")
+  in addition to the exact phrases.
+- **The packaged installer ships with a default admin password
+  baked in.** Operators reported that the admin password they set
+  on PC1 (e.g. "1234") didn't carry over to PC2 — every fresh
+  install fell back to "admin". Now every PC running the same
+  installer shares the same default password the operator set at
+  build time. You can still override it per-PC via Admin →
+  Settings if you want different passwords on different PCs.
+
+### Changed
+
+- **Startup test email is now opt-in instead of opt-out.** Previously
+  the server sent a test email on every cold-start (boot, redeploy,
+  workflow restart). Operators reported being spammed by these once
+  SMTP was already verified. Now you have to set
+  `SEND_STARTUP_TEST_EMAIL=1` in the deployment secrets to receive
+  one. For ad-hoc re-testing, POST `/api/license/test-email` fires a
+  single email without restarting the server.
+- **Transcription is Deepgram-only.** OpenAI Whisper has been removed
+  from the engine fallback chain — every PC now goes straight to
+  Deepgram for the streaming-fast latency you saw in v0.5.35+. The
+  engine picker no longer offers "Whisper".
+
+### Removed
+
+- **OpenAI is no longer used anywhere in the build.** The OpenAI key
+  is no longer baked into the installer, no longer required as a
+  deployment secret, and no longer printed in the startup
+  diagnostic. v0.7.19 already cut OpenAI from transcription;
+  v0.7.20 finishes the job by stripping it from the build pipeline
+  entirely.
+
+### Notes for operators
+
+- If you previously set `OPENAI_API_KEY` in your Replit deployment
+  secrets, you can delete it — it's no longer read by anything in
+  the app.
+- The desktop installer is now ~558 MB (unchanged from v0.7.18).
+  Existing installs on v0.7.17+ will auto-update in the background
+  via electron-updater.
+
 ## v0.5.36 — 2026-04-26
 
 ### Fixed

@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+#
+# Pre-push secret scan — defence in depth.
+#
+# The pre-commit hook already inspects each commit's staged diff, but a
+# contributor can bypass it with `git commit --no-verify` or by importing
+# commits from another tool. This hook re-scans the *whole repository
+# state* about to be pushed, so anything the per-commit hook missed (or
+# was bypassed for) is caught before the push leaves the laptop.
+#
+# To bypass intentionally:
+#
+#     git push --no-verify
+#
+# CI (`.github/workflows/secret-scan.yml`) is still the authoritative
+# guard.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CONFIG="${REPO_ROOT}/.gitleaks.toml"
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "[pre-push] gitleaks not installed locally — skipping scan (CI will still run it)." >&2
+  exit 0
+fi
+
+IGNORE_PATH="${REPO_ROOT}/.gitleaksignore"
+
+# `--gitleaks-ignore-path` is passed explicitly so behaviour is
+# deterministic across gitleaks versions (auto-discovery of
+# `.gitleaksignore` exists in 8.x but the flag locks it down even if
+# upstream changes the lookup rules in a future release).
+if ! gitleaks detect \
+  --source "${REPO_ROOT}" \
+  --config "${CONFIG}" \
+  --gitleaks-ignore-path "${IGNORE_PATH}" \
+  --redact \
+  --no-banner; then
+  cat >&2 <<'MSG'
+
+[pre-push] gitleaks found potential secrets in the repository history
+[pre-push] about to be pushed. The push was blocked.
+[pre-push]
+[pre-push] If you've already committed a real secret:
+[pre-push]   1. Rotate the credential immediately (it must be considered
+[pre-push]      compromised the moment it enters a working tree).
+[pre-push]   2. Remove it from history (e.g. `git filter-repo` or an
+[pre-push]      interactive rebase) before pushing.
+[pre-push]   3. See the post-mortem in `replit.md` for the v0.7.32 leak
+[pre-push]      incident this guard exists to prevent.
+MSG
+  exit 1
+fi

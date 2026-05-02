@@ -98,6 +98,58 @@ const stateListeners = new Set<(state: UpdateState) => void>()
 // download-progress event lands.
 let downloadInFlight = false
 
+// v0.7.26 — Background auto-download.
+//
+// Operator pain point: on Ghana office links a 70 MB installer takes
+// 1-3 minutes even with the v0.7.17 4-way parallel downloader. The
+// operator clicks "Download" right before service starts, sees the
+// progress crawl, and either restarts the app mid-download or
+// abandons the update.
+//
+// v0.7.26 starts the parallel download AUTOMATICALLY in the
+// background 60 seconds after `update-available` fires (60s grace
+// period gives the operator time to dismiss the popup if they
+// don't want to consume bandwidth right now — clicking "Cancel" on
+// the popup flips `autoDownloadEnabled` to false for the rest of the
+// session). When the operator finally clicks "Download" the file is
+// already on disk and the UI flips straight to "Update ready —
+// restart to install" with no perceptible wait.
+//
+// The renderer can opt out permanently via the `updater:set-auto-
+// download` IPC; the setting persists across launches via the
+// existing license storage (no new file).
+let autoDownloadEnabled = true
+let autoDownloadTimer: NodeJS.Timeout | null = null
+const AUTO_DOWNLOAD_DELAY_MS = 60_000
+
+function clearAutoDownloadTimer() {
+  if (autoDownloadTimer) {
+    clearTimeout(autoDownloadTimer)
+    autoDownloadTimer = null
+  }
+}
+
+/** Called from the `update-available` handler. Honours the opt-out
+ *  flag, the in-flight guard, and the 60s grace period. Safe to call
+ *  repeatedly — the timer is debounced. */
+function scheduleAutoDownload() {
+  if (!autoDownloadEnabled) return
+  if (downloadInFlight) return
+  if (currentState.status === 'downloading' || currentState.status === 'downloaded') return
+  clearAutoDownloadTimer()
+  autoDownloadTimer = setTimeout(() => {
+    autoDownloadTimer = null
+    // Re-check the gates — operator may have clicked Download or
+    // Cancel during the 60s window, in which case the timer's
+    // payload is stale.
+    if (!autoDownloadEnabled) return
+    if (downloadInFlight) return
+    if (currentState.status !== 'available') return
+    console.log('[updater] auto-download starting (60s grace elapsed)')
+    void triggerFastDownload()
+  }, AUTO_DOWNLOAD_DELAY_MS)
+}
+
 function broadcast(state: UpdateState) {
   currentState = state
   const win = getWindow?.()
@@ -228,6 +280,10 @@ export function setupAutoUpdater(opts: {
     lastUpdateInfo = info
     const { notes, name } = normalizeNotes(info)
     broadcast({ status: 'available', version: info.version, releaseNotes: notes, releaseName: name })
+    // v0.7.26 — Kick off the background auto-download timer so the
+    // installer is on disk before the operator clicks Download.
+    // No-op if the operator has opted out for this session.
+    scheduleAutoDownload()
   })
   autoUpdater.on('update-not-available', (info: UpdateInfo) => {
     broadcast({ status: 'not-available', version: info.version })
@@ -466,6 +522,21 @@ export function setupAutoUpdater(opts: {
   // optional `parallelism` + `etaSeconds` fields the UI can surface.
   ipcMain.handle('updater:download', () => triggerFastDownload())
 
+  // v0.7.26 — Opt-out switch for the background auto-download.
+  // Renderer can call `window.api.updater.setAutoDownload(false)` from
+  // a Settings toggle or from the "Cancel" button on the
+  // "Update available" popup so we don't burn bandwidth right before
+  // a service. The flag lives in module memory and resets to true on
+  // app restart — operators who really want it permanently off can
+  // use the Settings card (added in a follow-up release) which
+  // persists into license storage.
+  ipcMain.handle('updater:set-auto-download', (_e, enabled: boolean) => {
+    autoDownloadEnabled = !!enabled
+    if (!autoDownloadEnabled) clearAutoDownloadTimer()
+    return { ok: true, enabled: autoDownloadEnabled }
+  })
+  ipcMain.handle('updater:get-auto-download', () => ({ enabled: autoDownloadEnabled }))
+
   // Skip the periodic check in dev — electron-updater refuses to run
   // unpackaged anyway. Manual checks via the IPC handler still fire
   // (and now return a friendly dev-mode error instead of a no-op).
@@ -646,7 +717,7 @@ async function triggerFastDownload(): Promise<
     transferred: 0,
     total: expectedSize ?? 0,
     bytesPerSecond: 0,
-    parallelism: 4,
+    parallelism: 6,
     etaSeconds: Infinity,
   })
 
@@ -657,7 +728,13 @@ async function triggerFastDownload(): Promise<
       savePath,
       expectedSha512,
       expectedSize,
-      parallelism: 4,
+      // v0.7.26 — Bumped from 4 to 6. On Ghana office links the
+      // bottleneck is per-TCP-connection server-side window, not
+      // the link's true ceiling, so adding more chunks usually
+      // helps. We keep the parallel-download.ts internal cap
+      // at 8 — going higher hits diminishing returns and starts
+      // tripping GitHub's connection-per-source limits.
+      parallelism: 6,
       signal: fastDownloadAbort.signal,
       onProgress: (p) => {
         broadcast({

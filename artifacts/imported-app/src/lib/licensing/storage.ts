@@ -185,6 +185,28 @@ export interface RuntimeConfig {
   /** v0.5.52 — Override the BAKED Deepgram key. When empty,
    *  the renderer uses NEXT_PUBLIC_SCRIPTURELIVE_DEEPGRAM_KEY. */
   adminDeepgramKey?: string
+  /** v0.7.29 (introduced) / v0.7.32 (default flipped to ON).
+   *  When the resolved value is true, the speech-provider invokes
+   *  the LLM voice intent classifier (src/lib/voice/llm-classifier.ts)
+   *  as a FALLBACK after the regex classifier returns null or
+   *  low-confidence AND the utterance passes the command-likeness
+   *  gate (src/lib/voice/llm-gate.ts).
+   *
+   *  IMPORTANT: read this field via `isLlmClassifierEnabled(cfg)`
+   *  (below) — never inline-check `cfg.enableLlmClassifier === true`,
+   *  because as of v0.7.32 the semantics are "ON unless explicitly
+   *  set to false". A missing/undefined value MUST be treated as ON.
+   *  The kill switch in Admin Modal → Cloud Keys persists `false`
+   *  when an operator unticks it; the absence of the field means
+   *  "operator never touched it → use the default (ON)". */
+  enableLlmClassifier?: boolean
+  /** v0.7.29 — Per-PC override for the LLM classifier confidence
+   *  floor (1..100). Below this threshold, classifyIntent returns
+   *  null and the dispatcher does NOT fire a command. Default 70
+   *  (set in llm-classifier.ts as DEFAULT_CONFIDENCE_FLOOR).
+   *  Operators reporting too many false-positive commands can raise
+   *  this; operators reporting missed commands can lower it. */
+  llmClassifierConfidenceFloor?: number
   /** Last time the owner saved this config (ISO) — for audit display */
   updatedAt?: string
 }
@@ -270,7 +292,25 @@ function storagePath(): string {
 // the budget keeps "evaluation" honest while still giving the user
 // time to demo a service. Combined with `everActivated` lockout below,
 // the reinstall-to-reset workaround is now closed.
-const TRIAL_DURATION_MS = 30 * 60 * 1000 // 30 min
+//
+// v0.7.19 — Bumped 30 min → 180 min (3 hours) per operator request.
+// v0.7.22 — Tightened 180 min → 70 min per operator request.
+//   Rationale (operator-reported): 3 hours was too generous and gave
+//   trial users effectively a full Sunday service of free use. 70 min
+//   is enough to walk through the install, see verses appear during a
+//   short test, and decide whether to subscribe — without being long
+//   enough to cover an entire service. The `everActivated` lockout
+//   still prevents the reinstall-to-reset workaround.
+//
+// upgradeStaleTrialDuration() (called from load()) lifts any
+// previously-persisted `trialDurationMs` that's BELOW this number to
+// the new value, but ONLY for trials that haven't yet been activated
+// and haven't yet expired. The migration is one-way (smaller → bigger);
+// it deliberately does NOT shrink an existing trial that's longer than
+// the new constant, so anyone who started a v0.7.19/v0.7.20/v0.7.21
+// trial keeps their already-allocated 180-minute budget rather than
+// having time yanked away mid-evaluation.
+const TRIAL_DURATION_MS = 70 * 60 * 1000 // 70 min
 // v0.7.3 — Bumped from 15 min → 7 days. Operator's bug report:
 // "Active subscriptions are killed... it deletes active codes by
 // itself while I didn't give that command." The 15-minute window
@@ -399,6 +439,49 @@ function load(): LicenseFile {
       // is the whole point. Default falsy for fresh installs.
       everActivated: parsed.everActivated === true ? true : undefined,
       lockdownAfterDeactivation: parsed.lockdownAfterDeactivation === true ? true : undefined,
+    }
+    // v0.7.19 — Trial bump migration. If the persisted trial budget is
+    // smaller than the current TRIAL_DURATION_MS, AND the user has not
+    // yet activated a paid subscription, AND the trial they were on
+    // hadn't already expired, lift it. This ensures operators
+    // mid-trial when v0.7.19 lands get the full 180 min budget
+    // instead of being capped at the old (30 min) ceiling.
+    //
+    // Guards we deliberately apply (each one is load-bearing):
+    //   (a) trialDurationMs < TRIAL_DURATION_MS — only need to act
+    //       when the persisted budget is actually smaller than the
+    //       new ceiling. Idempotent: once lifted, this branch never
+    //       runs again.
+    //   (b) everActivated !== true — never touch installs that have
+    //       ever been on a paid subscription. Sticky-lockdown after
+    //       paid-sub-ends is a separate post-paid behaviour and we
+    //       must not silently extend any window in that flow.
+    //   (c) !activeSubscription — defensive double-check; if a
+    //       subscription is somehow still flagged active, leave the
+    //       trial counter alone.
+    //   (d) trialMsUsed < cache.trialDurationMs — CRITICAL. The
+    //       activity-gated trial considers the user expired/locked
+    //       once trialMsUsed >= trialDurationMs. Without this guard,
+    //       a user whose 30-min trial already ran out (and who
+    //       therefore should be locked) would be silently re-opened
+    //       to a fresh 150 min when 0.7.19 first launches. We only
+    //       lift trials that are still in progress at migration time.
+    if (
+      cache.trialDurationMs < TRIAL_DURATION_MS &&
+      cache.everActivated !== true &&
+      !cache.activeSubscription &&
+      (cache.trialMsUsed ?? 0) < cache.trialDurationMs
+    ) {
+      // eslint-disable-next-line no-console
+      console.log(
+        '[licensing] migrating trialDurationMs',
+        cache.trialDurationMs,
+        '→',
+        TRIAL_DURATION_MS,
+        '(v0.7.19 trial bump)',
+      )
+      cache.trialDurationMs = TRIAL_DURATION_MS
+      persist(cache)
     }
     return cache
   } catch (e) {
@@ -1543,4 +1626,24 @@ export function __testReset(): void {
   cache = null
   const p = storagePath()
   if (fs.existsSync(p)) fs.unlinkSync(p)
+}
+
+// v0.7.32 — Single source of truth for the LLM-classifier on/off
+// decision. The flag is "ON unless explicitly set to false", so a
+// fresh install (no config file or no field) gets the LLM fallback
+// automatically. Operators who experience regressions can untick the
+// kill switch in Admin Modal → Cloud Keys, which persists `false`,
+// and only that explicit false value disables the path.
+//
+// Every callsite (server routes, admin modal hydration, future
+// renderer reads) MUST use this helper rather than open-coding the
+// `=== true` check, or the default-on contract will silently break.
+//
+// Accepts a partial config so callers can pass either a full
+// `RuntimeConfig`, the admin-config endpoint's response shape, or
+// `null`/`undefined` (treated the same as a missing field → ON).
+export function isLlmClassifierEnabled(
+  cfg?: { enableLlmClassifier?: boolean | null } | null,
+): boolean {
+  return cfg?.enableLlmClassifier !== false
 }

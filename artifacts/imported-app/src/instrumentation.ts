@@ -4,34 +4,47 @@
 // (i.e. every Node process boot — both `next dev` in the workspace
 // and the production standalone server in the published deployment).
 //
-// Operator request after the SMTP setup walkthrough: "Send a test
-// email when app starts." Goal is to give them an instant
-// confirmation that the MAIL_HOST/MAIL_USER/MAIL_PASS/MAIL_FROM
-// secrets they pasted into the deployment Settings actually work,
-// without having to wait for a real customer to submit a payment
-// screenshot.
+// Original v0.5.46 behaviour: send a test email on every cold-start
+// unless SKIP_STARTUP_TEST_EMAIL=1 was set. This was useful during
+// the initial SMTP setup but operators reported being spammed by
+// these on every redeploy / restart once SMTP was already verified.
 //
-// Behavior:
-//   - If SMTP env vars are missing, log a clear warning to the
-//     deployment console and exit (no crash).
-//   - If SMTP is configured, send one test email to NOTIFICATION_EMAIL
-//     (nanvilow@gmail.com) and log SUCCESS / FAILED + reason.
-//   - The operator can suppress the test by setting
-//     SKIP_STARTUP_TEST_EMAIL=1 in the deployment secrets after
-//     they're satisfied.
+// v0.7.19 — Default flipped to OPT-IN. The startup test email now
+// only fires when SEND_STARTUP_TEST_EMAIL=1 is explicitly set in
+// the deployment secrets. Once an operator has confirmed SMTP works
+// (one email is enough), they should NEVER receive another startup
+// test email. For ad-hoc re-testing they can POST to the manual
+// endpoint /api/license/test-email which fires a single email
+// without restarting the server.
 //
-// The email body explains exactly what configuration was used, so
-// when the operator opens it they immediately see which secrets are
-// in play (MAIL_HOST, MAIL_USER, MAIL_FROM — never the password).
+// SKIP_STARTUP_TEST_EMAIL=1 still works as before (no-op, since
+// we're already off by default) so existing deployments that set
+// it stay silent.
 
 export async function register() {
   // instrumentation.ts is also called for the edge runtime; only
   // run our nodemailer / fs / nodejs-only code on the Node runtime.
   if (process.env.NEXT_RUNTIME !== 'nodejs') return
 
-  // Operator opt-out for after they're done verifying.
+  // v0.7.20 — OPENAI_API_KEY startup diagnostic removed. The v0.7.18
+  // hotfix block printed the loaded OpenAI key suffix on cold-start
+  // to debug a Ghana operator's 401s. v0.7.19 cut OpenAI from the
+  // transcription stack and v0.7.20 removed the secret entirely, so
+  // the diagnostic is now permanently irrelevant.
+
+  // v0.7.19 — Opt-IN gate. Default is OFF; the operator must
+  // explicitly set SEND_STARTUP_TEST_EMAIL=1 to receive one. The
+  // legacy SKIP_STARTUP_TEST_EMAIL=1 opt-out still short-circuits
+  // for any deployment that already had it set.
   if (process.env.SKIP_STARTUP_TEST_EMAIL === '1') {
     console.log('[startup-test-email] skipped (SKIP_STARTUP_TEST_EMAIL=1)')
+    return
+  }
+  if (process.env.SEND_STARTUP_TEST_EMAIL !== '1') {
+    console.log(
+      '[startup-test-email] skipped (default off; set SEND_STARTUP_TEST_EMAIL=1 ' +
+        'to fire one on next boot, or POST /api/license/test-email for ad-hoc tests)',
+    )
     return
   }
 

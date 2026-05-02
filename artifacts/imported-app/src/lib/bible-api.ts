@@ -1025,7 +1025,8 @@ export function getBookNames(): string[] {
 // "Amen", "the lord jesus crisis" → "the Lord Jesus Christ"). Pure
 // presentation — does NOT mutate the underlying store transcript so
 // detection logic stays untouched.
-const PROPER_NOUNS: Array<[RegExp, string]> = [
+type ReplaceFn = (substring: string, ...args: string[]) => string
+const PROPER_NOUNS: Array<[RegExp, string | ReplaceFn]> = [
   [/\bjesus\b/gi, 'Jesus'],
   [/\bchrist\b/gi, 'Christ'],
   [/\bjesus\s+christ\b/gi, 'Jesus Christ'],

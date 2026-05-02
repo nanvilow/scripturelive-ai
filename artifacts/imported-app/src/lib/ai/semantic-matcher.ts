@@ -34,9 +34,147 @@
 
 import OpenAI from 'openai'
 import { POPULAR_VERSES_KJV, type PopularVerse } from './popular-verses'
+import { getConfig } from '@/lib/licensing/storage'
+import { getOpenAIKey as getBakedOpenAIKey } from '@/lib/baked-credentials'
+
+// v0.7.25 — Resolve the OpenAI API key from THREE sources, in
+// priority order. This matches the Deepgram philosophy
+// (runtime-keys.ts): the .exe ships working out of the box, but
+// admins can override per-PC if they want to use their own
+// OpenAI account.
+//
+//   1. process.env.OPENAI_API_KEY
+//        Dev override; also what the GitHub Actions build sets so
+//        the inject-keys script can bake it. At runtime in a
+//        packaged .exe this is normally empty.
+//   2. License config `adminOpenAIKey`
+//        Per-PC override an admin paste into the Admin modal
+//        (src/components/license/admin-modal.tsx). Lets a single
+//        church re-bill a different account without touching the
+//        installer.
+//   3. BAKED_OPENAI_KEY (via getBakedOpenAIKey)
+//        The build-time bake, populated by scripts/inject-keys.mjs
+//        from the OPENAI_API_KEY env var. This is what makes AI
+//        features work for every operator out of the box, with no
+//        configuration required.
+//
+// History:
+//   v0.7.20 ripped the OpenAI bake out entirely (operator was
+//   moving to Deepgram-only at the time). v0.7.23 added AI Verse
+//   Search and v0.7.24 added passive AI Scripture Detection — both
+//   need OpenAI. v0.7.24 wired through the per-PC license override
+//   only, which still required every operator to paste their own
+//   key. v0.7.25 restores the bake on the SERVER side (the matcher
+//   runs in the Next.js API route, never in the renderer) so the
+//   key never reaches the browser bundle.
+function resolveOpenAIKey(): string | undefined {
+  const envKey = process.env.OPENAI_API_KEY
+  if (envKey && envKey.trim().length > 0) return envKey.trim()
+  try {
+    const cfg = getConfig()
+    const adminKey = cfg?.adminOpenAIKey
+    if (adminKey && adminKey.trim().length > 0) return adminKey.trim()
+  } catch {
+    // Defensive — license storage may not be initialised in unit
+    // tests / SSR contexts. Fall through to the bake.
+  }
+  try {
+    const baked = getBakedOpenAIKey()
+    if (baked && baked.trim().length > 0) return baked.trim()
+  } catch {
+    // Defensive — baked-credentials.ts is generated at build time
+    // by scripts/inject-keys.mjs. In development before the script
+    // has ever run the import would still resolve (the file exists)
+    // but the helper would return ''. The try/catch is belt-and-
+    // braces against future refactors that might make the import
+    // optional.
+  }
+  return undefined
+}
 
 const EMBEDDING_MODEL = 'text-embedding-3-small'
 const EMBEDDING_DIM = 1536
+
+// v0.7.28 — Strip operator "introducing" preambles before embedding.
+//
+// Operator-reported regression: when the preacher said "here's a
+// verse about loving your enemies" the passive AI Scripture Detection
+// chip never surfaced. Root cause: the matcher embedded the FULL
+// sentence (meta-wrapper included) and computed cosine similarity
+// against the embedded popular verses. The wrapper words ("here's a
+// verse about") dominate the embedding vector and drag the
+// similarity score below the 0.50 medium threshold even when the
+// trailing topic ("loving your enemies") is a near-perfect match
+// for Matthew 5:44 ("Love your enemies, bless them that curse
+// you…").
+//
+// The active find_by_quote VOICE COMMAND already extracts just the
+// topic (because it parses "find the verse about X" with a regex
+// that captures group 1). This fix gives the PASSIVE detector the
+// same advantage by stripping the same family of preamble phrases
+// before embedding.
+//
+// We are deliberately CONSERVATIVE about which preambles to strip:
+// every pattern requires an explicit "verse|scripture|passage" token
+// followed by an "about|on|that says|where|which" continuation. This
+// guarantees we never strip leading words from a real paraphrased
+// verse like "the Lord is my shepherd I shall not want" or "for God
+// so loved the world" — both of which start with words our preamble
+// regexes would otherwise match (the / for) but lack the
+// verse/scripture/passage signal.
+//
+// If no preamble matches, the original phrase is returned unchanged
+// so genuine paraphrases keep working exactly as they did before.
+const PREAMBLE_PATTERNS: RegExp[] = [
+  // "here's a verse about X", "here is the verse about X", "this is
+  // a scripture about X", "there's a passage about X".
+  /^(?:here'?s|here\s+is|there'?s|there\s+is|this\s+is)\s+(?:a|an|the|that|another|one)\s+(?:verse|scripture|passage|bible\s+verse)\s+(?:about|on|that\s+says|that\s+talks?\s+about|that\s+mentions?|where|which|saying)\s+/i,
+  // "let me read a verse about X", "let's look at a passage about X",
+  // "I want to share a verse about X", "I'll read the scripture
+  // where X".
+  /^(?:let'?s|let\s+me|let\s+us|i\s+(?:want|need|will|am\s+going|would\s+like)(?:\s+to)?|i'?ll|we\s+(?:want|need|will)(?:\s+to)?|we'?ll)\s+(?:read|share|look\s+at|see|find|hear|consider|examine|study)\s+(?:a|an|the|that|another)\s+(?:verse|scripture|passage|bible\s+verse)\s+(?:about|on|that\s+says|that\s+talks?\s+about|that\s+mentions?|where|which|saying)\s+/i,
+  // "we have a verse about X", "I have a verse where X", "I've got
+  // a scripture about X".
+  /^(?:we\s+have|i\s+have|i'?ve\s+got|we'?ve\s+got)\s+(?:a|an|the|that|another)\s+(?:verse|scripture|passage|bible\s+verse)\s+(?:about|on|that\s+says|that\s+talks?\s+about|that\s+mentions?|where|which|saying)\s+/i,
+  // "the verse about X" / "the scripture about X" / "the passage
+  // where X". Bare opener — only stripped when an explicit
+  // verse-token is present, so "the Lord is my shepherd" survives.
+  /^the\s+(?:verse|scripture|passage|bible\s+verse)\s+(?:about|on|that\s+says|that\s+talks?\s+about|that\s+mentions?|where|which|saying)\s+/i,
+  // "a verse about X" / "another scripture where X".
+  /^(?:a|an|another)\s+(?:verse|scripture|passage|bible\s+verse)\s+(?:about|on|that\s+says|that\s+talks?\s+about|that\s+mentions?|where|which|saying)\s+/i,
+  // Bare "scripture about X" / "passage about X" — unprefixed.
+  /^(?:scripture|passage|bible\s+verse)\s+(?:about|on|that\s+says|that\s+talks?\s+about|that\s+mentions?|where|which|saying)\s+/i,
+]
+
+/**
+ * v0.7.28 — Public for unit testing. Returns the topic phrase with
+ * any recognised "operator introducing a verse" preamble stripped.
+ * Returns the original (trimmed) text if no preamble matched. The
+ * minimum-length guard (≥ 3 word characters in the result) prevents
+ * stripping that would leave nothing useful to embed.
+ */
+export function stripIntroducingPreamble(text: string): string {
+  const trimmed = (text || '').trim()
+  if (!trimmed) return ''
+  for (const re of PREAMBLE_PATTERNS) {
+    if (!re.test(trimmed)) continue
+    const stripped = trimmed.replace(re, '').trim()
+    // Strip a trailing courtesy / punctuation tail too — preachers
+    // often follow the topic with "right?" / "you know" / "amen".
+    // Two-pass: strip trailing punctuation, then any trailing
+    // courtesy word ("right", "amen", "you know"), then punctuation
+    // again so a sequence like "salvation, amen" → "salvation".
+    const cleaned = stripped
+      .replace(/[\s,.;:!?]+$/, '')
+      .replace(/[\s,.;:!?]*(?:right|you\s+know|amen|please|okay|ok)\s*[.!?]?\s*$/i, '')
+      .replace(/[\s,.;:!?]+$/, '')
+      .trim()
+    const wordChars = cleaned.replace(/[^a-zA-Z0-9]/g, '')
+    if (wordChars.length < 3) return trimmed
+    return cleaned
+  }
+  return trimmed
+}
 
 /** Confidence buckets per the v0.6.0 spec. */
 export type ConfidenceLevel = 'high' | 'medium' | 'low'
@@ -72,10 +210,17 @@ let cache: CachedVerse[] | null = null
 let cacheLoading: Promise<CachedVerse[]> | null = null
 let openaiClient: OpenAI | null = null
 
+// v0.7.24 — Track the key the cached client was created with so we
+// rebuild the client when the admin rotates their key in the Admin
+// modal without requiring an app restart.
+let openaiClientKey: string | undefined
+
 function getClient(): OpenAI | null {
-  if (!process.env.OPENAI_API_KEY) return null
-  if (!openaiClient) {
-    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  const key = resolveOpenAIKey()
+  if (!key) return null
+  if (!openaiClient || openaiClientKey !== key) {
+    openaiClient = new OpenAI({ apiKey: key })
+    openaiClientKey = key
   }
   return openaiClient
 }
@@ -160,6 +305,14 @@ export async function matchTranscriptToVerses(
   const trimmed = (text || '').trim()
   if (trimmed.length < 8) return []
 
+  // v0.7.28 — Strip operator introducing preamble ("here's a verse
+  // about X" → "X") before embedding so the cosine similarity is
+  // computed against the actual topic phrase, not the meta-wrapper.
+  // No-op when no preamble matches, so genuine paraphrases are
+  // unaffected.
+  const queryText = stripIntroducingPreamble(trimmed)
+  if (queryText.length < 3) return []
+
   const client = getClient()
   if (!client) return []
 
@@ -171,7 +324,7 @@ export async function matchTranscriptToVerses(
   try {
     const resp = await client.embeddings.create({
       model: EMBEDDING_MODEL,
-      input: trimmed,
+      input: queryText,
     })
     const e = resp.data[0]?.embedding as number[] | undefined
     if (!e || e.length !== EMBEDDING_DIM) return []
@@ -215,7 +368,9 @@ export function semanticMatcherStatus(): {
     ready: cache !== null && cache.length > 0,
     cacheSize: cache?.length ?? 0,
     loading: cacheLoading !== null,
-    hasApiKey: !!process.env.OPENAI_API_KEY,
+    // v0.7.24 — true when EITHER process.env OR admin license key
+    // is populated; matches the resolution order used by getClient().
+    hasApiKey: !!resolveOpenAIKey(),
   }
 }
 

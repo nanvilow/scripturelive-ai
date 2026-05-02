@@ -84,6 +84,9 @@ interface AdminConfigResp {
     adminOpenAIKey?: string
     /** v0.5.52 — admin override for the BAKED Deepgram key. */
     adminDeepgramKey?: string
+    /** v0.7.29 — Phase 2 v0.8.0 — opt-in LLM voice classifier. */
+    enableLlmClassifier?: boolean
+    llmClassifierConfidenceFloor?: number
     updatedAt?: string
   }
   defaults: {
@@ -320,6 +323,20 @@ export function AdminModal() {
     openai: false,
     deepgram: false,
   })
+  // v0.7.29 — Phase 2 of v0.8.0: LLM voice classifier opt-in. Both
+  // fields ARE round-tripped on reload (unlike the cloud keys above)
+  // because they're operator preferences, not secrets. fLlmFloor is
+  // a string so we can distinguish "" (no override → server uses the
+  // classifier's compiled-in default of 70) from "0" / numeric input.
+  // v0.7.32 — Default ON to match the new server-side default. The
+  // hydration step below will overwrite this with the persisted value
+  // (treating undefined as ON via the `!== false` check), so this
+  // initial value only matters during the brief render before
+  // loadCfg() resolves. Keeping it true here prevents a flash of an
+  // unchecked box for the (very common) operator who has never
+  // touched this setting.
+  const [fEnableLlmClassifier, setFEnableLlmClassifier] = useState(true)
+  const [fLlmFloor, setFLlmFloor] = useState('')
 
   // v0.7.0 — Codes tab. Operator dashboard listing every activation
   // code with status, days remaining, geo location, buyer phone, and
@@ -869,6 +886,15 @@ export function AdminModal() {
       })
       setFOpenAIKey('')
       setFDeepgramKey('')
+      // v0.7.29 — Hydrate LLM classifier opt-in fields. Both default
+      // to the "off / no override" state if the config never set them.
+      // v0.7.32 — Default-ON semantics: treat undefined as ON.
+      setFEnableLlmClassifier(j.config.enableLlmClassifier !== false)
+      setFLlmFloor(
+        typeof j.config.llmClassifierConfidenceFloor === 'number'
+          ? String(j.config.llmClassifierConfidenceFloor)
+          : '',
+      )
       const next: Record<string, string> = {}
       for (const code of Object.keys(j.defaults.planPrices)) {
         const o = j.config.planPriceOverrides?.[code]
@@ -916,6 +942,18 @@ export function AdminModal() {
       else if (fOpenAIKey.trim() !== '') body.adminOpenAIKey = fOpenAIKey.trim()
       if (fDeepgramKey.trim().toUpperCase() === 'CLEAR') body.adminDeepgramKey = null
       else if (fDeepgramKey.trim() !== '') body.adminDeepgramKey = fDeepgramKey.trim()
+
+      // v0.7.29 — Always send the LLM classifier toggle (it's a
+      // boolean — no "leave alone" semantics). The floor is null
+      // (clears the override → server uses classifier default 70)
+      // when the field is empty, otherwise the parsed integer.
+      body.enableLlmClassifier = fEnableLlmClassifier
+      const floorTrim = fLlmFloor.trim()
+      if (floorTrim === '') body.llmClassifierConfidenceFloor = null
+      else {
+        const fn = Math.floor(Number(floorTrim))
+        if (Number.isFinite(fn) && fn > 0) body.llmClassifierConfidenceFloor = fn
+      }
       const r = await fetch('/api/license/admin/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -939,6 +977,16 @@ export function AdminModal() {
       })
       setFOpenAIKey('')
       setFDeepgramKey('')
+      // v0.7.29 — Refresh from canonical server response so the
+      // checkbox + floor reflect what's actually persisted (e.g. the
+      // server may have clamped the floor to 1..100).
+      // v0.7.32 — Default-ON semantics: treat undefined as ON.
+      setFEnableLlmClassifier(j.config.enableLlmClassifier !== false)
+      setFLlmFloor(
+        typeof j.config.llmClassifierConfidenceFloor === 'number'
+          ? String(j.config.llmClassifierConfidenceFloor)
+          : '',
+      )
       toast.success('Settings saved')
       // Re-poll license status so the overview tab + main UI pick up
       // any trial-length / price changes immediately.
@@ -2274,6 +2322,57 @@ export function AdminModal() {
                         className="bg-background border-border text-foreground font-mono"
                         autoComplete="off"
                       />
+                    </div>
+                  </div>
+
+                  {/* v0.7.29 (introduced) / v0.7.32 (default flipped to ON).
+                      LLM fallback that runs AFTER the regex classifier
+                      returns null/low-confidence and a cheap local
+                      command-likeness gate accepts the utterance.
+                      Default ON so every install gets it without operator
+                      action; unticking the box persists `false` and acts
+                      as a kill switch. The confidence floor input
+                      controls how strict the LLM must be (raise → fewer
+                      false positives; lower → fewer missed commands).
+                      Floor blank = use the classifier's compiled-in
+                      default (70). */}
+                  <div className="pt-3 border-t border-border space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="llm-classifier-toggle"
+                        checked={fEnableLlmClassifier}
+                        onCheckedChange={(v) => setFEnableLlmClassifier(v === true)}
+                      />
+                      <label
+                        htmlFor="llm-classifier-toggle"
+                        className="text-[11px] uppercase tracking-wider text-muted-foreground select-none cursor-pointer flex items-center gap-2"
+                      >
+                        AI voice intent fallback (on by default)
+                        <Badge className="bg-muted text-muted-foreground border-border text-[9px]">v0.7.32</Badge>
+                      </label>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground -mt-1 pl-6">
+                      When the regex matcher misses a phrasing the operator clearly intended as a command,
+                      send the utterance to OpenAI for a second opinion. On by default; untick to disable
+                      if it ever misfires. Adds up to ~1.5 s on missed-command utterances; never blocks
+                      a regex-detected command. Requires a working OpenAI key above.
+                    </p>
+                    <div className="flex items-center gap-2 pl-6">
+                      <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                        Confidence floor
+                      </label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={100}
+                        step={1}
+                        placeholder="70"
+                        value={fLlmFloor}
+                        onChange={(e) => setFLlmFloor(e.target.value)}
+                        className="bg-background border-border text-foreground font-mono w-20 h-7 text-[11px]"
+                        disabled={!fEnableLlmClassifier}
+                      />
+                      <span className="text-[10px] text-muted-foreground">/ 100</span>
                     </div>
                   </div>
 

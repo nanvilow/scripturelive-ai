@@ -8,7 +8,11 @@ import { lookupRange, lookupVerse, isTranslationBundled } from '@/lib/bibles/loc
 // v0.7.4 — chapter metadata for "next chapter" / "previous chapter"
 // voice commands. Same JSON the reference engine uses for validation.
 import bibleStructure from '@/data/bible-structure.json'
-import { detectCommand, type VoiceCommand } from '@/lib/voice/commands'
+import { detectCommand, detectCommandChain, type VoiceCommand } from '@/lib/voice/commands'
+// v0.7.29 — LLM-classifier command-likeness gate (Phase 2 of v0.8.0).
+// Used as a CHEAP local pre-check before we POST to /api/voice/classify
+// so most non-command transcripts skip the OpenAI roundtrip entirely.
+import { isLikelyCommandUtterance } from '@/lib/voice/llm-gate'
 import { pickBestVerse, type VerseLine } from '@/lib/voice/speaker-follow'
 // v0.5.45 — TRIPLE-ENGINE WITH AUTO-FALLBACK CHAIN.
 //
@@ -52,12 +56,22 @@ import type { DetectedVerse } from '@/lib/store'
 // v0.5.52 — TWO-ENGINE chain. Web Speech API removed entirely; the
 // desktop build ships with baked Deepgram + OpenAI keys so the
 // browser engine is no longer a useful fallback rung.
+//
+// v0.7.19 — OpenAI/Whisper engine removed from the runtime chain. The
+// operator's OpenAI project key was rotated and the rotation never
+// propagated cleanly to the deployed proxy, so Whisper-routed chunks
+// were 401-ing for every customer in the field. Rather than maintain
+// two STT vendors (one of which we couldn't keep healthy), we
+// consolidated on Deepgram for both the streaming WS path AND the
+// batched HTTP path. The whisper hook stays mounted for now (cheap)
+// and the type still includes it so any persisted preferences stay
+// load-safe; ENGINE_CHAIN simply no longer fans out to it.
 type EngineName = 'deepgram' | 'whisper'
 
 // Ordered fallback chain. Index 0 is the preferred engine. nextEngine
 // returns the name of the next engine in the chain, or null if we're
-// at the end.
-const ENGINE_CHAIN: EngineName[] = ['deepgram', 'whisper']
+// at the end. v0.7.19: Deepgram is the only entry — see header note.
+const ENGINE_CHAIN: EngineName[] = ['deepgram']
 function nextEngine(cur: EngineName): EngineName | null {
   const i = ENGINE_CHAIN.indexOf(cur)
   if (i < 0) return null
@@ -142,7 +156,15 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // never silently switches to another one.
   const preferredEngine = useAppStore((s) => s.preferredEngine)
   const setActiveEngineNameInStore = useAppStore((s) => s.setActiveEngineName)
-  const initialEngine: EngineName = preferredEngine === 'auto' ? 'deepgram' : preferredEngine
+  // v0.7.19 — Coerce any persisted 'whisper' preference to 'deepgram'.
+  // Old installs may have a saved preference of 'whisper' from a prior
+  // version where the operator pinned Whisper; that engine is no longer
+  // wired up (see ENGINE_CHAIN comment), so silently route them to
+  // Deepgram instead of leaving them in a never-starts state.
+  const initialEngine: EngineName =
+    preferredEngine === 'auto' || preferredEngine === 'whisper'
+      ? 'deepgram'
+      : preferredEngine
   // Currently active engine. With preferredEngine === 'auto' the
   // auto-fallback effect below advances it through ENGINE_CHAIN
   // whenever the active engine surfaces a structural error within the
@@ -493,6 +515,51 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // transcript chunk.
   const lastSpeakerSwitchAtRef = useRef<number>(0)
 
+  // v0.7.29 — Phase 2 of v0.8.0: LLM voice classifier opt-in flag.
+  // We cache the value in a ref because the regex pre-pass below runs
+  // dozens of times per minute on a busy mic and we don't want each
+  // run to allocate a Zustand selector or hit the storage layer. The
+  // useEffect below fetches /api/voice/classifier-status once on
+  // mount; a stale "true" value is harmless (the /classify endpoint
+  // also gates on the flag and returns `reason: 'disabled'`), and a
+  // stale "false" requires the operator to reload the renderer after
+  // toggling the flag on — acceptable for a beta feature.
+  const llmClassifierEnabledRef = useRef(false)
+  // Dedupe ref for LLM-fired commands. Same 4 s window the regex
+  // path uses; LLM commands carry the `[AI]` toast prefix so they're
+  // visually distinguishable from regex hits.
+  const lastLlmCmdRef = useRef<{ sig: string; at: number }>({ sig: '', at: 0 })
+
+  useEffect(() => {
+    // Fire-and-forget. If the fetch fails (network, 404 during
+    // dev-server boot, etc.) the ref stays false and the LLM
+    // fallback never engages — same behaviour as the feature being
+    // disabled, which is the safe default.
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await fetch('/api/voice/classifier-status', { cache: 'no-store' })
+        if (!r.ok) return
+        const j = (await r.json()) as { ok?: boolean; enabled?: boolean; hasApiKey?: boolean }
+        if (cancelled) return
+        // Only enable when the operator opted in AND we know the
+        // server can resolve an OpenAI key. With no key, every call
+        // would 0-confidence anyway and burn the OpenAI roundtrip
+        // budget for nothing.
+        llmClassifierEnabledRef.current = j.ok === true && j.enabled === true && j.hasApiKey === true
+        if (typeof window !== 'undefined' && llmClassifierEnabledRef.current) {
+          // eslint-disable-next-line no-console
+          console.log('[SpeechProvider] LLM voice classifier ENABLED (v0.7.29 Phase 2)')
+        }
+      } catch {
+        /* see comment above — silent no-op */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   /**
    * Dispatch a recognised voice command against the Zustand store.
    * Pure side-effect helper — no UI feedback (the caller emits the
@@ -504,30 +571,137 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     const slides = s.slides
     const liveIdx = s.liveSlideIndex
     switch (cmd.kind) {
-      case 'next_verse': {
-        // Advance the live verse highlight in the current passage if
-        // we have one; otherwise advance the live slide cursor.
+      // v0.7.22 — "next verse" / "previous verse" now actually steps
+      // through scripture. Operator bug report on v0.7.21:
+      // "When it's on John 3:3 and a voice command is given for the
+      // next verse, it should move to John 3:4" — but the old handler
+      // only advanced the highlight WITHIN a multi-verse passage and
+      // fell back to a no-op for single-verse slides (which is what
+      // the operator was on). Now we:
+      //   1. If on a multi-verse passage AND the highlight isn't yet
+      //      at the boundary, advance the highlight (existing UX).
+      //   2. Otherwise, parse the live slide's title (e.g. "John 3:3"
+      //      or "John 3:1-10"), step the verse number ±1, validate
+      //      against bibleStructure (don't run past the end of the
+      //      chapter), look up the new verse, and append it as a new
+      //      live slide — same pattern as next_chapter.
+      //   3. Only as a last resort (no live verse-passage at all),
+      //      advance the slide deck cursor.
+      case 'next_verse':
+      case 'previous_verse': {
+        const dir = cmd.kind === 'next_verse' ? 1 : -1
         const slide = liveIdx >= 0 ? slides[liveIdx] : null
+
+        // (1) Multi-verse passage: try to advance highlight first.
         if (slide && slide.type === 'verse' && (slide.content?.length ?? 0) > 1) {
-          const nextV = Math.min((slide.content?.length ?? 1) - 1, s.liveActiveVerseIndex + 1)
-          s.setLiveActiveVerseIndex(nextV)
-        } else if (slides.length) {
-          const nextI = Math.min(slides.length - 1, Math.max(0, liveIdx + 1))
+          const max = (slide.content?.length ?? 1) - 1
+          const cur = s.liveActiveVerseIndex
+          if (dir === 1 && cur < max) {
+            s.setLiveActiveVerseIndex(cur + 1)
+            break
+          }
+          if (dir === -1 && cur > 0) {
+            s.setLiveActiveVerseIndex(cur - 1)
+            break
+          }
+          // At boundary — fall through to scripture-step.
+        }
+
+        // (2) Single-verse slide OR boundary of multi-verse range:
+        //     load the next/previous verse from scripture and push
+        //     it live as a new slide.
+        if (slide && slide.type === 'verse' && slide.title) {
+          const ref = parseExplicitReference(slide.title)
+          if (ref) {
+            // Anchor the step against the END of a forward range and
+            // the START of a backward step — so "John 3:1-10" + next
+            // gives John 3:11, but "John 3:1-10" + previous gives
+            // John 2:25 (rollover into the previous chapter).
+            const anchor = dir === 1
+              ? (ref.verseEnd ?? ref.verseStart)
+              : ref.verseStart
+            const targetBook = ref.book
+            let targetChapter = ref.chapter
+            let targetVerse = anchor + dir
+            const struct = (bibleStructure as unknown as Record<string, number[]>)[ref.book]
+            const verseCount = struct?.[ref.chapter - 1] ?? 0
+
+            // v0.7.24 — Cross-chapter rollover. Operator complaint:
+            // "next verse" on John 3:36 (last verse) used to do
+            // nothing because the validation block below rejected
+            // verse 37. Now we roll over to John 4:1. Same for
+            // "previous verse" on John 4:1 → John 3:36.
+            //
+            // Rollover ONLY happens within the same book. At a book
+            // boundary (Revelation 22:21 + next, Genesis 1:1 +
+            // previous) we still fall through to the legacy slide-
+            // deck behaviour rather than guessing the next book.
+            if (verseCount > 0 && targetVerse > verseCount && struct) {
+              if (targetChapter < struct.length) {
+                targetChapter = targetChapter + 1
+                targetVerse = 1
+              }
+              // else: last chapter of the book, no rollover possible.
+            } else if (targetVerse < 1 && struct && targetChapter > 1) {
+              targetChapter = targetChapter - 1
+              targetVerse = struct[targetChapter - 1] ?? 1
+            }
+
+            // Re-validate after potential rollover.
+            const newStruct = (bibleStructure as unknown as Record<string, number[]>)[targetBook]
+            const newVerseCount = newStruct?.[targetChapter - 1] ?? 0
+            if (newVerseCount > 0 && targetVerse >= 1 && targetVerse <= newVerseCount) {
+              const tx = s.selectedTranslation
+              const refKey = `${targetBook} ${targetChapter}:${targetVerse}`
+              let textOut: string | null = lookupVerse(targetBook, targetChapter, targetVerse, tx)
+              if (!textOut && !isTranslationBundled(tx)) {
+                try {
+                  const v = await fetchBibleVerse(refKey, tx)
+                  if (v) textOut = v.text
+                } catch { /* ignore — toast below */ }
+              }
+              if (textOut) {
+                const slideNew = {
+                  id: `slide-${Date.now()}`,
+                  type: 'verse' as const,
+                  title: refKey,
+                  subtitle: tx,
+                  content: textOut.split('\n').filter(Boolean),
+                  background: s.settings.congregationScreenTheme,
+                }
+                const curSlides = useAppStore.getState().slides
+                const nextSlides = curSlides.length > 0 ? [...curSlides, slideNew] : [slideNew]
+                const idx = nextSlides.length - 1
+                useAppStore.getState().setSlides(nextSlides)
+                useAppStore.getState().setPreviewSlideIndex(idx)
+                useAppStore.getState().setLiveSlideIndex(idx)
+                useAppStore.getState().setIsLive(true)
+                useAppStore.getState().setLiveActiveVerseIndex(0)
+                // v0.7.24 — Surface a small toast when we rolled
+                // over so the operator knows the chapter changed.
+                if (targetChapter !== ref.chapter) {
+                  toast.success(`${refKey} (chapter ${targetChapter})`, {
+                    duration: 1800,
+                    position: 'bottom-right',
+                  })
+                }
+                break
+              }
+              toast.error(`Could not load ${refKey}`, { duration: 2000, position: 'bottom-right' })
+              break
+            }
+            // Truly off the end (or start) of the BOOK — fall
+            // through to slide deck.
+          }
+        }
+
+        // (3) Fallback: slide-deck advance (legacy behaviour).
+        if (slides.length) {
+          const nextI = dir === 1
+            ? Math.min(slides.length - 1, Math.max(0, liveIdx + 1))
+            : Math.max(0, liveIdx - 1)
           s.setPreviewSlideIndex(nextI)
           s.setLiveSlideIndex(nextI)
-          s.setLiveActiveVerseIndex(0)
-        }
-        break
-      }
-      case 'previous_verse': {
-        const slide = liveIdx >= 0 ? slides[liveIdx] : null
-        if (slide && slide.type === 'verse' && (slide.content?.length ?? 0) > 1) {
-          const prevV = Math.max(0, s.liveActiveVerseIndex - 1)
-          s.setLiveActiveVerseIndex(prevV)
-        } else if (slides.length) {
-          const prevI = Math.max(0, liveIdx - 1)
-          s.setPreviewSlideIndex(prevI)
-          s.setLiveSlideIndex(prevI)
           s.setLiveActiveVerseIndex(0)
         }
         break
@@ -572,6 +746,130 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           useAppStore.getState().setIsLive(true)
           useAppStore.getState().setLiveActiveVerseIndex(0)
         }
+        break
+      }
+      // ── v0.7.23 — AI Verse Search ──────────────────────────────────
+      // Operator described a verse instead of citing it ("find the
+      // verse about loving your enemies"). We hand the quote to the
+      // existing semantic matcher endpoint (OpenAI embeddings against
+      // POPULAR_VERSES_KJV), accept the top match if its confidence
+      // is HIGH or MEDIUM, re-fetch in the operator's currently-
+      // selected translation, and push it as a live slide. Mirrors
+      // the go_to_reference dispatch shape so the live behaviour is
+      // identical from the operator's point of view.
+      //
+      // Failure modes are spoken to the operator via toast so a quiet
+      // failure (no internet / no API key / no good match) doesn't
+      // leave them wondering what happened.
+      case 'find_by_quote': {
+        const quote = (cmd.quoteText || '').trim()
+        if (!quote) {
+          toast.error('No quote to search', { duration: 1500, position: 'bottom-right' })
+          break
+        }
+        toast.loading(`AI: searching for "${quote.length > 40 ? quote.slice(0, 38) + '…' : quote}"…`, {
+          id: 'ai-verse-search',
+          duration: 4000,
+          position: 'bottom-right',
+        })
+        let match: {
+          reference: string
+          book: string
+          chapter: number
+          verseStart: number
+          verseEnd?: number
+          confidence: 'high' | 'medium' | 'low'
+        } | null = null
+        try {
+          const resp = await fetch('/api/scripture/semantic-match', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: quote, topK: 1 }),
+          })
+          if (resp.ok) {
+            const j = (await resp.json()) as {
+              ok?: boolean
+              matches?: Array<{
+                reference: string
+                book: string
+                chapter: number
+                verseStart: number
+                verseEnd?: number
+                confidence: 'high' | 'medium' | 'low'
+              }>
+              status?: { hasApiKey?: boolean }
+            }
+            if (j.ok && j.matches && j.matches.length > 0) {
+              match = j.matches[0]!
+            } else if (j.status && j.status.hasApiKey === false) {
+              toast.error('AI Verse Search needs an OpenAI key (Settings → AI)', {
+                id: 'ai-verse-search',
+                duration: 4000,
+                position: 'bottom-right',
+              })
+              break
+            }
+          }
+        } catch {
+          /* network error — fall through to "no match" toast */
+        }
+        if (!match) {
+          toast.error(`No match for "${quote.length > 32 ? quote.slice(0, 30) + '…' : quote}"`, {
+            id: 'ai-verse-search',
+            duration: 2500,
+            position: 'bottom-right',
+          })
+          break
+        }
+        const refKey = `${match.book} ${match.chapter}:${match.verseStart}${
+          match.verseEnd && match.verseEnd !== match.verseStart ? `-${match.verseEnd}` : ''
+        }`
+        const tx = s.selectedTranslation
+        let textOut: string | null = null
+        const vEnd = match.verseEnd ?? match.verseStart
+        if (vEnd > match.verseStart) {
+          const rr = lookupRange(match.book, match.chapter, match.verseStart, vEnd, tx)
+          if (rr) textOut = rr.text
+        } else {
+          const v = lookupVerse(match.book, match.chapter, match.verseStart, tx)
+          if (v) textOut = v
+        }
+        if (!textOut) {
+          try {
+            const v = await fetchBibleVerse(refKey, tx)
+            if (v) textOut = v.text
+          } catch {
+            /* ignore — handled below */
+          }
+        }
+        if (!textOut) {
+          toast.error(`Found ${refKey} but couldn't load text`, {
+            id: 'ai-verse-search',
+            duration: 2500,
+            position: 'bottom-right',
+          })
+          break
+        }
+        const slide = {
+          id: `slide-${Date.now()}`,
+          type: 'verse' as const,
+          title: refKey,
+          subtitle: tx,
+          content: textOut.split('\n').filter(Boolean),
+          background: s.settings.congregationScreenTheme,
+        }
+        const cur = useAppStore.getState().slides
+        const next = cur.length > 0 ? [...cur, slide] : [slide]
+        const idx = next.length - 1
+        useAppStore.getState().setSlides(next)
+        useAppStore.getState().setPreviewSlideIndex(idx)
+        useAppStore.getState().setLiveSlideIndex(idx)
+        useAppStore.getState().setIsLive(true)
+        useAppStore.getState().setLiveActiveVerseIndex(0)
+        toast.success(
+          `${refKey} (${match.confidence === 'high' ? 'AI: high match' : 'AI: best match'})`,
+          { id: 'ai-verse-search', duration: 2200, position: 'bottom-right' },
+        )
         break
       }
       case 'scroll_up': {
@@ -715,6 +1013,148 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         s.setLiveSlideIndex(-1)
         break
       }
+      // ── v0.7.19 — Translation switch ───────────────────────────────
+      // Calls setSelectedTranslation. live-translation-sync.tsx watches
+      // selectedTranslation + liveSlideIndex and refetches the active
+      // verse slide's text in the new translation, then patches it
+      // in place via replaceSlide — that's what makes the live output
+      // / NDI feed update without "send to live again". The NDI
+      // payload picks up the change automatically because it's
+      // sourced from slides[liveSlideIndex].
+      case 'change_translation': {
+        if (!cmd.translation) break
+        // Idempotent: don't churn the live slide if the operator just
+        // re-stated the same translation.
+        if (s.selectedTranslation === cmd.translation) break
+        s.setSelectedTranslation(cmd.translation)
+        break
+      }
+      // ── v0.7.19 — Delete previous verse ───────────────────────────
+      // Pops the most-recently-pushed slide off the deck. Used by
+      // operators to recover from a misfired auto-detection without
+      // touching the keyboard. We:
+      //   1. Refuse if there are no slides (no-op + toast).
+      //   2. Splice off the LAST slide.
+      //   3. Move preview/live indices back to the new last slide,
+      //      OR -1 (blank) when the deck is now empty.
+      //   4. Reset liveActiveVerseIndex so the next render doesn't
+      //      try to highlight a verse that no longer exists.
+      // The setSlides + setLive*Index combo triggers the
+      // output-broadcaster watcher, which re-broadcasts to /api/output
+      // and propagates to NDI / preview / congregation screens.
+      case 'delete_previous_verse': {
+        const cur = useAppStore.getState().slides
+        if (!cur.length) {
+          toast.error('Nothing to delete on the deck', { duration: 1500, position: 'bottom-right' })
+          break
+        }
+        const next = cur.slice(0, -1)
+        const newIdx = next.length - 1
+        useAppStore.getState().setSlides(next)
+        useAppStore.getState().setPreviewSlideIndex(newIdx)
+        useAppStore.getState().setLiveSlideIndex(newIdx)
+        useAppStore.getState().setLiveActiveVerseIndex(0)
+        if (newIdx < 0) {
+          // Deck is now empty; bring the live output to a clean state
+          // rather than leaving a stale frame on screen.
+          useAppStore.getState().setIsLive(false)
+        }
+        break
+      }
+      // ── v0.7.19 — Show verse N within current chapter ─────────────
+      // Two cases:
+      //   (A) The current live slide IS a multi-verse passage (e.g.
+      //       loaded "John 3:1-30") — just move the highlight cursor
+      //       to verse N within that slide. No fetch needed.
+      //   (B) The current live slide is a single verse OR not a
+      //       Bible passage at all — we need a chapter context to
+      //       know which verse N to load. Try to parse the live
+      //       slide's title as a reference and fetch <book> <chapter>:N
+      //       in the active translation, then push as a new slide.
+      // If we can't recover any chapter context (no live verse
+      // currently), surface a toast — the operator probably meant to
+      // wake-prefix this with a book/chapter first.
+      case 'show_verse_n': {
+        if (!cmd.verseNumber) break
+        const n = cmd.verseNumber
+        const slide = liveIdx >= 0 ? slides[liveIdx] : null
+        // We need to know the passage anchor (book/chapter/verseStart)
+        // for BOTH branches: Case A uses verseStart to map "show verse
+        // 17" against a "John 3:16-18" slide to range-index 1 (NOT
+        // index 16). Case B reuses the same parse to fetch
+        // <book> <chapter>:N in the active translation.
+        const refFromSlide = slide && slide.type === 'verse' && slide.title
+          ? parseExplicitReference(slide.title)
+          : null
+        if (
+          slide &&
+          slide.type === 'verse' &&
+          (slide.content?.length ?? 0) > 1 &&
+          refFromSlide
+        ) {
+          // Case A — passage already loaded as a multi-verse range.
+          // Map the requested verse number to its position WITHIN the
+          // loaded range. If the request falls outside the loaded
+          // range we deliberately fall through to Case B, which will
+          // fetch the requested verse and append it as a new slide
+          // — matches operator expectation ("show verse 30" should
+          // load verse 30, not silently clamp to the last loaded one).
+          const start = refFromSlide.verseStart
+          const end = refFromSlide.verseEnd ?? refFromSlide.verseStart
+          if (n >= start && n <= end) {
+            const target = n - start
+            s.setLiveActiveVerseIndex(target)
+            break
+          }
+          // else: fall through to Case B fetch.
+        }
+        // Case B — need to fetch <currentBook> <currentChapter>:N.
+        if (!slide || slide.type !== 'verse' || !slide.title) {
+          toast.error(`No live passage to anchor verse ${n} against`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const ref = refFromSlide
+        if (!ref) {
+          toast.error(`Cannot parse current passage: ${slide.title}`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const struct = (bibleStructure as unknown as Record<string, number[]>)[ref.book]
+        const verseCount = struct?.[ref.chapter - 1] ?? 0
+        if (verseCount && (n < 1 || n > verseCount)) {
+          toast.error(`${ref.book} ${ref.chapter} only has ${verseCount} verses`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const tx = s.selectedTranslation
+        const refKey = `${ref.book} ${ref.chapter}:${n}`
+        let textOut: string | null = lookupVerse(ref.book, ref.chapter, n, tx)
+        if (!textOut && !isTranslationBundled(tx)) {
+          try {
+            const v = await fetchBibleVerse(refKey, tx)
+            if (v) textOut = v.text
+          } catch { /* fall through */ }
+        }
+        if (!textOut) {
+          toast.error(`Could not load ${refKey}`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const slideNew = {
+          id: `slide-${Date.now()}`,
+          type: 'verse' as const,
+          title: refKey,
+          subtitle: tx,
+          content: textOut.split('\n').filter(Boolean),
+          background: s.settings.congregationScreenTheme,
+        }
+        const cur = useAppStore.getState().slides
+        const next = cur.length > 0 ? [...cur, slideNew] : [slideNew]
+        const idx = next.length - 1
+        useAppStore.getState().setSlides(next)
+        useAppStore.getState().setPreviewSlideIndex(idx)
+        useAppStore.getState().setLiveSlideIndex(idx)
+        useAppStore.getState().setIsLive(true)
+        useAppStore.getState().setLiveActiveVerseIndex(0)
+        break
+      }
     }
   }, [])
 
@@ -833,18 +1273,78 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       // matches with confidence ≥80, we dispatch + suppress all
       // downstream processing on this transcript so a sentence like
       // "next verse" never accidentally triggers a "verse" detection.
+      //
+      // v0.7.19 — Now chain-aware. If the operator chains commands
+      // ("John 3:16, message version, next verse" or "media, KJV,
+      // clear screen"), detectCommandChain returns each segment as
+      // its own VoiceCommand and we dispatch them in order with a
+      // tiny delay so the live-translation-sync watcher and the
+      // output-broadcaster have a chance to settle between actions.
+      // The single-command path is kept as a fast path for the
+      // overwhelming majority of utterances that AREN'T chains.
       if (state.voiceControlEnabled) {
         const tail = text.trim().slice(-200) // command must be near the end
+
+        // Chain-mode: only fires when the utterance has explicit
+        // separators AND yields ≥ 2 dispatchable commands. Anything
+        // less falls through to single-command detection so we don't
+        // change behaviour for the common case.
+        const hasSeparator = /[,;]|\bthen\b/i.test(tail)
+        if (hasSeparator) {
+          const chain = detectCommandChain(tail)
+          if (chain.length >= 2) {
+            const now = Date.now()
+            // Single dedupe key for the WHOLE chain so a re-spoken
+            // chain doesn't fire twice in the 4 s window.
+            const sig = 'chain|' + chain.map((c) => {
+              const refSig = c.reference
+                ? `${c.reference.book}|${c.reference.chapter}|${c.reference.verseStart}|${c.reference.verseEnd ?? ''}`
+                : ''
+              return `${c.kind}|${refSig}|${c.translation ?? ''}|${c.verseNumber ?? ''}`
+            }).join(';')
+            // v0.7.19 — Wake-word bypass also applies to chains. If
+            // ANY segment was wake-prefixed, the operator explicitly
+            // re-issued the chain and we should always fire — matches
+            // the single-command behaviour. Without this, "Media,
+            // NKJV, clear screen" repeated within 4 s would only fire
+            // once.
+            const chainWoke = chain.some((c) => c.wakeWord === true)
+            if (chainWoke || lastVoiceCmdRef.current.sig !== sig || now - lastVoiceCmdRef.current.at > 4000) {
+              lastVoiceCmdRef.current = { sig, at: now }
+              speakerFollowSuspendedUntilRef.current = Date.now() + 2000
+              for (const c of chain) {
+                await dispatchVoiceCommand(c)
+                // Stagger by 120 ms so the live-translation-sync
+                // refetch (triggered by setSelectedTranslation) and
+                // the slide-broadcast settle before the next action
+                // mutates state again. Without the gap, a chain like
+                // "John 3:16, message version, next verse" can race:
+                // next_verse advances the cursor BEFORE the
+                // translation-swap re-fetch finishes and the
+                // resulting NDI frame briefly shows the wrong text.
+                await new Promise((res) => setTimeout(res, 120))
+                toast.message(c.label, { duration: 1200, position: 'bottom-right' })
+              }
+              state.setDetectionStatus('detected')
+              return
+            }
+          }
+        }
+
         const cmd = detectCommand(tail)
         if (cmd && cmd.confidence >= 80) {
           // Dedup: ignore the same command if we already executed it
           // with the same parameter signature in the last 4 s.
+          // v0.7.19 — Wake-word commands ("Media, ...") bypass dedupe
+          // because the operator explicitly invoked them. Without
+          // this, saying "Media, next verse" twice in quick
+          // succession would only fire once.
           const refSig = cmd.reference
             ? `${cmd.reference.book}|${cmd.reference.chapter}|${cmd.reference.verseStart}|${cmd.reference.verseEnd ?? ''}`
             : ''
-          const sig = `${cmd.kind}|${refSig}`
+          const sig = `${cmd.kind}|${refSig}|${cmd.translation ?? ''}|${cmd.verseNumber ?? ''}`
           const now = Date.now()
-          if (lastVoiceCmdRef.current.sig !== sig || now - lastVoiceCmdRef.current.at > 4000) {
+          if (cmd.wakeWord || lastVoiceCmdRef.current.sig !== sig || now - lastVoiceCmdRef.current.at > 4000) {
             lastVoiceCmdRef.current = { sig, at: now }
             speakerFollowSuspendedUntilRef.current = Date.now() + 2000
             await dispatchVoiceCommand(cmd)
@@ -852,6 +1352,117 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             toast.message(cmd.label, { duration: 1500, position: 'bottom-right' })
             // Suppress the rest of the pipeline for this transcript.
             return
+          }
+        }
+
+        // ── v0.7.29 — LLM voice classifier fallback (Phase 2 v0.8.0) ─
+        // The regex classifier above (commands.ts → detectCommand)
+        // either returned null OR a low-confidence (<80) match. If the
+        // operator has opted in to the LLM fallback and the utterance
+        // PASSES the local command-likeness gate (a cheap heuristic
+        // checking for trigger verbs / structural hints, see
+        // src/lib/voice/llm-gate.ts), we POST the tail + live slide
+        // context to /api/voice/classify which calls classifyIntent
+        // server-side. classifyIntent is built to NEVER throw and
+        // tops out at 1.5 s (its internal timeout); we wrap the fetch
+        // in our own 2 s AbortController as a belt-and-braces guard.
+        //
+        // On a returned VoiceCommand we apply the SAME dedupe + the
+        // SAME dispatch + the SAME speaker-follow suspension as the
+        // regex path. The toast carries an "[AI]" prefix so the
+        // operator can tell at a glance which path fired the command
+        // (helpful for triage during the beta).
+        // v0.7.30 — gate the LLM call on the REGEX OUTCOME, not on
+        // whether dispatch happened. Without this guard, a regex
+        // command that matched at >=80 confidence but was dedupe-
+        // suppressed (`lastVoiceCmdRef` 4 s window) would fall
+        // through here and trigger an LLM roundtrip on a command we
+        // already understood — wasting an OpenAI call AND, because
+        // `lastLlmCmdRef` is a SEPARATE dedupe ref, potentially
+        // double-executing the command via the LLM path.
+        if (
+          (!cmd || cmd.confidence < 80) &&
+          llmClassifierEnabledRef.current &&
+          isLikelyCommandUtterance(tail)
+        ) {
+          try {
+            const slides = state.slides
+            const liveIdx = state.liveSlideIndex
+            const liveSlide =
+              liveIdx >= 0 && liveIdx < slides.length ? slides[liveIdx] : undefined
+            // For verse slides, the reference text lives in `title`
+            // (e.g. "John 3:16"). Other slide types don't carry a
+            // reference — we just omit the field rather than feeding
+            // the LLM a misleading "Welcome" / "Announcement" string.
+            const liveReference =
+              liveSlide && liveSlide.type === 'verse' && typeof liveSlide.title === 'string'
+                ? liveSlide.title
+                : undefined
+            const ac = new AbortController()
+            const timer = setTimeout(() => ac.abort(), 2000)
+            let resp: Response
+            try {
+              resp = await fetch('/api/voice/classify', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                cache: 'no-store',
+                signal: ac.signal,
+                body: JSON.stringify({
+                  transcript: tail,
+                  context: {
+                    ...(liveReference ? { currentReference: liveReference } : {}),
+                    currentTranslation: state.selectedTranslation,
+                    currentVerseIndex: state.liveActiveVerseIndex,
+                    autoscrollActive: state.autoScrollEnabled,
+                  },
+                }),
+              })
+            } finally {
+              clearTimeout(timer)
+            }
+            if (resp.ok) {
+              const j = (await resp.json()) as {
+                ok?: boolean
+                command?: VoiceCommand | null
+                reason?: 'disabled' | 'no_api_key'
+              }
+              // Server told us the flag flipped off mid-session — sync
+              // our cached ref so we stop wasting roundtrips.
+              if (j.reason === 'disabled') {
+                llmClassifierEnabledRef.current = false
+              } else if (j.command) {
+                const llmCmd = j.command
+                const llmRefSig = llmCmd.reference
+                  ? `${llmCmd.reference.book}|${llmCmd.reference.chapter}|${llmCmd.reference.verseStart}|${llmCmd.reference.verseEnd ?? ''}`
+                  : ''
+                const llmSig = `ai|${llmCmd.kind}|${llmRefSig}|${llmCmd.translation ?? ''}|${llmCmd.verseNumber ?? ''}`
+                const now = Date.now()
+                if (
+                  lastLlmCmdRef.current.sig !== llmSig ||
+                  now - lastLlmCmdRef.current.at > 4000
+                ) {
+                  lastLlmCmdRef.current = { sig: llmSig, at: now }
+                  speakerFollowSuspendedUntilRef.current = Date.now() + 2000
+                  await dispatchVoiceCommand(llmCmd)
+                  state.setDetectionStatus('detected')
+                  toast.message(`[AI] ${llmCmd.label}`, {
+                    duration: 1500,
+                    position: 'bottom-right',
+                  })
+                  // Suppress the rest of the pipeline — same as the
+                  // regex path. The downstream Reference Engine v2 +
+                  // text-search still benefit from running when the
+                  // LLM returned null (we only return when it fired).
+                  return
+                }
+              }
+            }
+          } catch {
+            // Network error / abort / JSON parse — silent no-op. The
+            // regex path already ran; the v2 reference engine and
+            // text-search paths still execute below. The whole point
+            // of the LLM fallback is that it's an OPPORTUNISTIC
+            // additive layer, never a blocker.
           }
         }
       }

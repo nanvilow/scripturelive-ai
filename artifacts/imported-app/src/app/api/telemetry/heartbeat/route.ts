@@ -38,6 +38,12 @@ const schema = z.object({
   code: z.string().max(64).optional(),
   appVersion: z.string().max(32).optional(),
   location: z.string().max(128).optional(),
+  // v0.7.17 — OS + ISO country code now sent on every heartbeat
+  // by the desktop client (telemetry-client.ts HeartbeatPayload).
+  // Optional: older builds + browser callers omit them and we
+  // simply preserve whatever was on the install row already.
+  os: z.string().max(64).optional(),
+  countryCode: z.string().max(8).optional(),
   features: z.record(z.string(), z.unknown()).optional(),
 })
 
@@ -71,6 +77,28 @@ export async function POST(req: NextRequest) {
     await dbSet(`hb:${tsIso}:${randSuffix()}`, JSON.stringify(hb))
 
     // 2. Upsert install row's lastSeenAt.
+    //
+    // v0.7.17 — Three correctness fixes that landed together:
+    //   • The corrupt-prev fallback used to RESET firstSeenAt to
+    //     `tsIso`, so a transient JSON parse blip on a months-old
+    //     install would suddenly show "First seen: just now" in
+    //     the admin drilldown. We now preserve the prior
+    //     firstSeenAt by salvaging it from the raw string with a
+    //     regex before falling back to `tsIso`.
+    //   • Heartbeats now carry `os` + `countryCode` (sent by the
+    //     desktop on every poll). We persist them on the install
+    //     row, preserving any prior value when the payload omits
+    //     them — older clients keep working, the fields backfill
+    //     within 30s on upgrade.
+    //   • The terminal `.catch(() => undefined)` used to swallow
+    //     all DB errors, which is exactly why the records
+    //     dashboard's Active-now KPI under-counted: heartbeats
+    //     were succeeding (the hb:* row was being written), but
+    //     the inst:* upsert was silently failing under load and
+    //     the dashboard counted activeNow off lastSeenAt. We now
+    //     log the failure so it shows up in deployment logs; the
+    //     records aggregator (records/route.ts) also no longer
+    //     depends solely on inst:lastSeenAt for activeNow.
     const instKey = `inst:${p.installId}`
     const existingInst = await dbGet(instKey).catch(() => null)
     let inst: InstallRow
@@ -81,13 +109,23 @@ export async function POST(req: NextRequest) {
           ...prev,
           lastSeenAt: tsIso,
           appVersion: p.appVersion ?? prev.appVersion ?? null,
+          os: p.os ?? prev.os ?? null,
+          countryCode: p.countryCode ?? prev.countryCode ?? null,
         }
       } catch {
+        // Try to salvage firstSeenAt from the malformed blob so a
+        // transient corruption doesn't reset the install's age.
+        const m = /"firstSeenAt"\s*:\s*"([^"]+)"/.exec(existingInst)
+        const salvagedFirst = m && Number.isFinite(Date.parse(m[1]!))
+          ? m[1]!
+          : tsIso
         inst = {
           installId: p.installId,
-          firstSeenAt: tsIso,
+          firstSeenAt: salvagedFirst,
           lastSeenAt: tsIso,
           appVersion: p.appVersion ?? null,
+          os: p.os ?? null,
+          countryCode: p.countryCode ?? null,
         }
       }
     } else {
@@ -96,9 +134,13 @@ export async function POST(req: NextRequest) {
         firstSeenAt: tsIso,
         lastSeenAt: tsIso,
         appVersion: p.appVersion ?? null,
+        os: p.os ?? null,
+        countryCode: p.countryCode ?? null,
       }
     }
-    await dbSet(instKey, JSON.stringify(inst)).catch(() => undefined)
+    await dbSet(instKey, JSON.stringify(inst)).catch((e) => {
+      console.error('[telemetry/heartbeat] inst upsert failed', e)
+    })
 
     // 3. Per-code last-seen projection (only when a code is present;
     // not every heartbeat carries one — pre-activation pings won't).

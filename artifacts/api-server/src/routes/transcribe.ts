@@ -1,7 +1,18 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import multer from "multer";
-import OpenAI, { toFile } from "openai";
 import { logger } from "../lib/logger";
+
+/**
+ * /api/transcribe — Deepgram REST proxy for the desktop client.
+ *
+ * v0.7.19 — OpenAI removed. The operator's OpenAI project key was
+ * rotated and the rotation never propagated cleanly to this Replit
+ * deployment, so every customer .exe forwarding here was getting 401
+ * on every MediaRecorder chunk. Deepgram already powered the streaming
+ * WebSocket path, so consolidating on a single STT vendor (controlled
+ * by DEEPGRAM_API_KEY) eliminates the rotation-mismatch class of bug
+ * entirely.
+ */
 
 const router: IRouter = Router();
 
@@ -10,73 +21,42 @@ const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 },
 });
 
-const BIBLE_PROMPT =
-  "The speaker is delivering a Christian sermon and may quote the Bible. " +
-  "Common Bible book names: Genesis, Exodus, Leviticus, Numbers, Deuteronomy, " +
-  "Joshua, Judges, Ruth, Samuel, Kings, Chronicles, Ezra, Nehemiah, Esther, " +
-  "Job, Psalms, Proverbs, Ecclesiastes, Song of Solomon, Isaiah, Jeremiah, " +
-  "Lamentations, Ezekiel, Daniel, Hosea, Joel, Amos, Obadiah, Jonah, Micah, " +
-  "Nahum, Habakkuk, Zephaniah, Haggai, Zechariah, Malachi, Matthew, Mark, " +
-  "Luke, John, Acts, Romans, Corinthians, Galatians, Ephesians, Philippians, " +
-  "Colossians, Thessalonians, Timothy, Titus, Philemon, Hebrews, James, Peter, " +
-  "Jude, Revelation. Common terms: Jesus, Christ, Lord, God, Holy Spirit, " +
-  "gospel, salvation, righteousness, kingdom, covenant, prophet, apostle, " +
-  "disciple, faith, grace, mercy, sin, repentance, baptism, communion, amen.";
+// Same Deepgram REST URL + post-processing flags as the streaming
+// path, so transcript style is consistent across paths. See the
+// Next-side route for per-flag rationale.
+const DEEPGRAM_REST_URL =
+  "https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&punctuate=true&language=en";
 
-interface ClientSpec {
-  apiKey: string;
-  baseURL?: string;
-}
-
-let cached: { spec: ClientSpec; client: OpenAI } | null = null;
-
-function resolveClientSpec(): ClientSpec | null {
-  const directKey = process.env["OPENAI_API_KEY"];
-  if (directKey) return { apiKey: directKey };
-  const proxyKey = process.env["AI_INTEGRATIONS_OPENAI_API_KEY"];
-  const proxyBase = process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"];
-  if (proxyKey && proxyBase) return { apiKey: proxyKey, baseURL: proxyBase };
-  return null;
-}
-
-function getClient(): OpenAI | null {
-  const spec = resolveClientSpec();
-  if (!spec) return null;
-  if (
-    cached &&
-    cached.spec.apiKey === spec.apiKey &&
-    cached.spec.baseURL === spec.baseURL
-  ) {
-    return cached.client;
-  }
-  const client = spec.baseURL
-    ? new OpenAI({ apiKey: spec.apiKey, baseURL: spec.baseURL })
-    : new OpenAI({ apiKey: spec.apiKey });
-  cached = { spec, client };
-  return client;
-}
-
-function pickExtAndMime(incomingType: string): { ext: string; mime: string } {
+function pickMime(incomingType: string): string {
   const t = (incomingType || "").toLowerCase();
-  if (t.includes("wav") || t.includes("x-wav")) return { ext: "wav", mime: "audio/wav" };
-  if (t.includes("mp3") || t.includes("mpeg")) return { ext: "mp3", mime: "audio/mpeg" };
-  if (t.includes("ogg")) return { ext: "ogg", mime: "audio/ogg" };
-  if (t.includes("m4a") || t.includes("mp4") || t.includes("aac"))
-    return { ext: "m4a", mime: "audio/mp4" };
-  if (t.includes("flac")) return { ext: "flac", mime: "audio/flac" };
-  if (t.includes("webm")) return { ext: "webm", mime: t };
-  return { ext: "webm", mime: t || "audio/webm" };
+  if (t.includes("wav") || t.includes("x-wav")) return "audio/wav";
+  if (t.includes("mp3") || t.includes("mpeg")) return "audio/mpeg";
+  if (t.includes("ogg")) return "audio/ogg";
+  if (t.includes("m4a") || t.includes("mp4") || t.includes("aac")) return "audio/mp4";
+  if (t.includes("flac")) return "audio/flac";
+  if (t.includes("webm")) return t || "audio/webm";
+  return t || "audio/webm";
+}
+
+interface DeepgramPrerecordedResponse {
+  results?: {
+    channels?: Array<{
+      alternatives?: Array<{
+        transcript?: string;
+      }>;
+    }>;
+  };
 }
 
 router.post(
   "/transcribe",
   upload.single("audio"),
   async (req: Request, res: Response) => {
-    const client = getClient();
-    if (!client) {
+    const apiKey = (process.env["DEEPGRAM_API_KEY"] || "").trim();
+    if (!apiKey) {
       res.status(503).json({
         error:
-          "Transcription is unavailable: OPENAI_API_KEY is not configured on the server.",
+          "Transcription is unavailable: DEEPGRAM_API_KEY is not configured on the server.",
       });
       return;
     }
@@ -92,28 +72,41 @@ router.post(
     }
 
     try {
-      const { ext, mime } = pickExtAndMime(file.mimetype || "");
-      const named = await toFile(file.buffer, `chunk.${ext}`, { type: mime });
-
-      const result = await client.audio.transcriptions.create({
-        file: named,
-        model: "gpt-4o-mini-transcribe",
-        language: "en",
-        prompt: BIBLE_PROMPT,
-        response_format: "json",
+      const mime = pickMime(file.mimetype || "");
+      const upstream = await fetch(DEEPGRAM_REST_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Token ${apiKey}`,
+          "Content-Type": mime,
+        },
+        body: file.buffer,
       });
 
-      const text = (result?.text || "").trim();
+      if (!upstream.ok) {
+        const detail = await upstream.text().catch(() => "");
+        const keyTail = apiKey.slice(-6);
+        logger.error(
+          { status: upstream.status, keyTail, detail: detail.slice(0, 200) },
+          "[transcribe] Deepgram REST call rejected",
+        );
+        if (upstream.status === 401 || upstream.status === 403) {
+          res
+            .status(401)
+            .json({ error: "Deepgram rejected the API key configured on the server." });
+          return;
+        }
+        res.status(upstream.status).json({
+          error: `Deepgram HTTP ${upstream.status}: ${detail.slice(0, 200)}`,
+        });
+        return;
+      }
+
+      const json = (await upstream.json()) as DeepgramPrerecordedResponse;
+      const text = (json.results?.channels?.[0]?.alternatives?.[0]?.transcript || "").trim();
       res.json({ text });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Transcription failed";
-      logger.error({ err: msg }, "[transcribe] failed");
-      if (/Incorrect API key|401|Invalid.*api.*key|authentication/i.test(msg)) {
-        res
-          .status(401)
-          .json({ error: "OpenAI rejected the API key configured on the server." });
-        return;
-      }
+      logger.error({ err: msg }, "[transcribe] Deepgram fetch failed");
       res.status(500).json({ error: msg });
     }
   },

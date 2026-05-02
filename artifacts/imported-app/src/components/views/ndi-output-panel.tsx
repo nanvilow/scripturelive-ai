@@ -890,7 +890,7 @@ type NdiPreviewSurfaceProps = {
   ndiLowerThirdScale: number | undefined
 }
 
-function NdiPreviewSurface(props: NdiPreviewSurfaceProps): JSX.Element {
+function NdiPreviewSurface(props: NdiPreviewSurfaceProps): React.JSX.Element {
   const NATIVE_W = 1920
   const NATIVE_H = 1080
   const containerRef = useRef<HTMLDivElement | null>(null)

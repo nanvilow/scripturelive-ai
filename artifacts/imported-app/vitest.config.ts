@@ -1,10 +1,22 @@
 import { defineConfig } from 'vitest/config'
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
 
 // We don't extend the existing `vite.config.ts` because that file is
 // authored for the (separate) Vite mockup pipeline and asserts that
 // `PORT` / `BASE_PATH` are set in the environment. Tests run in plain
 // Node and shouldn't need either.
+//
+// v0.7.19 — Added the `@/` alias so test files can use the same
+// import style as the source they exercise. Mirrors the `paths` block
+// in tsconfig.json (`"@/*": ["./src/*"]`).
+const __dirname = dirname(fileURLToPath(import.meta.url))
 export default defineConfig({
+  resolve: {
+    alias: {
+      '@': resolve(__dirname, 'src'),
+    },
+  },
   test: {
     include: [
       'src/**/*.{test,spec}.{ts,tsx}',
