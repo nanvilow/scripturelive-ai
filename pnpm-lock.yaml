@@ -337,6 +337,9 @@ importers:
       '@tanstack/react-table':
         specifier: ^8.21.3
         version: 8.21.3(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      '@workspace/pricing':
+        specifier: workspace:*
+        version: link:../../lib/pricing
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -813,6 +816,9 @@ importers:
       '@workspace/api-client-react':
         specifier: workspace:*
         version: link:../../lib/api-client-react
+      '@workspace/pricing':
+        specifier: workspace:*
+        version: link:../../lib/pricing
       class-variance-authority:
         specifier: 'catalog:'
         version: 0.7.1
@@ -928,6 +934,8 @@ importers:
       drizzle-kit:
         specifier: ^0.31.9
         version: 0.31.9
+
+  lib/pricing: {}
 
   scripts:
     devDependencies:

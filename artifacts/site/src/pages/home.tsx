@@ -2,9 +2,23 @@ import { SEO } from "@/components/seo";
 import { ArrowRight, Download, Monitor, Mic, RefreshCw, Zap, CheckCircle2, ShieldCheck, Cpu, HardDrive, Wifi, Volume2, Globe, MessagesSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DownloadButton } from "@/components/download-button";
+import { getMarketingPlans, type PlanCode } from "@workspace/pricing";
 
 // Import assets from attached_assets using the alias defined in vite.config.ts
 import logoSvg from "@assets/scripturelive/logo.svg";
+
+// Marketing-only blurb per plan tier. Pricing lives in @workspace/pricing
+// so it can never drift from the desktop app; the prose below is purely
+// presentational copy specific to this landing page.
+const PLAN_BLURBS: Record<PlanCode, string> = {
+  "1M": "Perfect for special events or testing the waters with your team.",
+  "2M": "Two-month commitment for short campaigns and revival series.",
+  "3M": "Quarterly commitment for growing media teams.",
+  "4M": "Four months of coverage for an extended sermon series.",
+  "5M": "Five months of stability for a longer ministry season.",
+  "6M": "Half-year stability for your broadcast and projection.",
+  "1Y": "Set it and forget it. A full year of worry-free automated projection.",
+};
 
 export default function Home() {
   return (
@@ -166,40 +180,32 @@ export default function Home() {
             </div>
 
             <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-5xl mx-auto">
-              <div className="p-6 rounded-2xl bg-card border border-border flex flex-col hover:border-primary/50 transition-colors">
-                <div className="mb-4">
-                  <h3 className="text-lg font-medium text-muted-foreground mb-2">1 Month</h3>
-                  <div className="text-3xl font-bold">GHS 200</div>
-                </div>
-                <p className="text-sm text-muted-foreground mt-auto">Perfect for special events or testing the waters with your team.</p>
-              </div>
-              
-              <div className="p-6 rounded-2xl bg-card border border-border flex flex-col hover:border-primary/50 transition-colors">
-                <div className="mb-4">
-                  <h3 className="text-lg font-medium text-muted-foreground mb-2">3 Months</h3>
-                  <div className="text-3xl font-bold">GHS 550</div>
-                </div>
-                <p className="text-sm text-muted-foreground mt-auto">Quarterly commitment for growing media teams.</p>
-              </div>
-
-              <div className="p-6 rounded-2xl bg-card border border-border flex flex-col hover:border-primary/50 transition-colors">
-                <div className="mb-4">
-                  <h3 className="text-lg font-medium text-muted-foreground mb-2">6 Months</h3>
-                  <div className="text-3xl font-bold">GHS 1200</div>
-                </div>
-                <p className="text-sm text-muted-foreground mt-auto">Half-year stability for your broadcast and projection.</p>
-              </div>
-
-              <div className="p-6 rounded-2xl bg-primary/10 border-2 border-primary flex flex-col relative shadow-[0_0_30px_-10px_oklch(var(--primary))] scale-105 z-10">
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 bg-primary text-primary-foreground text-xs font-bold rounded-full whitespace-nowrap shadow-lg">
-                  BEST VALUE - 25% OFF
-                </div>
-                <div className="mb-4 pt-2">
-                  <h3 className="text-lg font-medium text-primary mb-2">1 Year</h3>
-                  <div className="text-4xl font-bold">GHS 1800</div>
-                </div>
-                <p className="text-sm text-muted-foreground mt-auto">Set it and forget it. A full year of worry-free automated projection.</p>
-              </div>
+              {getMarketingPlans().map((plan) => {
+                const isFeatured = Boolean(plan.discountLabel);
+                if (isFeatured) {
+                  return (
+                    <div key={plan.code} className="p-6 rounded-2xl bg-primary/10 border-2 border-primary flex flex-col relative shadow-[0_0_30px_-10px_oklch(var(--primary))] scale-105 z-10">
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 bg-primary text-primary-foreground text-xs font-bold rounded-full whitespace-nowrap shadow-lg">
+                        BEST VALUE - {plan.discountLabel?.toUpperCase()}
+                      </div>
+                      <div className="mb-4 pt-2">
+                        <h3 className="text-lg font-medium text-primary mb-2">{plan.label}</h3>
+                        <div className="text-4xl font-bold">GHS {plan.amountGhs}</div>
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-auto">{PLAN_BLURBS[plan.code]}</p>
+                    </div>
+                  );
+                }
+                return (
+                  <div key={plan.code} className="p-6 rounded-2xl bg-card border border-border flex flex-col hover:border-primary/50 transition-colors">
+                    <div className="mb-4">
+                      <h3 className="text-lg font-medium text-muted-foreground mb-2">{plan.label}</h3>
+                      <div className="text-3xl font-bold">GHS {plan.amountGhs}</div>
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-auto">{PLAN_BLURBS[plan.code]}</p>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </section>
