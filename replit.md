@@ -1,5 +1,31 @@
 # Recent Changes
 
+## v0.7.52 — Hotfix: installed app crashed with "Cannot find module 'electron-updater'" + workflow upload pin (May 2, 2026)
+
+**Bug 1 (runtime crash for end users):** v0.7.49 / v0.7.50 / v0.7.51 installers ran successfully but crashed at first launch with a JavaScript error dialog: `Uncaught Exception: Error: Cannot find module 'electron-updater'` — required from `resources/app.asar/dist-electron/updater.js`. The module simply wasn't bundled into the asar.
+
+**Root cause:** `electron-updater` was in `devDependencies` in `artifacts/imported-app/package.json`. electron-builder strips devDependencies from the production node_modules tree it bundles, so even though the build SUCCEEDED with no warnings, the produced installer was missing a runtime dependency. `dist-electron/updater.js` `require()`s `electron-updater` synchronously at process startup, so the crash fired before any window opened. **Fix:** moved `electron-updater@^6.3.9` from `devDependencies` to `dependencies`. Verified by scanning all `electron/*.ts` runtime imports — `electron-updater` was the only miscategorized one (`electron` itself is special-cased by electron-builder, `vitest` only appears in test files).
+
+**Bug 2 (CI):** v0.7.51 release CI failed at the "Upload installer" step because the `path:` glob I added — `release/ScriptureLive-AI-${{ steps.tag.outputs.name }}-Setup-*.exe` — used the tag name `v0.7.51` (with leading `v`), but electron-builder's `artifactName: ScriptureLive-AI-${version}-Setup-${arch}.${ext}` uses the package.json `version` (no `v`). Result: glob expected `ScriptureLive-AI-v0.7.51-Setup-*.exe` and found nothing. **Fix:** added a `version` output to the existing "Resolve tag" step that strips the leading `v` (`echo "version=${tag_name#v}"`) and switched the upload path to `${{ steps.tag.outputs.version }}`.
+
+**Confirmed working:** the v0.7.51 build log proved the v0.7.51 cleanup step caught and deleted the stale 134-byte `ScriptureLive-AI-0.7.32-Setup-x64.exe` AND a `.zip` stub from `artifacts/imported-app/release/` BEFORE electron-builder ran (lines 480-484 of the build job log). All three release-body / upload guards from v0.7.51 are still in place.
+
+## v0.7.51 — Release body pointed users at a 134-byte stub (May 2, 2026)
+
+The v0.7.49 release page rendered "Download ScriptureLive AI v0.7.49 Setup for Windows (134)" — link text said v0.7.49 but the URL pointed at `ScriptureLive-AI-0.7.32-Setup-x64.exe`, a 134-byte stub left over from the original failed v0.7.32 build. Users clicking the headline download got a non-functional 134-byte file.
+
+**Root cause:** the v0.7.49 tag's checkout still contained a tracked stale `artifacts/imported-app/release/ScriptureLive-AI-0.7.32-Setup-x64.exe`. The Windows build job uploaded `release/*.exe` (both the new 490 MB installer AND the stub) into the `windows-installer` artifact. The release-body builder ran `ls dist/*Setup*.exe | head -1` which alphabetically picked `0.7.32`. Wrong filename baked into the body markdown.
+
+**Live fix (already applied via API):** patched the v0.7.49 release body to point at the real `ScriptureLive-AI-0.7.49-Setup-x64.exe` and deleted the 134-byte asset. Users now see the correct 490 MB installer.
+
+**Permanent fix (this commit) — three independent guards in `.github/workflows/release-desktop.yml`:**
+
+1. **Body builder pinned to ${ver}.** `ls dist/*Setup*.exe` → `ls dist/ScriptureLive-AI-${ver}-Setup-*.exe`. Even if a stale older-version .exe leaks into the artifact, it can't win the glob. Hard-fails if no matching .exe is found rather than silently falling back.
+2. **Pre-build cleanup of `release/`.** Pwsh step wipes `artifacts/imported-app/release/` before electron-builder runs, so upload at end of build can only see files this run produced.
+3. **Upload artifact pinned to ${tag}.** `release/*.exe` → `release/ScriptureLive-AI-${tag}-Setup-*.exe`. Symmetric guard on the producer side.
+
+Task #95 (cleanup of tracked installer binaries on `main`) addresses the root cause for tags built on top of `main`. These three workflow guards are belt-and-suspenders for any tag that points at an older commit.
+
 ## v0.7.50 — Stop secrets in `.replit` from blocking ship-to-GitHub (Task #94, May 2, 2026)
 
 **Recurring problem.** v0.7.32 *and* v0.7.43 were both blocked at ship time by GitHub Push Protection because a Replit auto-checkpoint commit had captured a literal `OPENAI_API_KEY = "sk-proj-..."` inside `.replit` (most recently commit `aa5142570d`, in the `[userenv.development]` and `[userenv.production]` blocks). Each time, the operator had to (a) click the secret-scanning unblock URL, then (b) rotate the key, then (c) re-ship — an avoidable ~15 min of toil per release.

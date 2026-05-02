@@ -325,6 +325,9 @@ importers:
       cross-env:
         specifier: ^7.0.3
         version: 7.0.3
+      electron-updater:
+        specifier: ^6.3.9
+        version: 6.8.3
       hash-wasm:
         specifier: ^4.12.0
         version: 4.12.0
@@ -419,9 +422,6 @@ importers:
       electron-builder:
         specifier: ^25.1.8
         version: 25.1.8
-      electron-updater:
-        specifier: ^6.3.9
-        version: 6.8.3
       eslint:
         specifier: ^9
         version: 9.39.4(jiti@2.6.1)
@@ -2668,6 +2668,7 @@ packages:
   '@xmldom/xmldom@0.8.12':
     resolution: {integrity: sha512-9k/gHF6n/pAi/9tqr3m3aqkuiNosYTurLLUtc7xQ9sxB/wm7WPygCv8GYa6mS0fLJEHhqMC1ATYhz++U/lRHqg==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
 
   abbrev@1.1.1:
     resolution: {integrity: sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q==}
