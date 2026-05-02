@@ -1,5 +1,34 @@
 # Recent Changes
 
+## v0.7.39 — Lift V8 heap to 3584 MB now that standalone freed cgroup native memory (May 2, 2026)
+
+**v0.7.38 worked at the cgroup level** — the deploy got further than ever before, all the way through the heaviest webpack work, and only failed during the optimization phase with **exit status 1** (NOT exit 137 / SIGKILL). That distinction matters: status 1 + "JavaScript heap out of memory" is V8 heap exhaustion (Node-internal), while exit 137 is cgroup OOM kill (kernel-external). v0.7.34–v0.7.36 always died at exit 137; v0.7.38 died at exit 1. Different failure mode, much closer to success.
+
+**Why this is the right next lever**: with standalone tracing now disabled on Cloud Run (v0.7.38), the heaviest native (off-heap) memory consumer is gone. The cr-2-4 cgroup currently has way more native headroom than it did before — there is no longer any reason for the V8 heap cap to stay at 3072 MB just to leave room for the standalone trace step's ~1 GB of native allocations. Bumping the heap to 3584 MB still leaves ~512 MB of cgroup headroom for SWC + Prisma generate + kernel — comfortably enough since terser is also disabled (`DISABLE_MINIFY=1`).
+
+**Build memory budget timeline** (now documented in artifact.toml comments):
+
+| Version | Heap | Standalone | Outcome |
+|---|---|---|---|
+| v0.7.34 | 2048 MB | ON | exit 1 — V8 heap OOM during optimization |
+| v0.7.36 | 3072 MB | ON | exit 137 — cgroup SIGKILL during standalone trace |
+| v0.7.38 | 3072 MB | OFF (Cloud Run) | exit 1 — V8 heap OOM during optimization |
+| v0.7.39 | 3584 MB | OFF (Cloud Run) | should clear |
+
+**Changes**:
+
+1. **`artifacts/imported-app/.replit-artifact/artifact.toml`**: `NODE_OPTIONS` bumped from `--max-old-space-size=3072` to `--max-old-space-size=3584`. Added detailed comment block walking through every prior heap/standalone combination and why the v0.7.39 setting is the right one.
+2. **`artifacts/imported-app/package.json`**: bumped version to `0.7.39`.
+
+**Verification**:
+
+- `next info` confirms `next.config.ts` loads cleanly with `output: N/A` (the conditional standalone gate from v0.7.38 is still working).
+- v0.7.38 runtime sanity: `import next from "next"` resolves to the workspace-hoisted `node_modules/next/`, `server.mjs` and `server-transcribe-stream.mjs` both `node --check` cleanly, `cross-env` is available for the Electron path.
+
+**If v0.7.39 still OOMs**: the only remaining code-side levers are mostly squeezed out. The next steps would be (a) bumping the build runner from cr-2-4 to cr-4-8 in the Replit deployment pane (user-side click), or (b) splitting the app into route-segment lazy chunks to shrink the optimization graph itself — that's a much larger refactor. v0.7.39 is the last "free" lever before either of those.
+
+---
+
 ## v0.7.38 — Disable standalone trace on Cloud Run; the real OOM fix (May 2, 2026)
 
 **The lever I missed in v0.7.34–v0.7.37**: `output: "standalone"` in `next.config.ts` forces Next's standalone trace step — the SINGLE most memory-heavy phase of the build. It walks the entire resolved dep graph, opens every used file, and holds full per-file metadata in RAM at once. Even after the v0.7.35 dep trim, v0.7.36 `outputFileTracingExcludes`, the heap bump to 3 GB, terser disable, and webpackMemoryOptimizations, the trace step alone was still blowing the cr-2-4 (4 GB) cgroup. That's why every previous deploy SIGKILLed at the exact same point.
