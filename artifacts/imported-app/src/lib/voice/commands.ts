@@ -48,6 +48,14 @@ export type CommandKind =
   | 'change_translation'
   | 'delete_previous_verse'
   | 'show_verse_n'
+  // v0.7.23 — AI Verse Search. Operator describes a verse in their
+  // own words ("find the verse about loving your enemies") and the
+  // dispatcher calls the existing /api/scripture/semantic-match
+  // endpoint (OpenAI embeddings against POPULAR_VERSES_KJV) to find
+  // the best canonical reference, then loads it in the operator's
+  // current translation. Bridges the AI gap between the passive
+  // detector and the voice command system.
+  | 'find_by_quote'
 
 export interface VoiceCommand {
   kind: CommandKind
@@ -61,6 +69,12 @@ export interface VoiceCommand {
   translation?: string
   /** Verse number (1-indexed) if kind === 'show_verse_n'. */
   verseNumber?: number
+  /**
+   * v0.7.23 — Free-form quote / topic the operator is asking the
+   * semantic matcher to find when kind === 'find_by_quote'.
+   * Example: "loving your enemies" or "in the beginning was the word".
+   */
+  quoteText?: string
   /**
    * True when the utterance was prefixed with the "Media" wake word.
    * Dispatch can use this to boost priority (e.g. always-execute even
@@ -464,6 +478,82 @@ function detectTranslationCommand(
   }
 }
 
+// v0.7.23 — AI Verse Search detector.
+//
+// Recognises natural-language requests for the semantic matcher:
+//   "find the verse about loving your enemies"
+//   "find that scripture about being born again"
+//   "what's the verse that says love is patient"
+//   "the scripture about a city on a hill"
+//   "where does the bible say be still and know"
+//   "which verse talks about faith hope and love"
+//
+// Without the wake word, the leading trigger phrase MUST be present
+// (e.g. "find the verse about ..."). With the wake word ("Media,
+// the verse about X") the bare "the verse about ..." form is
+// accepted because the wake word already signals intent.
+//
+// Returns null if no quote text follows the trigger, or if the
+// quote is implausibly short (< 3 chars after stripping fillers) —
+// stops "find the verse about it" from blowing the embedding budget
+// on near-empty queries.
+function detectFindByQuoteCommand(
+  body: string,
+  wokeByWakeWord: boolean,
+): VoiceCommand | null {
+  const cleaned = body.trim()
+  if (!cleaned) return null
+
+  // Patterns each capture the topic / quote text in group 1.
+  // Order matters: more-specific patterns first so they win the
+  // match (e.g. "find me the verse about X" before "find ... X").
+  const PATTERNS: RegExp[] = [
+    /^(?:please\s+)?(?:find|locate|search\s+for|search|look\s+up|look\s+for|pull\s+up|get\s+me)\s+(?:that\s+|the\s+|a\s+|me\s+(?:that\s+|the\s+|a\s+)?)?(?:verse|scripture|passage|bible\s+verse)s?\s+(?:about|on|that\s+says|that\s+talks?\s+about|that\s+mentions?|that\s+says\s+something\s+about|with|regarding|concerning)\s+(.+)$/i,
+    /^(?:what(?:'s|\s+is|s)|where\s+is)\s+(?:the\s+|that\s+|a\s+)?(?:verse|scripture|passage)\s+(?:about|that\s+says|that\s+talks?\s+about|that\s+mentions?)\s+(.+)$/i,
+    /^the\s+(?:verse|scripture|passage)\s+(?:about|that\s+says|that\s+talks?\s+about|that\s+mentions?)\s+(.+)$/i,
+    /^where\s+(?:does\s+(?:it|the\s+bible)|in\s+the\s+bible)\s+(?:say|talk\s+about|mention|tell\s+(?:me\s+)?about)\s+(.+)$/i,
+    /^which\s+(?:verse|scripture|passage)\s+(?:says|talks?\s+about|mentions?|is\s+about)\s+(.+)$/i,
+    /^show\s+me\s+(?:the\s+|a\s+|that\s+)?(?:verse|scripture|passage)\s+(?:about|that\s+says|that\s+talks?\s+about)\s+(.+)$/i,
+    // v0.7.23 — bare "verse about X" / "scripture about X" only
+    // accepted with wake word, otherwise far too easy to false-fire
+    // on conversational phrases like "the verse about him giving up".
+    ...(wokeByWakeWord
+      ? [
+          /^(?:verse|scripture|passage)\s+(?:about|that\s+says|that\s+talks?\s+about)\s+(.+)$/i,
+        ]
+      : []),
+  ]
+
+  for (const re of PATTERNS) {
+    const m = cleaned.match(re)
+    if (!m) continue
+    let quote = m[1]!.trim()
+    // Strip a trailing courtesy / filler ("please", "thanks", "you
+    // know", "right") and trailing punctuation.
+    quote = quote
+      .replace(/[\s,.;:!?]+$/, '')
+      .replace(/\s+(?:please|thanks|thank\s+you|you\s+know|right)\s*$/i, '')
+      .trim()
+
+    // Sanity guard: at least 3 word chars to be a real query.
+    const wordChars = quote.replace(/[^a-zA-Z0-9]/g, '')
+    if (wordChars.length < 3) return null
+    // Hard cap to keep the API request small even if a transcript
+    // somehow concatenates multiple sentences.
+    if (quote.length > 240) quote = quote.slice(0, 240)
+
+    return {
+      kind: 'find_by_quote',
+      confidence: wokeByWakeWord ? 95 : 88,
+      label: `Find: ${quote.length > 32 ? quote.slice(0, 30) + '…' : quote}`,
+      quoteText: quote,
+      wakeWord: wokeByWakeWord,
+    }
+  }
+
+  return null
+}
+
 // v0.7.19 — Detect "show verse N" / "go to verse N" / (after wake
 // word) bare "verse N". N must be 1..200 — chapters in the Bible
 // have at most 176 verses (Psalm 119), so 200 is a generous cap.
@@ -533,6 +623,12 @@ export function detectCommand(utterance: string): VoiceCommand | null {
   // simple "leading trigger phrase" mould.
   const txCmd = detectTranslationCommand(cleaned, woke)
   if (txCmd) return txCmd
+  // v0.7.23 — AI Verse Search must run BEFORE the show-verse-N
+  // matcher so utterances like "show me the verse about love" reach
+  // the quote detector instead of being rejected by the strict
+  // "verse N" pattern.
+  const findCmd = detectFindByQuoteCommand(cleaned, woke)
+  if (findCmd) return findCmd
   const verseCmd = detectShowVerseCommand(cleaned, woke)
   if (verseCmd) return verseCmd
 
