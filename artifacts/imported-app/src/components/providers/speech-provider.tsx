@@ -567,17 +567,44 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             // Anchor the step against the END of a forward range and
             // the START of a backward step — so "John 3:1-10" + next
             // gives John 3:11, but "John 3:1-10" + previous gives
-            // (nothing — already at start of chapter).
+            // John 2:25 (rollover into the previous chapter).
             const anchor = dir === 1
               ? (ref.verseEnd ?? ref.verseStart)
               : ref.verseStart
-            const targetVerse = anchor + dir
+            const targetBook = ref.book
+            let targetChapter = ref.chapter
+            let targetVerse = anchor + dir
             const struct = (bibleStructure as unknown as Record<string, number[]>)[ref.book]
             const verseCount = struct?.[ref.chapter - 1] ?? 0
-            if (verseCount > 0 && targetVerse >= 1 && targetVerse <= verseCount) {
+
+            // v0.7.24 — Cross-chapter rollover. Operator complaint:
+            // "next verse" on John 3:36 (last verse) used to do
+            // nothing because the validation block below rejected
+            // verse 37. Now we roll over to John 4:1. Same for
+            // "previous verse" on John 4:1 → John 3:36.
+            //
+            // Rollover ONLY happens within the same book. At a book
+            // boundary (Revelation 22:21 + next, Genesis 1:1 +
+            // previous) we still fall through to the legacy slide-
+            // deck behaviour rather than guessing the next book.
+            if (verseCount > 0 && targetVerse > verseCount && struct) {
+              if (targetChapter < struct.length) {
+                targetChapter = targetChapter + 1
+                targetVerse = 1
+              }
+              // else: last chapter of the book, no rollover possible.
+            } else if (targetVerse < 1 && struct && targetChapter > 1) {
+              targetChapter = targetChapter - 1
+              targetVerse = struct[targetChapter - 1] ?? 1
+            }
+
+            // Re-validate after potential rollover.
+            const newStruct = (bibleStructure as unknown as Record<string, number[]>)[targetBook]
+            const newVerseCount = newStruct?.[targetChapter - 1] ?? 0
+            if (newVerseCount > 0 && targetVerse >= 1 && targetVerse <= newVerseCount) {
               const tx = s.selectedTranslation
-              const refKey = `${ref.book} ${ref.chapter}:${targetVerse}`
-              let textOut: string | null = lookupVerse(ref.book, ref.chapter, targetVerse, tx)
+              const refKey = `${targetBook} ${targetChapter}:${targetVerse}`
+              let textOut: string | null = lookupVerse(targetBook, targetChapter, targetVerse, tx)
               if (!textOut && !isTranslationBundled(tx)) {
                 try {
                   const v = await fetchBibleVerse(refKey, tx)
@@ -601,12 +628,21 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                 useAppStore.getState().setLiveSlideIndex(idx)
                 useAppStore.getState().setIsLive(true)
                 useAppStore.getState().setLiveActiveVerseIndex(0)
+                // v0.7.24 — Surface a small toast when we rolled
+                // over so the operator knows the chapter changed.
+                if (targetChapter !== ref.chapter) {
+                  toast.success(`${refKey} (chapter ${targetChapter})`, {
+                    duration: 1800,
+                    position: 'bottom-right',
+                  })
+                }
                 break
               }
               toast.error(`Could not load ${refKey}`, { duration: 2000, position: 'bottom-right' })
               break
             }
-            // Off the end of the chapter — fall through to slide deck.
+            // Truly off the end (or start) of the BOOK — fall
+            // through to slide deck.
           }
         }
 
