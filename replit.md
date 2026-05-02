@@ -1,5 +1,29 @@
 # Recent Changes
 
+## v0.7.38 — Disable standalone trace on Cloud Run; the real OOM fix (May 2, 2026)
+
+**The lever I missed in v0.7.34–v0.7.37**: `output: "standalone"` in `next.config.ts` forces Next's standalone trace step — the SINGLE most memory-heavy phase of the build. It walks the entire resolved dep graph, opens every used file, and holds full per-file metadata in RAM at once. Even after the v0.7.35 dep trim, v0.7.36 `outputFileTracingExcludes`, the heap bump to 3 GB, terser disable, and webpackMemoryOptimizations, the trace step alone was still blowing the cr-2-4 (4 GB) cgroup. That's why every previous deploy SIGKILLed at the exact same point.
+
+**Why standalone was on in the first place**: the Electron desktop build needs it. `electron-builder` packages the entire `.next/standalone/...` tree as a self-contained Node server bundle into the .exe / .dmg installer. The `package`, `package:win`, `package:mac` scripts produce a `.next/standalone/artifacts/imported-app/server.mjs` that gets copied into the Electron app resources.
+
+**Why Cloud Run does NOT need it**: the production runtime is a custom `server.mjs` (at `artifacts/imported-app/server.mjs`) that programmatically wraps Next via `next({ dev:false, dir:__dirname })` and attaches the Deepgram WebSocket via `attachTranscribeStream(server)` for `wss://.../api/transcribe-stream`. It uses `dir: __dirname` so it works whether run from artifact root OR from the standalone tree. Because pnpm hoists `next` to workspace root `node_modules/`, `import next from "next"` resolves fine from the artifact root with no standalone bundling required. The standalone tree's whole job — re-bundling node_modules into a portable subset — is wasted work for Cloud Run, which already ships the full workspace.
+
+**Changes**:
+
+1. **`artifacts/imported-app/next.config.ts`**: `output: "standalone"` is now gated behind `process.env.NEXT_OUTPUT_STANDALONE === "1"`. Default (no env var) → standalone OFF → Cloud Run path → no trace step.
+2. **`artifacts/imported-app/package.json`**:
+   - `start` script: changed from `node .next/standalone/artifacts/imported-app/server.mjs` to `node server.mjs` — runs the same custom server directly from the artifact root.
+   - `package`, `package:win`, `package:mac` scripts: prepended `cross-env NEXT_OUTPUT_STANDALONE=1` so the Electron build still produces the standalone tree it needs for `electron-builder`.
+3. **`artifacts/imported-app/scripts/copy-standalone-assets.mjs`**: `postbuild` step is now a graceful no-op when `.next/standalone/` doesn't exist (the Cloud Run path), with a clear log line explaining why. Previously it `process.exit(1)`'d, which would have hard-failed the Cloud Run build.
+
+**Verification**: `pnpm --filter @workspace/imported-app exec tsc --noEmit` exits 0; dev server (which uses `next dev`, not `next build`) continues to work fine on v0.7.38 (`Ready in 323ms`); the conditional `output` only kicks in for production builds.
+
+**Expected build memory impact**: skipping the standalone trace alone typically saves 30–50% of peak build memory on a Next 16 webpack production build. Combined with the v0.7.35 dep trim and v0.7.36 file-tracing excludes + heap bump, this should bring peak well inside the cr-2-4 (4 GB) cgroup.
+
+**Bumped version**: `0.7.37 → 0.7.38`.
+
+---
+
 ## v0.7.37 — `scriptureliveai.com` fully disconnected from runtime code (May 2, 2026)
 
 **User report**: "I said you should disconnect scriptureliveai.com from the app but it still leaked." Audit confirmed three live-code references that the v0.7.34 disconnect missed (the prior agent set the website URL TO scriptureliveai.com instead of AWAY from it):

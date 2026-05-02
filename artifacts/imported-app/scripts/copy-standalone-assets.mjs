@@ -15,11 +15,19 @@ const standaloneArtifact = path.join(
 const standaloneRoot = path.join(artifactRoot, ".next", "standalone");
 
 if (!fs.existsSync(standaloneArtifact)) {
-  console.error(
-    "[copy-standalone-assets] standalone build not found at",
-    standaloneArtifact,
+  // As of v0.7.38, `output: "standalone"` is gated behind
+  // NEXT_OUTPUT_STANDALONE=1 — Cloud Run autoscale builds skip it
+  // because the trace step blew the cr-2-4 (4 GB) build cgroup.
+  // Only the Electron `package*` scripts opt into standalone now,
+  // so for any non-Electron build (`pnpm run build` on its own,
+  // including the Cloud Run deploy) this postbuild step is a no-op.
+  console.log(
+    "[copy-standalone-assets] standalone build not produced",
+    "(NEXT_OUTPUT_STANDALONE != 1) — skipping. This is normal for",
+    "the Cloud Run deploy; only the Electron `package*` scripts",
+    "produce a standalone tree.",
   );
-  process.exit(1);
+  process.exit(0);
 }
 
 function copyDir(src, dst, label) {

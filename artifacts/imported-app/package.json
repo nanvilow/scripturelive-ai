@@ -1,6 +1,6 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.7.37",
+  "version": "0.7.38",
   "private": true,
   "main": "dist-electron/main.js",
   "repository": {
@@ -13,7 +13,7 @@
     "prebuild": "node scripts/inject-keys.mjs",
     "dev": "cross-env DATABASE_URL=file:../db/custom.db next dev -H 0.0.0.0 -p ${PORT:-3000}",
     "build": "cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build --webpack",
-    "start": "DATABASE_URL=file:../db/custom.db NODE_ENV=production HOST=0.0.0.0 PORT=${PORT:-3000} node .next/standalone/artifacts/imported-app/server.mjs",
+    "start": "DATABASE_URL=file:../db/custom.db NODE_ENV=production HOST=0.0.0.0 PORT=${PORT:-3000} node server.mjs",
     "postinstall": "node -e \"process.exit(0)\"",
     "lint": "eslint .",
     "test": "vitest run",
@@ -25,9 +25,9 @@
     "db:reset": "prisma migrate reset",
     "electron:build": "tsc -p electron/tsconfig.json",
     "electron:dev": "pnpm run electron:build && cross-env NEXT_DEV_URL=http://localhost:3000 electron dist-electron/main.js",
-    "package": "pnpm run build && pnpm run electron:build && electron-builder --config electron-builder.yml && pnpm run downloads:manifest",
-    "package:win": "pnpm run build && pnpm run electron:build && electron-builder --config electron-builder.yml --win --publish never && pnpm run downloads:manifest",
-    "package:mac": "pnpm run build && pnpm run electron:build && electron-builder --config electron-builder.yml --mac && pnpm run downloads:manifest",
+    "package": "cross-env NEXT_OUTPUT_STANDALONE=1 pnpm run build && pnpm run electron:build && electron-builder --config electron-builder.yml && pnpm run downloads:manifest",
+    "package:win": "cross-env NEXT_OUTPUT_STANDALONE=1 pnpm run build && pnpm run electron:build && electron-builder --config electron-builder.yml --win --publish never && pnpm run downloads:manifest",
+    "package:mac": "cross-env NEXT_OUTPUT_STANDALONE=1 pnpm run build && pnpm run electron:build && electron-builder --config electron-builder.yml --mac && pnpm run downloads:manifest",
     "downloads:manifest": "node scripts/update-download-manifest.mjs",
     "postbuild": "node scripts/copy-standalone-assets.mjs",
     "training:generate": "node scripts/voice-training/generate.mjs"

@@ -6,10 +6,35 @@ import type { NextConfig } from "next";
 // node_modules at this root — Turbopack must be told where to look.
 const workspaceRoot = path.join(__dirname, "..", "..");
 
+// Standalone output is gated behind NEXT_OUTPUT_STANDALONE=1 because:
+//
+//  1. The Electron desktop build NEEDS it — `electron-builder` packages
+//     the entire `.next/standalone/...` tree as a self-contained Node
+//     server. The `package`, `package:win`, and `package:mac` scripts in
+//     package.json set NEXT_OUTPUT_STANDALONE=1 before invoking `build`.
+//
+//  2. The Cloud Run autoscale deploy does NOT need it — it runs the
+//     same custom `server.mjs` (which programmatically wraps Next via
+//     `next({ dev:false, dir:__dirname })` and attaches the Deepgram
+//     WebSocket via `attachTranscribeStream`) directly from the artifact
+//     root, with `import next from "next"` resolving to the workspace-
+//     hoisted node_modules/next. Because pnpm hoists, the artifact
+//     directory has full access to every dep at runtime, so the
+//     standalone trace step's whole job (re-bundling node_modules into
+//     a portable tree) is wasted work for Cloud Run.
+//
+//  3. The standalone trace step is the SINGLE most memory-heavy phase
+//     of a Next 16 webpack production build — it walks the entire
+//     resolved dep graph, opens every used file, and holds full per-
+//     file metadata in RAM at once. Skipping it on Cloud Run was the
+//     remaining lever after v0.7.36's outputFileTracingExcludes +
+//     heap bump still SIGKILLed inside the cr-2-4 (4 GB) cgroup. With
+//     standalone off, webpack only has to emit `.next/` and the trace
+//     step is bypassed entirely.
+const enableStandalone = process.env.NEXT_OUTPUT_STANDALONE === "1";
+
 const nextConfig: NextConfig = {
-  // Standalone output is needed when the app is packaged inside the Electron
-  // desktop build. It is harmless for normal `next dev` / `next start`.
-  output: "standalone",
+  ...(enableStandalone ? { output: "standalone" as const } : {}),
   // Production builds use webpack (`next build --webpack`) because Turbopack
   // currently panics inside the PostCSS loader on this app's globals.css —
   // `<PostCssTransformedAsset as Asset>::content failed → parse_css failed →
