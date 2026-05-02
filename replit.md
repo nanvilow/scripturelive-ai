@@ -1,5 +1,42 @@
 # Recent Changes
 
+## Host-based routing for two-domain deploy (May 2, 2026)
+
+**The autoscale-only-deploys-one-artifact reality**: production logs from the prior publish revealed `artifact mode enabled runnable=1 static=0` — Replit autoscale rejects multi-artifact deploys silently, picking only the first runnable. Site's `serve = "static"` config was ignored; both `scriptureliveai.com` and `scripturelive.replit.app` were serving imported-app's Next.js. The api-server toml's prior comment about "Multiple ports being forwarded" was the canary.
+
+**Fix — multi-tenant Next.js with `rewrites()` host matching in next.config.ts** (server-side, Node runtime, no edge runtime overhead):
+1. **`artifacts/imported-app/next.config.ts`**: added `async rewrites()` returning `beforeFiles` with two `has: [{type:"host"}]` entries (`scriptureliveai.com` and `www.scriptureliveai.com`) that rewrite all non-`__marketing|api|_next` paths to `/__marketing/index.html`. Server-side rewrite — no middleware, no edge runtime. Marketing asset paths under `/__marketing/*` and the desktop app's `/api/*` calls (Deepgram WS, license endpoints) pass through untouched on every host.
+2. **`artifacts/imported-app/scripts/copy-marketing.mjs`** (new): copies `artifacts/site/dist/public/*` → `artifacts/imported-app/public/__marketing/*`. Wired into imported-app's `prebuild`: `inject-keys.mjs && PORT=21238 BASE_PATH=/__marketing/ pnpm --filter @workspace/site run build && copy-marketing.mjs`.
+3. **`artifacts/site/src/App.tsx`** simplified: removed wouter Switch/Route (single-page site, no client routing) so the BASE_URL/URL mismatch caused by the rewrite can't break rendering. Just renders `<Home />`.
+4. **Marketing assets re-prefixed for `/__marketing/`**: `index.html` uses Vite's `%BASE_URL%` substitution for favicon/icon/og:image; `seo.tsx` resolves default og image from `import.meta.env.BASE_URL`; `home.tsx` images use `${BASE_URL}images/...`.
+5. **Tomls reverted to original state**: imported-app `previewPath="/"` `paths=["/api","/"]`, site `previewPath="/site/"` `paths=["/site/"]` and **`[services.production]` removed** from site (no longer deployed independently — its build output is bundled into imported-app's public folder via prebuild).
+6. **`public/__marketing/` added to `.gitignore`** — regenerated each build.
+
+**False starts (don't repeat)**:
+- First tried Next.js `middleware.ts` for host routing. Turbopack panicked compiling middleware + globals.css together (`<MiddlewareEndpoint as Endpoint>::output failed` during `parse_css`). Switching to `next dev/build --webpack` to avoid Turbopack revealed a second pre-existing issue: webpack can't resolve Node's `stream` built-in for nodemailer imported through `instrumentation.ts`. Backed out both. The `rewrites()` approach above stays on Turbopack and stays on Node runtime — works cleanly with no other moving parts.
+
+**Verified locally**: `curl -H "Host: scriptureliveai.com" http://localhost:80/` → `status=200` in 11ms, returns marketing site HTML with correct `/__marketing/favicon.png`, `/__marketing/opengraph.jpg`, etc. Default host still hits the Next.js app (separate pre-existing Turbopack/globals.css dev-mode panic — irrelevant for prod since prod uses `next start` from `.next/standalone`, not Turbopack; the previous prod deploy ran imported-app fine).
+
+**User action needed**: click Publish to ship the new architecture to production.
+
+---
+
+## Custom domain + marketing-site-at-root migration (May 2, 2026)
+
+**Shipped**: `https://scriptureliveai.com` is now the primary URL — user bought the domain and connected it during the same publish flow. `scripturelive.replit.app` remains as additional URL (back-compat for any v0.7.30/v0.7.32 desktop installs that may have hardcoded the old domain).
+
+**Architecture change**: marketing site moved from `/site/` to `/`. Two artifact.toml swaps required (sequential, not parallel — Replit rejects DUPLICATE_PREVIEW_PATH):
+1. `artifacts/imported-app`: `previewPath` `/` → `/__imported-app` (workspace-only, like api-server's `/__api-server` pattern), `paths` `["/api", "/"]` → `["/api"]` only. **Critical**: kept `/api` so the shipping v0.7.32 desktop app's calls to `/api/transcribe-stream` (Deepgram WS) and `/api/license/*` keep working at the same URL the .exe expects. Next.js `basePath` left at `/` — desktop app's Electron file:// loader is unaffected. Frontend pages of imported-app are no longer reachable from the public proxy (they were never user-facing in production anyway — Electron loads UI from local files).
+2. `artifacts/site`: `previewPath` `/site/` → `/`, `paths` `["/site/"]` → `["/"]`, `BASE_PATH` env `/site/` → `/`.
+
+**Source updates** to drop `/site/` prefix: `index.html` (favicon, apple-touch-icon, og:image), `src/components/seo.tsx` (default `image`), `src/pages/not-found.tsx` (back-link href). Production build verified: 1779 modules, 347.63 KB JS / 110.49 KB CSS, 7.14s. Old `/site/` URLs return 308 (auto-redirect to `/`) so previously-shared links don't 404.
+
+**Why a custom domain instead of `scriptureliveai.replit.app`**: Replit deployments lock the subdomain at first publish (this Repl's slot was already `scripturelive` from a prior ship — can't be renamed). User picked option 2 (custom domain) over option 1 (accept `scripturelive.replit.app/site/`) because it's the proper long-term move for a real product going to pastors. Cloudflare Registrar was the recommended buy (~$10.44/yr at-cost, free DNS + SSL).
+
+**Persistent platform issue, still present**: `restart_workflow` for `artifacts/site: web` continues to time out with `DIDNT_OPEN_A_PORT` even though vite logs confirm it bound to port 21238 in 717ms. Production deploy uses `serve = "static"` and is unaffected. Dev preview iframe may show stale until the platform recovers.
+
+---
+
 ## Marketing site at `/site/` shipped (May 2, 2026)
 
 **Built**: a free, dark-themed marketing landing page for ScriptureLive AI as a brand-new react-vite artifact at `artifacts/site` (slug `site`, port 21238, previewPath `/site/`, dev URL `https://${REPLIT_DEV_DOMAIN}/site/`). Lives alongside `imported-app` which still owns `/`. Single scroll page: hero → problem → 6 features (Deepgram live transcription, KJV/NIV/ESV offline bibles, voice commands, speaker-follow, live translation sync, NDI native output) → pricing (4 tiers: GHS 200 / 550 / 1200 / 1800 with 25%-off best-value badge on the year) → Windows system requirements → final CTA → footer with WhatsApp link to 0246798526 and GitHub releases link. All download CTAs point at `https://github.com/nanvilow/scripturelive-ai/releases/latest`. Real logo (`logo.svg`) in nav + footer. SEO meta + OG tags hardcoded into `index.html` AND injected via `react-helmet-async` (subagent shipped helmet without adding it to package.json — caught + installed).

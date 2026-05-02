@@ -64,3 +64,4 @@ src/generated/
 #   baked-credentials.ts -> server (SMTP, Arkesel SMS)
 src/lib/keys.baked.ts
 src/lib/baked-credentials.ts
+public/__marketing/

@@ -82,7 +82,7 @@ export default function Home() {
           
           <div className="mt-24 max-w-6xl mx-auto rounded-xl border border-border bg-card shadow-2xl overflow-hidden relative">
             <div className="absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent z-10" />
-            <img src="/images/audio-booth.png" alt="Church Audio Booth" className="w-full h-auto object-cover opacity-80 mix-blend-luminosity hover:mix-blend-normal transition-all duration-1000" />
+            <img src={`${import.meta.env.BASE_URL}images/audio-booth.png`} alt="Church Audio Booth" className="w-full h-auto object-cover opacity-80 mix-blend-luminosity hover:mix-blend-normal transition-all duration-1000" />
           </div>
         </section>
 
@@ -105,7 +105,7 @@ export default function Home() {
             </div>
             <div className="relative">
               <div className="absolute inset-0 bg-primary/5 blur-3xl rounded-full" />
-              <img src="/images/operator.png" alt="Media Operator" className="rounded-xl border border-border shadow-2xl relative z-10" />
+              <img src={`${import.meta.env.BASE_URL}images/operator.png`} alt="Media Operator" className="rounded-xl border border-border shadow-2xl relative z-10" />
             </div>
           </div>
         </section>

@@ -1,5 +1,5 @@
 kind = "web"
-previewPath = "/"
+previewPath = "/site/"
 title = "ScriptureLive AI — Website"
 version = "1.0.0"
 id = "artifacts/site"
@@ -11,21 +11,12 @@ version = "1.0.0"
 
 [[services]]
 name = "web"
-paths = [ "/" ]
+paths = [ "/site/" ]
 localPort = 21238
 
 [services.development]
 run = "pnpm --filter @workspace/site run dev"
 
-[services.production]
-build = [ "pnpm", "--filter", "@workspace/site", "run", "build" ]
-publicDir = "artifacts/site/dist/public"
-serve = "static"
-
-[[services.production.rewrites]]
-from = "/*"
-to = "/index.html"
-
 [services.env]
 PORT = "21238"
-BASE_PATH = "/"
+BASE_PATH = "/site/"

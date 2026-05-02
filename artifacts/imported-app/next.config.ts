@@ -24,6 +24,34 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: process.env.REPLIT_DEV_DOMAIN
     ? [process.env.REPLIT_DEV_DOMAIN]
     : [],
+  // Host-based routing for two-domain deploy:
+  //   scriptureliveai.com (+ www) → marketing site (static SPA bundled at /__marketing/)
+  //   all other hosts (scripturelive.replit.app, dev domain) → existing Next.js app
+  // /__marketing/*, /api/*, /_next/* always pass through so the SPA's bundled
+  // assets and the desktop app's API calls keep working on every host.
+  async rewrites() {
+    // Segment-bounded exclusion: only paths whose first segment is exactly
+    // __marketing, api, _next, .well-known, or root files robots.txt /
+    // sitemap.xml / favicon.ico bypass the rewrite. `/apiary`, `/_nextfoo`
+    // etc. still rewrite to marketing on marketing hosts.
+    const passthrough =
+      "(?:__marketing(?:/.*)?|api(?:/.*)?|_next(?:/.*)?|\\.well-known(?:/.*)?|robots\\.txt|sitemap\\.xml|favicon\\.ico)";
+    const source = `/:path((?!${passthrough}$).*)`;
+    return {
+      beforeFiles: [
+        {
+          source,
+          has: [{ type: "host", value: "scriptureliveai.com" }],
+          destination: "/__marketing/index.html",
+        },
+        {
+          source,
+          has: [{ type: "host", value: "www.scriptureliveai.com" }],
+          destination: "/__marketing/index.html",
+        },
+      ],
+    };
+  },
   typescript: {
     ignoreBuildErrors: true,
   },
