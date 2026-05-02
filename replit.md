@@ -1,5 +1,104 @@
 # Recent Changes
 
+## v0.7.49 — Hotfix #6: physically strip `node_modules/@workspace` before electron-builder (May 2, 2026)
+
+**v0.7.48's exclude pattern didn't help.** Same exact failure:
+
+```
+⨯ D:\...\lib\pricing\package.json must be under D:\...\artifacts\imported-app\
+```
+
+`app-builder-lib` follows symlinks during file *discovery* and validates the resolved real path is under the app dir BEFORE the `files` exclude patterns are evaluated. So `"!node_modules/@workspace/**/*"` is unreachable — by the time the matcher would see it, the validation has already thrown.
+
+**New approach:** delete the symlink itself before electron-builder runs. Added a tiny `strip:workspace-symlinks` script (`node -e "fs.rmSync('node_modules/@workspace',{recursive:true,force:true})"`) and wired it into `package`, `package:win`, and `package:mac` between `electron:build` and `electron-builder`. Cross-platform (uses Node fs), idempotent (force:true), and safe at this point in the pipeline because:
+
+- `next build` has already finished (webpack inlined `@workspace/pricing` into the .next chunks).
+- `extraResources` ships the standalone bundle that contains the inlined code.
+- Electron's main process never `require()`s `@workspace/pricing` directly.
+- `pnpm install` re-creates the symlink for the next build, so dev is unaffected.
+
+The exclude pattern in `electron-builder.yml` is kept as belt-and-suspenders for any future workspace dep that slips through.
+
+## v0.7.48 — Hotfix #5: exclude `@workspace/pricing` symlink from electron-builder asar (May 2, 2026)
+
+**v0.7.47 cleared the missing-module error.** Next.js compiled successfully in 22.6 s, all 17 pages prerendered cleanly, the standalone bundle was assembled. The build then advanced into electron-builder for the first time in five attempts and failed with:
+
+```
+⨯ D:\...\lib\pricing\package.json must be under D:\...\artifacts\imported-app\
+```
+
+This is a pnpm-monorepo + electron-builder interaction. `artifacts/imported-app/package.json` declares `"@workspace/pricing": "workspace:*"`, and pnpm satisfies that by symlinking `artifacts/imported-app/node_modules/@workspace/pricing` → `../../../../lib/pricing`. electron-builder's asar packager follows the symlink, discovers files at absolute paths OUTSIDE the app dir, and refuses to package them.
+
+`@workspace/pricing` is only imported by `src/lib/licensing/plans.ts` — server/app code that webpack already bundles into the `.next/standalone/` tree (which we ship via electron-builder's `extraResources`). The Electron main process (`electron/`) never requires it directly. So the symlink in the asar is purely redundant — adding `"!node_modules/@workspace/**/*"` to electron-builder.yml's `files` list excludes it without affecting runtime behaviour, and the asar packager has nothing left outside the app dir to choke on.
+
+**Surgical scope:** one new exclude pattern in `electron-builder.yml`. `package.json` version bump to 0.7.48. No code changes, no Next config changes.
+
+## v0.7.47 — Hotfix #4: restore deleted `src/lib/bibles/local-bible.ts` (May 2, 2026)
+
+**v0.7.46's HOME redirect WORKED.** No more EPERM on the Windows runner — the build got past webpack snapshotting and finally surfaced the **actual** error that was hiding behind it the whole time:
+
+```
+./src/components/providers/speech-provider.tsx
+Module not found: Can't resolve '@/lib/bibles/local-bible'
+```
+
+`speech-provider.tsx` imports `lookupRange`, `lookupVerse`, and `isTranslationBundled` from `@/lib/bibles/local-bible`. That file was last in git history at v0.5.52 and was deleted from the repo somewhere between then and now, but nobody updated the import. v0.7.32 still had the file on origin (so its build passed); every commit since does not. The Cloud Run autoscale build never tripped on this because... actually it would have tripped on this too — the import is unconditional and webpack-resolved. The most likely explanation is that the most recent Cloud Run deploys were also failing silently and nobody noticed because the Replit deploy was the last one anyone exercised before the install-base started coming from the GitHub releases.
+
+The local sandbox happens to have a perfectly good 4 KB copy of the file from an earlier checkpoint restore — it was sitting on disk untracked the entire time. v0.7.47 just adds it back to the repo as a 5th blob. No code edits, just a file resurrection.
+
+This is the third independent root cause that was masking the first two: every "fix" we shipped before this was correct on its own merits, but the build still failed because there was always a deeper problem behind it (v0.7.43 → red CI; v0.7.44 narrowed config gate → still red; v0.7.45 widened config gate → still red; v0.7.46 fixed the EPERM → red but a different error; v0.7.47 fixes the actual missing module).
+
+## v0.7.46 — Hotfix #3: redirect HOME on the Windows GHA runner to dodge a Next 16.2.x webpack EPERM (May 2, 2026)
+
+**v0.7.45 didn't fix it either.** The standalone-path `next.config.ts` in v0.7.45 is essentially identical to v0.7.32's (which built clean on Windows). Same EPERM, same time-to-failure (9 s into `next build --webpack`). So the trigger isn't in the config at all — it's a regression in **Next.js 16.2.x** itself.
+
+**Root cause:** `package.json` declares `"next": "^16.1.1"` and v0.7.32's lockfile resolved that to a 16.1.x. Today pnpm resolves the same `^16.1.1` constraint to **16.2.4** (the GHA build log prints `▲ Next.js 16.2.4 (webpack)`). Starting with 16.2.x, webpack's build snapshotter walks `os.homedir()` looking for cache state. On Windows that's `process.env.USERPROFILE` = `C:\Users\<user>`, which contains the legacy XP-era junction `Application Data` that the OS always denies read access to. The walk crashes with `EPERM: operation not permitted, scandir 'C:\Users\runneradmin\Application Data'` and the build dies. Linux/Cloud Run has no equivalent junction in `/`, so the same code path is fine there.
+
+**Fix in `.github/workflows/release-desktop.yml`:** add a pre-build step that creates a fresh dir under `${{ runner.temp }}\nohome`, junctions in `AppData\Local\electron` and `AppData\Local\electron-builder` from the real home (so the `actions/cache@v4` restore is still visible to electron-builder later), and exports `HOME` and `USERPROFILE` via `$GITHUB_ENV`. From that point on `os.homedir()` returns the fake path, the equivalent `Application Data` simply doesn't exist there (clean ENOENT, which webpack handles), and the build proceeds.
+
+This workaround is independent of the Next.js version — if 16.3.x ever fixes the regression, the redirect is a harmless no-op. We deliberately did NOT downgrade `next` to a 16.1.x patch because that would risk silently affecting Cloud Run too, where Next 16.2.4 builds cleanly.
+
+**Surgical scope:** one new step in `.github/workflows/release-desktop.yml`. `package.json` version bump to 0.7.46. No code, no deps, no Cloud Run impact, no `next.config.ts` changes.
+
+## v0.7.45 — Hotfix #2: gate the WHOLE Cloud-Run config block from the Windows build (May 2, 2026)
+
+**v0.7.44 didn't fix it.** The narrow gate (just `experimental`) shipped, the new release run came up, and the Windows installer crashed at the **identical** spot, 9 seconds into `next build --webpack`:
+
+```
+▲ Next.js 16.2.4 (webpack)
+  Creating an optimized production build ...
+glob error [Error: EPERM: operation not permitted, scandir
+  'C:\Users\runneradmin\Application Data']
+Failed to compile.
+```
+
+The `recharts`/`optimizePackageImports` theory was wrong — the experimental block was demonstrably gated off (Next no longer printed the "Experiments" banner), and the EPERM still reproduced. So the trigger is one of the OTHER post-v0.7.32 additions to `next.config.ts`: `outputFileTracingExcludes`, `productionBrowserSourceMaps`, or the `DISABLE_MINIFY` `webpack` callback. Rather than bisect each one across 15-minute Windows CI cycles, v0.7.45 takes the conservative path: rewrite `next.config.ts` so the WHOLE Cloud-Run-only stack is gated behind `!enableStandalone`. The Electron Windows build now runs the literal v0.7.32-shaped config — the last release we have evidence of building cleanly on Windows.
+
+**What changed in `artifacts/imported-app/next.config.ts`:**
+- Base config (applied to both Cloud Run and Electron paths): `output` (conditional), `outputFileTracingRoot`, `serverExternalPackages`, `turbopack`, `allowedDevOrigins`, `typescript`, `reactStrictMode`. Mirrors v0.7.32 exactly except `serverExternalPackages` is kept on the Electron path because `instrumentation.ts` imports nodemailer/better-sqlite3/@prisma/client at server startup and webpack must externalise them.
+- Cloud-Run-only block (gated behind `!enableStandalone`): `outputFileTracingExcludes`, `experimental.{webpackMemoryOptimizations, cpus, optimizePackageImports}`, `productionBrowserSourceMaps: false`, the `DISABLE_MINIFY` webpack callback. None of these influence the Electron build at all.
+- `recharts` stays out of `optimizePackageImports` permanently — it's not a dep of this app.
+
+**Surgical scope:** still just one file. `package.json` version bump to 0.7.45. No source code, no dep changes, no Cloud Run regression risk.
+
+## v0.7.44 — Hotfix: unblock Windows release CI (May 2, 2026)
+
+**Problem:** v0.7.43 shipped to GitHub successfully (main + tag), but the GHA Release workflow failed within 8 seconds of starting `next build --webpack` on the Windows runner:
+
+```
+glob error [Error: EPERM: operation not permitted, scandir
+  'C:\Users\runneradmin\Application Data']
+Failed to compile.
+```
+
+Last known-green Windows release was v0.7.32 (run 25248892003). Everything since v0.7.40 has been Cloud-Run-OOM-mitigation work — the Windows path was never re-validated, and one of those mitigations turned out to be Windows-hostile.
+
+**Root cause:** `next.config.ts` listed `recharts` in the `experimental.optimizePackageImports` array (added v0.7.40). `recharts` is not a direct dependency of `imported-app` — it's only in `artifacts/site` and `artifacts/mockup-sandbox`, hoisted into the workspace-root `node_modules` by pnpm. When Next 16's webpack barrel-import resolver tries to introspect a "package" it cannot find in the immediate dep tree, it walks up the filesystem looking for it. On Windows that walk eventually scandir's `C:\Users\<user>\Application Data` — a legacy XP-era junction that always returns EPERM — and the build dies. The same config builds fine on Linux (Cloud Run) because `/` is readable to the end and the resolver gives up gracefully.
+
+**Fix:** Gate the entire `experimental` block (and only that block) behind `!enableStandalone` in `artifacts/imported-app/next.config.ts`. The Electron Windows installer build sets `NEXT_OUTPUT_STANDALONE=1` (per the `package:win` script), so it now gets a v0.7.32-style minimal config that matches the last green Windows release. Cloud Run (where `enableStandalone` is false) keeps every OOM mitigation untouched — `webpackMemoryOptimizations`, `cpus: 1`, and the now-`recharts`-free `optimizePackageImports` list. Also dropped `recharts` from the list entirely since this app never imports it.
+
+**Surgical scope:** the only file edited is `artifacts/imported-app/next.config.ts`. No source code, no dep changes, no Cloud Run regression risk.
+
 ## v0.7.43 — "Report an Issue" form: name, phone, location now compulsory (May 2, 2026)
 
 **Operator request:** the central admin Records dashboard (Ctrl+Shift+P → Overview → User reports) was getting too many anonymous "something is broken" reports with no way to follow up. From v0.7.43 every user report MUST include the reporter's name, phone, and location before it can be sent.
