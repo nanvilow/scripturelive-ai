@@ -12,8 +12,14 @@
 5. **Tomls reverted to original state**: imported-app `previewPath="/"` `paths=["/api","/"]`, site `previewPath="/site/"` `paths=["/site/"]` and **`[services.production]` removed** from site (no longer deployed independently — its build output is bundled into imported-app's public folder via prebuild).
 6. **`public/__marketing/` added to `.gitignore`** — regenerated each build.
 
+**Build engine: webpack for prod, Turbopack for dev**:
+- `next build --webpack` is required because Turbopack panics on this app's `globals.css` during the production build (`<PostCssTransformedAsset as Asset>::content failed → parse_css failed → evaluate_webpack_loader failed → unexpected end of file`). Same panic was hitting the Bible-app `/` route in dev mode too. Production deploy was failing with this exact error.
+- Webpack mode requires `serverExternalPackages: ["nodemailer", "better-sqlite3", "@prisma/client", "prisma"]` in `next.config.ts` so webpack leaves these as plain `require()`s — otherwise it tries to bundle nodemailer and chokes on the Node built-in `stream` module pulled in via `instrumentation.ts → notifications.ts`.
+- Dev workflow still uses Turbopack (no `--webpack` flag in `dev` script) for speed. The marketing route works fine in dev; only the Bible-app homepage panics in dev (irrelevant — nobody hits dev preview of the Bible app, prod uses `next start` from `.next/standalone`).
+- Local `next build --webpack` in this dev sandbox SIGKILLs (OOM — 6.8 GB free, Next.js webpack builds need ~8 GB) but progresses well past the CSS parse step into webpack bundling, confirming the fix. Production deploy containers have full memory.
+
 **False starts (don't repeat)**:
-- First tried Next.js `middleware.ts` for host routing. Turbopack panicked compiling middleware + globals.css together (`<MiddlewareEndpoint as Endpoint>::output failed` during `parse_css`). Switching to `next dev/build --webpack` to avoid Turbopack revealed a second pre-existing issue: webpack can't resolve Node's `stream` built-in for nodemailer imported through `instrumentation.ts`. Backed out both. The `rewrites()` approach above stays on Turbopack and stays on Node runtime — works cleanly with no other moving parts.
+- First tried Next.js `middleware.ts` for host routing. Turbopack panicked compiling middleware + globals.css together (`<MiddlewareEndpoint as Endpoint>::output failed` during `parse_css`). Solved by using `next.config.ts` rewrites instead (server-side, Node runtime, no edge runtime).
 
 **Verified locally**: `curl -H "Host: scriptureliveai.com" http://localhost:80/` → `status=200` in 11ms, returns marketing site HTML with correct `/__marketing/favicon.png`, `/__marketing/opengraph.jpg`, etc. Default host still hits the Next.js app (separate pre-existing Turbopack/globals.css dev-mode panic — irrelevant for prod since prod uses `next start` from `.next/standalone`, not Turbopack; the previous prod deploy ran imported-app fine).
 

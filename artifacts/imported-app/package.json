@@ -12,7 +12,7 @@
     "predev": "node scripts/inject-keys.mjs",
     "prebuild": "node scripts/inject-keys.mjs && PORT=21238 BASE_PATH=/__marketing/ pnpm --filter @workspace/site run build && node scripts/copy-marketing.mjs",
     "dev": "cross-env DATABASE_URL=file:../db/custom.db next dev -H 0.0.0.0 -p ${PORT:-3000}",
-    "build": "cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build",
+    "build": "cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build --webpack",
     "start": "DATABASE_URL=file:../db/custom.db NODE_ENV=production HOST=0.0.0.0 PORT=${PORT:-3000} node .next/standalone/artifacts/imported-app/server.mjs",
     "postinstall": "node -e \"process.exit(0)\"",
     "lint": "eslint .",

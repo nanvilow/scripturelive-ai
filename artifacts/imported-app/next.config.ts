@@ -10,6 +10,23 @@ const nextConfig: NextConfig = {
   // Standalone output is needed when the app is packaged inside the Electron
   // desktop build. It is harmless for normal `next dev` / `next start`.
   output: "standalone",
+  // Production builds use webpack (`next build --webpack`) because Turbopack
+  // currently panics inside the PostCSS loader on this app's globals.css —
+  // `<PostCssTransformedAsset as Asset>::content failed → parse_css failed →
+  // evaluate_webpack_loader failed → unexpected end of file`. The same panic
+  // hits dev mode for the Bible-app `/` route too. Webpack mode needs these
+  // server-only deps EXTERNALIZED so it leaves them as plain `require()`s
+  // (otherwise it tries to bundle nodemailer and fails resolving the Node
+  // built-in `stream` module pulled in by `instrumentation.ts`). Dev mode
+  // keeps using Turbopack via `next dev` (no --webpack flag) for speed —
+  // the marketing route works there, only the Bible homepage panics, which
+  // doesn't matter for production builds.
+  serverExternalPackages: [
+    "nodemailer",
+    "better-sqlite3",
+    "@prisma/client",
+    "prisma",
+  ],
   // In a pnpm monorepo, Next traces deps from the workspace root (where the
   // hoisted node_modules lives). Both must be pinned to the same value in
   // Next 16+ — and they must match the Turbopack root, otherwise Turbopack
