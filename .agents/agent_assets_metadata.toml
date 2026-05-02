@@ -1,5 +1,22 @@
 uploads = []
-generated = []
+
+[[generated]]
+id = "pQyJk7tuGbg2NuPj29Dac"
+uri = "file://artifacts/site/public/images/audio-booth.png"
+type = "image"
+title = "church audio booth"
+
+[[generated]]
+id = "f-dfmhqLxqdDMoGiO0agC"
+uri = "file://artifacts/site/public/images/projection-screen.png"
+type = "image"
+title = "church projection screen"
+
+[[generated]]
+id = "8eDTgxjGuo6zkqRIKSKEf"
+uri = "file://artifacts/site/public/images/operator.png"
+type = "image"
+title = "operator at laptop"
 
 [[outputs]]
 id = "-UTyq5izHA9Qp0GO3Jhh6"

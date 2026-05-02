@@ -1,5 +1,20 @@
 # Recent Changes
 
+## Marketing site at `/site/` shipped (May 2, 2026)
+
+**Built**: a free, dark-themed marketing landing page for ScriptureLive AI as a brand-new react-vite artifact at `artifacts/site` (slug `site`, port 21238, previewPath `/site/`, dev URL `https://${REPLIT_DEV_DOMAIN}/site/`). Lives alongside `imported-app` which still owns `/`. Single scroll page: hero → problem → 6 features (Deepgram live transcription, KJV/NIV/ESV offline bibles, voice commands, speaker-follow, live translation sync, NDI native output) → pricing (4 tiers: GHS 200 / 550 / 1200 / 1800 with 25%-off best-value badge on the year) → Windows system requirements → final CTA → footer with WhatsApp link to 0246798526 and GitHub releases link. All download CTAs point at `https://github.com/nanvilow/scripturelive-ai/releases/latest`. Real logo (`logo.svg`) in nav + footer. SEO meta + OG tags hardcoded into `index.html` AND injected via `react-helmet-async` (subagent shipped helmet without adding it to package.json — caught + installed).
+
+**Palette**: deep navy background `hsl(222 47% 7%)` + warm gold primary `oklch(0.62 0.15 75)` (matches the desktop app's identity). Inter font from Google. Tailwind v4 + tw-animate-css.
+
+**Production build**: `PORT=21238 BASE_PATH=/site/ pnpm --filter @workspace/site run build` produces `dist/public/` — 347KB JS / 98KB CSS, 1777 modules, 7.2s. Static-serves under `/site/` in production via the artifact.toml `serve = "static"` config.
+
+**Platform infra issue (NOT site code)**: throughout this session, **every** `restart_workflow` call (across all four artifacts, not just site) failed with `ENV_BUILD_FAILED` / `TIMED_OUT waiting for run environment to rebuild`. This is a Replit infra-level issue — the run environment cgroup cannot be (re)built right now. Verified by manually running vite outside the workflow: `nohup env PORT=21238 BASE_PATH=/site/ pnpm --filter @workspace/site run dev` brought vite up correctly (ready in ~400ms) and `curl http://localhost:80/site/` returned HTTP 200 with the rendered HTML through the proxy. The site itself is fine; the dev workflow runner is broken until the platform recovers. Production deploy is unaffected because it uses static serving, not the dev runner.
+
+**Files**: `artifacts/site/src/pages/home.tsx` (single-page marketing), `src/pages/not-found.tsx` (rewritten from light-theme `bg-gray-50` to dark-theme matching), `src/components/seo.tsx` (og:url fixed from fake `scripturelive-ai.com` to GitHub repo), `index.html` (favicon, OG tags, description), `src/App.tsx` (HelmetProvider + wouter router with `BASE_URL` base — `/site` works correctly), `src/index.css` (palette wired). Public assets: `favicon.png`, `favicon.svg`, `icon-512.png`, `opengraph.jpg`, `images/audio-booth.png`, `images/operator.png`, `images/projection-screen.png`. Source brand assets staged at `attached_assets/scripturelive/`.
+
+**Next**: deploy via the Publish flow — production static-serve sidesteps the workflow runtime issue and gives the user a stable `*.replit.app/site/` URL.
+
+
 ## v0.7.32 — Shipped to GitHub Actions via Git Database API (May 2, 2026)
 
 **The situation**: the v0.7.32 ship was blocked for two compounding reasons that the original "scrub keys with `git filter-repo` and push" plan would not have solved alone:
