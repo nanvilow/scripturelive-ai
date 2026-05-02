@@ -32,6 +32,56 @@ const nextConfig: NextConfig = {
   // path relative to the workspace root); the Electron launcher and
   // electron-builder config are aligned with this nested location.
   outputFileTracingRoot: workspaceRoot,
+  // Skip tracing huge native modules that the Cloud Run prod runtime
+  // never executes. They're either Electron-only (electron itself,
+  // electron-builder, electron-updater, koffi NDI bridge), test-only
+  // (playwright, vitest), or alternate-arch binaries Prisma ships
+  // for cross-platform support. Each excluded path is one fewer
+  // tarball Next has to walk and resolve during the standalone trace
+  // step — that step is one of the most memory-heavy parts of the
+  // build because it holds the entire dep graph + per-file metadata
+  // in RAM at once. Trimming it is a direct win against the cr-2-4
+  // (4 GB) build cgroup.
+  outputFileTracingExcludes: {
+    "*": [
+      "node_modules/electron/**",
+      "node_modules/electron-builder/**",
+      "node_modules/electron-updater/**",
+      "node_modules/@electron/**",
+      "node_modules/app-builder-lib/**",
+      "node_modules/dmg-builder/**",
+      "node_modules/koffi/**",
+      "node_modules/playwright/**",
+      "node_modules/playwright-core/**",
+      "node_modules/vitest/**",
+      "node_modules/@vitest/**",
+      "node_modules/bun-types/**",
+      "node_modules/typescript/**",
+      "node_modules/@types/**",
+      "node_modules/eslint/**",
+      "node_modules/eslint-*/**",
+      "node_modules/@eslint/**",
+      "node_modules/.cache/**",
+      // Prisma's per-arch query engine binaries — keep only the
+      // linux ones the Cloud Run container actually loads.
+      "node_modules/.prisma/client/query-engine-windows*",
+      "node_modules/.prisma/client/query-engine-darwin*",
+      "node_modules/@prisma/engines/query-engine-windows*",
+      "node_modules/@prisma/engines/query-engine-darwin*",
+      "node_modules/@prisma/engines/migration-engine-*",
+      "node_modules/@prisma/engines/introspection-engine-*",
+      // Sharp pre-builds for non-linux platforms.
+      "node_modules/@img/sharp-win32-*/**",
+      "node_modules/@img/sharp-darwin-*/**",
+      "node_modules/@img/sharp-libvips-win32-*/**",
+      "node_modules/@img/sharp-libvips-darwin-*/**",
+    ],
+  },
+  // (Next 16 removed the `eslint.ignoreDuringBuilds` config knob from
+  // its public NextConfig type — `next build` no longer runs ESLint
+  // by default in 15+. Linting is now an explicit `next lint` step,
+  // which we don't run during the prod build, so there is no
+  // ESLint memory cost to disable here.)
   turbopack: {
     root: workspaceRoot,
   },

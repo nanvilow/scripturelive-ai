@@ -1,5 +1,23 @@
 # Recent Changes
 
+## v0.7.36 — Final in-code memory levers; build-VM bump now required (May 2, 2026)
+
+**Result of v0.7.35 deploy attempt**: build `080da281-80f1-4969-926e-74e50f4068a1` on cr-2-4 still SIGKILLed at the exact same point (33 lines, ends right after `Creating an optimized production build...` with `Exit status 1` and no stack trace). The `+12 -37` line in pnpm install confirms the trimmed deps shipped, but webpack's base overhead in Next 16 is what's blowing the 4 GB cgroup — not the dep tree size.
+
+**Applied final in-code levers**:
+
+1. **`outputFileTracingExcludes`** in `next.config.ts`: tell Next NOT to trace ~14 categories of huge modules that the Cloud Run prod runtime never executes — Electron toolchain (electron, electron-builder, electron-updater, @electron/*, app-builder-lib, dmg-builder), koffi (NDI bridge), test runners (playwright, vitest), TypeScript, @types/*, ESLint, Prisma's per-arch query engine binaries (windows + darwin), Sharp's non-linux pre-builds. Each excluded path is one fewer tarball Next has to walk during the standalone trace step, which is one of the most memory-heavy build phases.
+2. **Bumped `NODE_OPTIONS=--max-old-space-size`** from `2048` → `3072` in `artifact.toml`. With v0.7.35's dep trim, native allocations (SWC, Prisma generate) are smaller, so we can give V8 an extra 1 GB while still leaving ~1 GB cgroup headroom.
+3. **Investigated `eslint.ignoreDuringBuilds`** but Next 16 removed that config option from `NextConfig` type — `next build` in 15+ does NOT run ESLint by default (it's now a separate `next lint` step), so there's no ESLint memory cost to disable here.
+
+**Verification**: typecheck exit 0; `verifyAndReplaceArtifactToml` confirmed the artifact.toml change validates and applied cleanly.
+
+**If this build also fails**: the agent has now exhausted every code-side memory lever. The proven escape hatch is **bumping the build runner from cr-2-4 (4 GB) → cr-4-8 (8 GB)** in the Replit Deployments pane. This is a UI-only setting on the user's end (cannot be changed from code). Steps: open Deployments → Settings → "Build resources" → select cr-4-8 → Save → Republish. Runtime resources stay independent and unaffected.
+
+**Bumped version**: `0.7.35 → 0.7.36`.
+
+---
+
 ## v0.7.35 — Deep dep trim to fit Cloud Run cr-2-4 build OOM (May 2, 2026)
 
 **Problem**: Even after v0.7.34 disconnected the marketing site, the next deploy still failed. Build logs (build id `5a4b3bba-b93e-4ad2-bb4a-a02c088cc691`, runner = `cr-2-4` = 4 GB) showed only 35 lines total, ending with `Creating an optimized production build...` followed immediately by `Exit status 1` — no stack trace, no error message. That's the textbook fingerprint of a kernel OOM SIGKILL inside the cgroup: the kernel terminates webpack mid-compile and pnpm reports the exit. All four memory levers (`NODE_OPTIONS=2048`, `cpus:1`, `webpackMemoryOptimizations`, `DISABLE_MINIFY=1`) plus Task #92's earlier 120 MB dep trim were not enough.
