@@ -17,6 +17,46 @@ Format rules (so the workflow's extractor keeps working):
 - Write for the operator, not the engineer. "Verses now appear within
   ~250ms" beats "reduced CHUNK_MS from 4500 to 2500".
 
+## v0.7.25 — 2026-05-02
+
+### Changed
+
+- **AI features now work out of the box on every install — no
+  operator setup required.** Operator feedback on v0.7.24: "I
+  don't want every church having to paste an OpenAI key into
+  Admin → Keys; do it the same way Deepgram works." This release
+  restores the build-time OpenAI key bake (which v0.7.20 had
+  removed when the project was Deepgram-only). Now:
+  - The build-time OpenAI key is shipped inside the installer the
+    same way the Deepgram key is.
+  - On every operator's PC, AI Verse Search ("find the verse that
+    says love your enemies") and passive AI Scripture Detection
+    activate the moment they launch v0.7.25 — no Admin → Keys
+    step, no env vars, no extra configuration.
+  - The per-PC override path added in v0.7.24 still works — a
+    church that wants to bill against their own OpenAI account
+    can still paste their own key in the Admin modal and it
+    takes precedence over the bundled default.
+  - The OpenAI key stays on the server side only (it's used by
+    the `/api/scripture/semantic-match` Next.js API route, never
+    by the renderer), so it doesn't appear in the browser bundle
+    where end users could read it from devtools.
+
+### Notes
+
+- For maintainers: the GitHub Actions release workflow already
+  forwards `OPENAI_API_KEY` from the repo secret of the same
+  name (release-desktop.yml line 79). If that secret isn't set,
+  the bake will be empty and operators will fall back to either
+  their per-PC license override or the silent no-op behaviour
+  that was in v0.7.24. Set `OPENAI_API_KEY` as a GitHub repo
+  secret on `nanvilow/scripturelive-ai` if you haven't already.
+- Same trust and cost model as Deepgram: every install hits
+  OpenAI on the build-owner's account. The matcher uses
+  text-embedding-3-small at roughly $0.02 per million tokens
+  with most voice commands under 20 tokens, so usage is
+  negligible even across many churches.
+
 ## v0.7.24 — 2026-05-02
 
 ### Fixed
