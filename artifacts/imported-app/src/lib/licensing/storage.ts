@@ -185,6 +185,24 @@ export interface RuntimeConfig {
   /** v0.5.52 — Override the BAKED Deepgram key. When empty,
    *  the renderer uses NEXT_PUBLIC_SCRIPTURELIVE_DEEPGRAM_KEY. */
   adminDeepgramKey?: string
+  /** v0.7.29 — Phase 2 of v0.8.0 advanced voice. When `true`, the
+   *  speech-provider invokes the LLM voice intent classifier
+   *  (src/lib/voice/llm-classifier.ts, scaffold shipped v0.7.27)
+   *  as a FALLBACK after the regex classifier returns null or
+   *  low-confidence AND the utterance passes the command-likeness
+   *  gate (src/lib/voice/llm-gate.ts). Default `false` — operators
+   *  must opt in via Admin Modal → Cloud Keys → "AI voice intent
+   *  fallback (beta)". When false, no /api/voice/classify call is
+   *  ever made and the regex path is the sole command source
+   *  (existing v0.7.x behaviour, unchanged). */
+  enableLlmClassifier?: boolean
+  /** v0.7.29 — Per-PC override for the LLM classifier confidence
+   *  floor (1..100). Below this threshold, classifyIntent returns
+   *  null and the dispatcher does NOT fire a command. Default 70
+   *  (set in llm-classifier.ts as DEFAULT_CONFIDENCE_FLOOR).
+   *  Operators reporting too many false-positive commands can raise
+   *  this; operators reporting missed commands can lower it. */
+  llmClassifierConfidenceFloor?: number
   /** Last time the owner saved this config (ISO) — for audit display */
   updatedAt?: string
 }

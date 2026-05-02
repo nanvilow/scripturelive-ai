@@ -64,6 +64,9 @@ interface SavePayload {
   /** v0.5.52 — admin-paste cloud key overrides. */
   adminOpenAIKey?: string | null
   adminDeepgramKey?: string | null
+  /** v0.7.29 — Phase 2 v0.8.0 — LLM voice classifier opt-in. */
+  enableLlmClassifier?: boolean | null
+  llmClassifierConfidenceFloor?: number | null
 }
 
 function clean(v: unknown): unknown {
@@ -101,6 +104,32 @@ export async function POST(req: NextRequest) {
   }
   if ('adminOpenAIKey' in body) patch.adminOpenAIKey = clean(body.adminOpenAIKey)
   if ('adminDeepgramKey' in body) patch.adminDeepgramKey = clean(body.adminDeepgramKey)
+
+  // v0.7.29 — LLM voice classifier opt-in. Boolean: explicit null
+  // clears the override; explicit boolean overrides; missing key is
+  // a no-op (preserves the existing value).
+  if ('enableLlmClassifier' in body) {
+    if (body.enableLlmClassifier === null) patch.enableLlmClassifier = null
+    else if (typeof body.enableLlmClassifier === 'boolean') {
+      patch.enableLlmClassifier = body.enableLlmClassifier
+    }
+  }
+  if ('llmClassifierConfidenceFloor' in body) {
+    if (body.llmClassifierConfidenceFloor === null) {
+      patch.llmClassifierConfidenceFloor = null
+    } else if (
+      typeof body.llmClassifierConfidenceFloor === 'number' &&
+      body.llmClassifierConfidenceFloor > 0
+    ) {
+      // Clamp 1..100. Floors outside this range have no useful
+      // semantics for the classifier (which returns confidence on a
+      // 0..100 scale).
+      patch.llmClassifierConfidenceFloor = Math.min(
+        100,
+        Math.max(1, Math.floor(body.llmClassifierConfidenceFloor)),
+      )
+    }
+  }
   if ('momoName' in body) patch.momoName = clean(body.momoName)
   if ('momoNumber' in body) patch.momoNumber = clean(body.momoNumber)
   if ('whatsappNumber' in body) patch.whatsappNumber = clean(body.whatsappNumber)

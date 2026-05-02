@@ -9,6 +9,10 @@ import { lookupRange, lookupVerse, isTranslationBundled } from '@/lib/bibles/loc
 // voice commands. Same JSON the reference engine uses for validation.
 import bibleStructure from '@/data/bible-structure.json'
 import { detectCommand, detectCommandChain, type VoiceCommand } from '@/lib/voice/commands'
+// v0.7.29 — LLM-classifier command-likeness gate (Phase 2 of v0.8.0).
+// Used as a CHEAP local pre-check before we POST to /api/voice/classify
+// so most non-command transcripts skip the OpenAI roundtrip entirely.
+import { isLikelyCommandUtterance } from '@/lib/voice/llm-gate'
 import { pickBestVerse, type VerseLine } from '@/lib/voice/speaker-follow'
 // v0.5.45 — TRIPLE-ENGINE WITH AUTO-FALLBACK CHAIN.
 //
@@ -510,6 +514,51 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // highlight doesn't yank back to a previous verse on a single noisy
   // transcript chunk.
   const lastSpeakerSwitchAtRef = useRef<number>(0)
+
+  // v0.7.29 — Phase 2 of v0.8.0: LLM voice classifier opt-in flag.
+  // We cache the value in a ref because the regex pre-pass below runs
+  // dozens of times per minute on a busy mic and we don't want each
+  // run to allocate a Zustand selector or hit the storage layer. The
+  // useEffect below fetches /api/voice/classifier-status once on
+  // mount; a stale "true" value is harmless (the /classify endpoint
+  // also gates on the flag and returns `reason: 'disabled'`), and a
+  // stale "false" requires the operator to reload the renderer after
+  // toggling the flag on — acceptable for a beta feature.
+  const llmClassifierEnabledRef = useRef(false)
+  // Dedupe ref for LLM-fired commands. Same 4 s window the regex
+  // path uses; LLM commands carry the `[AI]` toast prefix so they're
+  // visually distinguishable from regex hits.
+  const lastLlmCmdRef = useRef<{ sig: string; at: number }>({ sig: '', at: 0 })
+
+  useEffect(() => {
+    // Fire-and-forget. If the fetch fails (network, 404 during
+    // dev-server boot, etc.) the ref stays false and the LLM
+    // fallback never engages — same behaviour as the feature being
+    // disabled, which is the safe default.
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await fetch('/api/voice/classifier-status', { cache: 'no-store' })
+        if (!r.ok) return
+        const j = (await r.json()) as { ok?: boolean; enabled?: boolean; hasApiKey?: boolean }
+        if (cancelled) return
+        // Only enable when the operator opted in AND we know the
+        // server can resolve an OpenAI key. With no key, every call
+        // would 0-confidence anyway and burn the OpenAI roundtrip
+        // budget for nothing.
+        llmClassifierEnabledRef.current = j.ok === true && j.enabled === true && j.hasApiKey === true
+        if (typeof window !== 'undefined' && llmClassifierEnabledRef.current) {
+          // eslint-disable-next-line no-console
+          console.log('[SpeechProvider] LLM voice classifier ENABLED (v0.7.29 Phase 2)')
+        }
+      } catch {
+        /* see comment above — silent no-op */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   /**
    * Dispatch a recognised voice command against the Zustand store.
@@ -1303,6 +1352,105 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             toast.message(cmd.label, { duration: 1500, position: 'bottom-right' })
             // Suppress the rest of the pipeline for this transcript.
             return
+          }
+        }
+
+        // ── v0.7.29 — LLM voice classifier fallback (Phase 2 v0.8.0) ─
+        // The regex classifier above (commands.ts → detectCommand)
+        // either returned null OR a low-confidence (<80) match. If the
+        // operator has opted in to the LLM fallback and the utterance
+        // PASSES the local command-likeness gate (a cheap heuristic
+        // checking for trigger verbs / structural hints, see
+        // src/lib/voice/llm-gate.ts), we POST the tail + live slide
+        // context to /api/voice/classify which calls classifyIntent
+        // server-side. classifyIntent is built to NEVER throw and
+        // tops out at 1.5 s (its internal timeout); we wrap the fetch
+        // in our own 2 s AbortController as a belt-and-braces guard.
+        //
+        // On a returned VoiceCommand we apply the SAME dedupe + the
+        // SAME dispatch + the SAME speaker-follow suspension as the
+        // regex path. The toast carries an "[AI]" prefix so the
+        // operator can tell at a glance which path fired the command
+        // (helpful for triage during the beta).
+        if (llmClassifierEnabledRef.current && isLikelyCommandUtterance(tail)) {
+          try {
+            const slides = state.slides
+            const liveIdx = state.liveSlideIndex
+            const liveSlide =
+              liveIdx >= 0 && liveIdx < slides.length ? slides[liveIdx] : undefined
+            // For verse slides, the reference text lives in `title`
+            // (e.g. "John 3:16"). Other slide types don't carry a
+            // reference — we just omit the field rather than feeding
+            // the LLM a misleading "Welcome" / "Announcement" string.
+            const liveReference =
+              liveSlide && liveSlide.type === 'verse' && typeof liveSlide.title === 'string'
+                ? liveSlide.title
+                : undefined
+            const ac = new AbortController()
+            const timer = setTimeout(() => ac.abort(), 2000)
+            let resp: Response
+            try {
+              resp = await fetch('/api/voice/classify', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                cache: 'no-store',
+                signal: ac.signal,
+                body: JSON.stringify({
+                  transcript: tail,
+                  context: {
+                    ...(liveReference ? { currentReference: liveReference } : {}),
+                    currentTranslation: state.selectedTranslation,
+                    currentVerseIndex: state.liveActiveVerseIndex,
+                    autoscrollActive: state.autoScrollEnabled,
+                  },
+                }),
+              })
+            } finally {
+              clearTimeout(timer)
+            }
+            if (resp.ok) {
+              const j = (await resp.json()) as {
+                ok?: boolean
+                command?: VoiceCommand | null
+                reason?: 'disabled' | 'no_api_key'
+              }
+              // Server told us the flag flipped off mid-session — sync
+              // our cached ref so we stop wasting roundtrips.
+              if (j.reason === 'disabled') {
+                llmClassifierEnabledRef.current = false
+              } else if (j.command) {
+                const llmCmd = j.command
+                const llmRefSig = llmCmd.reference
+                  ? `${llmCmd.reference.book}|${llmCmd.reference.chapter}|${llmCmd.reference.verseStart}|${llmCmd.reference.verseEnd ?? ''}`
+                  : ''
+                const llmSig = `ai|${llmCmd.kind}|${llmRefSig}|${llmCmd.translation ?? ''}|${llmCmd.verseNumber ?? ''}`
+                const now = Date.now()
+                if (
+                  lastLlmCmdRef.current.sig !== llmSig ||
+                  now - lastLlmCmdRef.current.at > 4000
+                ) {
+                  lastLlmCmdRef.current = { sig: llmSig, at: now }
+                  speakerFollowSuspendedUntilRef.current = Date.now() + 2000
+                  await dispatchVoiceCommand(llmCmd)
+                  state.setDetectionStatus('detected')
+                  toast.message(`[AI] ${llmCmd.label}`, {
+                    duration: 1500,
+                    position: 'bottom-right',
+                  })
+                  // Suppress the rest of the pipeline — same as the
+                  // regex path. The downstream Reference Engine v2 +
+                  // text-search still benefit from running when the
+                  // LLM returned null (we only return when it fired).
+                  return
+                }
+              }
+            }
+          } catch {
+            // Network error / abort / JSON parse — silent no-op. The
+            // regex path already ran; the v2 reference engine and
+            // text-search paths still execute below. The whole point
+            // of the LLM fallback is that it's an OPPORTUNISTIC
+            // additive layer, never a blocker.
           }
         }
       }

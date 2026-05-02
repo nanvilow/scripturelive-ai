@@ -1,5 +1,33 @@
 # Recent Changes
 
+## v0.7.29 — Phase 2 of v0.8.0: LLM voice classifier wired into dispatch behind opt-in flag (May 2, 2026)
+
+**What this ships**: Phase 2 of the v0.8.0 advanced-voice plan. The `classifyIntent` scaffold from v0.7.27 is now actually invoked from the speech-provider as a SECOND-OPINION fallback that runs after the regex classifier (`commands.ts → detectCommand`) returns `null` or low-confidence (<80) AND a cheap local heuristic accepts the utterance as command-like. Default is OFF on every install — the operator opts in per-PC via Admin Modal → Cloud Keys → "AI voice intent fallback (beta)". When OFF, the v0.7.x voice path is bit-for-bit unchanged (no `/api/voice/classify` call is ever made).
+
+**The pipeline gain**: when the operator's voice command uses a phrasing the regex doesn't yet cover (the regex covers ~40 verbs across 13 command kinds and is tuned for short imperative phrasings), the LLM gets a chance to recognise it. Examples that the LLM unblocks: *"could you go back one"*, *"swap to NIV"*, *"show me chapter five verse three"*, *"hide everything"*. The `[AI]` toast prefix lets the operator see at a glance which path fired the command — useful for triage during the beta and for telling us which utterances to back-port into the regex.
+
+**The cost discipline**: the LLM call is GATED behind a 35-trigger-verb command-likeness heuristic (`src/lib/voice/llm-gate.ts:isLikelyCommandUtterance`) so ~95% of sermon utterances skip the OpenAI roundtrip entirely. The heuristic is intentionally cheap and conservative — short utterance (2..12 words) starting with a known command verb (next, previous, show, hide, scroll, switch, find, undo, etc.), OR carrying a structural hint ("verse N", "next verse", "translation niv", "to esv", "autoscroll"), with a wake-word ("media,", "okay", "hey") bypass. 39 unit tests pin the contract.
+
+**The integration safety net**:
+- `classifyIntent` is built to never throw (v0.7.27) and tops out at its own 1.5 s timeout. The fetch in speech-provider is also wrapped in a 2 s `AbortController` belt-and-braces guard.
+- Same dedupe window (4 s) as the regex path, with a separate `lastLlmCmdRef` so a regex-fired command followed by an LLM-fired duplicate doesn't double-execute.
+- Same speaker-follow suspension (2 s) so the highlight doesn't get yanked by the just-spoken command words.
+- `currentReference` is only sent to the LLM when the live slide is a `verse`-type slide; we don't feed it "Welcome" or "Announcement" titles that would mislead the prompt.
+- A returned `reason: 'disabled'` from the server (operator toggled the flag off mid-session) flips the cached client ref to false so subsequent utterances stop wasting roundtrips.
+
+**Files**:
+- NEW `src/lib/voice/llm-gate.ts` — pure heuristic + 35-verb trigger list, dependency-free, 39 tests in `llm-gate.test.ts`.
+- NEW `src/app/api/voice/classify/route.ts` — POST endpoint. Resolves OpenAI key server-side via `process.env` → admin override → baked default (same order as `semantic-matcher.resolveOpenAIKey`); never leaks the key to the renderer. Gates on `RuntimeConfig.enableLlmClassifier`; clamps confidence floor to 1..100; bounds transcript length to 600 chars.
+- NEW `src/app/api/voice/classifier-status/route.ts` — cheap GET probe so the speech-provider can decide ONCE on mount whether to even attempt the POST. Returns `{ enabled, hasApiKey }`. The renderer requires both `enabled === true` AND `hasApiKey === true` before flipping its cached ref.
+- EDITED `src/lib/licensing/storage.ts` — `RuntimeConfig.enableLlmClassifier?: boolean` (default false) and `RuntimeConfig.llmClassifierConfidenceFloor?: number` (default unset → server uses classifier's compiled-in 70).
+- EDITED `src/app/api/license/admin/config/route.ts` — `SavePayload` accepts both new fields with explicit-null clear semantics; the floor is clamped 1..100 server-side as a defence-in-depth check.
+- EDITED `src/components/license/admin-modal.tsx` — opt-in checkbox + numeric floor input added inside the existing Cloud Keys section, gated below the OpenAI/Deepgram key inputs (the LLM fallback genuinely depends on a working OpenAI key, so the placement reinforces the dependency). Both fields are round-tripped on reload (unlike the cloud keys, which are write-once secrets).
+- EDITED `src/components/providers/speech-provider.tsx` — new `llmClassifierEnabledRef` cached on mount via the status endpoint; new `lastLlmCmdRef` dedupe ref; the LLM fallback block lives inside the existing `if (state.voiceControlEnabled)` guard, between the regex command-pre-pass and the v2 reference engine.
+
+**Test coverage**: 39 new tests in `llm-gate.test.ts` (trigger verbs, wake-word bypass, structural hints, sermon-rejection, length cap, case/punctuation, coverage smoke). Full project: 394/394 green, tsc clean.
+
+**What this DOESN'T ship** (deferred to later v0.7.x or v0.8.0 final): the clarification toast (Phase 4 of the v0.8.0 plan), per-PC training-data export (Phase 5), and chapter-verse-count derivation from the live slide (we only send `currentReference`/`currentTranslation`/`currentVerseIndex`/`autoscrollActive` for now — adding `chapterVerseCount` requires parsing the slide content and is a refactor we'd rather land standalone).
+
 ## v0.7.28 — AI Verse Search hotfix: strip "here's a verse about" preamble before embedding (May 2, 2026)
 
 **Operator-reported regression**: when the preacher said *"here's a verse about loving your enemies"* the passive AI Scripture Detection chip never surfaced, even though Matthew 5:44 ("Love your enemies, bless them that curse you...") is right there in `POPULAR_VERSES_KJV`. The active `find_by_quote` voice command path worked fine for the same content because its regex already extracts just the topic (group 1 of "find the verse about X"). The passive detector did not have that advantage.
