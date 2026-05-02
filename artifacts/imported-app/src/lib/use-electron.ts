@@ -50,6 +50,11 @@ export type ScriptureLiveDesktop = {
     install: () => Promise<{ ok: boolean; error?: string }>
     download?: () => Promise<{ ok: boolean; error?: string; alreadyInProgress?: boolean }>
     cancel?: () => Promise<{ ok: boolean; error?: string }>
+    // v0.7.26 — background auto-download opt-out (added in preload).
+    // Optional so renderer code paths that load against an older
+    // bundled preload don't crash; gate every call with `?.`.
+    getAutoDownload?: () => Promise<{ enabled: boolean }>
+    setAutoDownload?: (enabled: boolean) => Promise<{ ok: boolean; enabled: boolean }>
     onState: (cb: (s: UpdateState) => void) => () => void
   }
   ndi: {
