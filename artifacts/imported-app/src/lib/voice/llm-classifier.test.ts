@@ -305,10 +305,12 @@ describe('llmResponseToCommand', () => {
     expect(cmd).toBeNull()
   })
 
-  it('maps go_to_reference, surfacing reference text in quoteText', () => {
-    // Phase 1 carrier convention — see comment in
-    // llm-classifier.ts. Phase 2 will re-parse this through the
-    // reference engine before queueing a slide.
+  it('maps go_to_reference into a parsed DetectedReference (v0.7.30)', () => {
+    // v0.7.30 fix — earlier the reference text was placed in
+    // `quoteText` as a temporary carrier and dispatchVoiceCommand
+    // silently no-op'd because it needs `cmd.reference`. Now we
+    // parse via reference-engine.parseExplicitReference so dispatch
+    // works end-to-end.
     const cmd = llmResponseToCommand(
       {
         intent: 'go_to_reference',
@@ -317,7 +319,11 @@ describe('llmResponseToCommand', () => {
       } satisfies LlmClassifierResponse,
       baseFloor,
     )
-    expect(cmd?.quoteText).toBe('John 3:16')
+    expect(cmd?.kind).toBe('go_to_reference')
+    expect(cmd?.reference?.book).toBe('John')
+    expect(cmd?.reference?.chapter).toBe(3)
+    expect(cmd?.reference?.verseStart).toBe(16)
+    expect(cmd?.quoteText).toBeUndefined()
   })
 
   it('returns null for go_to_reference when reference missing', () => {
@@ -328,7 +334,22 @@ describe('llmResponseToCommand', () => {
     expect(cmd).toBeNull()
   })
 
-  it('maps bible_says like go_to_reference', () => {
+  it('returns null for go_to_reference when reference text is unparseable (v0.7.30)', () => {
+    // Defence-in-depth: if the LLM hallucinates "the second one" or
+    // similar non-reference text, we'd rather drop the command than
+    // dispatch it without a usable DetectedReference.
+    const cmd = llmResponseToCommand(
+      {
+        intent: 'go_to_reference',
+        confidence: 90,
+        args: { reference: 'the second one over there' },
+      } satisfies LlmClassifierResponse,
+      baseFloor,
+    )
+    expect(cmd).toBeNull()
+  })
+
+  it('maps bible_says like go_to_reference (v0.7.30)', () => {
     const cmd = llmResponseToCommand(
       {
         intent: 'bible_says',
@@ -337,8 +358,10 @@ describe('llmResponseToCommand', () => {
       } satisfies LlmClassifierResponse,
       baseFloor,
     )
-    expect(cmd?.quoteText).toBe('Romans 8:28')
     expect(cmd?.kind).toBe('bible_says')
+    expect(cmd?.reference?.book).toBe('Romans')
+    expect(cmd?.reference?.chapter).toBe(8)
+    expect(cmd?.reference?.verseStart).toBe(28)
   })
 
   // Argument-free intents shouldn't require args at all.

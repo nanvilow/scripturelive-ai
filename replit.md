@@ -1,5 +1,89 @@
 # Recent Changes
 
+## v0.7.30 — Three v0.7.29 code-review fixes BEFORE the operator sees v0.7.29 (May 2, 2026)
+
+**Why this exists**: v0.7.29 shipped Phase 2 of v0.8.0 (LLM voice classifier wired into dispatch). The post-ship architect review caught three real bugs in the wiring that would have produced exactly the failure modes the v0.8.0 plan was supposed to prevent. v0.7.30 fixes all three before the auto-updater publishes v0.7.29 to operators. v0.7.29 stays in the GitHub release history for the audit trail; the auto-updater will skip it once v0.7.30 is published.
+
+**Fix #1 — LLM gate must look at the regex outcome, not at "did dispatch happen"** (`src/components/providers/speech-provider.tsx`):
+- Before v0.7.30: the LLM fallback block ran whenever the regex didn't dispatch — including the case where the regex MATCHED at high confidence but the dedup check (`lastVoiceCmdRef`, 4 s window) suppressed the duplicate. So if the operator said "next verse" twice in 4 s, the regex correctly dropped the second one… and then the LLM block fired anyway, paying for an OpenAI roundtrip on a command we already understood.
+- The compound bug: because `lastLlmCmdRef` is a SEPARATE dedupe ref, the LLM-path could even DOUBLE-EXECUTE the dropped regex command if classifyIntent returned the same intent. That is the exact opposite of the "second-opinion fallback" intent.
+- v0.7.30 fix (one-line condition guard): `if ((!cmd || cmd.confidence < 80) && llmClassifierEnabledRef.current && isLikelyCommandUtterance(tail))`. The LLM now only runs when the regex returned null OR a sub-80 confidence match — i.e. when the regex genuinely needs help. High-confidence regex matches (whether dispatched or dedup-suppressed) skip the LLM. The v2 reference engine and text-search fallbacks downstream are unchanged.
+
+**Fix #2 — `go_to_reference` / `bible_says` from the LLM must dispatch, not soft-fail** (`src/lib/voice/llm-classifier.ts`):
+- Before v0.7.30: when the LLM returned `go_to_reference` (e.g. operator said "could you bring up John 3:16"), the mapper put the reference STRING into `cmd.quoteText` as a "Phase 1 carrier" and added a comment saying "Phase 2 will re-parse this." Phase 2 (v0.7.29) wired the call but never actually did the re-parse. `dispatchVoiceCommand` requires `cmd.reference` (a parsed `DetectedReference`) for those two kinds and silently no-ops without it. Net effect: the entire `go_to_reference` / `bible_says` intent class — arguably the highest-value one for the LLM, since the regex is weakest on natural-language reference phrasing — was a silent drop.
+- v0.7.30 fix: import `parseExplicitReference` from `@/lib/bibles/reference-engine` and call it on the LLM-returned reference string inside the `go_to_reference` / `bible_says` case. The result is set as `cmd.reference`. If parsing fails (e.g. LLM hallucinates "the second one"), return null — better to drop the command than dispatch with a half-formed reference.
+
+**Fix #3 — already covered by Fix #1**: the architect's third finding (separate dedupe refs creating a bypass) is mechanically prevented by Fix #1's gate, since the LLM block now never runs in the dedup-suppressed branch in the first place.
+
+**Test coverage delta**:
+- Updated `llm-classifier.test.ts`:
+  - The `go_to_reference` test now asserts the parsed `DetectedReference` (book "John", chapter 3, verseStart 16) instead of the deprecated `quoteText` carrier, AND explicitly asserts `cmd.quoteText` is undefined.
+  - The `bible_says` test does the same for "Romans 8:28".
+  - NEW test: unparseable LLM hallucination ("the second one over there") returns null instead of dispatching a broken command.
+- Full project: 395/395 green (was 394/394 in v0.7.29 — net +1 from the unparseable-hallucination test), tsc clean.
+
+**No behaviour change for operators with the LLM flag OFF** (still the default on every install). The fixes only affect the opt-in beta path.
+
+## v0.7.29 — Phase 2 of v0.8.0: LLM voice classifier wired into dispatch behind opt-in flag (May 2, 2026)
+
+**What this ships**: Phase 2 of the v0.8.0 advanced-voice plan. The `classifyIntent` scaffold from v0.7.27 is now actually invoked from the speech-provider as a SECOND-OPINION fallback that runs after the regex classifier (`commands.ts → detectCommand`) returns `null` or low-confidence (<80) AND a cheap local heuristic accepts the utterance as command-like. Default is OFF on every install — the operator opts in per-PC via Admin Modal → Cloud Keys → "AI voice intent fallback (beta)". When OFF, the v0.7.x voice path is bit-for-bit unchanged (no `/api/voice/classify` call is ever made).
+
+**The pipeline gain**: when the operator's voice command uses a phrasing the regex doesn't yet cover (the regex covers ~40 verbs across 13 command kinds and is tuned for short imperative phrasings), the LLM gets a chance to recognise it. Examples that the LLM unblocks: *"could you go back one"*, *"swap to NIV"*, *"show me chapter five verse three"*, *"hide everything"*. The `[AI]` toast prefix lets the operator see at a glance which path fired the command — useful for triage during the beta and for telling us which utterances to back-port into the regex.
+
+**The cost discipline**: the LLM call is GATED behind a 35-trigger-verb command-likeness heuristic (`src/lib/voice/llm-gate.ts:isLikelyCommandUtterance`) so ~95% of sermon utterances skip the OpenAI roundtrip entirely. The heuristic is intentionally cheap and conservative — short utterance (2..12 words) starting with a known command verb (next, previous, show, hide, scroll, switch, find, undo, etc.), OR carrying a structural hint ("verse N", "next verse", "translation niv", "to esv", "autoscroll"), with a wake-word ("media,", "okay", "hey") bypass. 39 unit tests pin the contract.
+
+**The integration safety net**:
+- `classifyIntent` is built to never throw (v0.7.27) and tops out at its own 1.5 s timeout. The fetch in speech-provider is also wrapped in a 2 s `AbortController` belt-and-braces guard.
+- Same dedupe window (4 s) as the regex path, with a separate `lastLlmCmdRef` so a regex-fired command followed by an LLM-fired duplicate doesn't double-execute.
+- Same speaker-follow suspension (2 s) so the highlight doesn't get yanked by the just-spoken command words.
+- `currentReference` is only sent to the LLM when the live slide is a `verse`-type slide; we don't feed it "Welcome" or "Announcement" titles that would mislead the prompt.
+- A returned `reason: 'disabled'` from the server (operator toggled the flag off mid-session) flips the cached client ref to false so subsequent utterances stop wasting roundtrips.
+
+**Files**:
+- NEW `src/lib/voice/llm-gate.ts` — pure heuristic + 35-verb trigger list, dependency-free, 39 tests in `llm-gate.test.ts`.
+- NEW `src/app/api/voice/classify/route.ts` — POST endpoint. Resolves OpenAI key server-side via `process.env` → admin override → baked default (same order as `semantic-matcher.resolveOpenAIKey`); never leaks the key to the renderer. Gates on `RuntimeConfig.enableLlmClassifier`; clamps confidence floor to 1..100; bounds transcript length to 600 chars.
+- NEW `src/app/api/voice/classifier-status/route.ts` — cheap GET probe so the speech-provider can decide ONCE on mount whether to even attempt the POST. Returns `{ enabled, hasApiKey }`. The renderer requires both `enabled === true` AND `hasApiKey === true` before flipping its cached ref.
+- EDITED `src/lib/licensing/storage.ts` — `RuntimeConfig.enableLlmClassifier?: boolean` (default false) and `RuntimeConfig.llmClassifierConfidenceFloor?: number` (default unset → server uses classifier's compiled-in 70).
+- EDITED `src/app/api/license/admin/config/route.ts` — `SavePayload` accepts both new fields with explicit-null clear semantics; the floor is clamped 1..100 server-side as a defence-in-depth check.
+- EDITED `src/components/license/admin-modal.tsx` — opt-in checkbox + numeric floor input added inside the existing Cloud Keys section, gated below the OpenAI/Deepgram key inputs (the LLM fallback genuinely depends on a working OpenAI key, so the placement reinforces the dependency). Both fields are round-tripped on reload (unlike the cloud keys, which are write-once secrets).
+- EDITED `src/components/providers/speech-provider.tsx` — new `llmClassifierEnabledRef` cached on mount via the status endpoint; new `lastLlmCmdRef` dedupe ref; the LLM fallback block lives inside the existing `if (state.voiceControlEnabled)` guard, between the regex command-pre-pass and the v2 reference engine.
+
+**Test coverage**: 39 new tests in `llm-gate.test.ts` (trigger verbs, wake-word bypass, structural hints, sermon-rejection, length cap, case/punctuation, coverage smoke). Full project: 394/394 green, tsc clean.
+
+**What this DOESN'T ship** (deferred to later v0.7.x or v0.8.0 final): the clarification toast (Phase 4 of the v0.8.0 plan), per-PC training-data export (Phase 5), and chapter-verse-count derivation from the live slide (we only send `currentReference`/`currentTranslation`/`currentVerseIndex`/`autoscrollActive` for now — adding `chapterVerseCount` requires parsing the slide content and is a refactor we'd rather land standalone).
+
+## v0.7.28 — AI Verse Search hotfix: strip "here's a verse about" preamble before embedding (May 2, 2026)
+
+**Operator-reported regression**: when the preacher said *"here's a verse about loving your enemies"* the passive AI Scripture Detection chip never surfaced, even though Matthew 5:44 ("Love your enemies, bless them that curse you...") is right there in `POPULAR_VERSES_KJV`. The active `find_by_quote` voice command path worked fine for the same content because its regex already extracts just the topic (group 1 of "find the verse about X"). The passive detector did not have that advantage.
+
+**Root cause** (one-line version): the matcher embedded the FULL sentence — meta-wrapper included — so the words "here's a verse about" dominated the embedding vector and dragged the cosine similarity below the 0.50 medium-confidence threshold. Investigation files: `artifacts/imported-app/src/components/views/scripture-detection.tsx` (passive detector L110-169 → POSTs to `/api/scripture/semantic-match`) → `artifacts/imported-app/src/app/api/scripture/semantic-match/route.ts` → `artifacts/imported-app/src/lib/ai/semantic-matcher.ts:matchTranscriptToVerses` (the embedding call at ~L300). No preamble stripping existed anywhere in that pipeline.
+
+**The fix** (`artifacts/imported-app/src/lib/ai/semantic-matcher.ts`):
+- New exported pure helper `stripIntroducingPreamble(text)` runs 6 conservative regex patterns against the leading text. If one matches, the wrapper is removed; otherwise the input is returned unchanged.
+- Patterns covered:
+  - "here's / here is / there's / this is" + (a|an|the|that|another|one) + (verse|scripture|passage|bible verse) + (about|on|that says|that talks about|that mentions|where|which|saying)
+  - "let me / let's / I want to / I'll / I am going to / we'll" + (read|share|look at|see|find|hear|consider|examine|study) + (a|the|...) + (verse|scripture|passage) + (about|...)
+  - "we have / I have / I've got" + (a|the|...) + (verse|scripture|passage) + (about|...)
+  - Bare openers: "the verse about X", "a scripture about X", "scripture about X", "passage about X"
+- After stripping, a trailing courtesy filler is also dropped: "right?", "you know", "amen", "please", "okay", "ok" plus surrounding punctuation. Two-pass cleanup so "salvation, amen" → "salvation".
+- **Conservative-by-design safety net**: every pattern REQUIRES the explicit "verse|scripture|passage|bible verse" token. This is the critical correctness property — it guarantees we never strip leading words from a real paraphrased verse like "the Lord is my shepherd I shall not want", "for God so loved the world", or "love is patient love is kind". All 5 of those genuine paraphrases are pinned by tests as no-ops.
+- Minimum-length guard: if the stripped result has fewer than 3 word characters (e.g. preacher said "here's a verse about it"), the helper returns the ORIGINAL trimmed text so the matcher at least gets the full sentence to work with.
+- Wired into `matchTranscriptToVerses` immediately before the OpenAI embeddings call. The `input:` passed to `client.embeddings.create` is now the stripped phrase, not the raw transcript.
+
+**Test coverage** (`artifacts/imported-app/src/lib/ai/semantic-matcher.test.ts`, 37 new tests, all passing — full project total now 352/352):
+- The exact operator-reported phrase "here's a verse about loving your enemies" is pinned in test 1 → "loving your enemies".
+- 5 alternative wrapper forms (here is / there's / this is / that says).
+- 5 "let me / I want / I'll / I am going to" verb-led forms.
+- 3 "we have / I have / I've got" possessive forms.
+- 5 bare-opener forms ("the verse about", "scripture about", etc.).
+- 6 "do NOT strip" guards for real paraphrased verses (the Shepherd, John 3:16, 1 Cor 13, Ps 46:10, Phil 4:13, plus a "this verse really speaks" mid-sentence usage).
+- 4 trailing-filler tests (right?, you know, amen, "...").
+- 9 degenerate-input tests (empty, whitespace-only, no-preamble, too-short-after-strip, case-insensitivity, every continuation alternative).
+
+**Why no embedder/cosine integration test in this hotfix**: the embedding + cosine math requires a live OpenAI call, which we deliberately do NOT run in unit tests for cost and determinism reasons. The reported failure mode is fully captured at the stripper layer — once the wrapper is gone, the already-shipped (and operator-tested since v0.7.23) matcher pipeline embeds the topic phrase against `POPULAR_VERSES_KJV` exactly the way it always has, so the chip will surface.
+
+Behaviour change is intentionally narrow: passive AI Scripture Detection only. Voice commands, regex classifier, find_by_quote, slide rendering, and the upcoming v0.7.27 LLM classifier scaffold are unchanged. Phase 2 of the v0.8.0 plan (wiring `classifyIntent` into the dispatcher behind a feature flag) lands separately as v0.7.29.
+
 ## v0.7.27 — LLM intent classifier scaffold (Phase 1 of v0.8.0 advanced voice) (May 2, 2026)
 
 **Scope of this release: infrastructure only, zero behaviour change.** A new module `artifacts/imported-app/src/lib/voice/llm-classifier.ts` and its 57-test unit suite land in the build, but **no call site in the dispatch pipeline has been wired in**. Production voice command handling still goes exclusively through the regex classifier (`commands.ts → detectCommand()`) and the v0.7.23-25 semantic-match fallback. Operators will see no functional difference — this release is reviewable and rollback-able on its own.

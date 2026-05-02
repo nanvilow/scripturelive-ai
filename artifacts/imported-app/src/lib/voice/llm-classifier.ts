@@ -41,6 +41,7 @@ import OpenAI from 'openai'
 import { z } from 'zod'
 
 import type { VoiceCommand, CommandKind } from './commands'
+import { parseExplicitReference } from '@/lib/bibles/reference-engine'
 
 /**
  * The full enumeration of intents the LLM is allowed to return.
@@ -215,16 +216,20 @@ export function llmResponseToCommand(
     }
     case 'go_to_reference':
     case 'bible_says': {
-      // The reference STRING is returned by the LLM but the existing
-      // VoiceCommand shape carries a parsed `DetectedReference`. The
-      // dispatcher (in Phase 2) is responsible for re-running the
-      // canonical reference parser on this string before queueing
-      // the slide. We surface the raw text in `quoteText` as a
-      // temporary carrier so this scaffold is testable without
-      // pulling the reference engine into the unit tests.
+      // v0.7.30 — Phase 2 wiring: re-parse the reference STRING
+      // returned by the LLM through the canonical reference engine
+      // so the dispatcher receives a `DetectedReference` it knows
+      // how to handle. dispatchVoiceCommand requires `cmd.reference`
+      // for these two kinds and no-ops otherwise (silent drop), so
+      // returning a `quoteText` carrier the way the v0.7.27 scaffold
+      // did was a soft-fail. If parsing yields nothing we return
+      // null rather than guessing — the gate + regex pipeline will
+      // still run on the next utterance.
       const r = parsed.args?.reference?.trim()
       if (!r) return null
-      return { ...base, quoteText: r }
+      const reference = parseExplicitReference(r)
+      if (!reference) return null
+      return { ...base, reference }
     }
     default:
       return base
