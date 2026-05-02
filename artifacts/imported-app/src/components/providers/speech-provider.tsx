@@ -1372,7 +1372,19 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         // regex path. The toast carries an "[AI]" prefix so the
         // operator can tell at a glance which path fired the command
         // (helpful for triage during the beta).
-        if (llmClassifierEnabledRef.current && isLikelyCommandUtterance(tail)) {
+        // v0.7.30 — gate the LLM call on the REGEX OUTCOME, not on
+        // whether dispatch happened. Without this guard, a regex
+        // command that matched at >=80 confidence but was dedupe-
+        // suppressed (`lastVoiceCmdRef` 4 s window) would fall
+        // through here and trigger an LLM roundtrip on a command we
+        // already understood — wasting an OpenAI call AND, because
+        // `lastLlmCmdRef` is a SEPARATE dedupe ref, potentially
+        // double-executing the command via the LLM path.
+        if (
+          (!cmd || cmd.confidence < 80) &&
+          llmClassifierEnabledRef.current &&
+          isLikelyCommandUtterance(tail)
+        ) {
           try {
             const slides = state.slides
             const liveIdx = state.liveSlideIndex

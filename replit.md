@@ -1,5 +1,29 @@
 # Recent Changes
 
+## v0.7.30 — Three v0.7.29 code-review fixes BEFORE the operator sees v0.7.29 (May 2, 2026)
+
+**Why this exists**: v0.7.29 shipped Phase 2 of v0.8.0 (LLM voice classifier wired into dispatch). The post-ship architect review caught three real bugs in the wiring that would have produced exactly the failure modes the v0.8.0 plan was supposed to prevent. v0.7.30 fixes all three before the auto-updater publishes v0.7.29 to operators. v0.7.29 stays in the GitHub release history for the audit trail; the auto-updater will skip it once v0.7.30 is published.
+
+**Fix #1 — LLM gate must look at the regex outcome, not at "did dispatch happen"** (`src/components/providers/speech-provider.tsx`):
+- Before v0.7.30: the LLM fallback block ran whenever the regex didn't dispatch — including the case where the regex MATCHED at high confidence but the dedup check (`lastVoiceCmdRef`, 4 s window) suppressed the duplicate. So if the operator said "next verse" twice in 4 s, the regex correctly dropped the second one… and then the LLM block fired anyway, paying for an OpenAI roundtrip on a command we already understood.
+- The compound bug: because `lastLlmCmdRef` is a SEPARATE dedupe ref, the LLM-path could even DOUBLE-EXECUTE the dropped regex command if classifyIntent returned the same intent. That is the exact opposite of the "second-opinion fallback" intent.
+- v0.7.30 fix (one-line condition guard): `if ((!cmd || cmd.confidence < 80) && llmClassifierEnabledRef.current && isLikelyCommandUtterance(tail))`. The LLM now only runs when the regex returned null OR a sub-80 confidence match — i.e. when the regex genuinely needs help. High-confidence regex matches (whether dispatched or dedup-suppressed) skip the LLM. The v2 reference engine and text-search fallbacks downstream are unchanged.
+
+**Fix #2 — `go_to_reference` / `bible_says` from the LLM must dispatch, not soft-fail** (`src/lib/voice/llm-classifier.ts`):
+- Before v0.7.30: when the LLM returned `go_to_reference` (e.g. operator said "could you bring up John 3:16"), the mapper put the reference STRING into `cmd.quoteText` as a "Phase 1 carrier" and added a comment saying "Phase 2 will re-parse this." Phase 2 (v0.7.29) wired the call but never actually did the re-parse. `dispatchVoiceCommand` requires `cmd.reference` (a parsed `DetectedReference`) for those two kinds and silently no-ops without it. Net effect: the entire `go_to_reference` / `bible_says` intent class — arguably the highest-value one for the LLM, since the regex is weakest on natural-language reference phrasing — was a silent drop.
+- v0.7.30 fix: import `parseExplicitReference` from `@/lib/bibles/reference-engine` and call it on the LLM-returned reference string inside the `go_to_reference` / `bible_says` case. The result is set as `cmd.reference`. If parsing fails (e.g. LLM hallucinates "the second one"), return null — better to drop the command than dispatch with a half-formed reference.
+
+**Fix #3 — already covered by Fix #1**: the architect's third finding (separate dedupe refs creating a bypass) is mechanically prevented by Fix #1's gate, since the LLM block now never runs in the dedup-suppressed branch in the first place.
+
+**Test coverage delta**:
+- Updated `llm-classifier.test.ts`:
+  - The `go_to_reference` test now asserts the parsed `DetectedReference` (book "John", chapter 3, verseStart 16) instead of the deprecated `quoteText` carrier, AND explicitly asserts `cmd.quoteText` is undefined.
+  - The `bible_says` test does the same for "Romans 8:28".
+  - NEW test: unparseable LLM hallucination ("the second one over there") returns null instead of dispatching a broken command.
+- Full project: 395/395 green (was 394/394 in v0.7.29 — net +1 from the unparseable-hallucination test), tsc clean.
+
+**No behaviour change for operators with the LLM flag OFF** (still the default on every install). The fixes only affect the opt-in beta path.
+
 ## v0.7.29 — Phase 2 of v0.8.0: LLM voice classifier wired into dispatch behind opt-in flag (May 2, 2026)
 
 **What this ships**: Phase 2 of the v0.8.0 advanced-voice plan. The `classifyIntent` scaffold from v0.7.27 is now actually invoked from the speech-provider as a SECOND-OPINION fallback that runs after the regex classifier (`commands.ts → detectCommand`) returns `null` or low-confidence (<80) AND a cheap local heuristic accepts the utterance as command-like. Default is OFF on every install — the operator opts in per-PC via Admin Modal → Cloud Keys → "AI voice intent fallback (beta)". When OFF, the v0.7.x voice path is bit-for-bit unchanged (no `/api/voice/classify` call is ever made).
