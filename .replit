@@ -2,12 +2,55 @@ modules = ["nodejs-24", "python-3.11"]
 
 # v0.7.18 deploy fix — In a pnpm workspace Replit reads the production
 # build/run from each artifact's `.replit-artifact/artifact.toml`, NOT
-# from this file. Putting `build` and `run` here causes them to run as
-# a PRE-build hook BEFORE each artifact's own build, doubling the work
-# and risking OOM. So we keep this section minimal and only declare the
-# deployment target.
+# from this file. Putting a workspace-wide `build` here would cause the
+# whole workspace to be built at the repo root BEFORE each artifact's
+# own build, doubling the work and risking OOM. So we keep `[deployment]`
+# minimal and only declare the deployment target.
 [deployment]
 deploymentTarget = "autoscale"
+
+# v0.7.33 marketing-site fix (Task #91) — restore the marketing site at
+# scriptureliveai.com without re-introducing the cr-2-4 OOM that
+# motivated SKIP_MARKETING_PREBUILD=1 in the imported-app artifact.
+#
+# Background: Replit Autoscale only promotes ONE service per deploy
+# (see the comment in artifacts/api-server/.replit-artifact/artifact.toml
+# about "Multiple ports are being forwarded"), and the shared proxy
+# routes by path only — there is no host-based routing layer below the
+# Next.js app. So the @workspace/site Vite app cannot be deployed as
+# its own runtime artifact, and scriptureliveai.com must keep funneling
+# through imported-app's `next.config.ts` host rewrite to
+# `/__marketing/index.html`. The marketing bundle therefore has to live
+# on disk inside imported-app's `public/__marketing/` folder at deploy
+# time.
+#
+# The cr-2-4 OOM (4 GB cgroup, see artifacts/imported-app/DEPLOY.md)
+# was triggered by running the @workspace/site Vite build inside
+# imported-app's `prebuild` npm script — i.e. contiguously with the
+# Next 16 webpack build inside the same `pnpm --filter
+# @workspace/imported-app run build` process tree. The previous
+# stop-gap (`SKIP_MARKETING_PREBUILD=1` in the imported-app artifact's
+# build env) unblocked the deploy at the cost of an empty
+# `/__marketing/`, so the host rewrite fell through to Next's default
+# response.
+#
+# This pre-build hook builds ONLY @workspace/site (a small Vite build,
+# peak ~400 MB) and then exits. The whole process tree is torn down
+# before Cloud Run starts the per-artifact build phase, so all of that
+# memory is reclaimed before `next build --webpack` ever starts. The
+# marketing output is copied into `artifacts/imported-app/public/__marketing/`
+# by the existing `copy-marketing.mjs` helper invoked from
+# `maybe-build-marketing.mjs`, and the imported-app's standalone
+# postbuild then copies `public/` into the standalone tree as usual.
+# Local desktop builds (BUILD.bat / package:win / package:mac) never
+# go through `.replit`, so they keep using imported-app's in-artifact
+# `prebuild` path with `SKIP_MARKETING_PREBUILD` unset.
+#
+# We are NOT building the entire workspace here — only the one Vite
+# package that owns the marketing site — so the doubled-work warning
+# above doesn't apply.
+[deployment.build]
+args = ["node", "artifacts/imported-app/scripts/maybe-build-marketing.mjs"]
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
