@@ -1,5 +1,5 @@
 kind = "web"
-previewPath = "/site/"
+previewPath = "/"
 title = "ScriptureLive AI — Website"
 version = "1.0.0"
 id = "artifacts/site"
@@ -11,7 +11,7 @@ version = "1.0.0"
 
 [[services]]
 name = "web"
-paths = [ "/site/" ]
+paths = [ "/" ]
 localPort = 21238
 
 [services.development]
@@ -28,4 +28,4 @@ to = "/index.html"
 
 [services.env]
 PORT = "21238"
-BASE_PATH = "/site/"
+BASE_PATH = "/"

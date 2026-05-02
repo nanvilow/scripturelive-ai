@@ -13,7 +13,7 @@ export default function NotFound() {
           The page you were looking for doesn't exist.
         </p>
         <Button asChild className="bg-primary text-primary-foreground hover:bg-primary/90">
-          <a href="/site/">Back to ScriptureLive AI</a>
+          <a href="/">Back to ScriptureLive AI</a>
         </Button>
       </div>
     </div>

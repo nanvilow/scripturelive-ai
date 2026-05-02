@@ -10,7 +10,7 @@ interface SEOProps {
 export function SEO({
   title = "ScriptureLive AI | The Sunday-Morning Operator Console",
   description = "Built for Ghanaian churches who livestream — it hears the preacher, finds the verse, and puts it on the screen before the congregation even thinks to look it up.",
-  image = "/site/opengraph.jpg",
+  image = "/opengraph.jpg",
   url = "https://github.com/nanvilow/scripturelive-ai"
 }: SEOProps) {
   return (

@@ -1,5 +1,5 @@
 kind = "web"
-  previewPath = "/"
+  previewPath = "/__imported-app"
   title = "Imported App"
   version = "1.0.0"
   id = "artifacts/imported-app"
@@ -11,7 +11,7 @@ kind = "web"
 
   [[services]]
   name = "web"
-  paths = [ "/api", "/" ]
+  paths = [ "/api" ]
   localPort = 25650
 
   [services.development]
@@ -37,4 +37,3 @@ kind = "web"
   [services.env]
   PORT = "25650"
   BASE_PATH = "/"
-  
