@@ -114,7 +114,12 @@ export interface LlmClassifierContext {
 export interface LlmClassifierOptions {
   /** API key. In production this is the baked operator key. */
   apiKey: string
-  /** Model to call. Default `gpt-5-nano` for speed + cost. */
+  /** Model to call. Default `gpt-4o-mini` for speed, cost, AND
+   *  compatibility with `temperature: 0` + `response_format` JSON
+   *  mode. v0.7.31 reverted from `gpt-5-nano` after live testing
+   *  showed gpt-5-nano (a reasoning model) rejects `temperature: 0`
+   *  with HTTP 400 'Unsupported value' and our broad try/catch
+   *  swallowed the error as a silent no-op classification. */
   model?: string
   /** Override the OpenAI client (used by tests). */
   client?: OpenAI
@@ -126,7 +131,7 @@ export interface LlmClassifierOptions {
   timeoutMs?: number
 }
 
-const DEFAULT_MODEL = 'gpt-5-nano'
+const DEFAULT_MODEL = 'gpt-4o-mini'
 const DEFAULT_CONFIDENCE_FLOOR = 70
 const DEFAULT_TIMEOUT_MS = 1500
 

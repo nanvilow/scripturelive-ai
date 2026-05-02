@@ -19,7 +19,7 @@
 //   3. Reject everything else.
 //
 // Why a hand-rolled heuristic instead of letting the LLM decide:
-//   - Cost: at $0.15 / 1M input tokens for gpt-5-nano, every
+//   - Cost: at $0.15 / 1M input tokens for gpt-4o-mini, every
 //     utterance call is cheap — but a full sermon transcript
 //     contains thousands of utterances and we don't want to wait
 //     1.5 s on every one of them just to learn "no command here".

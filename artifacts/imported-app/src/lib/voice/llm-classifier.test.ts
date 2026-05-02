@@ -492,6 +492,31 @@ describe('classifyIntent — happy path', () => {
     })
     expect(mock.chat.completions.create.mock.calls[0][0].model).toBe('gpt-5.4')
   })
+
+  // v0.7.31 regression: the default model MUST be one that supports
+  // `temperature: 0` + `response_format: { type: 'json_object' }`.
+  // gpt-5-nano (a reasoning model) rejects temperature: 0 with HTTP
+  // 400, our broad try/catch swallowed it, and every utterance came
+  // back as a silent null in live testing. Pin the default to a
+  // chat-completions model family so this can't regress.
+  it('default model is a chat-completions model that supports temperature:0 + JSON mode', async () => {
+    const mock = makeClientReturning(
+      JSON.stringify({ intent: null, confidence: 0 }),
+    )
+    await classifyIntent('whatever', undefined, {
+      apiKey: 'test',
+      client: asClient(mock),
+      // no `model` override — must use DEFAULT_MODEL
+    })
+    const args = mock.chat.completions.create.mock.calls[0][0]
+    expect(args.model).toBe('gpt-4o-mini')
+    expect(args.temperature).toBe(0)
+    expect(args.response_format).toEqual({ type: 'json_object' })
+    // Belt-and-braces: forbid the gpt-5-* reasoning families that
+    // are known to reject `temperature: 0`.
+    expect(args.model).not.toMatch(/^gpt-5/)
+    expect(args.model).not.toMatch(/^o[1-9]/)
+  })
 })
 
 describe('classifyIntent — defensive returns null', () => {

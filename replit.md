@@ -1,5 +1,30 @@
 # Recent Changes
 
+## v0.7.31 — LLM voice classifier hotfix: switch default model from `gpt-5-nano` to `gpt-4o-mini` (May 2, 2026)
+
+**The bug** (caught in live Replit-dev smoke testing of v0.7.30, BEFORE any operator turned the flag on): with `enableLlmClassifier: true`, every utterance — including obvious commands like *"next verse"*, *"could you bring up John 3:16"*, *"swap to NIV"* — came back from `/api/voice/classify` as `{ok: true, command: null}`. HTTP 200, plausible 0.1–1.8 s timings, but the classifier was silently dropping every single intent. The opt-in feature shipped in v0.7.29 was 100% non-functional in practice.
+
+**Root cause** (single line): the classifier's `DEFAULT_MODEL` was set to `'gpt-5-nano'`. gpt-5-nano is a reasoning-family model and OpenAI rejects `temperature: 0` against it with `HTTP 400 — Unsupported value: 'temperature' does not support 0 with this model. Only the default (1) value is supported.` The classifier passes `temperature: 0` (correct for deterministic intent classification) so 100% of `chat.completions.create` calls threw before returning. `classifyIntent`'s deliberately broad `try/catch` then swallowed the exception per its no-throw contract and returned `null`. The route saw `null`, replied `{ok: true, command: null}`, and the operator-visible symptom was "AI fallback does literally nothing."
+
+**Why this slipped past v0.7.27 / v0.7.29 / v0.7.30 reviews**: the `gpt-5-nano` choice was made by the v0.7.27 author for cost/speed reasoning ("Default `gpt-5-nano` for speed + cost"), and every test in `llm-classifier.test.ts` (54 of them) uses an INJECTED mock OpenAI client — none of them ever actually hit the real OpenAI API or noticed that gpt-5-nano + `temperature: 0` is incompatible. The architect reviews were also offline-only. The model-incompatibility was only detectable by a live smoke test of the actual `/api/voice/classify` endpoint with a real key — which is exactly what we ran tonight.
+
+**The fix** (3 lines of code, 1 line of comment, 1 regression test):
+- `src/lib/voice/llm-classifier.ts`: `DEFAULT_MODEL = 'gpt-4o-mini'`. gpt-4o-mini is a chat-completions-family model, supports `temperature: 0` AND `response_format: { type: 'json_object' }`, costs $0.15 / 1M input tokens (same order as gpt-5-nano), and was already what the prompt + JSON mode + temperature: 0 design was tuned for. The `LlmClassifierOptions.model` JSDoc gained a paragraph documenting WHY this default cannot be a `gpt-5-*` reasoning model. The `llm-gate.ts` cost comment updated to match.
+- `src/lib/voice/llm-classifier.test.ts`: NEW regression test that calls `classifyIntent` WITHOUT a `model` override (so the default kicks in) and asserts (a) `args.model === 'gpt-4o-mini'`, (b) `args.temperature === 0`, (c) `args.response_format === { type: 'json_object' }`, (d) `args.model !== /^gpt-5/`, (e) `args.model !== /^o[1-9]/`. The two regex guards are belt-and-braces — if a future contributor swaps the default to gpt-5-mini or o3-mini, the test fails BEFORE the live behaviour does. 396/396 tests green (was 395 — net +1).
+
+**The live verification** (the test that actually proved the bug + the fix):
+- BEFORE the fix (gpt-5-nano): direct OpenAI call from this Replit env with the production prompt + `temperature: 0` → `HTTP 400 Unsupported value`. Same model with `temperature: 1` → would have worked but loses determinism (intent classifications would flap).
+- AFTER the fix (gpt-4o-mini), all 4 transcripts via the actual `/api/voice/classify` endpoint:
+  - *"next verse"* → `{kind:'next_verse', confidence:95, label:'Next verse'}` ✓ (0.92 s)
+  - *"could you bring up John 3:16"* → `{kind:'go_to_reference', confidence:90, reference:{book:'John', chapter:3, verseStart:16}}` ✓ (1.05 s)
+  - *"swap to NIV"* → `{kind:'change_translation', confidence:90, translation:'niv'}` ✓ (1.33 s)
+  - sermon line *"and so we see that the Lord is faithful in every season of our lives"* → `command: null` ✓ (1.12 s)
+- That is the v0.7.29 contract working end-to-end for the first time, including the v0.7.30 `parseExplicitReference` re-parse for `go_to_reference` (note `reference.book === 'John'`).
+
+**No effect on operators with the flag OFF** (the default on every install): `/api/voice/classify` is never called in that path. v0.7.31 only changes behaviour for operators who opted in to the AI fallback.
+
+**Files**: `src/lib/voice/llm-classifier.ts` (default model + JSDoc), `src/lib/voice/llm-classifier.test.ts` (+1 regression test), `src/lib/voice/llm-gate.ts` (cost-comment model name), `package.json` (0.7.30 → 0.7.31).
+
 ## v0.7.30 — Three v0.7.29 code-review fixes BEFORE the operator sees v0.7.29 (May 2, 2026)
 
 **Why this exists**: v0.7.29 shipped Phase 2 of v0.8.0 (LLM voice classifier wired into dispatch). The post-ship architect review caught three real bugs in the wiring that would have produced exactly the failure modes the v0.8.0 plan was supposed to prevent. v0.7.30 fixes all three before the auto-updater publishes v0.7.29 to operators. v0.7.29 stays in the GitHub release history for the audit trail; the auto-updater will skip it once v0.7.30 is published.
