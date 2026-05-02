@@ -35,17 +35,38 @@
 import OpenAI from 'openai'
 import { POPULAR_VERSES_KJV, type PopularVerse } from './popular-verses'
 import { getConfig } from '@/lib/licensing/storage'
+import { getOpenAIKey as getBakedOpenAIKey } from '@/lib/baked-credentials'
 
-// v0.7.24 — Resolve the OpenAI API key from two sources:
-//   1. process.env.OPENAI_API_KEY (developer / packaged-installer env)
-//   2. Admin license config — the existing `adminOpenAIKey` field
-//      operators can set in the in-app Admin modal
-//      (src/components/license/admin-modal.tsx). Until v0.7.24 this
-//      field was stored but never wired to the matcher, so admins
-//      who DID set the key still saw "AI features unavailable".
+// v0.7.25 — Resolve the OpenAI API key from THREE sources, in
+// priority order. This matches the Deepgram philosophy
+// (runtime-keys.ts): the .exe ships working out of the box, but
+// admins can override per-PC if they want to use their own
+// OpenAI account.
 //
-// Order matters: env wins so packaged-installer overrides remain
-// possible, but the admin-set key is honoured automatically.
+//   1. process.env.OPENAI_API_KEY
+//        Dev override; also what the GitHub Actions build sets so
+//        the inject-keys script can bake it. At runtime in a
+//        packaged .exe this is normally empty.
+//   2. License config `adminOpenAIKey`
+//        Per-PC override an admin paste into the Admin modal
+//        (src/components/license/admin-modal.tsx). Lets a single
+//        church re-bill a different account without touching the
+//        installer.
+//   3. BAKED_OPENAI_KEY (via getBakedOpenAIKey)
+//        The build-time bake, populated by scripts/inject-keys.mjs
+//        from the OPENAI_API_KEY env var. This is what makes AI
+//        features work for every operator out of the box, with no
+//        configuration required.
+//
+// History:
+//   v0.7.20 ripped the OpenAI bake out entirely (operator was
+//   moving to Deepgram-only at the time). v0.7.23 added AI Verse
+//   Search and v0.7.24 added passive AI Scripture Detection — both
+//   need OpenAI. v0.7.24 wired through the per-PC license override
+//   only, which still required every operator to paste their own
+//   key. v0.7.25 restores the bake on the SERVER side (the matcher
+//   runs in the Next.js API route, never in the renderer) so the
+//   key never reaches the browser bundle.
 function resolveOpenAIKey(): string | undefined {
   const envKey = process.env.OPENAI_API_KEY
   if (envKey && envKey.trim().length > 0) return envKey.trim()
@@ -55,7 +76,18 @@ function resolveOpenAIKey(): string | undefined {
     if (adminKey && adminKey.trim().length > 0) return adminKey.trim()
   } catch {
     // Defensive — license storage may not be initialised in unit
-    // tests / SSR contexts. Behave as if no key is configured.
+    // tests / SSR contexts. Fall through to the bake.
+  }
+  try {
+    const baked = getBakedOpenAIKey()
+    if (baked && baked.trim().length > 0) return baked.trim()
+  } catch {
+    // Defensive — baked-credentials.ts is generated at build time
+    // by scripts/inject-keys.mjs. In development before the script
+    // has ever run the import would still resolve (the file exists)
+    // but the helper would return ''. The try/catch is belt-and-
+    // braces against future refactors that might make the import
+    // optional.
   }
   return undefined
 }
