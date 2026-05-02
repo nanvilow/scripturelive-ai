@@ -14,27 +14,6 @@ args = ["pnpm", "store", "prune"]
 env = { "CI" = "true" }
 
 [workflows]
-runButton = "Project"
-
-[[workflows.workflow]]
-name = "Project"
-mode = "parallel"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "imported-app-build"
-
-[[workflows.workflow]]
-name = "imported-app-build"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd artifacts/imported-app && SKIP_MARKETING_PREBUILD=1 NODE_OPTIONS=--max-old-space-size=3584 NEXT_TELEMETRY_DISABLED=1 NODE_ENV=production pnpm run build"
-
-[workflows.workflow.metadata]
-isValidation = true
 
 [agent]
 stack = "PNPM_WORKSPACE"
