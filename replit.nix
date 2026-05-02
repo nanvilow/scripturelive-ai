@@ -1,6 +1,6 @@
 {pkgs}: {
   deps = [
-    pkgs.wine64
+    pkgs.wineWowPackages.stable
     pkgs.xvfb-run
     pkgs.xorg.xorgserver
     pkgs.xorg.libXtst

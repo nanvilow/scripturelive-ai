@@ -1,5 +1,22 @@
 # Recent Changes
 
+## v0.7.33 — Repeatable Linux cross-build of the Windows .exe (May 2, 2026)
+
+**The product change**: `scripts/linux-build-windows-exe.sh` is now a one-shot, idempotent emergency builder. After v0.7.32 had to be hand-cranked from Linux with two undocumented hacks (a fake `~/.local/bin/wine` shell stub + a manual `nsis`→`portable` flip in `electron-builder.yml`), this script bakes the working flow into git so the next "GitHub push is blocked but I need an .exe NOW" emergency takes minutes instead of hours. See `docs/EMERGENCY_LINUX_BUILD.md` for the full story.
+
+**Two distinct root causes, separately fixed**:
+1. **`pkgs.wine64` was 64-bit only** → `wineboot` hung at the `setupapi InstallHinfSection` step trying to bootstrap a wineprefix without 32-bit support. **Fixed** by swapping `replit.nix` to `pkgs.wineWowPackages.stable` (full WoW build, both 32 and 64-bit subsystems). With `WINEARCH=win64` lock-in the script's `wine64 wineboot --init` now finishes in ~5 seconds instead of hanging forever.
+2. **Replit container's seccomp filter (`Seccomp:2`) kills 32-bit ELF binaries with `SIGSYS` the moment they touch the i386 syscall ABI**. Verified empirically: a static 32-bit hello-world doing nothing but `int 0x80` exits with status 159 (= 128 + SIGSYS) without printing anything. This means the 32-bit `wine` launcher AND the NSIS Setup stub (a 32-bit PE) cannot run in this container regardless of wine version. **Cannot be fixed from inside the container** — it needs Replit infra to relax the filter. Workaround: the script auto-detects 32-bit ABI availability with a 5-second `wine --version` probe and falls back to `--config.win.target=portable` when blocked. `electron-builder.yml` stays canonical NSIS forever — the override is per-invocation on the CLI.
+
+**Bonus win over v0.7.32**: rcedit metadata (icon, file description, product name, version) is now correctly stamped on the output .exe. v0.7.32's wine shell stub no-op'd rcedit, so that .exe shipped with default Electron values in its PE resources. With real `wine64` running real `rcedit.exe` (a 64-bit PE — unaffected by the seccomp filter), metadata stamping works whether the final target is NSIS or portable.
+
+**Files added/changed**:
+- `replit.nix` — `pkgs.wine64` → `pkgs.wineWowPackages.stable` (managed via `installSystemDependencies`).
+- `scripts/linux-build-windows-exe.sh` — the script. Idempotent: cleans `release/` and `~/.wine` between runs. Removes any stale `~/.local/bin/wine` stub from v0.7.32. Locks `WINEARCH=win64` so the prefix never tries to spawn 32-bit init helpers that would crash. `SKIP_INSTALL=1`, `SKIP_BUILD=1`, `FORCE_TARGET=nsis|portable` env overrides for fast iteration.
+- `docs/EMERGENCY_LINUX_BUILD.md` — when to use it (only when GH push is blocked AND operator needs the .exe NOW), what you get, what you don't get, and detailed troubleshooting.
+
+**The script is NOT a replacement for GitHub Actions**: every routine Windows build should still go through the GH Actions Windows runner — that path signs with the operator's Authenticode cert, produces real NSIS auto-updatable installers, and uploads to a GitHub Release. The Linux script produces an unsigned .exe that is portable on this container (no auto-update on the resulting build). Use only in emergencies.
+
 ## v0.7.32 — Windows .exe delivered via Linux Replit cross-build (May 2, 2026)
 
 **The situation**: GitHub push of v0.7.32 is currently blocked because commit `aa514257` contains a leaked OpenAI key in `.replit:47-50` (`sk-proj-Ydk…`). The normal ship path (push → GitHub Actions runs Windows build → release .exe) is broken until the secret is rotated and the offending commit is rewritten/force-pushed. The operator asked for the .exe right away, so v0.7.32 was cross-built from the Linux Replit container instead.
