@@ -1,0 +1,77 @@
+Lockfile is up to date, resolution step is skipped
+
+Progress: resolved 0, reused 1, downloaded 0, added 0
+
+Progress: resolved 0, reused 40, downloaded 0, added 0
+
+Progress: resolved 0, reused 46, downloaded 0, added 0
+
+Packages: +12 -37
+++++++++++++-------------------------------------
+
+Progress: resolved 0, reused 47, downloaded 0, added 12
+
+Progress: resolved 0, reused 47, downloaded 0, added 12, done
+
+. preinstall$ sh -c 'rm -f package-lock.json yarn.lock; case "$npm_config_user_agent" in pnpm/*) ;; *) echo "Use pnpm instead" >&2; exit 1 ;; esac'
+
+. preinstall: Done
+
+. prepare$ node -e "try{var c=require('child_process');c.execSync('git rev-parse --is-inside-work-tree',{stdio:'ignore'});c.execSync('git config core.hooksPath .githooks',{stdio:'ignore'})}catch(e){}"
+
+. prepare: Done
+
+artifacts/imported-app postinstall$ node -e "process.exit(0)"
+
+artifacts/imported-app postinstall: Done
+
+Done in 5.1s using pnpm v10.26.1
+
+2026-05-02T18:58:08Z info: Starting Build
+
+> @workspace/imported-app@0.7.39 prebuild /home/runner/workspace/artifacts/imported-app
+> node scripts/inject-keys.mjs
+
+
+[inject-keys] renderer: DEEPGRAM=40 chars
+[inject-keys] server:   MAIL_HOST=SET MAIL_USER=SET MAIL_PASS=19 chars MAIL_FROM=SET SMS_API_KEY=25 chars SMS_SENDER=SET ADMIN_PASSWORD=EMPTY (default "admin" will apply) OPENAI=164 chars
+
+
+> @workspace/imported-app@0.7.39 build /home/runner/workspace/artifacts/imported-app
+> cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build --webpack
+
+
+Prisma schema loaded from prisma/schema.prisma
+
+┌─────────────────────────────────────────────────────────┐
+│  Update available 6.19.3 -> 7.8.0                       │
+│                                                         │
+│  This is a major update - please follow the guide at    │
+│  https://pris.ly/d/major-version-upgrade                │
+│                                                         │
+│  Run the following to update                            │
+│    npm i --save-dev prisma@latest                       │
+│    npm i @prisma/client@latest                          │
+└─────────────────────────────────────────────────────────┘
+
+
+✔ Generated Prisma Client (v6.19.3) to ./src/generated/prisma-client in 232ms
+
+Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+
+Tip: Want to turn off tips and other hints? https://pris.ly/tip-4-nohints
+
+
+▲ Next.js 16.2.4 (webpack)
+
+- Experiments (use with caution):
+  · cpus: 1
+  ✓ webpackMemoryOptimizations
+
+  Creating an optimized production build ...
+
+⚠ Production code optimization has been disabled in your project. Read more: https://nextjs.org/docs/messages/minification-disabled
+
+/home/runner/workspace/artifacts/imported-app:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/imported-app@0.7.39 build: `cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build --webpack`
+Exit status 1
