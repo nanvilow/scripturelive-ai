@@ -1,5 +1,24 @@
 # Recent Changes
 
+## v0.7.49 — Hotfix #6: physically strip `node_modules/@workspace` before electron-builder (May 2, 2026)
+
+**v0.7.48's exclude pattern didn't help.** Same exact failure:
+
+```
+⨯ D:\...\lib\pricing\package.json must be under D:\...\artifacts\imported-app\
+```
+
+`app-builder-lib` follows symlinks during file *discovery* and validates the resolved real path is under the app dir BEFORE the `files` exclude patterns are evaluated. So `"!node_modules/@workspace/**/*"` is unreachable — by the time the matcher would see it, the validation has already thrown.
+
+**New approach:** delete the symlink itself before electron-builder runs. Added a tiny `strip:workspace-symlinks` script (`node -e "fs.rmSync('node_modules/@workspace',{recursive:true,force:true})"`) and wired it into `package`, `package:win`, and `package:mac` between `electron:build` and `electron-builder`. Cross-platform (uses Node fs), idempotent (force:true), and safe at this point in the pipeline because:
+
+- `next build` has already finished (webpack inlined `@workspace/pricing` into the .next chunks).
+- `extraResources` ships the standalone bundle that contains the inlined code.
+- Electron's main process never `require()`s `@workspace/pricing` directly.
+- `pnpm install` re-creates the symlink for the next build, so dev is unaffected.
+
+The exclude pattern in `electron-builder.yml` is kept as belt-and-suspenders for any future workspace dep that slips through.
+
 ## v0.7.48 — Hotfix #5: exclude `@workspace/pricing` symlink from electron-builder asar (May 2, 2026)
 
 **v0.7.47 cleared the missing-module error.** Next.js compiled successfully in 22.6 s, all 17 pages prerendered cleanly, the standalone bundle was assembled. The build then advanced into electron-builder for the first time in five attempts and failed with:

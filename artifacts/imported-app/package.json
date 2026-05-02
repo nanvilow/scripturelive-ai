@@ -1,6 +1,6 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.7.48",
+  "version": "0.7.49",
   "private": true,
   "main": "dist-electron/main.js",
   "repository": {
@@ -25,9 +25,10 @@
     "db:reset": "prisma migrate reset",
     "electron:build": "tsc -p electron/tsconfig.json",
     "electron:dev": "pnpm run electron:build && cross-env NEXT_DEV_URL=http://localhost:3000 electron dist-electron/main.js",
-    "package": "cross-env NEXT_OUTPUT_STANDALONE=1 pnpm run build && pnpm run electron:build && electron-builder --config electron-builder.yml && pnpm run downloads:manifest",
-    "package:win": "cross-env NEXT_OUTPUT_STANDALONE=1 pnpm run build && pnpm run electron:build && electron-builder --config electron-builder.yml --win --publish never && pnpm run downloads:manifest",
-    "package:mac": "cross-env NEXT_OUTPUT_STANDALONE=1 pnpm run build && pnpm run electron:build && electron-builder --config electron-builder.yml --mac && pnpm run downloads:manifest",
+    "strip:workspace-symlinks": "node -e \"require('fs').rmSync('node_modules/@workspace',{recursive:true,force:true})\"",
+    "package": "cross-env NEXT_OUTPUT_STANDALONE=1 pnpm run build && pnpm run electron:build && pnpm run strip:workspace-symlinks && electron-builder --config electron-builder.yml && pnpm run downloads:manifest",
+    "package:win": "cross-env NEXT_OUTPUT_STANDALONE=1 pnpm run build && pnpm run electron:build && pnpm run strip:workspace-symlinks && electron-builder --config electron-builder.yml --win --publish never && pnpm run downloads:manifest",
+    "package:mac": "cross-env NEXT_OUTPUT_STANDALONE=1 pnpm run build && pnpm run electron:build && pnpm run strip:workspace-symlinks && electron-builder --config electron-builder.yml --mac && pnpm run downloads:manifest",
     "downloads:manifest": "node scripts/update-download-manifest.mjs",
     "postbuild": "node scripts/copy-standalone-assets.mjs",
     "training:generate": "node scripts/voice-training/generate.mjs"
