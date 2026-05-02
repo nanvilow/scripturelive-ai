@@ -1,5 +1,40 @@
 # Recent Changes
 
+## v0.7.27 — LLM intent classifier scaffold (Phase 1 of v0.8.0 advanced voice) (May 2, 2026)
+
+**Scope of this release: infrastructure only, zero behaviour change.** A new module `artifacts/imported-app/src/lib/voice/llm-classifier.ts` and its 57-test unit suite land in the build, but **no call site in the dispatch pipeline has been wired in**. Production voice command handling still goes exclusively through the regex classifier (`commands.ts → detectCommand()`) and the v0.7.23-25 semantic-match fallback. Operators will see no functional difference — this release is reviewable and rollback-able on its own.
+
+Why ship it standalone: keeping the LLM classifier scaffold separate from the dispatcher wiring means we can land it, run typecheck + the existing 315-test suite green, and ship it without risking a regression in the live voice command path. The Phase 2 release (which actually invokes `classifyIntent` from the dispatcher behind a feature flag) can then reference a stable, reviewed contract instead of bundling the contract change with the wire-in.
+
+**What the new module does (when Phase 2 wires it in):**
+- Public surface: `classifyIntent(transcript, context, options) → Promise<VoiceCommand | null>`. Returns the SAME `VoiceCommand` shape as the regex classifier so the dispatcher and toast layer don't need a new branch.
+- Calls OpenAI chat completions with `response_format: { type: 'json_object' }`, `temperature: 0`, default model `gpt-5-nano` for speed and cost. The response is parsed with a strict Zod schema (`LlmClassifierResponseSchema`) — unknown intent values, out-of-range confidence, and malformed JSON all return null instead of throwing.
+- 17 supported intents declared in `LLM_INTENT_KINDS` with a `satisfies readonly CommandKind[]` assertion that fails CI if `commands.ts` adds a new `CommandKind` without updating the classifier list.
+- Default confidence floor 70 (configurable per call). Default timeout 1500 ms via an internal `AbortController` that combines with the caller's `AbortSignal` so EITHER trips abort.
+- Lazy singleton OpenAI client cache scoped by API key, mirroring the pattern in `src/lib/ai/semantic-matcher.ts`.
+- `buildUserPrompt(transcript, context)` is exported as a pure helper so the wire format is snapshot-testable. Live slide context (current reference, translation, verse index, chapter verse count, autoscroll state) is included verbatim so the LLM can resolve deictic phrases like "the next one" or "go back two" — important for the kind of natural English a preacher uses mid-sermon.
+- `llmResponseToCommand(parsed, floor)` is also exported and pure. It enforces args contracts: `change_translation` requires a non-empty translation code (lowercased), `show_verse_n` requires a positive integer `verseNumber`, `find_by_quote` requires non-whitespace `quoteText`, and `go_to_reference` / `bible_says` require a `reference` string (carried in `quoteText` as a temporary Phase 1 convention; Phase 2 will re-parse it through the canonical reference engine before queueing a slide).
+- `classifyIntent` NEVER throws. Network failure, abort, schema rejection, malformed JSON — all return null so the dispatcher can transparently fall back to the regex classifier.
+
+**Test coverage** (`src/lib/voice/llm-classifier.test.ts`, 57 tests, all passing):
+- Schema validation: 7 tests for valid/invalid responses, confidence bounds, verseNumber constraints.
+- `llmResponseToCommand`: 24 tests covering null intent, sub-floor confidence, fractional confidence rounding, every args-required intent's missing-args path, and parametric coverage of all 12 arg-free intents.
+- `buildUserPrompt`: 5 tests for transcript JSON-encoding, context field inclusion/omission, and the boolean-vs-falsy edge case for `autoscrollActive: false`.
+- `classifyIntent` happy path: 4 tests for the OpenAI call shape (system + user message order, response_format, temperature, model override).
+- `classifyIntent` defensive returns: 9 tests for empty transcript (no model call), missing apiKey, null content, non-JSON, schema-failing JSON, default + custom confidence floor, network rejection, and pre-aborted signal.
+- `classifyIntent` args integration: 4 tests for translation normalisation, verseNumber, quote text, and empty-translation rejection.
+- All 17 `CommandKind` values are pinned by name in a smoke list so a rename in `commands.ts` fails the test instead of silently desyncing.
+
+The OpenAI client is fully mocked in tests (no live model calls, no network). A future operator-driven QA pass — NOT in this release — will run a few hundred real transcript samples through the model to tune the confidence floor and prompt wording before Phase 2 ships.
+
+**The full v0.8.0 hybrid plan** (saved at `.local/plans/voice-v2-plan.md`):
+1. Regex classifier first; if it returns ≥ 90 confidence, dispatch immediately. (Current path — fastest, zero LLM cost, zero network latency.)
+2. If regex returns null and the utterance looks like a command candidate (verb-led, short), call this LLM classifier with live slide context. **← Phase 2 wire-in, separate release.**
+3. If LLM returns ≥ 70 confidence, dispatch. Otherwise surface a clarification toast ("Did you mean: skip to next verse?"). **← Phase 4 release.**
+4. Embedding-based semantic fallback for `find_by_quote` stays as-is (already shipped in v0.7.23/24/25).
+
+Each subsequent phase will be a separate operator-visible release with its own changelog entry, settings toggle, and rollback path.
+
 ## v0.7.26 — Faster updater UX: background auto-download + parallelism 4 → 6 (May 2, 2026)
 
 Operator pain point this addresses: on Ghana office links, even with the v0.7.17 4-way parallel downloader, a 70 MB installer takes 1-3 minutes between the operator clicking "Download" and the "Restart to install" button enabling. Operators were either restarting the app mid-download (losing the partial transfer because v0.7.17 doesn't resume) or abandoning the update entirely and staying on an older version.
