@@ -164,43 +164,55 @@ const nextConfig: NextConfig = {
   // Terser/minification is now back on (re-enabling it shaves
   // ~30-50% off shipped client bundles), gated only behind the
   // DISABLE_MINIFY=1 escape hatch in the webpack callback below.
-  experimental: {
-    webpackMemoryOptimizations: true,
-    cpus: 1,
-    // v0.7.40 — Force aggressive tree-shaking of barrel-import
-    // packages that webpack would otherwise pull whole-module into
-    // every chunk that imports anything from them. lucide-react is
-    // the worst offender: logos-shell.tsx alone references 30+
-    // icons via the `import { A, B, C, ... } from 'lucide-react'`
-    // pattern, and without explicit optimizePackageImports webpack
-    // can end up holding the whole icon set's module records in
-    // memory across every chunk that uses any icon. Even though
-    // Next 16 has lucide-react in its defaults, listing it here
-    // explicitly is documented to be more aggressive (it switches
-    // from "modularize" to "package-import-optimization" pass).
-    optimizePackageImports: [
-      "lucide-react",
-      "@radix-ui/react-dialog",
-      "@radix-ui/react-dropdown-menu",
-      "@radix-ui/react-popover",
-      "@radix-ui/react-select",
-      "@radix-ui/react-tabs",
-      "@radix-ui/react-tooltip",
-      "@radix-ui/react-accordion",
-      "@radix-ui/react-checkbox",
-      "@radix-ui/react-label",
-      "@radix-ui/react-progress",
-      "@radix-ui/react-radio-group",
-      "@radix-ui/react-scroll-area",
-      "@radix-ui/react-separator",
-      "@radix-ui/react-slider",
-      "@radix-ui/react-slot",
-      "@radix-ui/react-switch",
-      "@radix-ui/react-toast",
-      "sonner",
-      "recharts",
-    ],
-  },
+  // v0.7.44 hotfix — Gate the Cloud-Run-only experimental knobs behind
+  // !enableStandalone. The Electron Windows installer build runs with
+  // NEXT_OUTPUT_STANDALONE=1 on a beefy GHA runner where these knobs
+  // give zero benefit. On Windows specifically, listing `recharts` in
+  // optimizePackageImports caused webpack's barrel-import resolver to
+  // glob upward looking for the package (recharts isn't in this app's
+  // own package.json — it's hoisted into the workspace node_modules
+  // by artifacts/site and artifacts/mockup-sandbox). The walk tripped
+  // on the legacy `C:\Users\<user>\Application Data` junction with
+  // EPERM, breaking the v0.7.43 release CI:
+  //   glob error [Error: EPERM: operation not permitted, scandir
+  //   'C:\Users\runneradmin\Application Data']
+  // Restoring the v0.7.32-style minimal config for the standalone
+  // path is the safest fix — that build was the last known green
+  // Windows release. Cloud Run (where standalone is OFF) keeps all
+  // the OOM mitigations untouched.
+  ...(enableStandalone ? {} : {
+    experimental: {
+      webpackMemoryOptimizations: true,
+      cpus: 1,
+      // Force aggressive tree-shaking of barrel-import packages that
+      // webpack would otherwise pull whole-module into every chunk that
+      // imports anything from them. lucide-react is the worst offender.
+      // Note: `recharts` is intentionally NOT listed here — it isn't a
+      // direct dep of this app (only of artifacts/site), and naming it
+      // triggered the Windows EPERM described above.
+      optimizePackageImports: [
+        "lucide-react",
+        "@radix-ui/react-dialog",
+        "@radix-ui/react-dropdown-menu",
+        "@radix-ui/react-popover",
+        "@radix-ui/react-select",
+        "@radix-ui/react-tabs",
+        "@radix-ui/react-tooltip",
+        "@radix-ui/react-accordion",
+        "@radix-ui/react-checkbox",
+        "@radix-ui/react-label",
+        "@radix-ui/react-progress",
+        "@radix-ui/react-radio-group",
+        "@radix-ui/react-scroll-area",
+        "@radix-ui/react-separator",
+        "@radix-ui/react-slider",
+        "@radix-ui/react-slot",
+        "@radix-ui/react-switch",
+        "@radix-ui/react-toast",
+        "sonner",
+      ],
+    },
+  }),
   // Disable production source maps. They were already off by default
   // (Next 16 omits them unless you opt in) — making it explicit so a
   // future toggle can't silently bring back the OOM by serialising a

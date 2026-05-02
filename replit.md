@@ -1,5 +1,23 @@
 # Recent Changes
 
+## v0.7.44 — Hotfix: unblock Windows release CI (May 2, 2026)
+
+**Problem:** v0.7.43 shipped to GitHub successfully (main + tag), but the GHA Release workflow failed within 8 seconds of starting `next build --webpack` on the Windows runner:
+
+```
+glob error [Error: EPERM: operation not permitted, scandir
+  'C:\Users\runneradmin\Application Data']
+Failed to compile.
+```
+
+Last known-green Windows release was v0.7.32 (run 25248892003). Everything since v0.7.40 has been Cloud-Run-OOM-mitigation work — the Windows path was never re-validated, and one of those mitigations turned out to be Windows-hostile.
+
+**Root cause:** `next.config.ts` listed `recharts` in the `experimental.optimizePackageImports` array (added v0.7.40). `recharts` is not a direct dependency of `imported-app` — it's only in `artifacts/site` and `artifacts/mockup-sandbox`, hoisted into the workspace-root `node_modules` by pnpm. When Next 16's webpack barrel-import resolver tries to introspect a "package" it cannot find in the immediate dep tree, it walks up the filesystem looking for it. On Windows that walk eventually scandir's `C:\Users\<user>\Application Data` — a legacy XP-era junction that always returns EPERM — and the build dies. The same config builds fine on Linux (Cloud Run) because `/` is readable to the end and the resolver gives up gracefully.
+
+**Fix:** Gate the entire `experimental` block (and only that block) behind `!enableStandalone` in `artifacts/imported-app/next.config.ts`. The Electron Windows installer build sets `NEXT_OUTPUT_STANDALONE=1` (per the `package:win` script), so it now gets a v0.7.32-style minimal config that matches the last green Windows release. Cloud Run (where `enableStandalone` is false) keeps every OOM mitigation untouched — `webpackMemoryOptimizations`, `cpus: 1`, and the now-`recharts`-free `optimizePackageImports` list. Also dropped `recharts` from the list entirely since this app never imports it.
+
+**Surgical scope:** the only file edited is `artifacts/imported-app/next.config.ts`. No source code, no dep changes, no Cloud Run regression risk.
+
 ## v0.7.43 — "Report an Issue" form: name, phone, location now compulsory (May 2, 2026)
 
 **Operator request:** the central admin Records dashboard (Ctrl+Shift+P → Overview → User reports) was getting too many anonymous "something is broken" reports with no way to follow up. From v0.7.43 every user report MUST include the reporter's name, phone, and location before it can be sent.
