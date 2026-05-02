@@ -11,7 +11,7 @@ export function SEO({
   title = "ScriptureLive AI | The Sunday-Morning Operator Console",
   description = "Built for Ghanaian churches who livestream — it hears the preacher, finds the verse, and puts it on the screen before the congregation even thinks to look it up.",
   image,
-  url = "https://scriptureliveai.com"
+  url = "https://scripturelive.replit.app"
 }: SEOProps) {
   const resolvedImage = image ?? `${import.meta.env.BASE_URL}opengraph.jpg`;
   return (

@@ -116,7 +116,7 @@ const DEFAULT_TRANSCRIBE_PROXY_URL =
 // var up from `process.env` at launch.
 const WEBSITE_URL =
   process.env.NEXT_PUBLIC_WEBSITE_URL?.trim() ||
-  'https://scriptureliveai.com/'
+  'https://scripturelive.replit.app/'
 
 const isDev = !app.isPackaged
 

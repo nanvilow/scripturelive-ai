@@ -1,5 +1,21 @@
 # Recent Changes
 
+## v0.7.37 — `scriptureliveai.com` fully disconnected from runtime code (May 2, 2026)
+
+**User report**: "I said you should disconnect scriptureliveai.com from the app but it still leaked." Audit confirmed three live-code references that the v0.7.34 disconnect missed (the prior agent set the website URL TO scriptureliveai.com instead of AWAY from it):
+
+1. `artifacts/imported-app/src/lib/website-url.ts:31` — `DEFAULT_WEBSITE_URL = 'https://scriptureliveai.com/'`. Surfaces in the desktop app's Help menu, Help & Updates card, and first-run welcome dialog.
+2. `artifacts/imported-app/electron/main.ts:122` — same hardcoded fallback in the Electron main process's `WEBSITE_URL` constant.
+3. `artifacts/site/src/components/seo.tsx:14` — default `og:url` SEO meta in the marketing site.
+
+**Fix**: all three rewritten to `https://scripturelive.replit.app/` (the actual published URL of this Repl). Comment in `website-url.ts` rewritten to reflect the disconnect — the `NEXT_PUBLIC_WEBSITE_URL` env-var override path is preserved so a future marketing site can be re-pointed via a single CI assignment without code changes.
+
+**Verification**: `rg "scriptureliveai"` across all source/config files (excluding docs, lockfiles, and `replit.md` history) returns zero matches. The desktop app's `DEFAULT_TRANSCRIBE_PROXY_URL` was already correctly pointing at `scripturelive.replit.app/api/transcribe` (so the live-transcription API path was never affected).
+
+**Bumped version**: `0.7.36 → 0.7.37`.
+
+---
+
 ## v0.7.36 — Final in-code memory levers; build-VM bump now required (May 2, 2026)
 
 **Result of v0.7.35 deploy attempt**: build `080da281-80f1-4969-926e-74e50f4068a1` on cr-2-4 still SIGKILLed at the exact same point (33 lines, ends right after `Creating an optimized production build...` with `Exit status 1` and no stack trace). The `+12 -37` line in pnpm install confirms the trimmed deps shipped, but webpack's base overhead in Next 16 is what's blowing the 4 GB cgroup — not the dep tree size.
