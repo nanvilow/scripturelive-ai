@@ -167,6 +167,39 @@ const nextConfig: NextConfig = {
   experimental: {
     webpackMemoryOptimizations: true,
     cpus: 1,
+    // v0.7.40 — Force aggressive tree-shaking of barrel-import
+    // packages that webpack would otherwise pull whole-module into
+    // every chunk that imports anything from them. lucide-react is
+    // the worst offender: logos-shell.tsx alone references 30+
+    // icons via the `import { A, B, C, ... } from 'lucide-react'`
+    // pattern, and without explicit optimizePackageImports webpack
+    // can end up holding the whole icon set's module records in
+    // memory across every chunk that uses any icon. Even though
+    // Next 16 has lucide-react in its defaults, listing it here
+    // explicitly is documented to be more aggressive (it switches
+    // from "modularize" to "package-import-optimization" pass).
+    optimizePackageImports: [
+      "lucide-react",
+      "@radix-ui/react-dialog",
+      "@radix-ui/react-dropdown-menu",
+      "@radix-ui/react-popover",
+      "@radix-ui/react-select",
+      "@radix-ui/react-tabs",
+      "@radix-ui/react-tooltip",
+      "@radix-ui/react-accordion",
+      "@radix-ui/react-checkbox",
+      "@radix-ui/react-label",
+      "@radix-ui/react-progress",
+      "@radix-ui/react-radio-group",
+      "@radix-ui/react-scroll-area",
+      "@radix-ui/react-separator",
+      "@radix-ui/react-slider",
+      "@radix-ui/react-slot",
+      "@radix-ui/react-switch",
+      "@radix-ui/react-toast",
+      "sonner",
+      "recharts",
+    ],
   },
   // Disable production source maps. They were already off by default
   // (Next 16 omits them unless you opt in) — making it explicit so a

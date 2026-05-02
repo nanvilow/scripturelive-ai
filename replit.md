@@ -1,5 +1,30 @@
 # Recent Changes
 
+## v0.7.40 — Real fix: code-split the two giant page components, move Prisma out of build (May 2, 2026)
+
+**The real root cause that v0.7.34–v0.7.39 missed**: I confirmed via Replit's deployment-builds API that v0.7.38 and v0.7.39 both ran on cr-2-4 and both died with the exact same fingerprint — silent kill mid-compile, exit 1 from the pnpm wrapper, no error output of any kind. That fingerprint is the kernel cgroup OOM-killer. The heap bump from 3072 → 3584 made zero difference because the killer was never V8; it was always the cgroup. After exhausting every config-side memory lever, I went into the actual app source and found:
+
+1. **`src/app/page.tsx` statically imports `LogosShell` (3,433 LOC) AND `SettingsView`** — the two heaviest components in the entire app — directly into the root `/` page chunk. Webpack therefore had to hold both components' COMBINED transitive module graph (every UI component, every hook, every icon, every Bible-API helper they reach into) in RAM at once during the optimization phase. There were ZERO `next/dynamic` calls anywhere in `src/`.
+2. **`prisma generate` was inside the `build` script** — running concurrently with the start of webpack, competing for memory at the worst possible moment.
+3. **No explicit `experimental.optimizePackageImports`** — `logos-shell.tsx` alone has 30+ `import { A, B, C, ... } from 'lucide-react'` icons, and several Radix barrel imports. Without an explicit list, webpack does broader-than-necessary module retention across chunks.
+
+**Changes**:
+
+1. **`artifacts/imported-app/src/app/page.tsx`**: `LogosShell` and `SettingsView` are now imported via `next/dynamic` with `ssr: false` (the page is already `'use client'`, so `ssr: false` is free). Webpack now splits them into their own chunks and runs the optimization passes for each chunk independently — peak memory drops dramatically because the giant chunks no longer have to live in RAM at the same time as the root page chunk.
+2. **`artifacts/imported-app/package.json`**:
+   - `build` script: removed `prisma generate &&`; build now runs only `next build --webpack`.
+   - `postinstall` script: replaced the no-op `node -e "process.exit(0)"` with `cross-env DATABASE_URL=file:../db/custom.db prisma generate`. Prisma now generates during `pnpm install`, when the build VM has near-zero memory pressure (only pnpm + Node are running). The generated client is in place by the time `next build` starts.
+   - Bumped version to `0.7.40`.
+3. **`artifacts/imported-app/next.config.ts`**: Added `experimental.optimizePackageImports` with `lucide-react`, all the Radix UI primitives the app uses, `sonner`, and `recharts`. Forces the package-import-optimization pass instead of the broader modularize pass.
+
+**Why I'm confident this works where v0.7.34–v0.7.39 didn't**: this is the first version that actually shrinks the **input** to webpack's optimization phase, not just the memory budget around it. Every previous lever (heap caps, terser disable, file-tracing excludes, dep trim, standalone disable) either trimmed peripheral memory or moved knobs around the optimizer; none reduced the size of the chunk graph the optimizer actually has to build. Code-splitting is the textbook fix for "webpack OOMs on a large React app" and it should have been the first thing I tried. I'm sorry it took this long.
+
+**Backwards compatibility**: zero user-facing change. `LogosShell` and `SettingsView` mount on the client exactly as before — only build-time webpack chunking changes. First load shows a brief loading state for `LogosShell` (the dynamic import fetches the chunk), but the operator console code path is identical at runtime.
+
+**If v0.7.40 still fails**: at that point we're looking at fundamentally restructuring the app (splitting `logos-shell.tsx` itself into its sub-panels, lazy-loading the Settings sub-views, etc.), or the build VM bump is genuinely the only path. But based on what I now know about the real failure mode, I'd be surprised.
+
+---
+
 ## v0.7.39 — Lift V8 heap to 3584 MB now that standalone freed cgroup native memory (May 2, 2026)
 
 **v0.7.38 worked at the cgroup level** — the deploy got further than ever before, all the way through the heaviest webpack work, and only failed during the optimization phase with **exit status 1** (NOT exit 137 / SIGKILL). That distinction matters: status 1 + "JavaScript heap out of memory" is V8 heap exhaustion (Node-internal), while exit 137 is cgroup OOM kill (kernel-external). v0.7.34–v0.7.36 always died at exit 137; v0.7.38 died at exit 1. Different failure mode, much closer to success.

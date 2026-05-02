@@ -1,6 +1,6 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.7.39",
+  "version": "0.7.40",
   "private": true,
   "main": "dist-electron/main.js",
   "repository": {
@@ -12,9 +12,9 @@
     "predev": "node scripts/inject-keys.mjs",
     "prebuild": "node scripts/inject-keys.mjs",
     "dev": "cross-env DATABASE_URL=file:../db/custom.db next dev -H 0.0.0.0 -p ${PORT:-3000}",
-    "build": "cross-env DATABASE_URL=file:../db/custom.db prisma generate && cross-env DATABASE_URL=file:../db/custom.db next build --webpack",
+    "build": "cross-env DATABASE_URL=file:../db/custom.db next build --webpack",
     "start": "DATABASE_URL=file:../db/custom.db NODE_ENV=production HOST=0.0.0.0 PORT=${PORT:-3000} node server.mjs",
-    "postinstall": "node -e \"process.exit(0)\"",
+    "postinstall": "cross-env DATABASE_URL=file:../db/custom.db prisma generate",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",

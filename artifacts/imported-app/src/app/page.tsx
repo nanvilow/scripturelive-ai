@@ -1,12 +1,11 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import { SpeechProvider } from '@/components/providers/speech-provider'
 import { OutputBroadcaster } from '@/components/providers/output-broadcaster'
 import { LiveTranslationSync } from '@/components/providers/live-translation-sync'
 import { UpdateNotifier } from '@/components/providers/update-notifier'
 import { UpdateAvailableDialog } from '@/components/providers/update-dialog'
-import { LogosShell } from '@/components/layout/logos-shell'
-import { SettingsView } from '@/components/views/settings'
 // v1 licensing — wrap the app so every subtree can consult the
 // subscription state and open the Subscribe / Admin modals.
 import { LicenseProvider } from '@/components/license/license-provider'
@@ -16,6 +15,26 @@ import { AdminModal } from '@/components/license/admin-modal'
 import { WelcomeDialog } from '@/components/providers/welcome-dialog'
 import { useAppStore } from '@/lib/store'
 import { ArrowLeft } from 'lucide-react'
+
+// v0.7.40 — Dynamic-imported. LogosShell is ~3,400 LOC plus its full
+// transitive component / hook / icon / Bible-API graph; SettingsView is
+// similarly broad. When both were statically imported here, webpack
+// pulled their entire combined module graph into the root `/` page
+// chunk, and the optimization phase had to hold all of it in memory
+// at once — which is what was OOMing the cr-2-4 (4 GB) build VM
+// silently mid-compile. Forcing a chunk split via `next/dynamic` lets
+// webpack process each big component as its own optimization pass and
+// GC between them. `ssr: false` is fine because page.tsx is already
+// `'use client'`. The components mount on the client just as before;
+// only the build-time module-graph topology changes.
+const LogosShell = dynamic(
+  () => import('@/components/layout/logos-shell').then((m) => m.LogosShell),
+  { ssr: false },
+)
+const SettingsView = dynamic(
+  () => import('@/components/views/settings').then((m) => m.SettingsView),
+  { ssr: false },
+)
 
 function AppContent() {
   const { currentView, setCurrentView } = useAppStore()
