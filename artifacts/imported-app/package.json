@@ -1,6 +1,6 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.7.51",
+  "version": "0.7.52",
   "private": true,
   "main": "dist-electron/main.js",
   "repository": {
@@ -66,6 +66,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cross-env": "^7.0.3",
+    "electron-updater": "^6.3.9",
     "hash-wasm": "^4.12.0",
     "lucide-react": "^0.525.0",
     "next": "^16.1.1",
@@ -89,7 +90,7 @@
     "zustand": "^5.0.6"
   },
   "_ndi_note": "NDI output is implemented via koffi (FFI) calling directly into Processing.NDI.Lib.x64.dll from the user's NDI Tools/Runtime install. koffi ships a precompiled win32-x64 .node binary inside its npm tarball, so there is NO node-gyp / Visual Studio Build Tools / electron-rebuild step. The runtime DLL is located at app start by walking NDI_RUNTIME_DIR_V6 / V5 / V4 env vars and the standard NDI install path. See electron/ndi-service.ts.",
-  "_dep_trim_note": "v0.7.35 deep dep trim for Cloud Run cr-2-4 (4 GB) build OOM. Removed 17 fully-unused deps confirmed via `rg` to have ZERO importers anywhere in src/, app/, electron/, or root configs (only references were package.json + bun.lock): @dnd-kit/{core,sortable,utilities}, @hookform/resolvers, @reactuses/core, @tanstack/react-{query,table}, cmdk, date-fns, embla-carousel-react, input-otp, next-auth, next-intl, react-day-picker, react-hook-form, vaul, yjs. Also deleted 6 dead shadcn UI wrappers with 0 importers: src/components/ui/{carousel,drawer,calendar,input-otp,command,form}.tsx. NOTE: `ws` was initially in the removal list but is required by server-transcribe-stream.mjs (the Deepgram WebSocket proxy attached to the standalone Next prod server) — kept it. Combined with Task #92's earlier 120 MB trim, this slashes webpack's module-graph working set so the build can fit in 4 GB without bumping the build runner. next-auth alone pulled jose+oauth4webapi+openid-client+preact (huge tree). If a future feature genuinely needs any of these, re-add them with `pnpm --filter @workspace/imported-app add <pkg>`.",
+  "_dep_trim_note": "v0.7.35 deep dep trim for Cloud Run cr-2-4 (4 GB) build OOM. Removed 17 fully-unused deps confirmed via `rg` to have ZERO importers anywhere in src/, app/, electron/, or root configs (only references were package.json + bun.lock): @dnd-kit/{core,sortable,utilities}, @hookform/resolvers, @reactuses/core, @tanstack/react-{query,table}, cmdk, date-fns, embla-carousel-react, input-otp, next-auth, next-intl, react-day-picker, react-hook-form, vaul, yjs. Also deleted 6 dead shadcn UI wrappers with 0 importers: src/components/ui/{carousel,drawer,calendar,input-otp,command,form}.tsx. NOTE: `ws` was initially in the removal list but is required by server-transcribe-stream.mjs (the Deepgram WebSocket proxy attached to the standalone Next prod server) \u2014 kept it. Combined with Task #92's earlier 120 MB trim, this slashes webpack's module-graph working set so the build can fit in 4 GB without bumping the build runner. next-auth alone pulled jose+oauth4webapi+openid-client+preact (huge tree). If a future feature genuinely needs any of these, re-add them with `pnpm --filter @workspace/imported-app add <pkg>`.",
   "devDependencies": {
     "@electron/notarize": "^2.5.0",
     "@tailwindcss/postcss": "^4",
@@ -101,7 +102,6 @@
     "bun-types": "^1.3.4",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
-    "electron-updater": "^6.3.9",
     "eslint": "^9",
     "eslint-config-next": "^16.1.1",
     "koffi": "^2.16.1",

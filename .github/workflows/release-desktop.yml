@@ -154,10 +154,17 @@ jobs:
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
-            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            tag_name="${{ inputs.tag }}"
           else
-            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            tag_name="${GITHUB_REF#refs/tags/}"
           fi
+          echo "name=$tag_name" >> "$GITHUB_OUTPUT"
+          # Also expose the version without the leading "v" so steps that
+          # need to match electron-builder's artifactName (which uses
+          # ${version} from package.json, NOT the git tag) have an exact
+          # filename component to glob with — e.g. v0.7.51 → 0.7.51 →
+          # ScriptureLive-AI-0.7.51-Setup-x64.exe.
+          echo "version=${tag_name#v}" >> "$GITHUB_OUTPUT"
 
       - name: Determine unsigned-release opt-out
         id: optout
@@ -373,7 +380,7 @@ jobs:
           # leftover .exe from a different tag can never piggy-back
           # into the windows-installer artifact (see release-body
           # builder for the symmetric guard on the consumer side).
-          path: artifacts/imported-app/release/ScriptureLive-AI-${{ steps.tag.outputs.name && steps.tag.outputs.name || github.ref_name }}-Setup-*.exe
+          path: artifacts/imported-app/release/ScriptureLive-AI-${{ steps.tag.outputs.version }}-Setup-*.exe
           if-no-files-found: error
           retention-days: 14
 
