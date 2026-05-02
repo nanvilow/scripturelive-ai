@@ -99,6 +99,20 @@ const nextConfig: NextConfig = {
   // future toggle can't silently bring back the OOM by serialising a
   // few hundred MB of source maps to disk.
   productionBrowserSourceMaps: false,
+  // v0.7.33 part 2 — Even at NODE_OPTIONS=--max-old-space-size=3072
+  // the build still SIGKILL'd on Cloud Run's 4 GB cr-2-4 runner.
+  // Terser is the heaviest webpack memory consumer (often 1–2 GB
+  // resident on its own minifying React component trees). Disabling
+  // it here trades a larger client bundle for actually completing the
+  // build inside the cgroup. Once the deploy is healthy we can swap
+  // terser back in by raising the build VM through the Replit
+  // deployment pane (cr-4-8 or larger).
+  webpack: (config, { dev }) => {
+    if (!dev && config.optimization) {
+      config.optimization.minimize = false;
+    }
+    return config;
+  },
   // v0.5.53 — Cloud keys are now baked into src/lib/keys.baked.ts via
   // scripts/inject-keys.mjs (runs as predev/prebuild and inside
   // BUILD.bat). The renderer imports the literal constants directly,

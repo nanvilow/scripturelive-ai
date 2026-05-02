@@ -24,19 +24,20 @@ kind = "web"
 
   [services.production.build.env]
   NODE_ENV = "production"
-  # v0.7.36 — Build VM has ~4 GB usable RAM. V8 old-space cap of 3072 MB
-  # leaves ~1 GB headroom for native allocations from SWC/webpack/terser
-  # plus V8 young-gen + code-space + Node overhead. 8192 was too high
-  # (V8 deferred GC and kernel SIGKILL'd at ~6 GB), 3584 was still
-  # marginal (peaked ~4.5 GB), 3072 should sit safely under the cgroup.
+  # v0.7.37 — Cloud Run build runner is cr-2-4 (2 vCPU, 4 GB RAM).
+  # Confirmed via getDeploymentBuild on both the last successful build
+  # (Turbopack, smaller app) and the SIGKILL'd webpack builds. The
+  # webpack build won't fit in 4 GB at any heap >= 3072. We drop V8
+  # cap to 2048 MB AND disable terser minification in next.config.ts
+  # (the single biggest memory consumer in webpack production builds).
+  # Combined headroom: ~2 GB for V8 + ~2 GB for native allocs (SWC,
+  # Prisma generate, etc.) = fits comfortably in 4 GB cgroup.
   #
-  # Note: --gc-interval is REJECTED by Node 24 in NODE_OPTIONS for
-  # security reasons ("--gc-interval= is not allowed in NODE_OPTIONS").
-  # Only --max-old-space-size is allowed via this env var.
-  #
-  # If this still OOMs, next escalation is cap=2560 MB combined with
-  # disabling SWC minification in next.config.ts.
-  NODE_OPTIONS = "--max-old-space-size=3072"
+  # Trade-off: client bundle is unminified. Acceptable for shipping
+  # the deploy; once live the user can bump build resources to cr-4-8
+  # in the Replit deployment pane and re-enable terser by reverting
+  # the webpack callback in next.config.ts.
+  NODE_OPTIONS = "--max-old-space-size=2048"
   NEXT_TELEMETRY_DISABLED = "1"
 
   [services.production.run]
