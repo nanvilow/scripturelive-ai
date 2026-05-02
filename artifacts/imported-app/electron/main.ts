@@ -101,6 +101,23 @@ import {
 const DEFAULT_TRANSCRIBE_PROXY_URL =
   'https://scripturelive.replit.app/api/transcribe'
 
+// Public marketing site URL surfaced from the Help menu so operators
+// can hand a link to their pastor / IT lead for pricing, contact, and
+// system requirements. Mirrors `src/lib/website-url.ts` (the renderer
+// can't be imported here because the electron tsconfig roots at
+// ./electron) — keep the two in sync.
+//
+// Override at build time with `NEXT_PUBLIC_WEBSITE_URL` — the SAME
+// env var the renderer's `src/lib/website-url.ts` reads. Sharing one
+// var name means a single assignment in CI propagates to both the
+// Help-menu link (this file) and the in-app "Visit website" row, so
+// the two surfaces never disagree. Next.js inlines NEXT_PUBLIC_* at
+// renderer build time, and Electron's main process picks the same
+// var up from `process.env` at launch.
+const WEBSITE_URL =
+  process.env.NEXT_PUBLIC_WEBSITE_URL?.trim() ||
+  'https://scripturelive.replit.app/site/'
+
 const isDev = !app.isPackaged
 
 // ── Chromium command-line flags ───────────────────────────────────
@@ -1236,6 +1253,18 @@ function buildAppMenu() {
     click: () => { void handleManualUpdateCheck() },
   }
 
+  // "Website" Help-menu entry. Opens the public marketing site in
+  // the operator's default browser via `shell.openExternal` so the
+  // link works in both packaged builds and `electron .` dev runs,
+  // and so the desktop app never tries to render the site inside its
+  // own BrowserWindow (which would mix marketing chrome with the
+  // operator console). Mirrors the in-app "Visit website" row in the
+  // Help & Updates settings card.
+  const websiteItem: MenuItemConstructorOptions = {
+    label: 'Website',
+    click: () => { void shell.openExternal(WEBSITE_URL) },
+  }
+
   const template: MenuItemConstructorOptions[] = []
 
   if (isMac) {
@@ -1261,17 +1290,16 @@ function buildAppMenu() {
     { role: 'editMenu' },
     { role: 'viewMenu' },
     { role: 'windowMenu' },
-    // Help menu only appears on non-Mac platforms. On macOS the
-    // Check for Updates… item already lives under the app menu, and
-    // since "View Releases on GitHub" was removed (browser redirect,
-    // conflicts with the in-app update flow), the Help submenu would
-    // be empty on Mac. Skipping it altogether avoids a blank menu.
-    ...(isMac
-      ? []
-      : [{
-          role: 'help' as const,
-          submenu: [checkForUpdatesItem],
-        }]),
+    // Help submenu — surfaces the marketing site (Website) and the
+    // in-app updater on every platform. Previously skipped on macOS
+    // because Check for Updates… already lives under the app menu
+    // and the Help entry would have been empty; now that we have a
+    // Website link to advertise, render it on macOS too so trial
+    // operators can find pricing / contact from the menu bar.
+    {
+      role: 'help' as const,
+      submenu: isMac ? [websiteItem] : [websiteItem, checkForUpdatesItem],
+    },
   )
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))

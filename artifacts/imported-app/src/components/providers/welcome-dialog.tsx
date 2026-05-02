@@ -39,6 +39,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Sparkles } from 'lucide-react'
+import { WEBSITE_URL } from '@/lib/website-url'
 
 const WELCOME_SEEN_KEY = 'scripturelive-welcome-seen-v1'
 
@@ -110,6 +111,19 @@ export function WelcomeDialog() {
           <p className="pt-2 text-xs">
             You&rsquo;re on a free trial &mdash; enjoy full access while you
             evaluate. You can subscribe anytime from the Activate button.
+          </p>
+          <p className="text-xs">
+            Need pricing, contact, or system requirements to share with your
+            pastor or IT lead? Visit{' '}
+            <a
+              href={WEBSITE_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="text-primary underline-offset-2 hover:underline"
+            >
+              our website
+            </a>
+            .
           </p>
         </div>
         <DialogFooter className="sm:justify-center">

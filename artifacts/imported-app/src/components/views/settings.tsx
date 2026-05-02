@@ -72,6 +72,7 @@ import {
   Sparkles,
   RefreshCw,
   Send,
+  Globe,
 } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { useLicense } from '@/components/license/license-provider'
@@ -88,6 +89,7 @@ import { OutputPreview } from '@/components/settings/output-preview'
 import { FONT_REGISTRY } from '@/lib/fonts'
 import { quickStartUrl, troubleshootingUrl, newIssueUrl } from '@/lib/github-repo'
 import { APP_VERSION } from '@/lib/app-version'
+import { WEBSITE_URL } from '@/lib/website-url'
 import { useNdi } from '@/lib/use-electron'
 
 export function SettingsView() {
@@ -2082,6 +2084,32 @@ function HelpAndUpdatesCard() {
         </div>
 
         <Separator />
+
+        {/*
+          Visit website — surfaces the public marketing site (pricing,
+          contact, system requirements) so trial operators can share
+          it with their pastor / IT lead without leaving the app.
+          Rendered as its own row so the call-to-action stays prominent
+          alongside the version line, instead of getting lost in the
+          three-column grid below.
+        */}
+        <a
+          href={WEBSITE_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border hover:bg-muted/40 text-xs"
+        >
+          <span className="flex items-center gap-2">
+            <Globe className="h-4 w-4 text-primary" />
+            <span className="flex flex-col">
+              <span className="font-medium">Visit website</span>
+              <span className="text-[11px] text-muted-foreground">
+                Pricing, contact, and system requirements
+              </span>
+            </span>
+          </span>
+          <ExternalLink className="h-3 w-3 opacity-60" />
+        </a>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <a
