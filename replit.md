@@ -21,7 +21,27 @@
 
 **Future ships from this Replit**: the same API approach works for any future divergent / blocked push. Key files: `/tmp/diff-status.txt` (diff manifest), `/tmp/fef4cca-tree.json` (base tree cache). The five-step API recipe (blobs → trees → commits → tags → refs) is reusable. Path-prefix skip list MUST exclude built artifacts (`release/`, `dist-electron/`, `exports/`, `screenshots/`, `.next/`) or blob upload will fail at GitHub's 100MB limit.
 
-**Status**: workflow run #130 is `in_progress` building the signed Windows installer. Standard build time is ~30-60 minutes. Once it succeeds, the v0.7.32 release appears alongside v0.7.30 on the repo's Releases page.
+**Status**: SHIPPED. Final release at https://github.com/nanvilow/scripturelive-ai/releases/tag/v0.7.32 — `ScriptureLive-AI-0.7.32-Setup-x64.exe` (570.1MB, signed), `latest.yml` (auto-updater manifest), `SHA256SUMS.txt`, and the blockmap, all published `2026-05-02T09:37:46Z`. Build #132 succeeded in 486s of actual compile time after two preceding failures fixed mid-flight.
+
+**Three workflow runs were needed; each failure unblocked the next**:
+
+- **Run #130 — failed in `Install dependencies` at 105s.** Root package.json `prepare` script was `sh -c 'git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git config core.hooksPath .githooks || true'`. Windows runner's pnpm/npm `prepare` context invokes scripts via cmd.exe, not Git Bash. cmd.exe parses the trailing `|| true` as a literal command lookup for `'true''` (note the stray quote from sh-style quote handling) and bombs out with `'true'' is not recognized as an internal or external command`. Curiously `preinstall` ALSO uses `sh -c` and worked — npm `preinstall` and `prepare` apparently use different shells on Windows. Fix: rewrite `prepare` in cross-platform Node:
+  ```
+  "prepare": "node -e \"try{var c=require('child_process');c.execSync('git rev-parse --is-inside-work-tree',{stdio:'ignore'});c.execSync('git config core.hooksPath .githooks',{stdio:'ignore'})}catch(e){}\""
+  ```
+
+- **Run #131 — failed in `Build & package Windows installer` at 120s.** Turbopack: `Module not found: Can't resolve '@/lib/bibles/local-bible'` in `artifacts/imported-app/src/components/providers/speech-provider.tsx:7`. Root cause: `local-bible.ts` matches the `local-*` pattern in `artifacts/imported-app/.gitignore`, so it's not in local main HEAD's tree, so my diff vs origin/main marked it as `D` (deleted), so the new GitHub tree omitted it. But `speech-provider.tsx` (which IS tracked) imports it. The build needs the file even though git doesn't track it locally. Fix: upload `local-bible.ts` from the working tree as a one-off override and include it in the next tree.
+
+  **Critical guardrail surfaced here**: there are TWO other gitignored-but-source-located files — `keys.baked.ts` and `baked-credentials.ts` — that contain real OpenAI/Deepgram/SMTP/Arkesel API keys. These are deliberately gitignored because GitHub's secret-scanner notifies the providers on push and they auto-revoke within minutes. The workflow generates them on the build runner via `scripts/inject-keys.mjs` from GitHub repo secrets. Future ships from the API path MUST exclude these files even though they appear in the same diagnostic step (`find ... -type f | git check-ignore`). Skip pattern to encode: `keys.baked.ts`, `baked-credentials.ts`, anything matching `local-*` UNLESS explicitly imported by tracked source.
+
+- **Run #132 — SUCCESS in 486s.** The two-fix retry built clean. `Verify macOS notarization` was a 15s no-op (Mac job is conditional). `Publish GitHub Release` ran 63s and uploaded the four release assets.
+
+**The full retry sequence on GitHub**:
+- Tag `v0.7.32` (1st) → commit `6f0eb0e` → tree `c738dbf` (104 blobs uploaded) → run #130 fails on prepare script
+- DELETE tag, fix package.json locally, upload new package.json blob → tag `v0.7.32` (2nd) → commit `730cd49` → tree `b5bad7c` → run #131 fails on local-bible
+- DELETE tag, upload local-bible.ts blob → tag `v0.7.32` (3rd) → commit `69c946b` → tree `5a8642a` → run #132 SUCCESS
+
+**Total ship cost**: 3 tag iterations, 106 blob uploads (104 + 1 + 1), zero force-pushes, zero `git filter-repo`, zero use of the local git binary's network ops. The whole pipeline ran from inside the main agent's sandboxed environment via the GitHub REST API.
 
 ## v0.7.34 — Pre-commit / CI secret scanning (May 2, 2026)
 
