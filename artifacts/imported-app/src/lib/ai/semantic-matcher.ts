@@ -34,6 +34,31 @@
 
 import OpenAI from 'openai'
 import { POPULAR_VERSES_KJV, type PopularVerse } from './popular-verses'
+import { getConfig } from '@/lib/licensing/storage'
+
+// v0.7.24 — Resolve the OpenAI API key from two sources:
+//   1. process.env.OPENAI_API_KEY (developer / packaged-installer env)
+//   2. Admin license config — the existing `adminOpenAIKey` field
+//      operators can set in the in-app Admin modal
+//      (src/components/license/admin-modal.tsx). Until v0.7.24 this
+//      field was stored but never wired to the matcher, so admins
+//      who DID set the key still saw "AI features unavailable".
+//
+// Order matters: env wins so packaged-installer overrides remain
+// possible, but the admin-set key is honoured automatically.
+function resolveOpenAIKey(): string | undefined {
+  const envKey = process.env.OPENAI_API_KEY
+  if (envKey && envKey.trim().length > 0) return envKey.trim()
+  try {
+    const cfg = getConfig()
+    const adminKey = cfg?.adminOpenAIKey
+    if (adminKey && adminKey.trim().length > 0) return adminKey.trim()
+  } catch {
+    // Defensive — license storage may not be initialised in unit
+    // tests / SSR contexts. Behave as if no key is configured.
+  }
+  return undefined
+}
 
 const EMBEDDING_MODEL = 'text-embedding-3-small'
 const EMBEDDING_DIM = 1536
@@ -72,10 +97,17 @@ let cache: CachedVerse[] | null = null
 let cacheLoading: Promise<CachedVerse[]> | null = null
 let openaiClient: OpenAI | null = null
 
+// v0.7.24 — Track the key the cached client was created with so we
+// rebuild the client when the admin rotates their key in the Admin
+// modal without requiring an app restart.
+let openaiClientKey: string | undefined
+
 function getClient(): OpenAI | null {
-  if (!process.env.OPENAI_API_KEY) return null
-  if (!openaiClient) {
-    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  const key = resolveOpenAIKey()
+  if (!key) return null
+  if (!openaiClient || openaiClientKey !== key) {
+    openaiClient = new OpenAI({ apiKey: key })
+    openaiClientKey = key
   }
   return openaiClient
 }
@@ -215,7 +247,9 @@ export function semanticMatcherStatus(): {
     ready: cache !== null && cache.length > 0,
     cacheSize: cache?.length ?? 0,
     loading: cacheLoading !== null,
-    hasApiKey: !!process.env.OPENAI_API_KEY,
+    // v0.7.24 — true when EITHER process.env OR admin license key
+    // is populated; matches the resolution order used by getClient().
+    hasApiKey: !!resolveOpenAIKey(),
   }
 }
 

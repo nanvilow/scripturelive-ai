@@ -17,6 +17,46 @@ Format rules (so the workflow's extractor keeps working):
 - Write for the operator, not the engineer. "Verses now appear within
   ~250ms" beats "reduced CHUNK_MS from 4500 to 2500".
 
+## v0.7.24 — 2026-05-02
+
+### Fixed
+
+- **"Next verse" / "previous verse" now rolls into the next chapter
+  automatically.** Operator bug report: when the live screen showed
+  John 3:36 (last verse of chapter 3) and the operator said "next
+  verse", nothing happened — they had to use a separate "next
+  chapter" command. Now "next verse" on John 3:36 correctly advances
+  to John 4:1, and "previous verse" on John 4:1 rolls back to John
+  3:36. A small toast announces the chapter change so the operator
+  knows the rollover happened. Rollover stays within the same book
+  — at a book boundary (Revelation 22:21 + next, Genesis 1:1 +
+  previous) the existing legacy behaviour kicks in. The standalone
+  "next chapter" / "previous chapter" commands still work exactly
+  as before.
+
+- **AI Scripture Detection and AI Verse Search now actually use the
+  OpenAI key admins set in the in-app Admin modal.** Operator bug
+  report after v0.7.23: the AI features stayed silent even though
+  the key was configured under Admin → Keys. Root cause: the matcher
+  was reading `process.env.OPENAI_API_KEY` only, and the admin-set
+  key was being saved to the license config without ever being
+  wired through to the matcher. v0.7.24 resolves the OpenAI key
+  from BOTH sources (env first, then admin license config), so:
+  - If you already entered your OpenAI key in Admin → Keys, AI
+    Scripture Detection and AI Verse Search start working
+    immediately on next launch (no env var, no env file, no
+    restart of anything else).
+  - The matcher rebuilds its OpenAI client automatically when you
+    rotate the key in Admin, no app restart needed.
+  - The status flag (`/api/scripture/semantic-match` GET) now
+    returns `hasApiKey: true` when EITHER source is populated.
+
+### Notes
+
+- If you don't already have an OpenAI key configured, open the
+  Admin modal (license/admin entry point) → Keys → paste your key.
+  AI features will activate within a few seconds.
+
 ## v0.7.23 — 2026-05-02
 
 ### Added
