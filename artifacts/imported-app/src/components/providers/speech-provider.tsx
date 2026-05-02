@@ -522,30 +522,101 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     const slides = s.slides
     const liveIdx = s.liveSlideIndex
     switch (cmd.kind) {
-      case 'next_verse': {
-        // Advance the live verse highlight in the current passage if
-        // we have one; otherwise advance the live slide cursor.
+      // v0.7.22 — "next verse" / "previous verse" now actually steps
+      // through scripture. Operator bug report on v0.7.21:
+      // "When it's on John 3:3 and a voice command is given for the
+      // next verse, it should move to John 3:4" — but the old handler
+      // only advanced the highlight WITHIN a multi-verse passage and
+      // fell back to a no-op for single-verse slides (which is what
+      // the operator was on). Now we:
+      //   1. If on a multi-verse passage AND the highlight isn't yet
+      //      at the boundary, advance the highlight (existing UX).
+      //   2. Otherwise, parse the live slide's title (e.g. "John 3:3"
+      //      or "John 3:1-10"), step the verse number ±1, validate
+      //      against bibleStructure (don't run past the end of the
+      //      chapter), look up the new verse, and append it as a new
+      //      live slide — same pattern as next_chapter.
+      //   3. Only as a last resort (no live verse-passage at all),
+      //      advance the slide deck cursor.
+      case 'next_verse':
+      case 'previous_verse': {
+        const dir = cmd.kind === 'next_verse' ? 1 : -1
         const slide = liveIdx >= 0 ? slides[liveIdx] : null
+
+        // (1) Multi-verse passage: try to advance highlight first.
         if (slide && slide.type === 'verse' && (slide.content?.length ?? 0) > 1) {
-          const nextV = Math.min((slide.content?.length ?? 1) - 1, s.liveActiveVerseIndex + 1)
-          s.setLiveActiveVerseIndex(nextV)
-        } else if (slides.length) {
-          const nextI = Math.min(slides.length - 1, Math.max(0, liveIdx + 1))
+          const max = (slide.content?.length ?? 1) - 1
+          const cur = s.liveActiveVerseIndex
+          if (dir === 1 && cur < max) {
+            s.setLiveActiveVerseIndex(cur + 1)
+            break
+          }
+          if (dir === -1 && cur > 0) {
+            s.setLiveActiveVerseIndex(cur - 1)
+            break
+          }
+          // At boundary — fall through to scripture-step.
+        }
+
+        // (2) Single-verse slide OR boundary of multi-verse range:
+        //     load the next/previous verse from scripture and push
+        //     it live as a new slide.
+        if (slide && slide.type === 'verse' && slide.title) {
+          const ref = parseExplicitReference(slide.title)
+          if (ref) {
+            // Anchor the step against the END of a forward range and
+            // the START of a backward step — so "John 3:1-10" + next
+            // gives John 3:11, but "John 3:1-10" + previous gives
+            // (nothing — already at start of chapter).
+            const anchor = dir === 1
+              ? (ref.verseEnd ?? ref.verseStart)
+              : ref.verseStart
+            const targetVerse = anchor + dir
+            const struct = (bibleStructure as unknown as Record<string, number[]>)[ref.book]
+            const verseCount = struct?.[ref.chapter - 1] ?? 0
+            if (verseCount > 0 && targetVerse >= 1 && targetVerse <= verseCount) {
+              const tx = s.selectedTranslation
+              const refKey = `${ref.book} ${ref.chapter}:${targetVerse}`
+              let textOut: string | null = lookupVerse(ref.book, ref.chapter, targetVerse, tx)
+              if (!textOut && !isTranslationBundled(tx)) {
+                try {
+                  const v = await fetchBibleVerse(refKey, tx)
+                  if (v) textOut = v.text
+                } catch { /* ignore — toast below */ }
+              }
+              if (textOut) {
+                const slideNew = {
+                  id: `slide-${Date.now()}`,
+                  type: 'verse' as const,
+                  title: refKey,
+                  subtitle: tx,
+                  content: textOut.split('\n').filter(Boolean),
+                  background: s.settings.congregationScreenTheme,
+                }
+                const curSlides = useAppStore.getState().slides
+                const nextSlides = curSlides.length > 0 ? [...curSlides, slideNew] : [slideNew]
+                const idx = nextSlides.length - 1
+                useAppStore.getState().setSlides(nextSlides)
+                useAppStore.getState().setPreviewSlideIndex(idx)
+                useAppStore.getState().setLiveSlideIndex(idx)
+                useAppStore.getState().setIsLive(true)
+                useAppStore.getState().setLiveActiveVerseIndex(0)
+                break
+              }
+              toast.error(`Could not load ${refKey}`, { duration: 2000, position: 'bottom-right' })
+              break
+            }
+            // Off the end of the chapter — fall through to slide deck.
+          }
+        }
+
+        // (3) Fallback: slide-deck advance (legacy behaviour).
+        if (slides.length) {
+          const nextI = dir === 1
+            ? Math.min(slides.length - 1, Math.max(0, liveIdx + 1))
+            : Math.max(0, liveIdx - 1)
           s.setPreviewSlideIndex(nextI)
           s.setLiveSlideIndex(nextI)
-          s.setLiveActiveVerseIndex(0)
-        }
-        break
-      }
-      case 'previous_verse': {
-        const slide = liveIdx >= 0 ? slides[liveIdx] : null
-        if (slide && slide.type === 'verse' && (slide.content?.length ?? 0) > 1) {
-          const prevV = Math.max(0, s.liveActiveVerseIndex - 1)
-          s.setLiveActiveVerseIndex(prevV)
-        } else if (slides.length) {
-          const prevI = Math.max(0, liveIdx - 1)
-          s.setPreviewSlideIndex(prevI)
-          s.setLiveSlideIndex(prevI)
           s.setLiveActiveVerseIndex(0)
         }
         break

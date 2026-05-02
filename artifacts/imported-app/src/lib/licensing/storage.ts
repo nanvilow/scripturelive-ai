@@ -272,19 +272,23 @@ function storagePath(): string {
 // the reinstall-to-reset workaround is now closed.
 //
 // v0.7.19 — Bumped 30 min → 180 min (3 hours) per operator request.
-// 30 min was too short to evaluate the app over a real Sunday service
-// (which can run 90–150 minutes by itself). 3 hours covers a full
-// service plus pre/post-service walkthrough so the operator can
-// genuinely decide whether to subscribe. The `everActivated` lockout
-// still prevents the reinstall-to-reset workaround.
+// v0.7.22 — Tightened 180 min → 70 min per operator request.
+//   Rationale (operator-reported): 3 hours was too generous and gave
+//   trial users effectively a full Sunday service of free use. 70 min
+//   is enough to walk through the install, see verses appear during a
+//   short test, and decide whether to subscribe — without being long
+//   enough to cover an entire service. The `everActivated` lockout
+//   still prevents the reinstall-to-reset workaround.
 //
 // upgradeStaleTrialDuration() (called from load()) lifts any
 // previously-persisted `trialDurationMs` that's BELOW this number to
 // the new value, but ONLY for trials that haven't yet been activated
-// and haven't yet expired — so an operator that's mid-trial when they
-// install v0.7.19 gets the full new budget instead of being stuck on
-// the smaller window from the previous release.
-const TRIAL_DURATION_MS = 180 * 60 * 1000 // 180 min (3 h)
+// and haven't yet expired. The migration is one-way (smaller → bigger);
+// it deliberately does NOT shrink an existing trial that's longer than
+// the new constant, so anyone who started a v0.7.19/v0.7.20/v0.7.21
+// trial keeps their already-allocated 180-minute budget rather than
+// having time yanked away mid-evaluation.
+const TRIAL_DURATION_MS = 70 * 60 * 1000 // 70 min
 // v0.7.3 — Bumped from 15 min → 7 days. Operator's bug report:
 // "Active subscriptions are killed... it deletes active codes by
 // itself while I didn't give that command." The 15-minute window
