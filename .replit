@@ -16,6 +16,26 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "imported-app-build"
+
+[[workflows.workflow]]
+name = "imported-app-build"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd artifacts/imported-app && SKIP_MARKETING_PREBUILD=1 NODE_OPTIONS=--max-old-space-size=3584 NEXT_TELEMETRY_DISABLED=1 NODE_ENV=production pnpm run build"
+
+[workflows.workflow.metadata]
+isValidation = true
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
@@ -26,22 +46,6 @@ timeoutMs = 240000
 
 [nix]
 channel = "stable-25_05"
-
-[[ports]]
-localPort = 8080
-externalPort = 8080
-
-[[ports]]
-localPort = 8081
-externalPort = 80
-
-[[ports]]
-localPort = 21238
-externalPort = 3001
-
-[[ports]]
-localPort = 25650
-externalPort = 3000
 
 [userenv]
 

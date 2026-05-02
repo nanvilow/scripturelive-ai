@@ -73,23 +73,39 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: false,
-  // v0.7.33 — Cloud Run autoscale build OOM fix. The deploy build
-  // machine has finite RAM and the Next 16 webpack build was
-  // SIGKILL'd by the kernel even at NODE_OPTIONS=--max-old-space-size=8192
-  // because the build VM itself caps below that. Two settings work
-  // together to keep webpack inside a smaller working set:
+  // ───────────────────────────────────────────────────────────────────
+  // Cloud Run autoscale build OOM controls.
+  // ───────────────────────────────────────────────────────────────────
+  // Production deploys build on Cloud Run's `cr-2-4` runner (2 vCPU,
+  // 4 GB RAM). The Next 16 webpack build is RAM-bound on that VM, so
+  // a layered defence keeps it inside the cgroup:
   //
-  //   - webpackMemoryOptimizations: opts into Next's tree-of-modules
-  //     reuse + early generator GC, trading ~10-20% longer builds for
-  //     a noticeably smaller resident set during the optimizer pass.
-  //   - cpus: 1 forces a single build worker so we don't multiply the
-  //     working set by the host's CPU count. Cloud Run build runners
-  //     usually report 4-8 logical cores but only have ~4 GB of usable
-  //     RAM after Linux + the Next runtime; one worker still finishes
-  //     in under 3 minutes for an app this size.
+  //   1. Shrink the input. `electron-updater` and `koffi` were moved
+  //      to devDependencies (they're only imported from electron/),
+  //      and the marketing-site prebuild is gated behind
+  //      SKIP_MARKETING_PREBUILD=1 in artifact.toml — Cloud Run no
+  //      longer runs the Vite build right before the Next build, so
+  //      the build VM doesn't peak twice.
   //
-  // Both knobs are dev-mode no-ops, so local `next dev` and the
-  // Electron desktop build keep their original parallelism.
+  //   2. Cap V8's heap via `NODE_OPTIONS=--max-old-space-size=3584`
+  //      in artifact.toml's `services.production.build.env`. 3584 MB
+  //      leaves ~512 MB of cgroup headroom for native allocs (SWC,
+  //      Prisma generate, terser's Rust binaries) on a 4 GB runner.
+  //
+  //   3. The two knobs below shrink webpack's own resident set:
+  //      - webpackMemoryOptimizations: opts into Next's tree-of-
+  //        modules reuse + early generator GC, trading ~10-20% longer
+  //        builds for a noticeably smaller working set during the
+  //        optimizer pass.
+  //      - cpus: 1 forces a single build worker so we don't multiply
+  //        the working set by the host's CPU count. One worker still
+  //        finishes in under 3 minutes for an app this size.
+  //
+  // Both experimental knobs are dev-mode no-ops, so local `next dev`
+  // and the Electron desktop build keep their original parallelism.
+  // Terser/minification is now back on (re-enabling it shaves
+  // ~30-50% off shipped client bundles), gated only behind the
+  // DISABLE_MINIFY=1 escape hatch in the webpack callback below.
   experimental: {
     webpackMemoryOptimizations: true,
     cpus: 1,
@@ -99,16 +115,12 @@ const nextConfig: NextConfig = {
   // future toggle can't silently bring back the OOM by serialising a
   // few hundred MB of source maps to disk.
   productionBrowserSourceMaps: false,
-  // v0.7.33 part 2 — Even at NODE_OPTIONS=--max-old-space-size=3072
-  // the build still SIGKILL'd on Cloud Run's 4 GB cr-2-4 runner.
-  // Terser is the heaviest webpack memory consumer (often 1–2 GB
-  // resident on its own minifying React component trees). Disabling
-  // it here trades a larger client bundle for actually completing the
-  // build inside the cgroup. Once the deploy is healthy we can swap
-  // terser back in by raising the build VM through the Replit
-  // deployment pane (cr-4-8 or larger).
+  // Terser/minification is enabled by default. Set DISABLE_MINIFY=1
+  // as an escape hatch if a future, larger build pushes us back over
+  // the 4 GB cgroup before we have a chance to bump the build runner
+  // to cr-4-8 in the Replit deployment pane. See DEPLOY.md.
   webpack: (config, { dev }) => {
-    if (!dev && config.optimization) {
+    if (!dev && config.optimization && process.env.DISABLE_MINIFY === '1') {
       config.optimization.minimize = false;
     }
     return config;

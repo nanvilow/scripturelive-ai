@@ -24,20 +24,29 @@ kind = "web"
 
   [services.production.build.env]
   NODE_ENV = "production"
-  # v0.7.37 — Cloud Run build runner is cr-2-4 (2 vCPU, 4 GB RAM).
-  # Confirmed via getDeploymentBuild on both the last successful build
-  # (Turbopack, smaller app) and the SIGKILL'd webpack builds. The
-  # webpack build won't fit in 4 GB at any heap >= 3072. We drop V8
-  # cap to 2048 MB AND disable terser minification in next.config.ts
-  # (the single biggest memory consumer in webpack production builds).
-  # Combined headroom: ~2 GB for V8 + ~2 GB for native allocs (SWC,
-  # Prisma generate, etc.) = fits comfortably in 4 GB cgroup.
+  # Cloud Run autoscale build runner is `cr-2-4` (2 vCPU, 4 GB RAM).
+  # See artifacts/imported-app/DEPLOY.md for the full breakdown of how
+  # the four memory levers (dep prune, marketing-prebuild skip, V8
+  # heap cap, webpack experimentals) keep the Next 16 webpack build
+  # inside the 4 GB cgroup. The user-side escape hatch when this app
+  # outgrows cr-2-4 is bumping the build resources to cr-4-8 in the
+  # Replit deployment pane.
   #
-  # Trade-off: client bundle is unminified. Acceptable for shipping
-  # the deploy; once live the user can bump build resources to cr-4-8
-  # in the Replit deployment pane and re-enable terser by reverting
-  # the webpack callback in next.config.ts.
-  NODE_OPTIONS = "--max-old-space-size=2048"
+  # SKIP_MARKETING_PREBUILD: short-circuits scripts/maybe-build-
+  # marketing.mjs so we don't run the @workspace/site Vite build
+  # back-to-back with the Next webpack build on the same VM. The
+  # scriptureliveai.com host rewrite falls through to Next's default
+  # response while the marketing site is wired into the Replit-level
+  # proxy as a separate artifact in a follow-up. Local desktop builds
+  # (BUILD.bat / package:win / package:mac) leave this unset, so the
+  # Electron .exe still ships with the bundled marketing SPA.
+  #
+  # NODE_OPTIONS: caps V8's old-space heap at 3584 MB, leaving ~512 MB
+  # of cgroup headroom for native allocs (SWC, Prisma generate,
+  # terser). The matching webpack memory knobs (cpus=1,
+  # webpackMemoryOptimizations) live in next.config.ts.
+  SKIP_MARKETING_PREBUILD = "1"
+  NODE_OPTIONS = "--max-old-space-size=3584"
   NEXT_TELEMETRY_DISABLED = "1"
 
   [services.production.run]
