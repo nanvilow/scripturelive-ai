@@ -1669,14 +1669,17 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       const detectedRefs = detectVersesInTextWithScore(text)
       const references = detectedRefs.map((r) => r.reference)
       const autoLiveOn = state.autoLive || state.settings.autoGoLiveOnDetection
-      // v0.7.60 — HARD CLAMP to 0.5 floor regardless of persisted
-      // setting. The operator's rule: anything ≥50% confidence is
-      // eligible to auto-go-live, anything below is a candidate-only
-      // suggestion. An upgrader whose localStorage still holds 0.9
-      // (the previous default) would otherwise be stuck at the old
-      // behaviour; clamping here makes the new floor apply on the
-      // very next service.
-      const threshold = Math.min(state.autoLiveThreshold ?? 0.5, 0.5)
+      // v0.7.73 — Honour the operator's autoLiveThreshold setting EXACTLY,
+      // floored at 0.50 so an accidental 0 doesn't auto-live every fuzzy
+      // hit and ceilinged at 1.0. v0.7.60's hard-cap at 0.50 was the
+      // primary cause of "displays random scriptures even when nobody
+      // is quoting one" — operators who tightened the slider in Settings
+      // were silently ignored. Default 0.78 (high-confidence band) when
+      // the operator never touched the slider — matches the semantic
+      // matcher's CONFIDENCE_HIGH_THRESHOLD so AI hits only auto-live
+      // when they're near-verbatim quotations.
+      const operatorThreshold = state.autoLiveThreshold ?? 0.78
+      const threshold = Math.max(0.50, Math.min(1.0, operatorThreshold))
 
       // ── Voice text detection ─────────────────────────────────────────
       // When the speaker quotes a passage (e.g. "In the beginning God
@@ -1732,7 +1735,15 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                 processedRefsRef.current.has(top.reference)
               : false
             if (top && !willHandleBelow && !processedTextHitsRef.current.has(top.reference)) {
-              const minSim = hasAttribution ? 0.32 : 0.4
+              // v0.7.73 — Raised minSim 0.32/0.40 → 0.55/0.60. The
+              // previous floor matched any verse sharing two content
+              // words with the spoken tail, which is why "thank you for
+              // coming today" could surface a verse about thanksgiving.
+              // 0.55+ requires a real overlap of distinctive words, so
+              // only actual quotations (or close paraphrases) survive
+              // this gate. Attribution still gets the small handicap
+              // because the preacher has explicitly signalled scripture.
+              const minSim = hasAttribution ? 0.55 : 0.60
               if (sim < minSim) {
                 /* not a real quotation — drop silently */
               } else {
@@ -1758,13 +1769,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   chapter: top.chapter,
                   verseStart: top.verse,
                 })
-                // v0.7.60 — Lowered live threshold 0.85 → 0.50 per
-                // operator's "display 50–100% to live" spec. The
-                // upstream `minSim` gate (0.32 / 0.4 with attribution)
-                // keeps obvious noise from reaching this point, so the
-                // 0.50 floor is a meaningful "we're confident enough
-                // to put this on the projector" signal.
-                if (autoLiveOn && sim >= 0.50) {
+                // v0.7.73 — Use the operator's threshold (default 0.78)
+                // instead of a hardcoded 0.50. Combined with the raised
+                // minSim floor above, this means a keyword hit only
+                // auto-displays on the projector when the spoken tail
+                // genuinely matches a verse — no more "speaker said
+                // 'love' so here's 1 Corinthians 13 on the screen".
+                if (autoLiveOn && sim >= threshold) {
                   const slide = {
                     id: `slide-${Date.now()}`,
                     type: 'verse' as const,
@@ -1843,7 +1854,16 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               const tx = state.selectedTranslation
               let bestLiveDispatched = false
               for (const m of semJson.matches) {
-                if (m.score < 0.20) continue
+                // v0.7.73 — Raised semantic noise floor 0.20 → 0.55.
+                // Cosine similarity of 0.20–0.50 between the transcript
+                // and a verse means "loosely related topic" not "the
+                // speaker is quoting/paraphrasing this verse." Embedding
+                // models cluster anything biblical into a tight subspace,
+                // so even casual sermon talk lights up a dozen verses
+                // in that band. Below 0.55 = drop entirely (don't show
+                // as a candidate either — the operator was getting noise
+                // suggestions for verses nobody mentioned).
+                if (m.score < 0.55) continue
                 if (processedSemanticHitsRef.current.has(m.reference)) continue
                 if (processedRefsRef.current.has(m.reference)) continue
                 if (processedTextHitsRef.current.has(m.reference)) continue
@@ -1890,10 +1910,12 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   confidence: m.score,
                 }
 
-                if (m.score >= 0.50) {
-                  // Live-eligible — push to detectedVerses and (if
-                  // auto-live is on AND this is the first 0.50+ hit
-                  // in this call) flip the projector.
+                if (m.score >= threshold) {
+                  // v0.7.73 — Auto-live now uses the operator's
+                  // autoLiveThreshold (default 0.78 = high-confidence
+                  // band). The 0.55–threshold band still surfaces as a
+                  // candidate chip the operator can click; only strong
+                  // semantic matches reach the projector automatically.
                   const tBefore = useAppStore.getState().liveTranscript
                   useAppStore.getState().pushTranscriptBreak(tBefore.length)
                   useAppStore.getState().addDetectedVerse(detected)
