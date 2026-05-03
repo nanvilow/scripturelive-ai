@@ -317,11 +317,33 @@ async function downloadChunkInto(
   // mid-stream silence). Without this, a stuck TLS handshake to S3
   // would block the chunk forever and prevent the watchdog from
   // ever observing forward progress on its sibling chunks.
-  const res = await fetch(url, {
-    headers: { Range: `bytes=${chunk.start}-${chunk.end}` },
-    redirect: 'follow',
-    signal: mergeSignals(signal, AbortSignal.timeout(CHUNK_HEADER_TIMEOUT_MS)),
-  })
+  //
+  // v0.7.63 — CRITICAL: the previous implementation used
+  // `AbortSignal.timeout(CHUNK_HEADER_TIMEOUT_MS)` which cannot be
+  // cancelled — so the abort fires 30s later regardless, even after
+  // headers arrive, killing the body stream mid-download. On any link
+  // slower than ~22 Mbps per connection (every Ghana office link, plus
+  // most home networks worldwide), each chunk would die at 30s in,
+  // the fast path would fail, and the fallback would inherit the same
+  // bug. Result: download visibly stuck at 0%, then a long pause, then
+  // either a second 0% start (single-stream fallback) or a phantom
+  // error. Fix: a manually-cleared timer scoped to just the
+  // `await fetch()` headers phase.
+  const headerCtrl = new AbortController()
+  const headerTimer = setTimeout(
+    () => headerCtrl.abort(new Error(`Chunk headers timed out after ${CHUNK_HEADER_TIMEOUT_MS}ms`)),
+    CHUNK_HEADER_TIMEOUT_MS,
+  )
+  let res: Response
+  try {
+    res = await fetch(url, {
+      headers: { Range: `bytes=${chunk.start}-${chunk.end}` },
+      redirect: 'follow',
+      signal: mergeSignals(signal, headerCtrl.signal),
+    })
+  } finally {
+    clearTimeout(headerTimer)
+  }
   // 206 Partial Content is the success code for a Range request.
   // Some misconfigured servers reply 200 with the full body; if that
   // happens we MUST bail because we'd write the entire file into one
@@ -386,14 +408,29 @@ async function singleStreamDownload(
     }
   }, STALL_CHECK_INTERVAL_MS)
 
-  const res = await fetch(opts.url, {
-    redirect: 'follow',
-    signal: mergeSignals(
-      opts.signal,
-      stallCtrl.signal,
-      AbortSignal.timeout(CHUNK_HEADER_TIMEOUT_MS),
-    ),
-  })
+  // v0.7.63 — same fix as downloadChunkInto: timeout must scope to
+  // headers only, not the entire body stream. Previously a 490 MB
+  // installer over a 5 Mbps link would die at exactly 30s in (~18 MB
+  // transferred) because the unkillable AbortSignal.timeout fired.
+  // The mid-stream stall watchdog already protects against true
+  // silence; this timer only guards the connect/TLS/redirect phase.
+  const headerCtrl = new AbortController()
+  const headerTimer = setTimeout(
+    () => headerCtrl.abort(new Error(`Single-stream headers timed out after ${CHUNK_HEADER_TIMEOUT_MS}ms`)),
+    CHUNK_HEADER_TIMEOUT_MS,
+  )
+  let res: Response
+  try {
+    res = await fetch(opts.url, {
+      redirect: 'follow',
+      signal: mergeSignals(opts.signal, stallCtrl.signal, headerCtrl.signal),
+    })
+  } catch (err) {
+    clearTimeout(headerTimer)
+    clearInterval(stallTimer)
+    throw err
+  }
+  clearTimeout(headerTimer)
   if (!res.ok) {
     clearInterval(stallTimer)
     throw new Error(`GET ${opts.url} returned ${res.status}`)

@@ -1,5 +1,17 @@
 # Recent Changes
 
+## v0.7.63 — In-app updater download stuck at 0% on slow links (May 3, 2026)
+
+**Bug:** Operator report — "upgrade side, when user click on download, download stack at 0%". Same symptom v0.7.55 was supposed to fix, except this time the download visibly **starts** (toast shows 0% and parallelism: 6 chunks), then either freezes or briefly climbs to ~15–25% and snaps back. No clean fallback, no error toast.
+
+**Root cause:** Regression introduced by v0.7.55 itself. The "headers-only" timeout in `electron/parallel-download.ts` was implemented with `AbortSignal.timeout(CHUNK_HEADER_TIMEOUT_MS)` — a fire-and-forget signal that **cannot be cancelled**. The intent was to bound only the TLS+HTTP-headers exchange (typically <1s); the actual behaviour is to abort the entire fetch (including the body stream that's being read) at exactly 30s. With a 490 MB installer split into six ~82 MB chunks, every chunk over a link slower than ~22 Mbps per connection — i.e. every Ghana office link, plus most home networks worldwide — dies precisely 30s into its body read, after transferring 15–18 MB. `Promise.all` rejects, `triggerFastDownload()` falls back to `triggerUpdateDownload()` (electron-updater's slow single-stream path), and the **single-stream fallback inherits the same bug** because `singleStreamDownload` was wired with the same `AbortSignal.timeout`. Result: a fast path that abruptly stops + a slow path that abruptly stops, with the renderer's seeded `{percent: 0}` toast freezing in between because both broadcasts come from the same module.
+
+**Fix:** Replaced both `AbortSignal.timeout(...)` call-sites with a manual `setTimeout` → `AbortController.abort()` pair, paired with `clearTimeout()` the instant `await fetch(...)` returns the response headers. Body reads then run with no upper bound — the existing 25s stall watchdog (which monitors `transferredCounter` growth) still protects against true mid-stream silence, exactly as v0.7.55 originally intended. Two surgical edits in `electron/parallel-download.ts`:
+1. `downloadChunkInto()` — manual header timer, cleared in a `try/finally` around the fetch.
+2. `singleStreamDownload()` — same pattern with explicit `clearTimeout` on the success path AND in the `catch` path (so a TLS failure doesn't leak the timer).
+
+Version bumped to `0.7.63`. Local typecheck green. **Not pushed to git** per operator instruction; awaiting explicit ship approval.
+
 ## v0.7.56 — vMix won't reattach to NDI source after Disconnect → Reconnect (May 3, 2026)
 
 **Bug:** Operator report — "the NDI output connection with other apps, like OBS and vMix, [is weak] because when I disconnect NDI from the scripturliveai app and reconnect it, it won't work with it unless I close vMix before and reopen it before NDI is connected." Classic vMix-caches-dead-NDI-endpoint bug: after Disconnect → Reconnect, vMix kept trying to TCP-connect to the OLD sender's IP:port for 10–30 seconds, ignoring the fresh mDNS announcement of the new sender at the same name.
