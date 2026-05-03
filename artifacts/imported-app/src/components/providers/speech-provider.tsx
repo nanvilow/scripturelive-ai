@@ -5,6 +5,10 @@ import { toast } from 'sonner'
 import { bootstrapRuntimeKeys } from '@/lib/runtime-keys'
 import { detectBestReference, parseExplicitReference } from '@/lib/bibles/reference-engine'
 import { lookupRange, lookupVerse, isTranslationBundled } from '@/lib/bibles/local-bible'
+// v0.7.65 — Curated preacher-phrase dictionary (~190 unaddressed
+// quotations like "the heavens declare the glory of God" or
+// "trouble don't last always"). Runs strictly local, no network.
+import { detectBestPreacherPhrase } from '@/lib/bibles/preacher-phrases'
 // v0.7.4 — chapter metadata for "next chapter" / "previous chapter"
 // voice commands. Same JSON the reference engine uses for validation.
 import bibleStructure from '@/data/bible-structure.json'
@@ -1579,6 +1583,87 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             return
           }
         }
+      }
+
+      // ── v0.7.65 — Preacher Phrase Engine ───────────────────────────
+      // Catches the un-addressed quotations the explicit-reference
+      // engines (regex + Reference Engine v2) cannot — phrases like
+      // "Jesus wept", "the heavens declare the glory of God", "trouble
+      // don't last always", "Lazarus come forth". Same dispatch shape
+      // as the v2 block above: detect → fetch verse text → push
+      // DetectedVerse → optionally auto-go-live. Sermon-only entries
+      // ("say amen somebody") are skipped — they have no Bible address
+      // to project. Dedupe via the existing processedTextHitsRef so a
+      // single phrase doesn't refire on every transcript chunk.
+      try {
+        const phraseHit = detectBestPreacherPhrase(text, {
+          excludeReferences: processedTextHitsRef.current,
+        })
+        if (phraseHit && !phraseHit.sermonOnly) {
+          processedTextHitsRef.current = new Set(processedTextHitsRef.current).add(
+            phraseHit.reference,
+          )
+          const params = new URLSearchParams({
+            reference: phraseHit.reference,
+            translation: state.selectedTranslation,
+          })
+          const r = await fetch(`/api/bible?${params.toString()}`)
+          if (r.ok) {
+            // /api/bible?reference= returns a single verse object:
+            //   { reference, text, translation, book, chapter, verseStart, ... }
+            // (the ?search= path is the one that returns { hits: [] })
+            const v = (await r.json()) as {
+              reference?: string; text?: string; translation?: string
+              book?: string; chapter?: number; verseStart?: number
+            }
+            if (v?.reference && v.text && v.translation) {
+              const detected: DetectedVerse = {
+                id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                reference: v.reference,
+                text: v.text,
+                translation: v.translation,
+                detectedAt: new Date(),
+                // Catalogue match is high-confidence by construction;
+                // we floor at 0.85 so it lands in the auto-go-live
+                // band without depending on operator-tunable thresholds.
+                confidence: phraseHit.matchType === 'exact' ? 0.95 : 0.85,
+              }
+              const tBefore = useAppStore.getState().liveTranscript
+              useAppStore.getState().pushTranscriptBreak(tBefore.length)
+              useAppStore.getState().addDetectedVerse(detected)
+              useAppStore.getState().addToVerseHistory({
+                reference: v.reference,
+                text: v.text,
+                translation: v.translation,
+                book: v.book ?? '',
+                chapter: v.chapter ?? 0,
+                verseStart: v.verseStart ?? 0,
+              })
+              const autoLiveOnPhrase = state.autoLive || state.settings.autoGoLiveOnDetection
+              if (autoLiveOnPhrase) {
+                const slide = {
+                  id: `slide-${Date.now()}`,
+                  type: 'verse' as const,
+                  title: v.reference,
+                  subtitle: v.translation,
+                  content: v.text.split('\n').filter(Boolean),
+                  background: state.settings.congregationScreenTheme,
+                }
+                const cur = useAppStore.getState().slides
+                const next = cur.length > 0 ? [...cur, slide] : [slide]
+                const idx = next.length - 1
+                useAppStore.getState().setSlides(next)
+                useAppStore.getState().setPreviewSlideIndex(idx)
+                useAppStore.getState().setLiveSlideIndex(idx)
+                useAppStore.getState().setIsLive(true)
+              }
+              state.setDetectionStatus('detected')
+              return
+            }
+          }
+        }
+      } catch {
+        /* phrase-engine failures are silent — keyword + AI paths still run */
       }
 
       const detectedRefs = detectVersesInTextWithScore(text)
