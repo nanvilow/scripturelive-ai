@@ -274,6 +274,23 @@ const TRANSLATION_ALIASES: Record<string, string> = {
   'oeb': 'OEB',
   'open english': 'OEB',
   'open english bible': 'OEB',
+  // v0.7.77 — Twi (Akuapem) Bible. Operators in Ghana frequently
+  // switch a verse mid-sermon to "the Twi version" so the
+  // congregation hears it in their first language. The wake-word
+  // form ("Media, Twi version") and the lead-in form ("give me
+  // the Twi version") both route through the same change_translation
+  // intent that already swaps the live verse text in place via
+  // LiveTranslationSync. "Akan" is included as the language family
+  // alias preachers also use interchangeably; "Akuapem" is the
+  // specific dialect of the underlying tw-wakna dataset.
+  'twi': 'TWI',
+  'twi version': 'TWI',
+  'twi bible': 'TWI',
+  'twi translation': 'TWI',
+  'akuapem': 'TWI',
+  'akuapem twi': 'TWI',
+  'akan': 'TWI',
+  'akan bible': 'TWI',
 }
 
 // Cached longest-first key list so we don't sort on every call.
