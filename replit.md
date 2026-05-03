@@ -1,5 +1,19 @@
 # Recent Changes
 
+## v0.7.54 — Voice commands silently disabled by default (May 3, 2026)
+
+**Bug:** Operator report — "the LLM voice classifier doesn't listen and detect or do what it should do in the app; voice commands are not working." Despite shipping a full natural-language command system across v0.7.19 → v0.7.32 (regex classifier, wake-word "Media", multi-command chaining, translation aliases, filler filter, LLM fallback via `/api/voice/classify` with the OpenAI key), spoken commands fired exactly zero times for end users.
+
+**Root cause:** `voiceControlEnabled` defaulted to **`false`** in `src/lib/store.ts:746`. That single flag is the master gate at `speech-provider.tsx:1285` — when off, the entire voice-command pre-pass (regex + chain + LLM + wake-word + filler filter) is skipped silently and only Bible-reference auto-detection runs. The toggle to turn it on lives in Settings → Voice Control, an obscure corner most operators never visit. Mic was hot, transcripts flowed, dispatcher was healthy, OPENAI_API_KEY was bound and reachable (verified live: `/api/voice/classifier-status` returns `{ok:true, enabled:true, hasApiKey:true}`) — but the gate at line 1285 short-circuited before any of it ran.
+
+**Fixes (3 changes):**
+
+1. **`voiceControlEnabled: true`** as the new fresh-install default (`src/lib/store.ts`). The classifier infrastructure is mature enough (confidence floor of 80 on regex, 70 on LLM; 4 s dedupe; 200-char tail-only window; filler pre-filter; wake-word elevation) that defaulting on matches operator expectation without measurable false-positive risk.
+2. **Persist version 2 → 3** with a one-time migrate that force-flips `voiceControlEnabled: true` for every existing install. Without this, current operators upgrading would still have the old persisted `false` and see no behaviour change.
+3. **LLM-gate widened to 20 words** (`src/lib/voice/llm-gate.ts`, was 12) and a new "discourse-marker preface" hop so phrases starting with "now", "so", "well", "alright", "uh", "and", "please" still surface their actual command verb on the second word. Real preacher cadence — "Now let's open up to the book of John chapter three verse sixteen" (13 words, starts with "now") — used to be silently rejected by the gate even though "let's" is a valid trigger verb. Tests added for the new cadence patterns.
+
+All 405 unit tests pass. The fix is purely additive: an operator who genuinely wants the system off can still flick the switch in Settings, and that preference will then persist forward.
+
 ## v0.7.53 — Hotfix: NDI broken because `koffi` was also in devDependencies (May 3, 2026)
 
 **Bug:** v0.7.52's installer launched fine (electron-updater fix landed), but the NDI Output panel showed "NDI runtime not detected. (koffi (FFI library) failed to load: Cannot find module 'koffi'…" — same exact pattern as the v0.7.52 electron-updater bug, just for a different package. NDI output to vMix / Wirecast / OBS was completely non-functional in installed builds.

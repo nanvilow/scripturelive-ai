@@ -112,7 +112,16 @@ const STRUCTURAL_HINTS: RegExp[] = [
 ]
 
 const MIN_WORDS = 2
-const MAX_WORDS = 12
+// v0.7.54 — raised from 12 to 20 after operator reports of natural
+// preacher cadence missing the gate. Phrases like "Now let's open up
+// to the book of John chapter three verse sixteen" (13 words) or
+// "Give me the message version of John three sixteen please" (11
+// words) easily blow past 12. 20 still rules out full sermon
+// sentences while accepting commands phrased the way operators
+// actually speak mid-service. The downstream LLM call still has the
+// 1.5 s internal timeout and a confidence floor of 70, so a longer
+// gate window doesn't materially change false-positive risk.
+const MAX_WORDS = 20
 
 /**
  * Returns true when the utterance is worth sending to the LLM
@@ -129,14 +138,31 @@ export function isLikelyCommandUtterance(text: string): boolean {
   if (words.length < MIN_WORDS) return false
   if (words.length > MAX_WORDS) return false
 
-  // Strip leading wake-word ("media,") so the first word check sees
-  // the actual command verb. The wake-word itself is not in
-  // TRIGGER_VERBS by design — it's already handled upstream by the
-  // wake-word path in speech-provider.
+  // Strip a leading wake-word ("media,") OR a discourse-marker
+  // preface ("now", "so", "well", "alright", "uh", "um", "and",
+  // "please") so the first word check sees the actual command verb.
+  // The wake-word / discourse markers themselves are not in
+  // TRIGGER_VERBS by design — wake words are handled upstream in
+  // speech-provider, and discourse markers are sermon vocabulary
+  // that mustn't trigger LLM calls on their own.
+  // v0.7.54 — added the discourse-marker hop after operator reports
+  // of "Now let's open up to John chapter three verse sixteen" being
+  // rejected by the gate even though "let's" IS a trigger verb.
+  const PREFACE = new Set([
+    'media', 'okay', 'ok', 'hey',                  // wake-word forms
+    'now', 'so', 'well', 'alright', 'right',       // discourse markers
+    'uh', 'um', 'er', 'eh', 'and', 'please',       // fillers
+  ])
   let first = words[0].toLowerCase().replace(/[^a-z']/g, '')
-  if (first === 'media' || first === 'okay' || first === 'ok' || first === 'hey') {
+  if (PREFACE.has(first)) {
     if (words.length < MIN_WORDS + 1) return false
     first = words[1].toLowerCase().replace(/[^a-z']/g, '')
+    // Allow ONE more hop ("Now please show me…", "Okay so go to…")
+    // so two stacked prefaces don't defeat the gate.
+    if (PREFACE.has(first)) {
+      if (words.length < MIN_WORDS + 2) return false
+      first = words[2].toLowerCase().replace(/[^a-z']/g, '')
+    }
   }
 
   if (TRIGGER_VERBS.has(first)) return true
