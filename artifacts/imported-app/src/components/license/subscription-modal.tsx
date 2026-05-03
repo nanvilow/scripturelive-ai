@@ -105,11 +105,10 @@ export function SubscriptionModal() {
   const [whatsapp, setWhatsapp] = useState('')
   const [payment, setPayment] = useState<PaymentResp | null>(null)
   const [code, setCode] = useState('')
-  // v0.5.53 — second activation slot for an operator-supplied
-  // generated/master code, surfaced as its own input box right under
-  // Step 3. Both slots feed the same /api/license/activate endpoint;
-  // the only difference is which value is sent on click.
-  const [masterCode, setMasterCode] = useState('')
+  // v0.7.75 — Single activation input. The legacy "master code" slot
+  // was collapsed into the same field; we auto-detect master vs
+  // customer codes by SL-MASTER prefix at submit time so the API
+  // still gets the right `expectedType`.
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [receipt, setReceipt] = useState<ActivateResp | null>(null)
@@ -145,7 +144,6 @@ export function SubscriptionModal() {
         setSelected(null)
         setPayment(null)
         setCode('')
-        setMasterCode('')
         setBusy(false)
         setError(null)
         setReceipt(null)
@@ -232,17 +230,16 @@ export function SubscriptionModal() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className={cn(
-        'max-h-[92vh] overflow-y-auto bg-background border-border text-foreground',
+        'max-h-[92vh] overflow-y-auto bg-background border-border text-foreground p-4 sm:p-5 gap-3',
         phase === 'plans' ? 'sm:max-w-[1080px]' : 'sm:max-w-[680px]',
       )}>
-        <DialogHeader>
+        <DialogHeader className="space-y-1">
           <DialogTitle className="flex items-center gap-2 text-base">
             <ShieldCheck className="h-4 w-4 text-emerald-400" />
             Activate AI Detection
           </DialogTitle>
-          <DialogDescription className="text-muted-foreground text-xs">
-            ScriptureLive AI helps churches display scripture instantly — no manual typing,
-            no delays, just smooth, accurate, powerful live Bible detection.
+          <DialogDescription className="text-muted-foreground text-[11px] leading-snug">
+            Already paid? Enter your activation code below. New here? Pick a plan.
           </DialogDescription>
         </DialogHeader>
 
@@ -343,42 +340,99 @@ export function SubscriptionModal() {
             },
           ]
           return (
-          <div className="space-y-5">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-5 pt-3">
+          <div className="space-y-4">
+            {/* v0.7.75 — Activation entry MOVED TO TOP per operator
+                feedback: "make sure when users open it, they should be
+                able to see where to enter the activation code too."
+                Previously the activation field sat below all three
+                pricing tiers, which pushed it below the fold on a
+                1280×720 stage so customers with a code in hand
+                couldn't find where to type it. Now it's the first
+                thing visible — pricing tiers follow underneath for
+                customers who don't have a code yet. The two slots
+                (customer code / master code) are collapsed into a
+                single tabbed control to keep the top section short. */}
+            <div className="rounded-lg border border-emerald-500/40 bg-emerald-950/15 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] uppercase tracking-wider text-emerald-300 font-semibold">
+                  Already have an activation code?
+                </div>
+                <span className="text-[10px] text-muted-foreground">Right-click box to paste</span>
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="SL-1Y-XXXXXX  (or master / generated code)"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  onContextMenu={(e) => { e.preventDefault(); pasteIntoInput(setCode) }}
+                  className="bg-background border-border text-foreground font-mono h-9"
+                />
+                <Button
+                  onClick={() => {
+                    // Auto-detect master vs customer code by prefix so
+                    // we collapse the two old buttons into one without
+                    // losing the cross-reject precision in the API.
+                    const v = code.trim().toUpperCase()
+                    const looksMaster = /^SL-MASTER/i.test(v) || /^MASTER/i.test(v)
+                    submitActivation(code, looksMaster ? 'master' : 'activation')
+                  }}
+                  disabled={busy}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 h-9"
+                >
+                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate'}
+                </Button>
+              </div>
+              {error && phase === 'plans' && (
+                <div className="text-[11px] text-rose-400 flex items-start gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  {error}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="h-px flex-1 bg-border" />
+              <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                Or pick a plan
+              </span>
+              <div className="h-px flex-1 bg-border" />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 lg:gap-4">
               {tiers.map((tier) => {
                 const Icon = tier.icon
                 return (
                   <div
                     key={tier.id}
                     className={cn(
-                      'relative rounded-2xl border p-5 sm:p-6 flex flex-col bg-card/40',
+                      'relative rounded-xl border p-3.5 sm:p-4 flex flex-col bg-card/40',
                       tier.featured
-                        ? 'border-amber-500/70 bg-gradient-to-b from-amber-950/30 via-card/40 to-card/40 shadow-[0_0_40px_-12px_rgba(245,158,11,0.45)] lg:scale-[1.03] lg:z-10'
+                        ? 'border-amber-500/70 bg-gradient-to-b from-amber-950/30 via-card/40 to-card/40 shadow-[0_0_30px_-12px_rgba(245,158,11,0.45)]'
                         : 'border-border hover:border-border/80',
                     )}
                   >
                     {tier.featured && (
-                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3.5 py-1 rounded-full bg-amber-500 text-amber-950 text-[10px] font-bold uppercase tracking-wider shadow-lg whitespace-nowrap">
+                      <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-amber-500 text-amber-950 text-[9px] font-bold uppercase tracking-wider shadow-lg whitespace-nowrap">
                         Most Popular
                       </div>
                     )}
-                    <div className="flex items-center gap-2">
-                      <Icon className={cn('h-4 w-4', tier.featured ? 'text-amber-300' : 'text-muted-foreground')} />
-                      <h3 className="text-base font-semibold text-foreground">{tier.name}</h3>
+                    <div className="flex items-center gap-1.5">
+                      <Icon className={cn('h-3.5 w-3.5', tier.featured ? 'text-amber-300' : 'text-muted-foreground')} />
+                      <h3 className="text-sm font-semibold text-foreground">{tier.name}</h3>
                     </div>
-                    <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground min-h-[40px]">{tier.blurb}</p>
-                    <div className="mt-4 mb-4">
-                      <div className="flex items-baseline gap-1.5">
-                        <span className={cn('text-3xl sm:text-4xl font-bold tracking-tight', tier.featured ? 'text-amber-200' : 'text-foreground')}>{tier.price}</span>
+                    <p className="mt-1 text-[10.5px] leading-snug text-muted-foreground min-h-[28px]">{tier.blurb}</p>
+                    <div className="mt-2 mb-2">
+                      <div className="flex items-baseline gap-1">
+                        <span className={cn('text-2xl font-bold tracking-tight', tier.featured ? 'text-amber-200' : 'text-foreground')}>{tier.price}</span>
                         {tier.priceSuffix && (
-                          <span className="text-[11px] text-muted-foreground">{tier.priceSuffix}</span>
+                          <span className="text-[10px] text-muted-foreground">{tier.priceSuffix}</span>
                         )}
                       </div>
                     </div>
-                    <ul className="space-y-2 mb-5">
+                    <ul className="space-y-1 mb-3">
                       {tier.features.map((f) => (
-                        <li key={f} className="flex items-start gap-2 text-[12px] text-foreground">
-                          <Check className={cn('h-3.5 w-3.5 mt-[3px] shrink-0', tier.featured ? 'text-amber-300' : 'text-emerald-400')} />
+                        <li key={f} className="flex items-start gap-1.5 text-[11px] text-foreground leading-snug">
+                          <Check className={cn('h-3 w-3 mt-[2px] shrink-0', tier.featured ? 'text-amber-300' : 'text-emerald-400')} />
                           <span>{f}</span>
                         </li>
                       ))}
@@ -387,7 +441,7 @@ export function SubscriptionModal() {
                       onClick={tier.onSelect}
                       disabled={tier.disabled}
                       className={cn(
-                        'mt-auto w-full h-10 text-[12px] font-semibold uppercase tracking-wider',
+                        'mt-auto w-full h-8 text-[11px] font-semibold uppercase tracking-wider',
                         tier.featured
                           ? 'bg-amber-500 hover:bg-amber-400 text-amber-950 border border-amber-300'
                           : 'bg-transparent hover:bg-muted text-foreground border border-border',
@@ -398,47 +452,6 @@ export function SubscriptionModal() {
                   </div>
                 )
               })}
-            </div>
-
-            {/* v0.6.1 — relocated activation entry. Same two slots that
-                used to live in PHASE 2 (post-plan-pick): a customer
-                code slot (emerald Activate) and a master / generated
-                code slot (amber Activate). Either one bypasses the
-                payment flow entirely — the activation endpoint
-                returns the plan info embedded in the code itself. */}
-            <div className="space-y-2 rounded-lg border border-border bg-card/40 p-3.5">
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Step 3 — Enter activation code after payment</div>
-              <div className="flex gap-2">
-                <Input
-                  placeholder="SL-1Y-XXXXXX"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.toUpperCase())}
-                  onContextMenu={(e) => { e.preventDefault(); pasteIntoInput(setCode) }}
-                  className="bg-background border-border text-foreground font-mono"
-                />
-                <Button onClick={() => submitActivation(code, 'activation')} disabled={busy} className="bg-emerald-600 hover:bg-emerald-500 text-white">
-                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate'}
-                </Button>
-              </div>
-              <p className="text-[10px] text-muted-foreground">Right-click the box above to paste from clipboard.</p>
-
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground pt-2 border-t border-border">
-                Or — Enter your generated and master code in here
-              </div>
-              <div className="flex gap-2">
-                <Input
-                  placeholder="SL-MASTER-XXXXXX or generated code"
-                  value={masterCode}
-                  onChange={(e) => setMasterCode(e.target.value.toUpperCase())}
-                  onContextMenu={(e) => { e.preventDefault(); pasteIntoInput(setMasterCode) }}
-                  className="bg-background border-border text-foreground font-mono"
-                />
-                <Button onClick={() => submitActivation(masterCode, 'master')} disabled={busy} className="bg-amber-600 hover:bg-amber-500 text-white">
-                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate'}
-                </Button>
-              </div>
-
-              {error && phase === 'plans' && <div className="text-[11px] text-rose-400 flex items-start gap-1.5"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />{error}</div>}
             </div>
           </div>
           )

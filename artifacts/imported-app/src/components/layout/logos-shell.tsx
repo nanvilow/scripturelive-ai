@@ -408,8 +408,29 @@ function LiveTranscriptionCard() {
     // canonical detector (same logic that fires the slide auto-stage)
     // so a paragraph appearing here is guaranteed to have triggered a
     // verse panel update — no false positives from word-soup names.
+    //
+    // v0.7.75 — Per operator feedback ("the second image is supposed
+    // to show only the Bible-detected verses, not the whole writings"):
+    // Bible-only mode now extracts JUST the detected reference strings
+    // (e.g. "Genesis 1:1", "John 3:16") instead of leaking the
+    // surrounding sermon speech that happened to contain the trigger
+    // phrase. Each unique reference becomes its own paragraph, in
+    // order of appearance, deduplicated against the previous segment
+    // so the same verse doesn't repeat back-to-back when the speaker
+    // dwells on it. The render below detects this case and styles
+    // each entry as a verse pill rather than running prose.
     if (bibleOnlyTranscription) {
-      segs = segs.filter((p) => detectVersesInText(p).length > 0)
+      const refs: string[] = []
+      let last = ''
+      for (const p of segs) {
+        for (const ref of detectVersesInText(p)) {
+          if (ref !== last) {
+            refs.push(ref)
+            last = ref
+          }
+        }
+      }
+      return refs.slice(-12)
     }
     return segs.slice(-12)
   })()
@@ -642,22 +663,50 @@ function LiveTranscriptionCard() {
               </div>
             </div>
           )}
-          {paragraphs.map((para, i) => (
-            <p
-              key={i}
-              className={cn(
-                'text-[12px] leading-relaxed text-foreground',
-                // Add visible spacing between paragraphs
-                i > 0 && 'mt-3 pt-3 border-t border-border/40',
+          {bibleOnlyTranscription ? (
+            // v0.7.75 — Bible-only mode renders each detected reference
+            // as a compact pill. No surrounding speech leaks through.
+            paragraphs.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {paragraphs.map((ref, i) => (
+                  <span
+                    key={`${ref}-${i}`}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-500/15 border border-amber-500/40 text-amber-200 text-[11px] font-mono font-semibold"
+                  >
+                    <BookOpen className="h-3 w-3" />
+                    {ref}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              liveTranscript ? (
+                <p className="text-[11px] text-muted-foreground italic">
+                  Listening — no Bible references detected yet. Toggle the{' '}
+                  <span className="text-foreground font-semibold">Bible</span> button
+                  off to see the full transcript.
+                </p>
+              ) : null
+            )
+          ) : (
+            <>
+              {paragraphs.map((para, i) => (
+                <p
+                  key={i}
+                  className={cn(
+                    'text-[12px] leading-relaxed text-foreground',
+                    // Add visible spacing between paragraphs
+                    i > 0 && 'mt-3 pt-3 border-t border-border/40',
+                  )}
+                >
+                  {normalizeTranscriptForDisplay(para)}
+                </p>
+              ))}
+              {liveInterimTranscript && (
+                <p className="text-[12px] leading-relaxed text-muted-foreground italic">
+                  {normalizeTranscriptForDisplay(liveInterimTranscript)}…
+                </p>
               )}
-            >
-              {normalizeTranscriptForDisplay(para)}
-            </p>
-          ))}
-          {liveInterimTranscript && (
-            <p className="text-[12px] leading-relaxed text-muted-foreground italic">
-              {normalizeTranscriptForDisplay(liveInterimTranscript)}…
-            </p>
+            </>
           )}
         </div>
       </div>
