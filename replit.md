@@ -1,5 +1,21 @@
 # Recent Changes
 
+## v0.7.56 — vMix won't reattach to NDI source after Disconnect → Reconnect (May 3, 2026)
+
+**Bug:** Operator report — "the NDI output connection with other apps, like OBS and vMix, [is weak] because when I disconnect NDI from the scripturliveai app and reconnect it, it won't work with it unless I close vMix before and reopen it before NDI is connected." Classic vMix-caches-dead-NDI-endpoint bug: after Disconnect → Reconnect, vMix kept trying to TCP-connect to the OLD sender's IP:port for 10–30 seconds, ignoring the fresh mDNS announcement of the new sender at the same name.
+
+**Root cause:** `electron/ndi-service.ts` was doing the bare minimum on stop — calling `NDIlib_send_destroy()` on the sender pointer and waiting only **200 ms** before allowing a recreate. That's nowhere near enough on three counts:
+1. The NDI runtime's mDNS responder thread stayed ALIVE between stop and start, so our sender's mDNS advertisement aged out passively (over many seconds) instead of being actively retracted.
+2. vMix's NDI Receiver fires its "no signal" detector at roughly 1 second of silence; only after that will it accept a new sender at the same name. With our 200 ms cooldown, the new sender published BEFORE vMix had even noticed the old one was gone — so vMix kept its cached endpoint state and never re-resolved.
+3. The 200 ms gracefulStop fadeout barely registered as an off-air signal on the wire.
+
+**Fix (3 coordinated changes):**
+1. **Full NDI runtime recycle on every operator-initiated stop.** After `send_destroy()`, we now call `NDIlib_destroy()` to tear down the entire runtime — mDNS responder included. This actively broadcasts goodbye records and releases every cached sender identity NDI was holding. The next `start()` calls `NDIlib_initialize()` again to bring up a fresh runtime before recreating the sender.
+2. **Cooldown bumped 200 ms → 1500 ms.** Gives vMix's "no signal" timer (~1s) time to fire and purge its cached endpoint before we publish the new sender at the same name. Combined with the runtime recycle, this is what actually fixes the reconnect failure.
+3. **Goodbye fadeout extended 200 ms → 500 ms** so receivers see a clear "fade to black + going off-air" sequence instead of an abrupt disappearance.
+
+Trade-off: Reconnect after Disconnect now takes ~1.5s instead of being instant. Acceptable in exchange for actually working without restarting vMix. Auto-start at app boot is unaffected because there's no prior `lastDestroyAt` to wait for.
+
 ## v0.7.55 — In-app updater stuck at "Downloading update… 0%" (May 3, 2026)
 
 **Bug:** Operator report — "the downloading in the app is not working? Downloading update… 0%. stand still and not fast, fix it." The progress toast appears, says 0%, then sits there forever. No fallback ever triggers, no error toast appears, the operator has to kill the app and download the installer manually from the Releases page.

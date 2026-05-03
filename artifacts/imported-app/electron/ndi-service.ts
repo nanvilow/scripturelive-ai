@@ -135,6 +135,18 @@ export class NdiService extends EventEmitter {
   private keepAliveTimer: NodeJS.Timeout | null = null
   private sendBusy = false
   private lastDestroyAt = 0
+  // v0.7.56 — Tracks whether NDIlib_initialize() is currently active.
+  // The operator-initiated stop() path now calls NDIlib_destroy() to
+  // fully recycle the NDI runtime — killing the mDNS responder and
+  // releasing every cached sender identity. The next start() must
+  // re-initialize before any send_create call. Without this recycle,
+  // vMix / OBS / Wirecast receivers that cached the OLD sender's
+  // IP:port refuse to reattach to a new sender with the same name
+  // until the receiver itself is restarted, which was the operator's
+  // exact complaint. Distinct from `bindings != null` because the
+  // FFI function pointers stay loaded across runtime recycles —
+  // only the live runtime state goes away.
+  private runtimeAlive = false
 
   constructor() {
     super()
@@ -226,6 +238,7 @@ export class NdiService extends EventEmitter {
         console.error('[ndi]', this.loadError)
         return
       }
+      this.runtimeAlive = true
 
       this.bindings = {
         initialize,
@@ -285,17 +298,45 @@ export class NdiService extends EventEmitter {
 
     // v0.7.12 — mDNS-flush cooldown. When start() is called shortly
     // after a stop() (e.g. operator changed resolution, on-air toggle
-    // bounce, fps switch) we MUST give the NDI runtime time to retract
-    // the old mDNS advertisement before publishing a new one with the
-    // same source name. Without this, downstream receivers occasionally
-    // see TWO sources momentarily — one dead, one live — and may
-    // latch onto the dead one until the operator restarts the receiver.
-    // 200ms is enough for the runtime's mDNS goodbye packets to fan
-    // out on a typical LAN; longer would just delay first-frame.
+    // bounce, fps switch, or the explicit Disconnect→Reconnect flow)
+    // we MUST give downstream receivers time to NOTICE the old
+    // sender is gone before we publish a new one with the same name.
+    // Without enough silence in between, vMix in particular caches
+    // the dead sender's IP:port and tries to TCP-connect to it for
+    // 10–30s, ignoring the fresh mDNS announcement entirely — which
+    // forces the operator to restart vMix to recover.
+    //
+    // v0.7.56 — Bumped 200 → 1500ms after operator escalation. vMix's
+    // NDI Receiver fires its "no signal" detector at roughly 1s of
+    // silence; only after that does it accept a new sender at the
+    // same name. 1.5s adds margin for slow LAN links. Combined with
+    // the full NDIlib_destroy() runtime recycle that stop() now
+    // performs (which retracts the mDNS advertisement immediately
+    // instead of letting it age out passively), this is enough to
+    // make Disconnect→Reconnect work reliably without any operator
+    // intervention on the receiver side.
     const sinceDestroy = Date.now() - this.lastDestroyAt
-    const DESTROY_COOLDOWN_MS = 200
+    const DESTROY_COOLDOWN_MS = 1500
     if (this.lastDestroyAt > 0 && sinceDestroy < DESTROY_COOLDOWN_MS) {
       await new Promise((res) => setTimeout(res, DESTROY_COOLDOWN_MS - sinceDestroy))
+    }
+
+    // v0.7.56 — Re-initialize the NDI runtime if the previous stop()
+    // destroyed it. NDIlib_initialize() is idempotent and cheap (it
+    // re-spawns the mDNS responder + the internal worker pool), so
+    // calling it on every start that follows a recycle is safe. We
+    // do NOT call it pre-emptively when runtime is already alive —
+    // some NDI versions return false when re-initialised over a live
+    // runtime, which would falsely look like a hardware-incompatible
+    // CPU error to the user.
+    if (this.bindings && !this.runtimeAlive) {
+      if (!this.bindings.initialize()) {
+        throw new Error(
+          'NDIlib_initialize() returned false on reconnect. Try fully restarting ScriptureLive AI.',
+        )
+      }
+      this.runtimeAlive = true
+      console.log('[ndi] runtime re-initialised after operator stop')
     }
 
     const settings = {
@@ -435,6 +476,36 @@ export class NdiService extends EventEmitter {
     }
     this.lastFrame = null
     this.status = { running: false, frameCount: this.status.frameCount }
+
+    // v0.7.56 — Full NDI runtime recycle on operator-initiated stop.
+    // Calling NDIlib_destroy() right after send_destroy() does three
+    // things no amount of waiting alone can:
+    //   1. Tears down the mDNS responder thread, which RETRACTS our
+    //      sender's advertisement immediately (broadcasting goodbye
+    //      records) instead of letting it passively age out of
+    //      receivers' caches over many seconds.
+    //   2. Releases every internal sender identity NDI was holding,
+    //      so when we publish a new sender at the same name on the
+    //      next start() it is treated as a fundamentally fresh
+    //      identity at the protocol layer.
+    //   3. Frees the worker pool / connection sockets that vMix and
+    //      friends were holding open to OUR side, prompting them to
+    //      drop their cached endpoint state for our source.
+    // Combined with the 1.5s cooldown in start(), this is what
+    // actually fixes the "vMix won't reconnect after Disconnect
+    // unless I restart vMix" complaint. The trade-off is a tiny
+    // delay (~50–150ms) on each Disconnect — invisible to operators.
+    if (this.bindings && this.runtimeAlive) {
+      try {
+        this.bindings.destroy()
+      } catch (e) {
+        console.warn(
+          '[ndi] runtime destroy on stop threw (non-fatal):',
+          e instanceof Error ? e.message : e,
+        )
+      }
+      this.runtimeAlive = false
+    }
   }
 
   /**
@@ -449,7 +520,7 @@ export class NdiService extends EventEmitter {
    * have only milliseconds before the process exits and the fadeout
    * would add user-perceptible latency.
    */
-  async gracefulStop(blackFrameMs = 200): Promise<void> {
+  async gracefulStop(blackFrameMs = 500): Promise<void> {
     if (!this.senderInstance || !this.bindings) {
       return this.stop()
     }
@@ -484,10 +555,16 @@ export class NdiService extends EventEmitter {
    */
   destroy(): void {
     if (this.bindings) {
-      try {
-        this.bindings.destroy()
-      } catch {
-        /* ignore — we're tearing down anyway */
+      // v0.7.56 — only call destroy() if runtime is still alive.
+      // stop() may have already recycled it — calling destroy() twice
+      // crashes some NDI runtime builds.
+      if (this.runtimeAlive) {
+        try {
+          this.bindings.destroy()
+        } catch {
+          /* ignore — we're tearing down anyway */
+        }
+        this.runtimeAlive = false
       }
       this.bindings = null
     }
