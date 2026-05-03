@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useVideoPlayer } from '@/lib/video';
 import { Scene1 } from './video_scenes/Scene1';
@@ -30,16 +30,34 @@ export default function VideoTemplate({
   onSceneChange?: (sceneKey: string) => void;
 } = {}) {
   const { currentSceneKey } = useVideoPlayer({ durations, loop });
+  const bgmRef = useRef<HTMLAudioElement>(null);
+  const sfxRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
     onSceneChange?.(currentSceneKey);
+    // Play whoosh SFX on scene transition
+    if (sfxRef.current) {
+      sfxRef.current.currentTime = 0;
+      sfxRef.current.volume = 0.4;
+      sfxRef.current.play().catch(() => {});
+    }
   }, [currentSceneKey, onSceneChange]);
+
+  useEffect(() => {
+    // Start background music
+    if (bgmRef.current) {
+      bgmRef.current.volume = 0.2;
+      bgmRef.current.play().catch(() => {});
+    }
+  }, []);
 
   const baseSceneKey = currentSceneKey.replace(/_r[12]$/, '') as keyof typeof SCENE_DURATIONS;
   const SceneComponent = SCENE_COMPONENTS[baseSceneKey];
 
   return (
     <div className="relative w-full h-screen overflow-hidden bg-[#020617] text-white">
+      <audio ref={bgmRef} src={`${import.meta.env.BASE_URL}audio/bgm.mp3`} loop preload="auto" />
+      <audio ref={sfxRef} src={`${import.meta.env.BASE_URL}audio/whoosh.mp3`} preload="auto" />
       <div className="absolute inset-0 flex items-center justify-center">
         <div className="relative w-full h-full max-w-[1080px] aspect-[9/16] overflow-hidden">
 
