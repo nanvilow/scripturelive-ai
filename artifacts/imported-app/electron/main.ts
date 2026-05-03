@@ -1905,6 +1905,22 @@ app.whenReady().then(async () => {
   } catch (err) {
     fatalError('setupIpc', err); app.quit(); return
   }
+  // v0.7.72 — Clear Chromium HTTP cache before the embedded Next
+  // server boots. The pinned port (47330) means every install of
+  // SLAI hits the SAME origin (http://127.0.0.1:47330), so after
+  // an auto-update Chromium would happily serve cached HTML from
+  // the PREVIOUS build — referencing _next/static/chunks/<hash>.js
+  // filenames that no longer exist in the new build's static dir.
+  // Result: "This page couldn't load" because every chunk 404s.
+  // Clearing the cache once at startup costs ~50ms and guarantees
+  // the renderer always pulls a fresh HTML+chunk pair from the
+  // freshly-baked server. Safe to run on every launch — Chromium
+  // re-populates the cache as the page loads.
+  try {
+    await session.defaultSession.clearCache()
+  } catch (err) {
+    console.warn('[boot] session.clearCache failed (non-fatal):', err)
+  }
   try {
     appBaseUrl = await startNextServer()
   } catch (err) {
