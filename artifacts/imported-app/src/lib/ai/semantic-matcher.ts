@@ -67,29 +67,58 @@ import { getOpenAIKey as getBakedOpenAIKey } from '@/lib/baked-credentials'
 //   key. v0.7.25 restores the bake on the SERVER side (the matcher
 //   runs in the Next.js API route, never in the renderer) so the
 //   key never reaches the browser bundle.
-function resolveOpenAIKey(): string | undefined {
+// v0.7.61 — Resolve {apiKey, baseURL} from FOUR sources, in priority
+// order. The new top entry is the Replit AI Integrations proxy:
+// when AI_INTEGRATIONS_OPENAI_BASE_URL + AI_INTEGRATIONS_OPENAI_API_KEY
+// are present (auto-provisioned on Replit by the platform — no admin
+// key entry needed, charges go to the workspace owner's Replit
+// credits) we route every OpenAI call through the proxy. This is the
+// "just works like Deepgram" path the operator asked for. The other
+// three sources remain as fallbacks for end-user .exe distributions
+// that ship outside Replit.
+//
+//   1. AI_INTEGRATIONS_OPENAI_API_KEY + AI_INTEGRATIONS_OPENAI_BASE_URL
+//        Replit-managed proxy. No setup required by the operator.
+//   2. process.env.OPENAI_API_KEY
+//        Dev override / GitHub Actions build-time injection.
+//   3. License config `adminOpenAIKey`
+//        Per-PC override via Admin Modal (used by packaged .exe).
+//   4. BAKED_OPENAI_KEY (via getBakedOpenAIKey)
+//        Build-time bake from inject-keys.mjs.
+export interface OpenAIClientCreds {
+  apiKey: string
+  baseURL?: string
+}
+
+function resolveOpenAICreds(): OpenAIClientCreds | undefined {
+  const proxyUrl = (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || '').trim()
+  const proxyKey = (process.env.AI_INTEGRATIONS_OPENAI_API_KEY || '').trim()
+  if (proxyUrl && proxyKey) {
+    return { apiKey: proxyKey, baseURL: proxyUrl }
+  }
   const envKey = process.env.OPENAI_API_KEY
-  if (envKey && envKey.trim().length > 0) return envKey.trim()
+  if (envKey && envKey.trim().length > 0) return { apiKey: envKey.trim() }
   try {
     const cfg = getConfig()
     const adminKey = cfg?.adminOpenAIKey
-    if (adminKey && adminKey.trim().length > 0) return adminKey.trim()
+    if (adminKey && adminKey.trim().length > 0) return { apiKey: adminKey.trim() }
   } catch {
     // Defensive — license storage may not be initialised in unit
     // tests / SSR contexts. Fall through to the bake.
   }
   try {
     const baked = getBakedOpenAIKey()
-    if (baked && baked.trim().length > 0) return baked.trim()
+    if (baked && baked.trim().length > 0) return { apiKey: baked.trim() }
   } catch {
-    // Defensive — baked-credentials.ts is generated at build time
-    // by scripts/inject-keys.mjs. In development before the script
-    // has ever run the import would still resolve (the file exists)
-    // but the helper would return ''. The try/catch is belt-and-
-    // braces against future refactors that might make the import
-    // optional.
+    /* see prior comment */
   }
   return undefined
+}
+
+// Back-compat shim: callers that only need the key (e.g. the wiring
+// test, the hasApiKey diagnostic) can keep using the old name.
+function resolveOpenAIKey(): string | undefined {
+  return resolveOpenAICreds()?.apiKey
 }
 
 const EMBEDDING_MODEL = 'text-embedding-3-small'
@@ -212,15 +241,25 @@ let openaiClient: OpenAI | null = null
 
 // v0.7.24 — Track the key the cached client was created with so we
 // rebuild the client when the admin rotates their key in the Admin
-// modal without requiring an app restart.
+// modal without requiring an app restart. v0.7.61 — also rebuild
+// when the baseURL changes (i.e. on switch between proxy and
+// direct-key modes within a single dev session).
 let openaiClientKey: string | undefined
+let openaiClientBaseUrl: string | undefined
 
 function getClient(): OpenAI | null {
-  const key = resolveOpenAIKey()
-  if (!key) return null
-  if (!openaiClient || openaiClientKey !== key) {
-    openaiClient = new OpenAI({ apiKey: key })
-    openaiClientKey = key
+  const creds = resolveOpenAICreds()
+  if (!creds) return null
+  const sameKey = openaiClientKey === creds.apiKey
+  const sameBase = openaiClientBaseUrl === creds.baseURL
+  if (!openaiClient || !sameKey || !sameBase) {
+    openaiClient = new OpenAI(
+      creds.baseURL
+        ? { apiKey: creds.apiKey, baseURL: creds.baseURL }
+        : { apiKey: creds.apiKey },
+    )
+    openaiClientKey = creds.apiKey
+    openaiClientBaseUrl = creds.baseURL
   }
   return openaiClient
 }

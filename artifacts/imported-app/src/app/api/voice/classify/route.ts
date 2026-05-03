@@ -46,22 +46,26 @@ interface Body {
   confidenceFloor?: number
 }
 
-// Mirror the resolution order in semantic-matcher.resolveOpenAIKey():
-// process.env first, then admin override, then the bake. Server-side
-// only — the key never reaches the renderer bundle.
-function resolveOpenAIKey(): string | undefined {
+// v0.7.61 — Mirror semantic-matcher.resolveOpenAICreds(): proxy
+// first (Replit AI Integrations — auto-provisioned, no admin key
+// entry needed), then env, admin override, baked credential.
+interface OpenAIClientCreds { apiKey: string; baseURL?: string }
+function resolveOpenAICreds(): OpenAIClientCreds | undefined {
+  const proxyUrl = (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || '').trim()
+  const proxyKey = (process.env.AI_INTEGRATIONS_OPENAI_API_KEY || '').trim()
+  if (proxyUrl && proxyKey) return { apiKey: proxyKey, baseURL: proxyUrl }
   const envKey = process.env.OPENAI_API_KEY
-  if (envKey && envKey.trim().length > 0) return envKey.trim()
+  if (envKey && envKey.trim().length > 0) return { apiKey: envKey.trim() }
   try {
     const cfg = getConfig()
     const adminKey = cfg?.adminOpenAIKey
-    if (adminKey && adminKey.trim().length > 0) return adminKey.trim()
+    if (adminKey && adminKey.trim().length > 0) return { apiKey: adminKey.trim() }
   } catch {
     /* noop — see semantic-matcher.ts for rationale */
   }
   try {
     const baked = getBakedOpenAIKey()
-    if (baked && baked.trim().length > 0) return baked.trim()
+    if (baked && baked.trim().length > 0) return { apiKey: baked.trim() }
   } catch {
     /* noop */
   }
@@ -97,8 +101,8 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const apiKey = resolveOpenAIKey()
-  if (!apiKey) {
+  const creds = resolveOpenAICreds()
+  if (!creds) {
     return NextResponse.json(
       { ok: true, command: null, reason: 'no_api_key' as const },
       { headers: { 'Cache-Control': 'no-store' } },
@@ -122,7 +126,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const command = await classifyIntent(safe, body.context, {
-      apiKey,
+      apiKey: creds.apiKey,
+      ...(creds.baseURL ? { baseURL: creds.baseURL } : {}),
       ...(confidenceFloor !== undefined ? { confidenceFloor } : {}),
     })
     return NextResponse.json(

@@ -114,6 +114,10 @@ export interface LlmClassifierContext {
 export interface LlmClassifierOptions {
   /** API key. In production this is the baked operator key. */
   apiKey: string
+  /** Optional OpenAI base URL override. Set when routing through the
+   *  Replit AI Integrations proxy (v0.7.61) so the apiKey is sent to
+   *  the proxy URL instead of api.openai.com. */
+  baseURL?: string
   /** Model to call. Default `gpt-4o-mini` for speed, cost, AND
    *  compatibility with `temperature: 0` + `response_format` JSON
    *  mode. v0.7.31 reverted from `gpt-5-nano` after live testing
@@ -271,11 +275,15 @@ function defaultLabelFor(kind: CommandKind): string {
  */
 let cachedClient: OpenAI | null = null
 let cachedKey: string | undefined
+// v0.7.61 — Also re-key on baseURL so a live switch between the
+// Replit proxy and a direct OpenAI key never reuses a stale client.
+let cachedBaseUrl: string | undefined
 
-function getClient(key: string): OpenAI {
-  if (!cachedClient || cachedKey !== key) {
-    cachedClient = new OpenAI({ apiKey: key })
+function getClient(key: string, baseURL?: string): OpenAI {
+  if (!cachedClient || cachedKey !== key || cachedBaseUrl !== baseURL) {
+    cachedClient = new OpenAI(baseURL ? { apiKey: key, baseURL } : { apiKey: key })
     cachedKey = key
+    cachedBaseUrl = baseURL
   }
   return cachedClient
 }
@@ -296,7 +304,7 @@ export async function classifyIntent(
   if (!transcript.trim()) return null
   if (!options.apiKey && !options.client) return null
 
-  const client = options.client ?? getClient(options.apiKey)
+  const client = options.client ?? getClient(options.apiKey, options.baseURL)
   const model = options.model ?? DEFAULT_MODEL
   const confidenceFloor = options.confidenceFloor ?? DEFAULT_CONFIDENCE_FLOOR
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
