@@ -1,5 +1,15 @@
 # Recent Changes
 
+## v0.7.53 — Hotfix: NDI broken because `koffi` was also in devDependencies (May 3, 2026)
+
+**Bug:** v0.7.52's installer launched fine (electron-updater fix landed), but the NDI Output panel showed "NDI runtime not detected. (koffi (FFI library) failed to load: Cannot find module 'koffi'…" — same exact pattern as the v0.7.52 electron-updater bug, just for a different package. NDI output to vMix / Wirecast / OBS was completely non-functional in installed builds.
+
+**Root cause:** `koffi` (the FFI library `electron/ndi-service.ts` uses to dlopen the NDI SDK at runtime) was in `devDependencies`. electron-builder.yml correctly listed `node_modules/koffi/**/*` under `asarUnpack`, but `asarUnpack` only matters for files that are bundled in the first place — and electron-builder strips devDependencies from the bundled `node_modules`, so koffi never made it into `resources/` at all. The `require('koffi')` in `ndi-service.ts` then threw at the moment the operator clicked "Start NDI Output".
+
+**Fix:** move `koffi@^2.16.1` from `devDependencies` to `dependencies` so electron-builder includes it AND its `asarUnpack` rule has something to unpack. NDI was working in older versions (pre-pnpm-workspace conversion) because devDeps were less aggressively stripped; the strip:workspace-symlinks change in v0.7.49 made the problem visible.
+
+**Sweep (so this is the LAST package-classification bug):** grepped every bare `require()` and bare `import` in `dist-electron/*.js` and `electron/*.ts`. Total set of non-Node-builtin runtime imports: `electron`, `electron-updater`, `koffi`, `sharp`. After this fix all four are correctly placed (`electron` is special-cased by electron-builder; the other three are in `dependencies`). No further packages can fail with "Cannot find module" at startup.
+
 ## v0.7.52 — Hotfix: installed app crashed with "Cannot find module 'electron-updater'" + workflow upload pin (May 2, 2026)
 
 **Bug 1 (runtime crash for end users):** v0.7.49 / v0.7.50 / v0.7.51 installers ran successfully but crashed at first launch with a JavaScript error dialog: `Uncaught Exception: Error: Cannot find module 'electron-updater'` — required from `resources/app.asar/dist-electron/updater.js`. The module simply wasn't bundled into the asar.
