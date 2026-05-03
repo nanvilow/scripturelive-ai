@@ -120,18 +120,29 @@ describe('isLikelyCommandUtterance — rejects sermon speech', () => {
 })
 
 describe('isLikelyCommandUtterance — length cap', () => {
-  it('rejects utterances longer than 12 words even when they start with a trigger', () => {
-    // 13 words, starts with "show" — too long, almost certainly
-    // sermon content rather than a command.
+  // v0.7.54 — gate widened from 12 to 20 words to accept natural
+  // preacher cadence ("now let's open up the book of John chapter
+  // three verse sixteen"). The cap is still tight enough to
+  // exclude full sermon sentences.
+  it('rejects utterances longer than 20 words even when they start with a trigger', () => {
+    // 21 words starting with "show" — long-form sermon content.
     const long =
-      'show me the way you want me to walk in this life today'
-    expect(long.split(/\s+/).length).toBeGreaterThan(12)
+      'show me the way you want me to walk in this life today and tomorrow and forever and ever in Jesus name amen'
+    expect(long.split(/\s+/).length).toBeGreaterThan(20)
     expect(isLikelyCommandUtterance(long)).toBe(false)
   })
-  it('accepts an exactly-12-word command', () => {
-    const twelve = 'show the next verse from chapter three of the book of John'
-    expect(twelve.split(/\s+/).length).toBe(12)
-    expect(isLikelyCommandUtterance(twelve)).toBe(true)
+  it('accepts an exactly-20-word command', () => {
+    const twenty =
+      'show me the next verse from chapter three of the book of John in the message version please for me'
+    expect(twenty.split(/\s+/).length).toBe(20)
+    expect(isLikelyCommandUtterance(twenty)).toBe(true)
+  })
+  it('accepts a 13-word natural preacher cadence command', () => {
+    // The exact phrase that motivated the v0.7.54 widening.
+    const cadence =
+      "now let's open up to the book of John chapter three verse sixteen"
+    expect(cadence.split(/\s+/).length).toBe(13)
+    expect(isLikelyCommandUtterance(cadence)).toBe(true)
   })
 })
 

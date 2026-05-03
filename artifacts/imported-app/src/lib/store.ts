@@ -743,7 +743,21 @@ export const useAppStore = create<AppState>()(
       setActiveEngineName: (e) => set({ activeEngineName: e }),
 
       // v0.5.52 — feature toggles default OFF for safety.
-      voiceControlEnabled: false,
+      // v0.7.54 — default-ON. Prior to this version the flag defaulted
+      // to false, which meant the entire voice-command pre-pass in
+      // SpeechProvider (regex classifier + chain detector + LLM
+      // classifier + wake-word handling) was silently skipped on every
+      // fresh install. Operators reported "voice commands not working"
+      // because the toggle was buried in Settings → Voice Control and
+      // most never knew it existed. The classifier infrastructure has
+      // been hardened across v0.7.19 → v0.7.32 with filler filtering,
+      // wake-word stripping ("Media, ..."), translation aliases,
+      // confidence floors, and a 4 s dedupe window — defaulting on
+      // matches operator expectation now that false-positive risk is
+      // bounded. The persist migrate (version 2 → 3) below also
+      // force-flips this to true for existing installs so the upgrade
+      // path matches the fresh-install default.
+      voiceControlEnabled: true,
       setVoiceControlEnabled: (b) => set({ voiceControlEnabled: b }),
       speakerFollowEnabled: false,
       setSpeakerFollowEnabled: (b) => set({ speakerFollowEnabled: b }),
@@ -977,9 +991,12 @@ export const useAppStore = create<AppState>()(
       // automatically, but every field they explicitly set survives.
       // This stops the "I upgraded and my trial reset / my fonts
       // changed / my mic gain went back to 1" complaints.
-      version: 2,
+      version: 3,
       migrate: (persistedState: unknown, version: number) => {
-        const ps = (persistedState as { settings?: Partial<AppSettings> } | undefined) ?? {}
+        const ps = (persistedState as {
+          settings?: Partial<AppSettings>
+          voiceControlEnabled?: boolean
+        } | undefined) ?? {}
         // v0.5.34 → v1: flip autoGoLiveOnDetection on for early adopters.
         if (version < 1) {
           return {
@@ -989,6 +1006,7 @@ export const useAppStore = create<AppState>()(
               ...(ps.settings ?? {}),
               autoGoLiveOnDetection: true,
             },
+            voiceControlEnabled: true,
           }
         }
         // v0.6.0 → v2: pure preserve. New defaults apply only to
@@ -1003,6 +1021,23 @@ export const useAppStore = create<AppState>()(
               ...defaultSettings,
               ...(ps.settings ?? {}),
             },
+            voiceControlEnabled: true,
+          }
+        }
+        // v0.7.54 → v3: one-time force-enable of voiceControlEnabled.
+        // Prior to v0.7.54 the default was false AND the toggle lived
+        // buried in Settings → Voice Control, so the overwhelming
+        // majority of installed seats had it off without realising it
+        // existed — voice commands silently never fired. We flip it
+        // true on this migration so existing operators get the same
+        // out-of-box behaviour as fresh installs. An operator who
+        // genuinely WANTS commands disabled can flick the switch off
+        // again in Settings; their preference will then persist
+        // forward (this migration only runs once at version bump).
+        if (version < 3) {
+          return {
+            ...ps,
+            voiceControlEnabled: true,
           }
         }
         return ps
