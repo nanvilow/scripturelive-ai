@@ -78,6 +78,66 @@ uri = "file://attached_assets/social_flyers/10_download_cta.png"
 type = "image"
 title = "download cta"
 
+[[generated]]
+id = "7dULw7IXtAqaDlwQtdRQf"
+uri = "file://attached_assets/social_flyers_v2/bg_01_hero.png"
+type = "image"
+title = "hero brand bg"
+
+[[generated]]
+id = "rWZPhwCD8wGPEq3mMp5F7"
+uri = "file://attached_assets/social_flyers_v2/bg_02_voice.png"
+type = "image"
+title = "voice command bg"
+
+[[generated]]
+id = "VBbrUxb5Gs17JnN-58tf7"
+uri = "file://attached_assets/social_flyers_v2/bg_03_ndi.png"
+type = "image"
+title = "ndi broadcast bg"
+
+[[generated]]
+id = "k1-HO-ejb0ENcjJSxNupV"
+uri = "file://attached_assets/social_flyers_v2/bg_04_translations.png"
+type = "image"
+title = "translations bg"
+
+[[generated]]
+id = "hvCRcJg4jRMkiksfrowzp"
+uri = "file://attached_assets/social_flyers_v2/bg_05_congregation.png"
+type = "image"
+title = "congregation bg"
+
+[[generated]]
+id = "ntMspLdAwO-TDVD0Tex--"
+uri = "file://attached_assets/social_flyers_v2/bg_06_pulpit.png"
+type = "image"
+title = "pulpit bg"
+
+[[generated]]
+id = "odFXDVbD91HsYmN9e1cLB"
+uri = "file://attached_assets/social_flyers_v2/bg_07_speed.png"
+type = "image"
+title = "speed setup bg"
+
+[[generated]]
+id = "syNDjmVkNNw98XMQ2yG92"
+uri = "file://attached_assets/social_flyers_v2/bg_08_sunday.png"
+type = "image"
+title = "sunday morning bg"
+
+[[generated]]
+id = "9KiOjYQSwgBV87WEY-18X"
+uri = "file://attached_assets/social_flyers_v2/bg_09_modern.png"
+type = "image"
+title = "modern upgrade bg"
+
+[[generated]]
+id = "H_Bm6-o-26pmFCKHyMv1W"
+uri = "file://attached_assets/social_flyers_v2/bg_10_download.png"
+type = "image"
+title = "download cta bg"
+
 [[outputs]]
 id = "-UTyq5izHA9Qp0GO3Jhh6"
 uri = "file://exports/ScriptureLive-AI-v0.5.24-source.zip"
@@ -407,3 +467,63 @@ id = "qZnqQ8pm5jocB7QeW8D9p"
 uri = "file://attached_assets/social_flyers/10_download_cta.png"
 type = "image"
 title = "10 — Download Now"
+
+[[outputs]]
+id = "gZN8gTIg3RuSciVh1BGGL"
+uri = "file://attached_assets/social_flyers_v2/01_hero.png"
+type = "image"
+title = "1 — Hero (Square • FB/IG Feed)"
+
+[[outputs]]
+id = "S5bzpRY7jbhyTonGVcWsH"
+uri = "file://attached_assets/social_flyers_v2/02_voice.png"
+type = "image"
+title = "2 — Voice Commands (Vertical • TikTok/Reels/Stories)"
+
+[[outputs]]
+id = "s4Q_sK1b5UbPtlNPEZcg5"
+uri = "file://attached_assets/social_flyers_v2/03_ndi.png"
+type = "image"
+title = "3 — NDI Broadcast (Square • FB/IG Feed)"
+
+[[outputs]]
+id = "xZMefNYP94eO0u4NEi3CY"
+uri = "file://attached_assets/social_flyers_v2/04_translations.png"
+type = "image"
+title = "4 — 20+ Translations (Square • FB/IG Feed)"
+
+[[outputs]]
+id = "P1AwyS9shrvRyGdR7fiAK"
+uri = "file://attached_assets/social_flyers_v2/05_congregation.png"
+type = "image"
+title = "5 — Worship Amplified (Vertical • TikTok/Reels/Stories)"
+
+[[outputs]]
+id = "E-jbnHLRsyfc-FunUvpZ5"
+uri = "file://attached_assets/social_flyers_v2/06_pulpit.png"
+type = "image"
+title = "6 — Built For The Pulpit (Square • FB/IG Feed)"
+
+[[outputs]]
+id = "Vkmewxw46OUdNiJGI3r3B"
+uri = "file://attached_assets/social_flyers_v2/07_speed.png"
+type = "image"
+title = "7 — On-Air In 5 Seconds (Vertical • TikTok/Reels/Stories)"
+
+[[outputs]]
+id = "suqjd7nR60VXjQXUr6dMj"
+uri = "file://attached_assets/social_flyers_v2/08_sunday.png"
+type = "image"
+title = "8 — Ready For Sunday (Square • FB/IG Feed)"
+
+[[outputs]]
+id = "fgPKzRGx6EidR-nkQ9xOn"
+uri = "file://attached_assets/social_flyers_v2/09_modern.png"
+type = "image"
+title = "9 — The Modern Upgrade (Square • FB/IG Feed)"
+
+[[outputs]]
+id = "w9JcW91Gd2aWnqDmNjATX"
+uri = "file://attached_assets/social_flyers_v2/10_download.png"
+type = "image"
+title = "10 — Get It Now / Download (Vertical • TikTok/Reels/Stories)"
