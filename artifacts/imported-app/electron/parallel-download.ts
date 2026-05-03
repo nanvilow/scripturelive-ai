@@ -101,6 +101,47 @@ interface ChunkState {
 
 const PROGRESS_THROTTLE_MS = 100
 const SPEED_WINDOW_MS = 1500
+// v0.7.55 — Network safety nets. The original implementation had NO
+// timeouts anywhere and NO stall detector, so any TCP stall on a
+// flaky church link (HEAD that never responds, S3 redirect that
+// hangs after the body opens, a single chunk whose stream silently
+// stops without a FIN) left the operator staring at "Downloading
+// update… 0%" with no progress events ever firing and no fallback
+// ever triggering. These three deadlines bound the worst case:
+//   HEAD_TIMEOUT_MS      — abort HEAD probe and try single-stream.
+//   CHUNK_HEADER_TIMEOUT_MS — abort a chunk whose response headers
+//                             never arrive (TLS handshake stuck etc).
+//   STALL_TIMEOUT_MS     — if total transferred doesn't grow for
+//                          this long, throw so the caller can fall
+//                          back to electron-updater (which has its
+//                          own retry/backoff logic).
+const HEAD_TIMEOUT_MS = 10_000
+const CHUNK_HEADER_TIMEOUT_MS = 30_000
+const STALL_TIMEOUT_MS = 25_000
+const STALL_CHECK_INTERVAL_MS = 2_500
+
+/**
+ * Merge an upstream AbortSignal with an internal one (timeout, stall
+ * watchdog, etc) so a fetch can be aborted by either source. Written
+ * by hand because `AbortSignal.any()` only landed in Node 20.3, and
+ * older Electron releases ship Node 18.
+ */
+function mergeSignals(
+  ...signals: Array<AbortSignal | undefined>
+): AbortSignal {
+  const ctrl = new AbortController()
+  for (const s of signals) {
+    if (!s) continue
+    if (s.aborted) {
+      ctrl.abort((s as AbortSignal & { reason?: unknown }).reason)
+      return ctrl.signal
+    }
+    s.addEventListener('abort', () => {
+      ctrl.abort((s as AbortSignal & { reason?: unknown }).reason)
+    }, { once: true })
+  }
+  return ctrl.signal
+}
 
 export async function parallelDownload(
   opts: ParallelDownloadOpts,
@@ -109,13 +150,16 @@ export async function parallelDownload(
 
   // 1. HEAD — discover size + Range support. Failure is non-fatal: we
   //    fall back to single-stream GET which always works.
+  // v0.7.55 — wrap with HEAD_TIMEOUT_MS so a hung TCP connect (very
+  // common on Ghana wifi behind weird corporate proxies) doesn't trap
+  // the entire downloader before a single byte can flow.
   let total = opts.expectedSize ?? 0
   let acceptRanges = false
   try {
     const head = await fetch(opts.url, {
       method: 'HEAD',
       redirect: 'follow',
-      signal: opts.signal,
+      signal: mergeSignals(opts.signal, AbortSignal.timeout(HEAD_TIMEOUT_MS)),
     })
     if (head.ok) {
       const len = head.headers.get('content-length')
@@ -127,8 +171,14 @@ export async function parallelDownload(
         .toLowerCase()
         .includes('bytes')
     }
-  } catch {
-    // HEAD failed — fall through to single stream below.
+  } catch (err) {
+    // HEAD failed (timeout, DNS, TLS, proxy) — fall through to
+    // single stream below. Logged because it tells operators their
+    // network is misbehaving even when the slow path eventually works.
+    console.warn(
+      '[parallel-download] HEAD probe failed, using single-stream:',
+      err instanceof Error ? err.message : err,
+    )
     acceptRanges = false
   }
 
@@ -188,13 +238,46 @@ export async function parallelDownload(
     // 5. Download every chunk concurrently. Promise.all rejects on
     //    the first failure; the caller-supplied AbortSignal then
     //    cancels all sibling chunks via fetch's signal propagation.
-    await Promise.all(
-      chunks.map(async (chunk) => {
-        await downloadChunkInto(fd, chunk, opts.url, opts.signal, () => {
-          computeAndEmit(false)
-        })
-      }),
-    )
+    //
+    // v0.7.55 — wire in the stall watchdog. Independent AbortController
+    // we own; flipped if no transferred-bytes growth is observed for
+    // STALL_TIMEOUT_MS. Merged into every chunk's fetch signal so
+    // tripping the watchdog cancels every in-flight chunk at once.
+    const stallCtrl = new AbortController()
+    let lastProgressBytes = 0
+    let lastProgressAt = Date.now()
+    const stallTimer = setInterval(() => {
+      const transferred = chunks.reduce((s, c) => s + c.transferred, 0)
+      if (transferred > lastProgressBytes) {
+        lastProgressBytes = transferred
+        lastProgressAt = Date.now()
+        return
+      }
+      if (Date.now() - lastProgressAt >= STALL_TIMEOUT_MS) {
+        console.warn(
+          `[parallel-download] stalled at ${transferred}/${total} bytes for ${STALL_TIMEOUT_MS}ms — aborting`,
+        )
+        stallCtrl.abort(new Error('Download stalled — no bytes received for 25s'))
+      }
+    }, STALL_CHECK_INTERVAL_MS)
+
+    try {
+      await Promise.all(
+        chunks.map(async (chunk) => {
+          await downloadChunkInto(
+            fd,
+            chunk,
+            opts.url,
+            mergeSignals(opts.signal, stallCtrl.signal),
+            () => {
+              computeAndEmit(false)
+            },
+          )
+        }),
+      )
+    } finally {
+      clearInterval(stallTimer)
+    }
 
     computeAndEmit(true)
 
@@ -229,10 +312,15 @@ async function downloadChunkInto(
   signal: AbortSignal | undefined,
   onByteWritten: () => void,
 ): Promise<void> {
+  // v0.7.55 — bounded headers-only timeout. Once the body stream
+  // opens we hand off to the stall watchdog upstream (which detects
+  // mid-stream silence). Without this, a stuck TLS handshake to S3
+  // would block the chunk forever and prevent the watchdog from
+  // ever observing forward progress on its sibling chunks.
   const res = await fetch(url, {
     headers: { Range: `bytes=${chunk.start}-${chunk.end}` },
     redirect: 'follow',
-    signal,
+    signal: mergeSignals(signal, AbortSignal.timeout(CHUNK_HEADER_TIMEOUT_MS)),
   })
   // 206 Partial Content is the success code for a Range request.
   // Some misconfigured servers reply 200 with the full body; if that
@@ -276,9 +364,44 @@ async function singleStreamDownload(
 ): Promise<ParallelDownloadResult> {
   await mkdir(dirname(opts.savePath), { recursive: true })
   const startedAt = Date.now()
-  const res = await fetch(opts.url, { redirect: 'follow', signal: opts.signal })
-  if (!res.ok) throw new Error(`GET ${opts.url} returned ${res.status}`)
-  if (!res.body) throw new Error(`GET ${opts.url} returned no body`)
+  // v0.7.55 — stall watchdog for the single-stream path too. Same
+  // semantics as the parallel path: if no bytes flow for STALL_TIMEOUT_MS
+  // we abort so updater.ts can fall back to electron-updater. The
+  // `transferredCounter` is updated from the body-read loop below.
+  const stallCtrl = new AbortController()
+  let transferredCounter = 0
+  let lastProgressBytes = 0
+  let lastProgressAt = Date.now()
+  const stallTimer = setInterval(() => {
+    if (transferredCounter > lastProgressBytes) {
+      lastProgressBytes = transferredCounter
+      lastProgressAt = Date.now()
+      return
+    }
+    if (Date.now() - lastProgressAt >= STALL_TIMEOUT_MS) {
+      console.warn(
+        `[parallel-download] single-stream stalled at ${transferredCounter} bytes for ${STALL_TIMEOUT_MS}ms — aborting`,
+      )
+      stallCtrl.abort(new Error('Download stalled — no bytes received for 25s'))
+    }
+  }, STALL_CHECK_INTERVAL_MS)
+
+  const res = await fetch(opts.url, {
+    redirect: 'follow',
+    signal: mergeSignals(
+      opts.signal,
+      stallCtrl.signal,
+      AbortSignal.timeout(CHUNK_HEADER_TIMEOUT_MS),
+    ),
+  })
+  if (!res.ok) {
+    clearInterval(stallTimer)
+    throw new Error(`GET ${opts.url} returned ${res.status}`)
+  }
+  if (!res.body) {
+    clearInterval(stallTimer)
+    throw new Error(`GET ${opts.url} returned no body`)
+  }
 
   const lenHdr = res.headers.get('content-length')
   const total =
@@ -302,6 +425,7 @@ async function singleStreamDownload(
         const buf = Buffer.from(value.buffer, value.byteOffset, value.byteLength)
         await fd.write(buf, 0, buf.byteLength)
         transferred += buf.byteLength
+        transferredCounter = transferred
 
         const now = Date.now()
         if (now - lastEmit >= PROGRESS_THROTTLE_MS) {
@@ -330,6 +454,7 @@ async function singleStreamDownload(
       }
     }
   } finally {
+    clearInterval(stallTimer)
     await fd.close().catch(() => {})
   }
 
