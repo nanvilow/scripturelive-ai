@@ -232,17 +232,16 @@ export function SubscriptionModal() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className={cn(
-        'max-h-[92vh] overflow-y-auto bg-background border-border text-foreground',
+        'max-h-[92vh] overflow-y-auto bg-background border-border text-foreground p-4 sm:p-5 gap-3',
         phase === 'plans' ? 'sm:max-w-[1080px]' : 'sm:max-w-[680px]',
       )}>
-        <DialogHeader>
+        <DialogHeader className="space-y-1">
           <DialogTitle className="flex items-center gap-2 text-base">
             <ShieldCheck className="h-4 w-4 text-emerald-400" />
             Activate AI Detection
           </DialogTitle>
-          <DialogDescription className="text-muted-foreground text-xs">
-            ScriptureLive AI helps churches display scripture instantly — no manual typing,
-            no delays, just smooth, accurate, powerful live Bible detection.
+          <DialogDescription className="text-muted-foreground text-[11px] leading-snug">
+            Already paid? Enter your activation code below. New here? Pick a plan.
           </DialogDescription>
         </DialogHeader>
 
