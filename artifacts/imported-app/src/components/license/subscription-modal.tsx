@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { useLicense } from './license-provider'
-import { Copy, ShieldCheck, Lock, Sparkles, AlertTriangle, Phone, Mail, Loader2 } from 'lucide-react'
+import { Copy, ShieldCheck, Lock, Sparkles, AlertTriangle, Phone, Mail, Loader2, Check, Crown, Building2, Gift } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -231,7 +231,10 @@ export function SubscriptionModal() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="sm:max-w-[680px] max-h-[88vh] overflow-y-auto bg-background border-border text-foreground">
+      <DialogContent className={cn(
+        'max-h-[92vh] overflow-y-auto bg-background border-border text-foreground',
+        phase === 'plans' ? 'sm:max-w-[1080px]' : 'sm:max-w-[680px]',
+      )}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <ShieldCheck className="h-4 w-4 text-emerald-400" />
@@ -250,28 +253,151 @@ export function SubscriptionModal() {
             plan first. The two activation slots now sit directly below
             the plan grid so they fill the empty space next to the 1-Year
             tile. */}
-        {phase === 'plans' && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              {plans.map((p) => (
-                <button
-                  key={p.code}
-                  type="button"
-                  onClick={() => { setSelected(p); setPhase('payment') }}
-                  className={cn(
-                    'group relative text-left rounded-lg border bg-card/50 hover:bg-muted/60',
-                    'border-border hover:border-emerald-500/50 transition p-3',
-                    selected?.code === p.code && 'border-emerald-500 bg-emerald-950/30',
-                  )}
-                >
-                  {p.discountLabel && (
-                    <Badge className="absolute -top-2 -right-2 bg-amber-500 text-amber-950 border-amber-300 text-[9px] uppercase">{p.discountLabel}</Badge>
-                  )}
-                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{p.label}</div>
-                  <div className="text-xl font-bold text-emerald-300 mt-1">GHS {p.amountGhs.toLocaleString()}</div>
-                  <div className="text-[10px] text-muted-foreground mt-0.5">{p.days} days</div>
-                </button>
-              ))}
+        {phase === 'plans' && (() => {
+          // v0.7.68 — Professional 3-tier pricing layout (Starter / Pro /
+          // Church License) replacing the legacy 7-cell duration grid.
+          // Tiers map to the canonical @workspace/pricing catalogue:
+          //   • Starter      → no plan code (1-hour activity-gated trial
+          //                    is auto-running for unactivated installs).
+          //   • Pro          → 1M plan code, billed monthly via MoMo.
+          //   • Church License → 1Y plan code, billed yearly via MoMo.
+          // Prices and durations are pulled from the live `plans` array
+          // (which already merges in operator overrides from /api/license/plans),
+          // so any future price change in the admin panel propagates to
+          // both cards without a code edit. The legacy 1M / 1Y direct
+          // tiles are kept reachable through this same picker — clicking
+          // Pro sets selected = 1M plan, clicking Church sets 1Y plan.
+          const proPlan = plans.find((p) => p.code === '1M') ?? null
+          const churchPlan = plans.find((p) => p.code === '1Y') ?? null
+          const tiers: Array<{
+            id: 'starter' | 'pro' | 'church'
+            name: string
+            blurb: string
+            price: string
+            priceSuffix: string
+            icon: typeof Crown
+            features: string[]
+            ctaLabel: string
+            featured: boolean
+            onSelect: () => void
+            disabled?: boolean
+          }> = [
+            {
+              id: 'starter',
+              name: 'Starter',
+              blurb: 'Perfect for small churches just getting started with smart scripture display.',
+              price: 'Free',
+              priceSuffix: '',
+              icon: Gift,
+              features: [
+                'AI Verse Detection (Free Trial)',
+                'Dual Screen Display',
+                'Basic Typography Customization',
+                'Up to 2 screens',
+                'Email Support',
+              ],
+              ctaLabel: 'Get Started',
+              featured: false,
+              onSelect: () => setOpen(false),
+            },
+            {
+              id: 'pro',
+              name: 'Pro',
+              blurb: 'The full ScriptureLive experience for growing congregations.',
+              price: proPlan ? `GHS ${proPlan.amountGhs.toLocaleString()}` : 'GHS —',
+              priceSuffix: '/per month',
+              icon: Crown,
+              features: [
+                'AI Verse Detection (OpenAI Mode)',
+                'NDI Output Integration',
+                'Unlimited Screens',
+                'Full Typography & Styling',
+                'Smart Chapter Navigator',
+                'Priority Support',
+                'All future updates',
+              ],
+              ctaLabel: 'Get Started',
+              featured: true,
+              disabled: !proPlan,
+              onSelect: () => { if (proPlan) { setSelected(proPlan); setPhase('payment') } },
+            },
+            {
+              id: 'church',
+              name: 'Church License',
+              blurb: 'A permanent license for established ministries — pay once, own it forever.',
+              price: churchPlan ? `GHS ${churchPlan.amountGhs.toLocaleString()}` : 'GHS —',
+              priceSuffix: '/Year',
+              icon: Building2,
+              features: [
+                'Everything in Pro',
+                'Lifetime license (no subscription)',
+                'Install on up to 5 machines',
+                'Setup & onboarding call',
+                'Dedicated WhatsApp support',
+                'Custom branding options',
+              ],
+              ctaLabel: 'Get Started',
+              featured: false,
+              disabled: !churchPlan,
+              onSelect: () => { if (churchPlan) { setSelected(churchPlan); setPhase('payment') } },
+            },
+          ]
+          return (
+          <div className="space-y-5">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-5 pt-3">
+              {tiers.map((tier) => {
+                const Icon = tier.icon
+                return (
+                  <div
+                    key={tier.id}
+                    className={cn(
+                      'relative rounded-2xl border p-5 sm:p-6 flex flex-col bg-card/40',
+                      tier.featured
+                        ? 'border-amber-500/70 bg-gradient-to-b from-amber-950/30 via-card/40 to-card/40 shadow-[0_0_40px_-12px_rgba(245,158,11,0.45)] lg:scale-[1.03] lg:z-10'
+                        : 'border-border hover:border-border/80',
+                    )}
+                  >
+                    {tier.featured && (
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3.5 py-1 rounded-full bg-amber-500 text-amber-950 text-[10px] font-bold uppercase tracking-wider shadow-lg whitespace-nowrap">
+                        Most Popular
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <Icon className={cn('h-4 w-4', tier.featured ? 'text-amber-300' : 'text-muted-foreground')} />
+                      <h3 className="text-base font-semibold text-foreground">{tier.name}</h3>
+                    </div>
+                    <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground min-h-[40px]">{tier.blurb}</p>
+                    <div className="mt-4 mb-4">
+                      <div className="flex items-baseline gap-1.5">
+                        <span className={cn('text-3xl sm:text-4xl font-bold tracking-tight', tier.featured ? 'text-amber-200' : 'text-foreground')}>{tier.price}</span>
+                        {tier.priceSuffix && (
+                          <span className="text-[11px] text-muted-foreground">{tier.priceSuffix}</span>
+                        )}
+                      </div>
+                    </div>
+                    <ul className="space-y-2 mb-5">
+                      {tier.features.map((f) => (
+                        <li key={f} className="flex items-start gap-2 text-[12px] text-foreground">
+                          <Check className={cn('h-3.5 w-3.5 mt-[3px] shrink-0', tier.featured ? 'text-amber-300' : 'text-emerald-400')} />
+                          <span>{f}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <Button
+                      onClick={tier.onSelect}
+                      disabled={tier.disabled}
+                      className={cn(
+                        'mt-auto w-full h-10 text-[12px] font-semibold uppercase tracking-wider',
+                        tier.featured
+                          ? 'bg-amber-500 hover:bg-amber-400 text-amber-950 border border-amber-300'
+                          : 'bg-transparent hover:bg-muted text-foreground border border-border',
+                      )}
+                    >
+                      {tier.ctaLabel}
+                    </Button>
+                  </div>
+                )
+              })}
             </div>
 
             {/* v0.6.1 — relocated activation entry. Same two slots that
@@ -315,7 +441,8 @@ export function SubscriptionModal() {
               {error && phase === 'plans' && <div className="text-[11px] text-rose-400 flex items-start gap-1.5"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />{error}</div>}
             </div>
           </div>
-        )}
+          )
+        })()}
 
         {/* ── PHASE 2 — PAYMENT ─────────────────────────────────────────── */}
         {phase === 'payment' && selected && (
