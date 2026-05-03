@@ -43,7 +43,31 @@ export function OutputBroadcaster() {
   const lastSentRef = useRef<string>('')
   const inFlightRef = useRef<boolean>(false)
   const dirtyRef = useRef<boolean>(false)
-  const rafRef = useRef<number | null>(null)
+  // v0.7.57 — Minimised-window NDI freeze fix.
+  //
+  // Originally we coalesced flushes with requestAnimationFrame so the
+  // outbound POST cost was naturally limited to ~60Hz. The problem:
+  // when the operator MINIMISES the main ScriptureLive window (the
+  // canonical pre-vMix workflow), Chromium suspends rAF callbacks
+  // entirely on the hidden BrowserWindow. The renderer keeps detecting
+  // verses (Whisper + Web Audio aren't gated by rAF), the Zustand
+  // store keeps updating, and onChange/schedule keep being called —
+  // but the queued rAF never fires, so /api/output is never POSTed,
+  // SSE never broadcasts, and the offscreen NDI capture window keeps
+  // painting the LAST state it received before minimise. Operators
+  // saw the verse change on screen but vMix's NDI receiver stayed
+  // frozen until they restored the window (which fired the deferred
+  // rAF) and then minimised again.
+  //
+  // setTimeout is NOT throttled to a stop on hidden Electron windows
+  // the way rAF is — it stays at full rate when backgroundThrottling
+  // is left on its default (and the renderer here doesn't disable it,
+  // because the operator console doesn't need 60fps when minimised,
+  // only the NDI capture window does, which already sets it false).
+  // 16ms gives the same one-frame coalescing rAF gave us, so the POST
+  // rate is unchanged while the window is visible and the NDI feed
+  // updates in real time while minimised.
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -252,11 +276,15 @@ export function OutputBroadcaster() {
 
     const schedule = () => {
       if (cancelled) return
-      if (rafRef.current !== null) return
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = null
+      if (flushTimerRef.current !== null) return
+      // 16ms ≈ one frame at 60Hz. Coalesces bursty store updates into
+      // a single POST while keeping the NDI feed responsive even when
+      // the main window is minimised (see ref-declaration comment for
+      // the full v0.7.57 rationale).
+      flushTimerRef.current = setTimeout(() => {
+        flushTimerRef.current = null
         void flush()
-      })
+      }, 16)
     }
 
     const onChange = () => {
@@ -281,9 +309,9 @@ export function OutputBroadcaster() {
     return () => {
       cancelled = true
       unsubscribe()
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
+      if (flushTimerRef.current !== null) {
+        clearTimeout(flushTimerRef.current)
+        flushTimerRef.current = null
       }
     }
   }, [])
