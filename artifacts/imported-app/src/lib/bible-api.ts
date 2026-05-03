@@ -92,6 +92,13 @@ export async function fetchBibleChapterFromAPI(
 ): Promise<BibleChapter | null> {
   try {
     const info = TRANSLATIONS_INFO[translation]
+    // v0.7.77 — Twi via wldeh/bible-api. No fallback: the operator
+    // explicitly asked for Twi, and substituting KJV would silently
+    // put the wrong language on the projector during a service.
+    if (info?.source === 'wldeh') {
+      const { fetchTwiChapter } = await import('@/lib/bibles/twi-bible')
+      return await fetchTwiChapter(book, chapter)
+    }
     // Modern translations via bolls.life
     if (info?.source === 'bolls') {
       const bolls = await fetchChapterFromBolls(book, chapter, info.abbreviation)
@@ -152,7 +159,7 @@ export async function fetchBibleChapter(
 // proxied through bolls.life when available; KJV/ASV/WEB/etc. use bible-api.com
 // directly. All entries here return their *actual* translation text — no silent
 // KJV fallback for the user.
-export const TRANSLATIONS_INFO: Record<string, { name: string; full: string; abbreviation: string; source: 'bible-api' | 'bolls' }> = {
+export const TRANSLATIONS_INFO: Record<string, { name: string; full: string; abbreviation: string; source: 'bible-api' | 'bolls' | 'wldeh' }> = {
   KJV: { name: 'KJV', full: 'King James Version', abbreviation: 'kjv', source: 'bible-api' },
   ASV: { name: 'ASV', full: 'American Standard Version', abbreviation: 'asv', source: 'bible-api' },
   WEB: { name: 'WEB', full: 'World English Bible', abbreviation: 'web', source: 'bible-api' },
@@ -170,6 +177,13 @@ export const TRANSLATIONS_INFO: Record<string, { name: string; full: string; abb
   CSB: { name: 'CSB', full: 'Christian Standard Bible', abbreviation: 'CSB', source: 'bolls' },
   MSG: { name: 'MSG', full: 'The Message', abbreviation: 'MSG', source: 'bolls' },
   RSV: { name: 'RSV', full: 'Revised Standard Version', abbreviation: 'RSV', source: 'bolls' },
+  // v0.7.77 — Twi (Akuapem) Bible. Sourced from the public-domain
+  // wldeh/bible-api dataset (`tw-wakna`). Implementation lives in
+  // src/lib/bibles/twi-bible.ts; routing handled by the source ===
+  // 'wldeh' branch in fetchBibleVerseFromAPI / fetchBibleChapterFromAPI.
+  // Lets a preacher say "give me the Twi version" mid-service and have
+  // the live verse swap to its Akuapem Twi text in place.
+  TWI: { name: 'TWI', full: 'Twi (Akuapem) Bible', abbreviation: 'tw-wakna', source: 'wldeh' },
 }
 
 // API translation mapping (bible-api.com slugs only; bolls translations use the key directly)
@@ -835,6 +849,14 @@ export async function fetchBibleVerseFromAPI(
     if (!parsed) return null
 
     const info = TRANSLATIONS_INFO[translation]
+    // v0.7.77 — Twi via wldeh/bible-api. We do NOT fall through to
+    // KJV when Twi is missing for a passage — silently substituting
+    // English for an explicitly-requested Twi verse would be worse
+    // than returning null (which short-circuits the slide push).
+    if (info?.source === 'wldeh') {
+      const { fetchTwiVerse } = await import('@/lib/bibles/twi-bible')
+      return await fetchTwiVerse(parsed, reference)
+    }
     // Modern translations (NIV/ESV/NLT/...) are served by bolls.life
     if (info?.source === 'bolls') {
       const bolls = await fetchVerseFromBolls(parsed, info.abbreviation, reference)
