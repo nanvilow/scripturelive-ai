@@ -50,6 +50,39 @@ artifacts/imported-app/dist-electron/
 artifacts/imported-app/dist-electron-ui/
 artifacts/imported-app/exports/
 artifacts/imported-app/download/
+# v0.7.67 deploy fix — `artifacts/imported-app/release/` is the
+# electron-builder output dir. After a local `BUILD.bat` /
+# `pnpm package:win` run this dir holds:
+#   - ScriptureLive-AI-X.Y.Z-Setup-x64.exe   (~490 MB)
+#   - win-unpacked/                          (~1.9 GB unpacked Electron)
+#   - .blockmap, .yml, builder-debug.yml, etc.
+# Total: 2.7 GB. The web autoscale runtime never serves this — the
+# Windows installer is distributed via GitHub Releases. Including it
+# in the deploy tarball is what pushed the image past Cloud Run's
+# 8 GiB limit ("The deployment image size exceeds the 8 GiB limit").
+# Anchored path (NOT a `**/release/` glob) so we don't accidentally
+# strip a directory literally named `release` from inside any
+# transitive node_modules tree.
+artifacts/imported-app/release/
+
+# v0.7.67 deploy fix — User-uploaded media accumulated in dev. These
+# live on the operator's local disk in production (the runtime writes
+# uploads to a per-user path managed by the storage adapter), not in
+# the Git tree. Shipping the dev copies into the deploy image just
+# bloats the upload tarball by another ~110 MB with content that gets
+# overwritten on first user action anyway.
+artifacts/imported-app/uploads/
+artifacts/imported-app/upload/
+
+# v0.7.67 deploy fix — Repo-root scratch media (chat-attached preview
+# clips, asset-manager screen recordings). Already covered for
+# `attached_assets/` and `screenshots/` above; this is the same
+# category for media that landed at the repo root with timestamped
+# names (`Asset-Manager-*.mp4`, etc.).
+/Asset-Manager-*.mp4
+/Asset-Manager-*.mov
+/*.mp4
+/*.mov
 
 # Turbopack cache (regenerated on each build)
 artifacts/imported-app/.turbo/
