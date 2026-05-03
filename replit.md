@@ -1,5 +1,25 @@
 # Recent Changes
 
+## v0.7.55 — In-app updater stuck at "Downloading update… 0%" (May 3, 2026)
+
+**Bug:** Operator report — "the downloading in the app is not working? Downloading update… 0%. stand still and not fast, fix it." The progress toast appears, says 0%, then sits there forever. No fallback ever triggers, no error toast appears, the operator has to kill the app and download the installer manually from the Releases page.
+
+**Root cause:** The download code in `electron/parallel-download.ts` had **zero network safety nets**:
+1. The HEAD probe to GitHub Releases used raw `fetch()` with no timeout. On a hung TCP connect (very common on Ghana wifi behind weird corporate proxies, or when GitHub's CDN edge is being flaky) the HEAD call sat forever, never returning, never throwing.
+2. Each parallel Range chunk used raw `fetch()` with no timeout either. A stuck TLS handshake on any one of the six parallel chunks would hang Promise.all forever.
+3. There was no stall watchdog. Once a chunk's body stream opened, if the bytes silently stopped flowing mid-download (no FIN, no RST, just dead air — the textbook "long-fat-pipe TCP zombie connection") the read loop blocked indefinitely. No progress events ever fired, the renderer toast stayed at 0%, and the fallback to electron-updater's slow path never triggered because no error was ever thrown.
+
+The bonus insult: even when bytes WERE flowing, on the single-stream fallback path if GitHub's S3 redirect didn't return a Content-Length header (chunked transfer encoding), the percent calculation divided by 0, locking the UI at 0% even while MB ticked up.
+
+**Fix (3 deadlines + a watchdog):**
+1. **`HEAD_TIMEOUT_MS = 10s`** — wraps the HEAD probe via `AbortSignal.timeout`. On timeout we log a warning and fall through to the single-stream path, which tries the GET directly and may succeed against a server that just doesn't honor HEAD properly.
+2. **`CHUNK_HEADER_TIMEOUT_MS = 30s`** — bounds how long any one chunk's TLS+HTTP-headers exchange can take before we give up on it. Once the body stream opens, the watchdog (below) takes over.
+3. **`STALL_TIMEOUT_MS = 25s`** stall watchdog — runs `setInterval` every 2.5s during the download, monitoring total bytes-transferred. If it doesn't grow for 25 seconds straight, we fire an internal AbortController that's merged into every chunk's fetch signal, killing all six chunks simultaneously. The thrown abort propagates up to `triggerFastDownload()` in `updater.ts`, whose catch block already falls back to electron-updater's single-stream path with its own retry/backoff logic.
+4. Same watchdog wired into the single-stream fallback so it can't get stuck either.
+5. New `mergeSignals()` helper merges the operator's cancel token with the timeout/watchdog signals — written by hand because `AbortSignal.any()` only landed in Node 20.3 and older Electron releases ship Node 18.
+
+The result: in the worst case the operator now sees activity within ~10s (HEAD timeout → fallback) or ~25s (mid-download stall → fallback). They never sit on a permanently-frozen "0%" again. If both the fast and slow paths genuinely can't reach GitHub, electron-updater finally surfaces a clean error toast instead of a silent hang.
+
 ## v0.7.54 — Voice commands silently disabled by default (May 3, 2026)
 
 **Bug:** Operator report — "the LLM voice classifier doesn't listen and detect or do what it should do in the app; voice commands are not working." Despite shipping a full natural-language command system across v0.7.19 → v0.7.32 (regex classifier, wake-word "Media", multi-command chaining, translation aliases, filler filter, LLM fallback via `/api/voice/classify` with the OpenAI key), spoken commands fired exactly zero times for end users.
