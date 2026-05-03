@@ -82,6 +82,10 @@ uploads/
 upload/
 exports/
 download/
-build-resources/
+build-resources/*
+!build-resources/notarize.js
+!build-resources/icon.ico
+!build-resources/icon.png
+!build-resources/entitlements.mac.plist
 db/
 
