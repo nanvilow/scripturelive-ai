@@ -11,7 +11,8 @@
 
 import { describe, it, expect } from 'vitest'
 
-import { stripIntroducingPreamble } from './semantic-matcher'
+import { preacherCatalogueAsVerses, stripIntroducingPreamble } from './semantic-matcher'
+import { PREACHER_PHRASES } from '@/lib/bibles/preacher-phrases'
 
 describe('stripIntroducingPreamble — operator-reported case', () => {
   it("strips \"here's a verse about\" so the embedding sees just the topic", () => {
@@ -214,5 +215,37 @@ describe('stripIntroducingPreamble — degenerate inputs', () => {
   it('handles "on" continuation (e.g. "verse on patience")', () => {
     expect(stripIntroducingPreamble('the verse on patience and endurance'))
       .toBe('patience and endurance')
+  })
+})
+
+describe('preacherCatalogueAsVerses — v0.7.67 LLM/preacher wiring', () => {
+  const verses = preacherCatalogueAsVerses()
+
+  it('synthesises a non-trivial set of PopularVerse-shaped records', () => {
+    expect(verses.length).toBeGreaterThanOrEqual(150)
+  })
+
+  it('excludes "General Sermon Phrase" entries (no Bible address to project)', () => {
+    expect(verses.find((v) => v.reference === 'General Sermon Phrase')).toBeUndefined()
+    // And every Bible-addressed entry in the catalogue IS represented.
+    const addressed = PREACHER_PHRASES.filter((p) => !p.sermonOnly).length
+    expect(verses.length).toBe(addressed)
+  })
+
+  it('parses simple references into book/chapter/verseStart', () => {
+    const wept = verses.find((v) => v.reference === 'John 11:35')
+    expect(wept).toBeDefined()
+    expect(wept!.book).toBe('John')
+    expect(wept!.chapter).toBe(11)
+    expect(wept!.verseStart).toBe(35)
+    expect(wept!.text.toLowerCase()).toContain('jesus wept')
+  })
+
+  it('parses "1 Samuel 17:47"-style numbered-book references', () => {
+    const battle = verses.find((v) => v.reference === '1 Samuel 17:47')
+    expect(battle).toBeDefined()
+    expect(battle!.book).toBe('1 Samuel')
+    expect(battle!.chapter).toBe(17)
+    expect(battle!.verseStart).toBe(47)
   })
 })
