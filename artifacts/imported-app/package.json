@@ -1,6 +1,6 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.7.62",
+  "version": "0.7.63",
   "private": true,
   "main": "dist-electron/main.js",
   "repository": {
@@ -31,7 +31,8 @@
     "package:mac": "cross-env NEXT_OUTPUT_STANDALONE=1 pnpm run build && pnpm run electron:build && pnpm run strip:workspace-symlinks && electron-builder --config electron-builder.yml --mac && pnpm run downloads:manifest",
     "downloads:manifest": "node scripts/update-download-manifest.mjs",
     "postbuild": "node scripts/copy-standalone-assets.mjs",
-    "training:generate": "node scripts/voice-training/generate.mjs"
+    "training:generate": "node scripts/voice-training/generate.mjs",
+    "verify:release-files": "node scripts/verify-release-files.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.11.1",
