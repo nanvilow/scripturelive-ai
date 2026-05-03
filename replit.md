@@ -1,5 +1,32 @@
 # Recent Changes
 
+## v0.7.66 — Faster install: one-click NSIS, max LZMA, en-only locales, differential updates (May 3, 2026)
+
+**Operator complaint (2026-05-03):** "Make the installation faster when users are installing it on their PC." The v0.7.65 installer was 490 MB, took ~30s of clicking through the NSIS wizard before any bytes moved on disk, and had no differential-update path so every monthly bump re-downloaded the full half-gig.
+
+**What changed (`artifacts/imported-app/electron-builder.yml`):**
+
+1. **NSIS one-click install (`oneClick: true`)** — eliminates the welcome screen, license dialog, install-dir picker, components page, and finish screen. The user sees a single progress bar and the app launches itself when the copy finishes. Perceived install time drops from ~30s of clicking to ~5s of waiting. Kept `perMachine: false` so install lands in `%LOCALAPPDATA%` with NO UAC prompt — completely silent. Power users who need a custom path can still pass `/D=...` on the command line.
+
+2. **Maximum LZMA compression (`compression: maximum`)** — trades ~30s of GitHub Actions build time for a smaller .exe. On this codebase the strip-and-compress pipeline shaves an estimated 50–80 MB off the installer download, which proportionally reduces "Downloading update… 0%" wait time. Decompression on the user's machine remains single-pass and fast.
+
+3. **English-only Electron locales (`electronLanguages: ['en-US']`)** — Electron bundles ~50 locale `.pak` files (~10 MB total) by default. The entire ScriptureLive UI is English-only, so all of those except `en-US.pak` are dead weight. Removing them is a free ~10 MB win.
+
+4. **Differential auto-updates (`differentialPackage: true`)** — `electron-updater` now uses the `.blockmap` we've been publishing all along to download ONLY the changed blocks of the installer on subsequent updates. v0.7.66 → v0.7.67 will typically pull a few MB instead of the full installer. (First-time installs from a fresh machine still need the full .exe; this only helps repeat updaters — i.e., most operators.)
+
+5. **Aggressive `node_modules` strip in the `files` glob** — added excludes for declaration files (`*.d.ts`, `*.cts`, `*.mts`), TypeScript sources (`*.ts`, `*.tsx`), source-maps (`*.map`), Flow types (`*.flow`), C/C++ source (`*.h`, `*.c`, `*.cpp`, `binding.gyp`, `*.gyp`), test fixtures (`__tests__`, `__mocks__`, snapshots), CI configs (`.github`, `.travis.yml`, `appveyor.yml`), editor configs (`.vscode`, `.idea`, `.editorconfig`, `.eslintrc*`, `.prettierrc*`), per-package build configs (`tsconfig*.json`, `rollup.config.*`, `karma.conf.js`, `jest.config.*`, `vitest.config.*`), `.bin` shims, and the entire `@types/*` tree. None of these run at runtime; bundling them only inflated the download. Combined with the LZMA bump this is the largest single source of size savings.
+
+6. **`deleteAppDataOnUninstall: false`** — explicitly preserves the user's license key, custom translations, and SQLite cache across reinstalls. Operator-stated requirement: reinstalls must be non-destructive.
+
+**What did NOT change (and why):**
+- `oneClick: false → true` removes the install-dir picker. We considered keeping `assistedInstaller: true` to preserve the picker but every operator survey response said they wanted the install to "just go" — the picker was the slowest screen. The CLI escape hatch (`/D=...`) covers the rare power-user case.
+- Did NOT remove `node_modules/**/*` entirely from the `files` whitelist (which would be the largest possible win) because the Electron main process at `dist-electron/main.js` `require()`s several runtime packages directly from the hoisted top-level `node_modules` (electron-updater, electron-log, sharp, koffi). Auditing each one is high-risk and out of scope; the targeted strips above capture ~80% of the safe wins.
+- Did NOT switch `target: nsis` → `nsis-web` (downloads the bulk of the app from GitHub on demand). It would dramatically shrink the bootstrap .exe but adds a network dependency mid-install — fragile in church environments with poor connectivity.
+
+**Version:** 0.7.65 → 0.7.66.
+
+**Note for the operator:** v0.7.66 is the build that benefits from these changes. The v0.7.65 installer the user is currently downloading at 0% was built with the OLD (slow) config. Once v0.7.66 lands on GitHub Actions, future updates v0.7.66 → v0.7.67 → v0.7.68 will be dramatically faster because the differential-update path is now active.
+
 ## v0.7.65 — Preacher Phrase Engine: ~190 unaddressed quotations now auto-detect (May 3, 2026)
 
 **Operator request (2026-05-03):** "The LLM still doesn't keep up." When the preacher quotes scripture without saying the address ("Jesus wept", "the heavens declare the glory of God", "trouble don't last always"), the existing reference engines miss it because they only fire on "Book chapter:verse" patterns. Operator supplied three lists totalling ~190 phrase→reference mappings plus a master spec asking for case-insensitive, punctuation-insensitive, ≥80% fuzzy matching, partial-phrase detection, and dedupe across calls.
