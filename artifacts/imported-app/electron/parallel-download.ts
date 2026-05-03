@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { mkdir, open, truncate, unlink } from 'node:fs/promises'
+import { createReadStream, createWriteStream } from 'node:fs'
+import { mkdir, open, unlink } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 
 /**
  * Pure-Node multi-threaded HTTP range downloader for v0.7.17.
@@ -186,23 +187,40 @@ export async function parallelDownload(
     return await singleStreamDownload(opts, total)
   }
 
-  // 2. Pre-allocate the destination so chunks can write positionally.
+  // v0.7.70 — Each chunk now streams into its own sibling temp file
+  // (`<savePath>.part0`, `.part1`, …) and we concatenate them at the
+  // end. This replaces the previous `truncate(savePath, total)` +
+  // shared-fd positional-write design which had a critical Windows
+  // bug: NTFS synchronously zero-fills the entire pre-allocated range
+  // unless the process holds `SeManageVolumePrivilege` (it doesn't).
+  // On a 460 MB installer over a slow HDD with antivirus, that
+  // zero-fill could stall for 30–90 seconds BEFORE a single chunk
+  // fetch was issued — operators saw the toast frozen at "0%" with
+  // no progress events firing and no stall watchdog running yet
+  // (the watchdog only starts after truncate+open complete). The
+  // per-chunk-file approach eliminates the zero-fill entirely and
+  // chunks start hitting the network immediately.
   await mkdir(dirname(opts.savePath), { recursive: true })
-  await truncate(opts.savePath, total)
-  const fd = await open(opts.savePath, 'r+')
   const startedAt = Date.now()
 
+  // Compute chunk byte ranges first so we can derive part-file paths
+  // and pass them into the download workers.
+  const chunkSize = Math.ceil(total / requestedParallelism)
+  const chunks: ChunkState[] = []
+  for (let i = 0; i < requestedParallelism; i++) {
+    const start = i * chunkSize
+    const end = Math.min(start + chunkSize - 1, total - 1)
+    if (start > end) break
+    chunks.push({ start, end, transferred: 0 })
+  }
+  const effectiveParallelism = chunks.length
+  const partPaths = chunks.map((_, i) => `${opts.savePath}.part${i}`)
+
+  const cleanupParts = async () => {
+    await Promise.all(partPaths.map((p) => unlink(p).catch(() => {})))
+  }
+
   try {
-    // 3. Compute chunk byte ranges.
-    const chunkSize = Math.ceil(total / requestedParallelism)
-    const chunks: ChunkState[] = []
-    for (let i = 0; i < requestedParallelism; i++) {
-      const start = i * chunkSize
-      const end = Math.min(start + chunkSize - 1, total - 1)
-      if (start > end) break
-      chunks.push({ start, end, transferred: 0 })
-    }
-    const effectiveParallelism = chunks.length
 
     // 4. Throttled progress emission with rolling-window speed.
     const speedSamples: Array<{ t: number; bytes: number }> = [{ t: startedAt, bytes: 0 }]
@@ -263,9 +281,9 @@ export async function parallelDownload(
 
     try {
       await Promise.all(
-        chunks.map(async (chunk) => {
-          await downloadChunkInto(
-            fd,
+        chunks.map(async (chunk, i) => {
+          await downloadChunkToFile(
+            partPaths[i],
             chunk,
             opts.url,
             mergeSignals(opts.signal, stallCtrl.signal),
@@ -281,7 +299,25 @@ export async function parallelDownload(
 
     computeAndEmit(true)
 
-    // 6. SHA-512 verify against expected hash from latest.yml.
+    // 6. Concatenate all part files into the final destination via
+    //    streaming (so we never load the full installer into memory).
+    //    Order matters — chunk 0 must be written first, then 1, etc.
+    const out = createWriteStream(opts.savePath)
+    try {
+      for (const part of partPaths) {
+        await pipeline(createReadStream(part), out, { end: false })
+      }
+      await new Promise<void>((resolve, reject) => {
+        out.end((err?: Error | null) => (err ? reject(err) : resolve()))
+      })
+    } catch (err) {
+      out.destroy()
+      throw err
+    }
+    // Part files are no longer needed once concat succeeds.
+    await cleanupParts()
+
+    // 7. SHA-512 verify against expected hash from latest.yml.
     if (opts.expectedSha512) {
       const got = await hashFile(opts.savePath)
       if (got !== opts.expectedSha512) {
@@ -300,13 +336,16 @@ export async function parallelDownload(
       parallelism: effectiveParallelism,
       rangedUsed: true,
     }
-  } finally {
-    await fd.close().catch(() => {})
+  } catch (err) {
+    // On any failure (cancel, stall, network, SHA mismatch) leave no
+    // junk part files behind — the next attempt should start clean.
+    await cleanupParts()
+    throw err
   }
 }
 
-async function downloadChunkInto(
-  fd: Awaited<ReturnType<typeof open>>,
+async function downloadChunkToFile(
+  partPath: string,
   chunk: ChunkState,
   url: string,
   signal: AbortSignal | undefined,
@@ -356,18 +395,32 @@ async function downloadChunkInto(
   if (!res.body) {
     throw new Error(`Range request for bytes=${chunk.start}-${chunk.end} returned no body`)
   }
-  const reader = res.body.getReader()
-  let pos = chunk.start
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    if (value && value.byteLength > 0) {
-      const buf = Buffer.from(value.buffer, value.byteOffset, value.byteLength)
-      await fd.write(buf, 0, buf.byteLength, pos)
-      pos += buf.byteLength
-      chunk.transferred += buf.byteLength
-      onByteWritten()
+  // v0.7.70 — Stream the chunk body straight into its own part file
+  // via a write stream. We need byte-level visibility for the stall
+  // watchdog, so we read manually instead of using `pipeline()`.
+  const out = createWriteStream(partPath)
+  try {
+    const reader = res.body.getReader()
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value && value.byteLength > 0) {
+        const buf = Buffer.from(value.buffer, value.byteOffset, value.byteLength)
+        if (!out.write(buf)) {
+          await new Promise<void>((resolve) => out.once('drain', resolve))
+        }
+        chunk.transferred += buf.byteLength
+        onByteWritten()
+      }
     }
+    await new Promise<void>((resolve, reject) => {
+      out.end((err?: Error | null) => (err ? reject(err) : resolve()))
+    })
+  } catch (err) {
+    out.destroy()
+    // Best-effort: drop the partial part-file so a retry starts clean.
+    await unlink(partPath).catch(() => {})
+    throw err
   }
   // Sanity check — if the server cut the stream short we'd silently
   // ship a truncated chunk and the SHA verify would catch it. The
