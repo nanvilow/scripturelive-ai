@@ -867,15 +867,15 @@ export async function fetchBibleVerseFromAPI(
           }
         }
       }
-      return {
-        reference,
-        text: `Verse text for ${reference} (${translation}) — unable to fetch from API.`,
-        translation,
-        book: parsed.book,
-        chapter: parsed.chapter,
-        verseStart: parsed.verseStart,
-        verseEnd: parsed.verseEnd,
-      }
+      // v0.7.59 — NEVER return a placeholder verse with the literal
+      // string "unable to fetch from API." as the text. The previous
+      // behaviour leaked that error message all the way to the live
+      // projector during a service (operator report: "the whole
+      // congregation saw it, so embarrassing"). Returning null causes
+      // /api/bible to respond 404, fetchBibleVerse() resolves to null,
+      // and the speech-provider live-detection path skips pushing the
+      // verse to the slide deck. Silent failure is correct here.
+      return null
     }
 
     const data = await response.json()
@@ -957,6 +957,21 @@ export async function searchBibleByTextFromAPI(
 }
 
 // ──────────────────────────────────────────────
+// Poison-text guard (defense in depth)
+// ──────────────────────────────────────────────
+// Old builds (≤ v0.7.58) returned a placeholder BibleVerse whose `.text`
+// was literally `"Verse text for John 3:16 (KJV) — unable to fetch from
+// API."`. That string ended up on the live projector during a service.
+// The root cause is fixed (v0.7.59), but a few of those strings may
+// already be persisted in the SQLite verse cache on operator machines.
+// This guard ensures NONE of them ever reach the renderer.
+export function isPoisonedVerseText(text: string | null | undefined): boolean {
+  if (!text) return false
+  return /\bunable to fetch from API\b/i.test(text) ||
+    /^Verse text for .+\(.+\) — unable to fetch/i.test(text)
+}
+
+// ──────────────────────────────────────────────
 // Client-side Bible fetch (routes through our API)
 // ──────────────────────────────────────────────
 export async function fetchBibleVerse(
@@ -978,6 +993,13 @@ export async function fetchBibleVerse(
     const data = await response.json()
     if (data.error) {
       console.error(`Bible API error: ${data.error}`)
+      return null
+    }
+
+    // Defense in depth: never pass an error-string-as-verse-text to the
+    // renderer, even if the server cached one from an old build.
+    if (isPoisonedVerseText(data.text)) {
+      console.error('[bible-api] dropped poisoned cached verse for', reference)
       return null
     }
 
