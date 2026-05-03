@@ -54,7 +54,7 @@ export interface Plan {
 // so any "X hours/month" claim cannot be enforced. See replit.md
 // changelog for the rationale.
 export const PLANS: readonly Plan[] = [
-  { code: '1M', label: '1 Month',  amountGhs: 170,  days: 31,  showOnMarketing: true  },
+  { code: '1M', label: '1 Month',  amountGhs: 200,  days: 31,  showOnMarketing: true  },
   { code: '2M', label: '2 Months', amountGhs: 350,  days: 62,  showOnMarketing: false, hidden: true },
   { code: '3M', label: '3 Months', amountGhs: 550,  days: 93,  showOnMarketing: false, hidden: true },
   { code: '4M', label: '4 Months', amountGhs: 750,  days: 124, showOnMarketing: false, hidden: true },
