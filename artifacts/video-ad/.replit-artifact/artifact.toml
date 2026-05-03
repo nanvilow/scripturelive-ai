@@ -1,0 +1,31 @@
+kind = "video"
+previewPath = "/video-ad/"
+title = "ScriptureLive AI — Video Ad"
+version = "1.0.0"
+id = "artifacts/video-ad"
+router = "path"
+
+[[integratedSkills]]
+name = "video-js"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/video-ad/" ]
+localPort = 21673
+
+[services.development]
+run = "pnpm --filter @workspace/video-ad run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/video-ad", "run", "build" ]
+publicDir = "artifacts/video-ad/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21673"
+BASE_PATH = "/video-ad/"
