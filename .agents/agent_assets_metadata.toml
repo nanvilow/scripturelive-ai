@@ -18,6 +18,66 @@ uri = "file://artifacts/site/public/images/operator.png"
 type = "image"
 title = "operator at laptop"
 
+[[generated]]
+id = "JEvGvVx3_kbVd5hJiZ9iR"
+uri = "file://attached_assets/social_flyers/01_hero_brand.png"
+type = "image"
+title = "scripturelive hero"
+
+[[generated]]
+id = "q6S6durpK2r8l45MCY2fh"
+uri = "file://attached_assets/social_flyers/02_ndi_broadcasting.png"
+type = "image"
+title = "ndi broadcasting"
+
+[[generated]]
+id = "C8zY971c5hhetDAmCNyJD"
+uri = "file://attached_assets/social_flyers/03_voice_commands.png"
+type = "image"
+title = "voice commands"
+
+[[generated]]
+id = "FLDf6E7boBZ8NUgaF6kG-"
+uri = "file://attached_assets/social_flyers/04_multi_translation.png"
+type = "image"
+title = "multi translation bible"
+
+[[generated]]
+id = "INTeqD5pFkWT8Lew8QQRU"
+uri = "file://attached_assets/social_flyers/05_congregation_view.png"
+type = "image"
+title = "congregation worship"
+
+[[generated]]
+id = "zNNTunrBSa_ePpqAaQBu5"
+uri = "file://attached_assets/social_flyers/06_preacher_pulpit.png"
+type = "image"
+title = "preacher pulpit"
+
+[[generated]]
+id = "thrjumOpKNdSnitwWPZ_A"
+uri = "file://attached_assets/social_flyers/07_simple_setup.png"
+type = "image"
+title = "fast simple setup"
+
+[[generated]]
+id = "TSi9Tm-u5ZfkasloOm2p3"
+uri = "file://attached_assets/social_flyers/08_sunday_ready.png"
+type = "image"
+title = "sunday service ready"
+
+[[generated]]
+id = "CAv2gYWR4GzUzcj6qOu7Z"
+uri = "file://attached_assets/social_flyers/09_modern_alternative.png"
+type = "image"
+title = "modern alternative"
+
+[[generated]]
+id = "yd-R1pjA64d1Z0qy7oY2i"
+uri = "file://attached_assets/social_flyers/10_download_cta.png"
+type = "image"
+title = "download cta"
+
 [[outputs]]
 id = "-UTyq5izHA9Qp0GO3Jhh6"
 uri = "file://exports/ScriptureLive-AI-v0.5.24-source.zip"
@@ -287,3 +347,63 @@ id = "J2bSKUfVjaGoUtrhQdpFw"
 uri = "file://artifacts/imported-app/release/ScriptureLive-AI-0.7.32-Setup-x64.zip"
 type = "unspecified"
 title = "ScriptureLive AI 0.7.32 — Windows x64 installer (zipped .exe)"
+
+[[outputs]]
+id = "obHlsYz4YsIQxf37Kihuw"
+uri = "file://attached_assets/social_flyers/01_hero_brand.png"
+type = "image"
+title = "1 — Hero / Brand"
+
+[[outputs]]
+id = "KF-ZUL4u9ZMaEVzOytoJX"
+uri = "file://attached_assets/social_flyers/02_ndi_broadcasting.png"
+type = "image"
+title = "2 — Broadcast-Ready NDI"
+
+[[outputs]]
+id = "TZ6giNfZs8OC_6D1qmK2B"
+uri = "file://attached_assets/social_flyers/03_voice_commands.png"
+type = "image"
+title = "3 — Voice Commands"
+
+[[outputs]]
+id = "OM3lgvVjAb9KWcy_Rtwqn"
+uri = "file://attached_assets/social_flyers/04_multi_translation.png"
+type = "image"
+title = "4 — Multiple Bible Translations"
+
+[[outputs]]
+id = "9LCRiUJ3h6hHhQbPCPbni"
+uri = "file://attached_assets/social_flyers/05_congregation_view.png"
+type = "image"
+title = "5 — Worship, Amplified"
+
+[[outputs]]
+id = "zX3U2I7LYqnXzP63cTqrj"
+uri = "file://attached_assets/social_flyers/06_preacher_pulpit.png"
+type = "image"
+title = "6 — Built for the Pulpit"
+
+[[outputs]]
+id = "2wxoh7Lk0dWo7axbjmi84"
+uri = "file://attached_assets/social_flyers/07_simple_setup.png"
+type = "image"
+title = "7 — Simple Setup"
+
+[[outputs]]
+id = "qpKsvyWrLmcKijKFBAI4M"
+uri = "file://attached_assets/social_flyers/08_sunday_ready.png"
+type = "image"
+title = "8 — Ready for Sunday"
+
+[[outputs]]
+id = "5Ky8mhxedZ7UDHReK_zUc"
+uri = "file://attached_assets/social_flyers/09_modern_alternative.png"
+type = "image"
+title = "9 — The Modern Upgrade"
+
+[[outputs]]
+id = "qZnqQ8pm5jocB7QeW8D9p"
+uri = "file://attached_assets/social_flyers/10_download_cta.png"
+type = "image"
+title = "10 — Download Now"
