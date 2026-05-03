@@ -2128,7 +2128,13 @@ function DetectedVersesCard() {
     return chunks.length ? chunks : [[cleaned]]
   }
 
-  const sendDetected = (v: typeof detectedVerses[number], live: boolean) => {
+  // v0.7.76 — `mode` replaces the old boolean `live`:
+  //   • 'schedule' — add to schedule only (no preview, no live)
+  //   • 'preview'  — schedule + load into Preview pane (operator
+  //                  can review before going live)
+  //   • 'live'     — schedule + load into Preview + push to Live
+  //                  (the old `live: true` behaviour)
+  const sendDetected = (v: typeof detectedVerses[number], mode: 'schedule' | 'preview' | 'live') => {
     const groups = splitForSlides(v.text || '')
     const slides = groups.map((content, idx) => ({
       id: `slide-${Date.now()}-${idx}`,
@@ -2144,9 +2150,11 @@ function DetectedVersesCard() {
       subtitle: v.translation,
       slides,
     })
-    if (live) {
+    if (mode === 'preview' || mode === 'live') {
       setSlides(slides)
       setPreviewSlideIndex(0)
+    }
+    if (mode === 'live') {
       setLiveSlideIndex(0)
       setIsLive(true)
       // Toast suppressed per FRS — output actions stay silent.
@@ -2193,27 +2201,32 @@ function DetectedVersesCard() {
         key={`${kind}-${v.reference}-${i}`}
         onClick={() => {
           if (isCandidate) {
-            // Promote candidate → live-eligible bucket. Does NOT
-            // touch the projector — operator still needs to click
-            // it again in the LIVE column to schedule, or double-
-            // click to go live. This is the explicit confirmation
-            // step the spec demands.
+            // v0.7.76 — Per operator request: clicking a candidate
+            // now promotes it AND loads it into the Preview pane
+            // (no projector push). Operator double-clicks to send
+            // live. Previously a single click only promoted to the
+            // LIVE column without touching Preview, which felt
+            // unresponsive — operators didn't realise the click
+            // had registered.
             promoteDetectedVerseCandidate(v.id)
+            sendDetected({ ...v, confidence: Math.max(0.5, v.confidence) }, 'preview')
             requestNavigatorRef(v.reference)
           } else {
-            sendDetected(v, false)
+            sendDetected(v, 'schedule')
             requestNavigatorRef(v.reference)
           }
         }}
         onDoubleClick={() => {
           if (isCandidate) {
-            // Two-step promote+schedule on double-click of a
-            // candidate. Still does NOT auto-live (per spec).
+            // v0.7.76 — Double-click on a candidate now goes
+            // STRAIGHT to Live Display (still after promotion so
+            // the row settles in the LIVE column). Previous
+            // behaviour was promote+schedule only, never live.
             promoteDetectedVerseCandidate(v.id)
-            sendDetected({ ...v, confidence: Math.max(0.5, v.confidence) }, false)
+            sendDetected({ ...v, confidence: Math.max(0.5, v.confidence) }, 'live')
             requestNavigatorRef(v.reference)
           } else {
-            sendDetected(v, true)
+            sendDetected(v, 'live')
           }
         }}
         className={cn(
@@ -2224,7 +2237,7 @@ function DetectedVersesCard() {
         )}
         title={
           isCandidate
-            ? `Low-confidence suggestion (${pct}%). Click → promote to LIVE column · Double-click → promote + schedule. Never auto-live.`
+            ? `Low-confidence suggestion (${pct}%). Click → preview only · Double-click → send LIVE. Never auto-live.`
             : `Click → schedule + open in Chapter Navigator · Double-click → live · Detection accuracy: ${pct}%`
         }
       >
