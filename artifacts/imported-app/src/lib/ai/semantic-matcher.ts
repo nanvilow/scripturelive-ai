@@ -34,8 +34,67 @@
 
 import OpenAI from 'openai'
 import { POPULAR_VERSES_KJV, type PopularVerse } from './popular-verses'
+import { PREACHER_PHRASES } from '@/lib/bibles/preacher-phrases'
 import { getConfig } from '@/lib/licensing/storage'
 import { getOpenAIKey as getBakedOpenAIKey } from '@/lib/baked-credentials'
+
+// v0.7.67 — Bring the preacher-phrase catalogue into the embedding
+// pool so the AI (semantic) detector can match the same un-addressed
+// quotations the LOCAL detector in preacher-phrases.ts already
+// catches. Background: the local engine runs first in
+// speech-provider.tsx and handles exact + ≥80% fuzzy matches with
+// zero network cost. The semantic matcher is the next stop and was
+// only embedding POPULAR_VERSES_KJV — so when a preacher said
+// something the local engine MISSED (e.g. heavy paraphrase, severe
+// transcription noise that knocked token-overlap below 80%, or a
+// reference present in the preacher catalogue but not the popular
+// canon — "though he slay me yet will I trust him", "trouble don't
+// last always", "let the weak say I am strong"), the AI Detection
+// chip stayed silent. Folding the catalogue into the cache fixes
+// that: the LLM now scores cosine similarity against EVERY
+// preacher-catalogue entry too, so deeper paraphrases of those
+// phrases still surface as MEDIUM/HIGH chips.
+//
+// Implementation: each preacher phrase is synthesized as a
+// PopularVerse-shaped record with the phrase itself as `text` (the
+// catalogue is what the operator wants the AI to recognise, even
+// though the canonical scripture text would be more verbose). The
+// reference is parsed back into book/chapter/verse so the chip and
+// re-fetch path work identically to a popular-verse hit. Sermon-only
+// entries ("say amen somebody", reference === "General Sermon
+// Phrase") are excluded — they have no Bible address to project.
+//
+// Dedupe: when a preacher phrase shares a reference with a popular
+// verse (e.g. both have "Psalm 23:1"), BOTH embeddings are kept.
+// They embed different surface forms ("the lord is my shepherd"
+// vs the full KJV "The LORD is my shepherd; I shall not want.") so
+// keeping both gives the matcher more recall — the cosine winner
+// is still scored against the same reference, and the chip layer
+// already dedupes on reference at display time.
+export function preacherCatalogueAsVerses(): PopularVerse[] {
+  // "Psalm 23:1" / "1 Samuel 17:47" / "Psalm 113:5-6"
+  const REF_RE = /^(\d?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s+(\d+):(\d+)(?:-(\d+))?$/
+  const out: PopularVerse[] = []
+  for (const entry of PREACHER_PHRASES) {
+    if (entry.sermonOnly) continue
+    const m = REF_RE.exec(entry.reference.trim())
+    if (!m) continue
+    const book = m[1].trim()
+    const chapter = Number(m[2])
+    const verseStart = Number(m[3])
+    const verseEnd = m[4] ? Number(m[4]) : undefined
+    if (!Number.isFinite(chapter) || !Number.isFinite(verseStart)) continue
+    out.push({
+      reference: entry.reference,
+      book,
+      chapter,
+      verseStart,
+      verseEnd,
+      text: entry.phrase,
+    })
+  }
+  return out
+}
 
 // v0.7.25 — Resolve the OpenAI API key from THREE sources, in
 // priority order. This matches the Deepgram philosophy
@@ -301,7 +360,13 @@ async function ensureCache(): Promise<CachedVerse[]> {
   }
 
   cacheLoading = (async () => {
-    const verses = [...POPULAR_VERSES_KJV]
+    // v0.7.67 — Combine the canonical popular-verses set with the
+    // preacher-phrase catalogue (Bible-addressed entries only) so
+    // the AI Detection chip catches the same un-addressed
+    // quotations the local engine already does, even when the
+    // local engine's ≥80% token-overlap fuzzy gate dropped the
+    // utterance.
+    const verses = [...POPULAR_VERSES_KJV, ...preacherCatalogueAsVerses()]
     const out: CachedVerse[] = []
     // OpenAI embeddings endpoint accepts arrays of up to ~2048 inputs.
     // 200 verses fits comfortably in a single request — but we batch
