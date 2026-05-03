@@ -2040,6 +2040,9 @@ function DetectedVersesCard() {
   const {
     detectedVerses,
     clearDetectedVerses,
+    detectedVerseCandidates,
+    clearDetectedVerseCandidates,
+    promoteDetectedVerseCandidate,
     addScheduleItem,
     setSlides,
     setPreviewSlideIndex,
@@ -2101,20 +2104,125 @@ function DetectedVersesCard() {
     }
   }
 
+  // v0.7.60 — Shared row renderer for both the LIVE column and the
+  // CANDIDATES column. The only behavioural difference between the
+  // two is the click target: in CANDIDATES, click PROMOTES (moves
+  // the row over to the live column with a forced 0.50 confidence)
+  // — it does NOT push to the projector. Operator must then
+  // single-click the promoted row to schedule, or double-click to
+  // go live. This guarantees no <50% suggestion ever reaches the
+  // congregation screen automatically.
+  const renderRow = (v: typeof detectedVerses[number], i: number, kind: 'live' | 'candidate') => {
+    const pct = Math.round((v.confidence || 0) * 100)
+    const tier =
+      v.confidence >= 0.9
+        ? 'green'
+        : v.confidence >= 0.5
+          ? 'yellow'
+          : v.confidence >= 0.2
+            ? 'red'
+            : 'dim'
+    const barColor =
+      tier === 'green'
+        ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.85)]'
+        : tier === 'yellow'
+          ? 'bg-yellow-400'
+          : tier === 'red'
+            ? 'bg-rose-500'
+            : 'bg-muted-foreground/40'
+    const labelColor =
+      tier === 'green'
+        ? 'text-emerald-300'
+        : tier === 'yellow'
+          ? 'text-yellow-300'
+          : tier === 'red'
+            ? 'text-rose-300'
+            : 'text-muted-foreground'
+    const isCandidate = kind === 'candidate'
+    return (
+      <div
+        key={`${kind}-${v.reference}-${i}`}
+        onClick={() => {
+          if (isCandidate) {
+            // Promote candidate → live-eligible bucket. Does NOT
+            // touch the projector — operator still needs to click
+            // it again in the LIVE column to schedule, or double-
+            // click to go live. This is the explicit confirmation
+            // step the spec demands.
+            promoteDetectedVerseCandidate(v.id)
+            requestNavigatorRef(v.reference)
+          } else {
+            sendDetected(v, false)
+            requestNavigatorRef(v.reference)
+          }
+        }}
+        onDoubleClick={() => {
+          if (isCandidate) {
+            // Two-step promote+schedule on double-click of a
+            // candidate. Still does NOT auto-live (per spec).
+            promoteDetectedVerseCandidate(v.id)
+            sendDetected({ ...v, confidence: Math.max(0.5, v.confidence) }, false)
+            requestNavigatorRef(v.reference)
+          } else {
+            sendDetected(v, true)
+          }
+        }}
+        className={cn(
+          'rounded border px-2 py-1.5 cursor-pointer transition-colors select-none',
+          isCandidate
+            ? 'border-rose-500/30 bg-rose-500/5 hover:border-rose-400/60 hover:bg-rose-500/10'
+            : 'border-border/70 bg-card/40 hover:border-emerald-500/40 hover:bg-card',
+        )}
+        title={
+          isCandidate
+            ? `Low-confidence suggestion (${pct}%). Click → promote to LIVE column · Double-click → promote + schedule. Never auto-live.`
+            : `Click → schedule + open in Chapter Navigator · Double-click → live · Detection accuracy: ${pct}%`
+        }
+      >
+        <div className="flex items-center justify-between gap-2 mb-0.5">
+          <span className={cn(
+            'text-[10px] font-semibold',
+            isCandidate ? 'text-rose-300' : 'text-emerald-300',
+          )}>
+            {v.reference}
+          </span>
+          <span className="text-[9px] text-muted-foreground uppercase">{v.translation}</span>
+        </div>
+        <p className="text-[11px] text-foreground line-clamp-2 leading-snug">{v.text}</p>
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <div className="flex-1 h-1 rounded-full bg-muted/80 overflow-hidden">
+            <div
+              className={cn('h-full rounded-full transition-all duration-500 ease-out', barColor)}
+              style={{ width: `${Math.max(4, pct)}%` }}
+            />
+          </div>
+          <span className={cn('text-[9px] font-mono tabular-nums w-7 text-right transition-colors', labelColor)}>
+            {pct}%
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  const totalCount = detectedVerses.length + detectedVerseCandidates.length
+
   return (
     <Card
       title="Detected Verses"
       badge={
-        detectedVerses.length > 0 ? (
+        totalCount > 0 ? (
           <Badge className="h-4 px-1.5 text-[9px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/40">
-            {detectedVerses.length}
+            {totalCount}
           </Badge>
         ) : null
       }
       actions={
-        detectedVerses.length > 0 ? (
+        totalCount > 0 ? (
           <button
-            onClick={clearDetectedVerses}
+            onClick={() => {
+              clearDetectedVerses()
+              clearDetectedVerseCandidates()
+            }}
             className="text-[10px] text-muted-foreground hover:text-foreground uppercase tracking-wider"
           >
             Clear
@@ -2122,85 +2230,56 @@ function DetectedVersesCard() {
         ) : null
       }
     >
-      <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="p-2 space-y-1.5">
-          {detectedVerses.length === 0 ? (
-            <div className="text-center py-8 text-[11px] text-muted-foreground">
-              <Mic className="h-7 w-7 mx-auto opacity-40 mb-2" />
-              When the speaker quotes a passage we&apos;ll list it here. Start
-              the live transcription on the left to begin.
-            </div>
-          ) : (
-            detectedVerses.map((v, i) => {
-              // Accuracy bar — width and color reflect detection
-              // confidence. Green w/ glow ≥90% (auto-live eligible),
-              // yellow 50–89%, red 20–49%, dim otherwise. Smooth
-              // transitions on width and color so the bar visibly
-              // "fills in" as the speech engine refines its parse.
-              const pct = Math.round((v.confidence || 0) * 100)
-              const tier =
-                v.confidence >= 0.9
-                  ? 'green'
-                  : v.confidence >= 0.5
-                    ? 'yellow'
-                    : v.confidence >= 0.2
-                      ? 'red'
-                      : 'dim'
-              const barColor =
-                tier === 'green'
-                  ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.85)]'
-                  : tier === 'yellow'
-                    ? 'bg-yellow-400'
-                    : tier === 'red'
-                      ? 'bg-rose-500'
-                      : 'bg-muted-foreground/40'
-              const labelColor =
-                tier === 'green'
-                  ? 'text-emerald-300'
-                  : tier === 'yellow'
-                    ? 'text-yellow-300'
-                    : tier === 'red'
-                      ? 'text-rose-300'
-                      : 'text-muted-foreground'
-              return (
-                <div
-                  key={`${v.reference}-${i}`}
-                  onClick={() => {
-                    // v0.5.4 T005 — In addition to staging the slide in
-                    // Preview, push the reference to the Chapter
-                    // Navigator so the operator can read surrounding
-                    // context without retyping the reference. Double-
-                    // click still pushes the verse to Live.
-                    sendDetected(v, false)
-                    requestNavigatorRef(v.reference)
-                  }}
-                  onDoubleClick={() => sendDetected(v, true)}
-                  className="rounded border border-border/70 bg-card/40 hover:border-emerald-500/40 hover:bg-card px-2 py-1.5 cursor-pointer transition-colors select-none"
-                  title={`Click → schedule + open in Chapter Navigator · Double-click → live · Detection accuracy: ${pct}%`}
-                >
-                  <div className="flex items-center justify-between gap-2 mb-0.5">
-                    <span className="text-[10px] font-semibold text-emerald-300">
-                      {v.reference}
-                    </span>
-                    <span className="text-[9px] text-muted-foreground uppercase">{v.translation}</span>
-                  </div>
-                  <p className="text-[11px] text-foreground line-clamp-2 leading-snug">{v.text}</p>
-                  {/* Accuracy bar */}
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <div className="flex-1 h-1 rounded-full bg-muted/80 overflow-hidden">
-                      <div
-                        className={cn('h-full rounded-full transition-all duration-500 ease-out', barColor)}
-                        style={{ width: `${Math.max(4, pct)}%` }}
-                      />
-                    </div>
-                    <span className={cn('text-[9px] font-mono tabular-nums w-7 text-right transition-colors', labelColor)}>
-                      {pct}%
-                    </span>
-                  </div>
+      {/* v0.7.60 — Two-column split: LIVE (≥50%, auto-live eligible)
+          on the left, CANDIDATES (20–49%, operator-promote-only) on
+          the right. Each column scrolls independently so a busy
+          candidates list can't push live detections off-screen. */}
+      <div className="flex-1 min-h-0 grid grid-cols-2 gap-1 overflow-hidden">
+        {/* LIVE column — ≥50% confidence */}
+        <div className="flex flex-col min-h-0 border-r border-border/50">
+          <div className="px-2 py-1 flex items-center justify-between bg-emerald-500/5 border-b border-emerald-500/20 sticky top-0 z-10">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-300">
+              Live (≥50%)
+            </span>
+            <span className="text-[9px] font-mono tabular-nums text-muted-foreground">
+              {detectedVerses.length}
+            </span>
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="p-1.5 space-y-1.5">
+              {detectedVerses.length === 0 ? (
+                <div className="text-center py-6 text-[10px] text-muted-foreground">
+                  <Mic className="h-5 w-5 mx-auto opacity-40 mb-1.5" />
+                  Live-eligible detections appear here.
                 </div>
-              )
-            })
-          )}
+              ) : (
+                detectedVerses.map((v, i) => renderRow(v, i, 'live'))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* CANDIDATES column — 20–49% confidence, operator promotes manually */}
+        <div className="flex flex-col min-h-0">
+          <div className="px-2 py-1 flex items-center justify-between bg-rose-500/5 border-b border-rose-500/20 sticky top-0 z-10">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-rose-300">
+              Candidates (20–49%)
+            </span>
+            <span className="text-[9px] font-mono tabular-nums text-muted-foreground">
+              {detectedVerseCandidates.length}
+            </span>
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="p-1.5 space-y-1.5">
+              {detectedVerseCandidates.length === 0 ? (
+                <div className="text-center py-6 text-[10px] text-muted-foreground">
+                  Low-confidence guesses land here. Click to promote.
+                </div>
+              ) : (
+                detectedVerseCandidates.map((v, i) => renderRow(v, i, 'candidate'))
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </Card>

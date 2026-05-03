@@ -495,6 +495,18 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   const lastTextSearchAtRef = useRef<number>(0)
   const processedTextHitsRef = useRef<Set<string>>(new Set())
 
+  // v0.7.60 — Live AI semantic-match throttle + dedupe. The semantic
+  // matcher costs one OpenAI embedding per call (~80–150 ms); we
+  // gate it inside the same conditional block as the keyword search
+  // so a quiet transcript doesn't burn quota, and we record each
+  // accepted reference so a single paraphrase doesn't get re-pushed
+  // on every subsequent chunk that still contains it. The pipeline
+  // is what turns "in his time he make all things" into a live
+  // suggestion of Ecclesiastes 3:11 — without it the regex matcher
+  // would never recognise the paraphrase.
+  const lastSemanticAtRef = useRef<number>(0)
+  const processedSemanticHitsRef = useRef<Set<string>>(new Set())
+
   // v0.5.52 — Voice command dedup. Holds the LAST command signature
   // we executed and when. Re-issuing the same command within 4 s is
   // ignored so a long transcript ending in the same trigger phrase
@@ -1541,7 +1553,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             // was an artifact of pre-tier days when low-confidence
             // chunks reached this code path. 70 matches the operator
             // spec ("≥70% live").
-            if (autoLiveOn2 && v2.confidence >= 70) {
+            // v0.7.60 — Lowered floor 70 → 50 per operator spec
+            // ("display 50–100% to live"). The v2 detector still
+            // applies its own ≥80 in-engine gate before we get here,
+            // so in practice this branch only fires for very strong
+            // matches; the change just unblocks the rare 50–69 band
+            // that the engine occasionally produces on noisy audio.
+            if (autoLiveOn2 && v2.confidence >= 50) {
               const slide = {
                 id: `slide-${Date.now()}`,
                 type: 'verse' as const,
@@ -1566,7 +1584,14 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       const detectedRefs = detectVersesInTextWithScore(text)
       const references = detectedRefs.map((r) => r.reference)
       const autoLiveOn = state.autoLive || state.settings.autoGoLiveOnDetection
-      const threshold = state.autoLiveThreshold ?? 0.9
+      // v0.7.60 — HARD CLAMP to 0.5 floor regardless of persisted
+      // setting. The operator's rule: anything ≥50% confidence is
+      // eligible to auto-go-live, anything below is a candidate-only
+      // suggestion. An upgrader whose localStorage still holds 0.9
+      // (the previous default) would otherwise be stuck at the old
+      // behaviour; clamping here makes the new floor apply on the
+      // very next service.
+      const threshold = Math.min(state.autoLiveThreshold ?? 0.5, 0.5)
 
       // ── Voice text detection ─────────────────────────────────────────
       // When the speaker quotes a passage (e.g. "In the beginning God
@@ -1648,7 +1673,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   chapter: top.chapter,
                   verseStart: top.verse,
                 })
-                if (autoLiveOn && sim >= 0.85) {
+                // v0.7.60 — Lowered live threshold 0.85 → 0.50 per
+                // operator's "display 50–100% to live" spec. The
+                // upstream `minSim` gate (0.32 / 0.4 with attribution)
+                // keeps obvious noise from reaching this point, so the
+                // 0.50 floor is a meaningful "we're confident enough
+                // to put this on the projector" signal.
+                if (autoLiveOn && sim >= 0.50) {
                   const slide = {
                     id: `slide-${Date.now()}`,
                     type: 'verse' as const,
@@ -1670,6 +1701,156 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           }
         } catch {
           /* ignore search failures */
+        }
+      }
+
+      // ── v0.7.60 — Live AI semantic-match (paraphrase recovery) ─
+      // Runs in the SAME throttle window as the keyword search above
+      // so a chatty transcript can't double-burn API quota. Where
+      // the keyword search wants a stripped, high-signal query, the
+      // semantic matcher wants the natural recent phrasing — so we
+      // pass the raw `recentText` (which already has the operator-
+      // preamble stripped inside the matcher itself).
+      //
+      // Tier routing:
+      //   • score ≥ 0.50 → live-eligible (addDetectedVerse + auto-
+      //     live if autoLiveOn). Auto-live only fires for the SINGLE
+      //     best match each call so we never push two competing
+      //     paraphrases at once.
+      //   • 0.20 ≤ score < 0.50 → candidates bucket only (operator
+      //     must click to promote; never auto-live).
+      //   • score < 0.20 → drop (noise floor).
+      //
+      // We dedupe per-reference inside this hook AND inside
+      // addDetectedVerseCandidate (which skips already-present refs)
+      // so the same suggestion can't pile up across chunks.
+      const SEMANTIC_THROTTLE_MS = 1500
+      if (
+        allWords.length >= minWords &&
+        keywords.length >= minKeywords &&
+        now - lastSemanticAtRef.current > SEMANTIC_THROTTLE_MS
+      ) {
+        lastSemanticAtRef.current = now
+        try {
+          const semResp = await fetch('/api/scripture/semantic-match', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: recentText,
+              topK: 5,
+              includeLow: true, // we want the 0.20–0.49 band for the candidates column
+            }),
+          })
+          if (semResp.ok) {
+            const semJson = (await semResp.json()) as {
+              ok: boolean
+              matches?: Array<{
+                reference: string
+                book: string
+                chapter: number
+                verseStart: number
+                verseEnd?: number
+                text: string
+                score: number
+              }>
+            }
+            if (semJson.ok && Array.isArray(semJson.matches) && semJson.matches.length) {
+              const tx = state.selectedTranslation
+              let bestLiveDispatched = false
+              for (const m of semJson.matches) {
+                if (m.score < 0.20) continue
+                if (processedSemanticHitsRef.current.has(m.reference)) continue
+                if (processedRefsRef.current.has(m.reference)) continue
+                if (processedTextHitsRef.current.has(m.reference)) continue
+                processedSemanticHitsRef.current.add(m.reference)
+
+                // Re-fetch in operator's selected translation when
+                // bundled, falling back to the canonical KJV text
+                // from POPULAR_VERSES_KJV (which is what came back
+                // in `m.text`). This mirrors the v2-detector path so
+                // the projector slide always shows the operator's
+                // translation pick when one is available.
+                let textOut: string | null = null
+                let translationOut: string = tx
+                const vEnd = m.verseEnd ?? m.verseStart
+                if (vEnd > m.verseStart) {
+                  const r = lookupRange(m.book, m.chapter, m.verseStart, vEnd, tx)
+                  if (r) textOut = r.text
+                } else {
+                  const r = lookupVerse(m.book, m.chapter, m.verseStart, tx)
+                  if (r) textOut = r
+                }
+                if (!textOut && !isTranslationBundled(tx)) {
+                  try {
+                    const v = await fetchBibleVerse(m.reference, tx)
+                    if (v) {
+                      textOut = v.text
+                      translationOut = v.translation
+                    }
+                  } catch { /* fall through */ }
+                }
+                if (!textOut) {
+                  // Fall back to the KJV text the matcher used. The
+                  // projector still gets a usable slide.
+                  textOut = m.text
+                  translationOut = 'KJV'
+                }
+
+                const detected: DetectedVerse = {
+                  id: `det-sem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                  reference: m.reference,
+                  text: textOut,
+                  translation: translationOut,
+                  detectedAt: new Date(),
+                  confidence: m.score,
+                }
+
+                if (m.score >= 0.50) {
+                  // Live-eligible — push to detectedVerses and (if
+                  // auto-live is on AND this is the first 0.50+ hit
+                  // in this call) flip the projector.
+                  const tBefore = useAppStore.getState().liveTranscript
+                  useAppStore.getState().pushTranscriptBreak(tBefore.length)
+                  useAppStore.getState().addDetectedVerse(detected)
+                  useAppStore.getState().addToVerseHistory({
+                    reference: m.reference,
+                    text: textOut,
+                    translation: translationOut,
+                    book: m.book,
+                    chapter: m.chapter,
+                    verseStart: m.verseStart,
+                    verseEnd: m.verseEnd ?? undefined,
+                  })
+                  state.setDetectionStatus('detected')
+                  if (autoLiveOn && !bestLiveDispatched) {
+                    bestLiveDispatched = true
+                    const slide = {
+                      id: `slide-${Date.now()}`,
+                      type: 'verse' as const,
+                      title: m.reference,
+                      subtitle: translationOut,
+                      content: textOut.split('\n').filter(Boolean),
+                      background: state.settings.congregationScreenTheme,
+                    }
+                    const cur = useAppStore.getState().slides
+                    const next = cur.length > 0 ? [...cur, slide] : [slide]
+                    const idx = next.length - 1
+                    useAppStore.getState().setSlides(next)
+                    useAppStore.getState().setPreviewSlideIndex(idx)
+                    useAppStore.getState().setLiveSlideIndex(idx)
+                    useAppStore.getState().setIsLive(true)
+                  }
+                } else {
+                  // 0.20–0.49 band → candidates only. Operator must
+                  // explicitly promote; never auto-live.
+                  useAppStore.getState().addDetectedVerseCandidate(detected)
+                }
+              }
+            }
+          }
+        } catch {
+          /* network/quota errors fail open — the regex + keyword paths
+             still get to run on subsequent chunks. */
         }
       }
 
@@ -1748,6 +1929,10 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     }
     if (speechCommand === 'start') {
       processedRefsRef.current = new Map()
+      // v0.7.60 — Reset semantic-match dedupe so a fresh service
+      // doesn't carry over yesterday's accepted suggestions.
+      processedSemanticHitsRef.current = new Set()
+      lastSemanticAtRef.current = 0
       // v0.5.44 — track WHEN we started so the auto-fallback effect
       // can scope its 8 s WS-failure window, and remember the
       // callback so the fallback path can re-arm it on the browser
@@ -1772,6 +1957,9 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       setLiveInterimTranscript('')
       useAppStore.getState().clearTranscriptBreaks()
       processedRefsRef.current = new Map()
+      // v0.7.60 — Reset semantic dedupe on transcript reset too.
+      processedSemanticHitsRef.current = new Set()
+      lastSemanticAtRef.current = 0
       setSpeechCommand(null)
     }
   }, [

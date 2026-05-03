@@ -77,6 +77,11 @@ export const POPULAR_VERSES_KJV: readonly PopularVerse[] = [
 
   // ── Ecclesiastes ───────────────────────────────────────────────────
   { reference: 'Ecclesiastes 3:1', book: 'Ecclesiastes', chapter: 3, verseStart: 1, text: 'To every thing there is a season, and a time to every purpose under the heaven.' },
+  // v0.7.60 — Operator report: speaker said "in his time he make all
+  // things" and the system failed to bring up the verse. Adding the
+  // canonical KJV text for Ecclesiastes 3:11 so the semantic matcher
+  // can recover this paraphrase.
+  { reference: 'Ecclesiastes 3:11', book: 'Ecclesiastes', chapter: 3, verseStart: 11, text: 'He hath made every thing beautiful in his time: also he hath set the world in their heart, so that no man can find out the work that God maketh from the beginning to the end.' },
 
   // ── Isaiah ─────────────────────────────────────────────────────────
   { reference: 'Isaiah 9:6', book: 'Isaiah', chapter: 9, verseStart: 6, text: 'For unto us a child is born, unto us a son is given: and the government shall be upon his shoulder: and his name shall be called Wonderful, Counsellor, The mighty God, The everlasting Father, The Prince of Peace.' },

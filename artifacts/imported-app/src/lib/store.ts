@@ -267,6 +267,16 @@ interface AppState {
   detectedVerses: DetectedVerse[]
   addDetectedVerse: (v: DetectedVerse) => void
   clearDetectedVerses: () => void
+  // v0.7.60 — Low-confidence "candidate" detections (0.20–0.49). The
+  // operator can promote one to live with a click; auto-go-live is
+  // never permitted from this bucket. Kept separate from
+  // `detectedVerses` so the projector pipeline (which reads
+  // detectedVerses + the slides array) can never accidentally surface
+  // a sub-50% suggestion to the congregation screen.
+  detectedVerseCandidates: DetectedVerse[]
+  addDetectedVerseCandidate: (v: DetectedVerse) => void
+  clearDetectedVerseCandidates: () => void
+  promoteDetectedVerseCandidate: (id: string) => void
   liveVerse: BibleVerse | null
   setLiveVerse: (v: BibleVerse | null) => void
 
@@ -701,6 +711,37 @@ export const useAppStore = create<AppState>()(
           detectedVerses: [v, ...state.detectedVerses].slice(0, 100),
         })),
       clearDetectedVerses: () => set({ detectedVerses: [] }),
+      // v0.7.60 — Candidates bucket. Cap at 50 entries (operator only
+      // ever scans the recent few in a service, and we don't want a
+      // long quiet stretch of low-confidence noise to keep growing).
+      detectedVerseCandidates: [],
+      addDetectedVerseCandidate: (v) =>
+        set((state) => {
+          // Skip dupes by reference within the recent window so a
+          // semantic matcher firing on every transcript chunk doesn't
+          // stack the same suggestion 10 times.
+          const existing = state.detectedVerseCandidates.find(
+            (c) => c.reference === v.reference,
+          )
+          if (existing) return {}
+          return {
+            detectedVerseCandidates: [v, ...state.detectedVerseCandidates].slice(0, 50),
+          }
+        }),
+      clearDetectedVerseCandidates: () => set({ detectedVerseCandidates: [] }),
+      promoteDetectedVerseCandidate: (id) =>
+        set((state) => {
+          const candidate = state.detectedVerseCandidates.find((c) => c.id === id)
+          if (!candidate) return {}
+          // Promote = remove from candidates, add to detectedVerses
+          // with a synthetic 0.50 confidence so the LIVE column treats
+          // it as eligible (the operator has explicitly endorsed it).
+          const promoted: DetectedVerse = { ...candidate, confidence: Math.max(0.5, candidate.confidence) }
+          return {
+            detectedVerseCandidates: state.detectedVerseCandidates.filter((c) => c.id !== id),
+            detectedVerses: [promoted, ...state.detectedVerses].slice(0, 100),
+          }
+        }),
       liveVerse: null,
       setLiveVerse: (v) => set({ liveVerse: v }),
 
@@ -969,7 +1010,12 @@ export const useAppStore = create<AppState>()(
 
       // 0.9 = 90%. Verses below this never auto-go-live; they only
       // appear in the Detected Verses panel as preview suggestions.
-      autoLiveThreshold: 0.9,
+      // v0.7.60 — Lowered from 0.9 → 0.5 per operator spec
+      // ("display 50–100% to live"). The speech-provider also clamps
+      // any persisted value to ≤ 0.5 at the auto-live decision sites,
+      // so an upgrader whose localStorage still holds 0.9 still gets
+      // the new 50% floor without needing a settings change.
+      autoLiveThreshold: 0.5,
       setAutoLiveThreshold: (t) =>
         set({ autoLiveThreshold: Math.max(0, Math.min(1, t)) }),
 
