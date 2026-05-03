@@ -1,5 +1,37 @@
 # Recent Changes
 
+## v0.7.64 — Pricing collapse: 1M → GHS 170, hide 2M–6M, drop "25% Off" badge (May 3, 2026)
+
+**Operator request (2026-05-03):** Drop the entry price from GHS 200 → GHS 170, remove the 2M / 3M / 4M / 5M / 6M middle tiers from purchase UIs, and remove the "25% Off" badge from the 1-Year plan. Originally framed as a much larger spec (per-user transcription metering with monthly resets, hard-lock-at-zero, multi-month add-on hours formula, exploit protection tied to authenticated accounts). After review, the larger spec was **deliberately not implemented** — see "What was NOT done and why" below.
+
+**What changed:**
+1. **`lib/pricing/src/index.ts`** (canonical catalogue, single source of truth for both desktop app and marketing site):
+   - 1M `amountGhs`: 200 → **170**.
+   - Added optional `hidden?: boolean` flag on the `Plan` interface.
+   - 2M, 3M, 4M, 5M, 6M marked `hidden: true` (and `showOnMarketing: false`).
+   - 1Y `discountLabel: '25% Off'` removed.
+   - Added `getPurchasablePlans()` helper that filters out hidden tiers; `getMarketingPlans()` now also filters by `!hidden` defensively.
+2. **`artifacts/imported-app/src/components/license/subscription-modal.tsx`**: The hand-typed `FALLBACK_PLANS` array (a long-standing drift hazard — it was still showing GHS 200 / 25% Off / six middle tiers despite the lib being the supposed source of truth) is now derived from `getPurchasablePlans()`. Future price/tier edits become a one-file change in `lib/pricing` instead of a two-file change with silent-drift risk.
+3. **`artifacts/imported-app/src/app/api/license/plans/route.ts`**: The public `/api/license/plans` endpoint (consumed by the customer modal at runtime to pick up Admin-Settings price overrides without a rebuild) now filters out `hidden` plans server-side. Admin endpoints still read `PLANS` directly and continue to see the full catalogue, so the Admin tab can still generate codes for any historical tier on request.
+4. **`artifacts/imported-app/src/lib/licensing/plans.ts`**: Re-exports `getPurchasablePlans` so the in-app modal can import it from the licensing barrel (consistent with the rest of the licensing-layer imports).
+5. **`artifacts/site/src/pages/home.tsx`**: PLAN_BLURBS retained for all 7 codes (the Record stays exhaustive over PlanCode so removing tiers can't break the type), with the 1Y blurb tweaked to mention "our most popular tier" now that it's no longer the discount tier. The marketing grid auto-collapses to {1M, 1Y} via `getMarketingPlans()`.
+
+**Backward compatibility:** The hidden plan codes (2M–6M) remain in the `PLANS` array, so:
+- Existing activation codes minted with `SL-2M-…`, `SL-3M-…`, `SL-4M-…`, `SL-5M-…`, `SL-6M-…` still validate via `findPlan()`.
+- Existing payment rows in the admin audit log render correctly (label + price lookup still works).
+- Admin can still generate codes for those tiers if a returning customer specifically asks for one (admin uses `PLANS` directly, not the filtered helpers).
+
+**What was NOT done and why:** The original spec asked for a server-side per-user transcription-time meter (1500 min/month for 1M, 1800 min/month for 1Y), real-time per-second deduction during live transcription, hard-lock at zero, monthly billing-cycle resets, a multi-month "+N extras" selector with a `25 + extras × 20` hours formula, a usage progress bar in the UI, "protection against refresh/reset exploits", and a database schema with `subscription_type / remaining_minutes / monthly_limit_minutes / billing_cycle_start / billing_cycle_end` fields tied to "authenticated user account". Every one of those items was deliberately skipped because:
+1. **No accounts exist.** ScriptureLive AI is a single-machine desktop app licensed by per-device activation codes (`SL-{PLAN}-XXXXXX`) with state in `~/.scripturelive/license.json`. There is no login, no user table, no server-side account. "Tied to authenticated user account" cannot be implemented without first building an entire auth + sync layer.
+2. **No exploit protection is possible client-side.** Any local admin can edit the JSON file and reset their own meter. Writing meter code that pretends otherwise would be theatre and would mislead future maintainers about what the system actually guarantees.
+3. **The Deepgram API key ships in the renderer bundle** (`scripts/inject-keys.mjs` → `keys.baked.ts`). A user who hits a 25h cap can extract the asar in seconds and stream on the operator's Deepgram bill anyway, so client-side metering provides zero real cost protection. The correct cost-cap location is Deepgram's own dashboard usage limit, which is one checkbox.
+4. **Customer trust risk.** Promising "25 hours/month" to pastors who paid for a "1 month subscription" and then locking them out at 25h mid-Sunday-sermon is the kind of failure that ends in angry WhatsApp messages on the 0246798526 line. Until accounts + reliable resets exist, this metric is safer left out.
+5. **Multi-month add-on selector intentionally skipped** because displaying "you'll get 65 hrs/month with 3 months" without a real meter behind it would be advertising a feature that doesn't exist.
+
+**Verdict:** Path C from the conversation — visible pricing/UX changes only, zero customer-trust risk, fully reversible. If the operator later builds an auth + server-side usage layer (a separate project of its own), the metering half of the spec can be added on top without redoing this work.
+
+**Version bumped to `0.7.64`. Local typecheck green.**
+
 ## v0.7.63 — In-app updater download stuck at 0% on slow links (May 3, 2026)
 
 **Bug:** Operator report — "upgrade side, when user click on download, download stack at 0%". Same symptom v0.7.55 was supposed to fix, except this time the download visibly **starts** (toast shows 0% and parallelism: 6 chunks), then either freezes or briefly climbs to ~15–25% and snaps back. No clean fallback, no error toast.
