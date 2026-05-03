@@ -10,6 +10,13 @@ import logoSvg from "@assets/scripturelive/logo.svg";
 // Marketing-only blurb per plan tier. Pricing lives in @workspace/pricing
 // so it can never drift from the desktop app; the prose below is purely
 // presentational copy specific to this landing page.
+//
+// v0.7.64 — Plans 2M–6M are still listed here defensively so the
+// Record type stays exhaustive over PlanCode, but they are flagged
+// `hidden: true` in the pricing lib and won't reach this page via
+// getMarketingPlans(). Removing them from the Record would require
+// also narrowing PlanCode itself, which would invalidate findPlan()
+// lookups for old activation codes already in the wild.
 const PLAN_BLURBS: Record<PlanCode, string> = {
   "1M": "Perfect for special events or testing the waters with your team.",
   "2M": "Two-month commitment for short campaigns and revival series.",
@@ -17,7 +24,7 @@ const PLAN_BLURBS: Record<PlanCode, string> = {
   "4M": "Four months of coverage for an extended sermon series.",
   "5M": "Five months of stability for a longer ministry season.",
   "6M": "Half-year stability for your broadcast and projection.",
-  "1Y": "Set it and forget it. A full year of worry-free automated projection.",
+  "1Y": "Set it and forget it. A full year of worry-free automated projection — our most popular tier.",
 };
 
 export default function Home() {

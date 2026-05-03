@@ -13,9 +13,9 @@
 // every activation code we generate, and changing them retroactively
 // would invalidate codes already in the wild.
 
-import { PLANS, findPlan, isPlanCode, type Plan, type PlanCode } from '@workspace/pricing'
+import { PLANS, findPlan, isPlanCode, getPurchasablePlans, type Plan, type PlanCode } from '@workspace/pricing'
 
-export { PLANS, findPlan, isPlanCode }
+export { PLANS, findPlan, isPlanCode, getPurchasablePlans }
 export type { Plan, PlanCode }
 
 // MoMo recipient — operator-supplied. Hard-coded as the v1 default

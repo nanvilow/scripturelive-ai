@@ -29,6 +29,7 @@ interface Plan {
   amountGhs: number
   days: number
   discountLabel?: string
+  hidden?: boolean
 }
 
 // v0.5.48 — compiled defaults used as a fallback BEFORE the public
@@ -36,15 +37,29 @@ interface Plan {
 // The modal fetches the EFFECTIVE plan list (with any owner-set
 // price overrides applied) on mount so price changes from Admin
 // Settings show up without rebuilding the renderer bundle.
-const FALLBACK_PLANS: Plan[] = [
-  { code: '1M', label: '1 Month',  amountGhs: 200,  days: 31 },
-  { code: '2M', label: '2 Months', amountGhs: 350,  days: 62 },
-  { code: '3M', label: '3 Months', amountGhs: 550,  days: 93 },
-  { code: '4M', label: '4 Months', amountGhs: 750,  days: 124 },
-  { code: '5M', label: '5 Months', amountGhs: 900,  days: 155 },
-  { code: '6M', label: '6 Months', amountGhs: 1200, days: 186 },
-  { code: '1Y', label: '1 Year',   amountGhs: 1800, days: 365, discountLabel: '25% Off' },
-]
+//
+// v0.7.64 — Sourced from @workspace/pricing (the canonical
+// catalogue) instead of being hand-duplicated here. The previous
+// hand-typed copy had silently drifted off the lib (it still
+// listed 2M–6M and the GHS 200 / 25% Off legacy values after they
+// were collapsed). Importing keeps both surfaces in lockstep
+// forever and makes future price changes a one-file edit.
+//
+// IMPORTANT: import DIRECTLY from `@workspace/pricing` (the zero-deps
+// catalogue lib), NOT from `@/lib/licensing/plans` — the licensing
+// barrel transitively imports `storage.ts`, which uses `node:fs`,
+// and this file ships into the client bundle. Pulling it through
+// the barrel breaks the Turbopack/Next client build with
+// "the chunking context does not support external modules
+// (request: node:fs)".
+import { getPurchasablePlans } from '@workspace/pricing'
+const FALLBACK_PLANS: Plan[] = getPurchasablePlans().map((p) => ({
+  code: p.code,
+  label: p.label,
+  amountGhs: p.amountGhs,
+  days: p.days,
+  discountLabel: p.discountLabel,
+}))
 
 interface PaymentResp {
   ref: string
