@@ -1,5 +1,47 @@
 # Recent Changes
 
+## v0.7.65 — Preacher Phrase Engine: ~190 unaddressed quotations now auto-detect (May 3, 2026)
+
+**Operator request (2026-05-03):** "The LLM still doesn't keep up." When the preacher quotes scripture without saying the address ("Jesus wept", "the heavens declare the glory of God", "trouble don't last always"), the existing reference engines miss it because they only fire on "Book chapter:verse" patterns. Operator supplied three lists totalling ~190 phrase→reference mappings plus a master spec asking for case-insensitive, punctuation-insensitive, ≥80% fuzzy matching, partial-phrase detection, and dedupe across calls.
+
+**What changed:**
+
+1. **NEW `artifacts/imported-app/src/lib/bibles/preacher-phrases.ts`** (~340 LOC):
+   - Curated catalogue of 188 deduplicated phrase→reference entries combining all three operator lists (foundational verses, Psalms, Proverbs, prophets, Gospels, epistles, Revelation, plus sermon-only filler like "say amen somebody").
+   - `normalizePhrase()` — lowercase, strip apostrophes/punctuation, collapse whitespace. Applied at compile time to every catalogue entry AND at runtime to every transcript chunk so they share the same string space.
+   - `detectPreacherPhrases(text, opts)` / `detectBestPreacherPhrase(text, opts)`:
+     - Tail-clipped at 600 chars (perf guard) before scanning.
+     - Stage 1: exact normalised substring scan against all 188 entries.
+     - Stage 2: fuzzy fallback — sliding window of same word-count, accept when ≥0.80 of catalogue tokens hit (Levenshtein-1 forgiveness per token for words ≥4 chars). Same forgiveness model as the existing `verseTextSimilarity` so the whole pipeline stays consistent.
+     - Dedupe by reference within a single call AND across calls via `excludeReferences` (caller passes `processedTextHitsRef`).
+     - Returns hits sorted by score, exact wins over fuzzy.
+   - "General Sermon Phrase" entries flagged `sermonOnly:true` so the dispatcher skips them — they have no Bible address to project.
+
+2. **NEW `artifacts/imported-app/src/lib/bibles/preacher-phrases.test.ts`** (16 tests, all green):
+   - Catalogue integrity (size ≥150, normalised forms unique, sermon-only flagged correctly, sample mappings correct).
+   - Normaliser correctness (case, punctuation, whitespace).
+   - Exact match: mid-sentence partial detection, case-insensitive, punctuation-insensitive, sermon-only flag honoured, null on no match.
+   - Fuzzy match: Lev-1 typo tolerance ("lazerus" → "lazarus"), 5-of-6 token overlap accepted, random unrelated text rejected.
+   - Multi-hit + dedupe: two phrases collapsing to one reference returns one hit; `excludeReferences` blocks repeat dispatch.
+
+3. **EDIT `artifacts/imported-app/src/components/providers/speech-provider.tsx`** — wired the engine into `processCallbackRef.current` directly after the v2 Reference Engine block and before the keyword-search recovery path. On hit (and not `sermonOnly`):
+   - Adds the reference to `processedTextHitsRef` (existing dedupe set, shared with the keyword search and AI semantic-match paths).
+   - Fetches verse text from `/api/bible?reference=…&translation=…` (single-verse JSON shape, NOT the `?search=` shape that returns `{hits:[]}`).
+   - Pushes a `DetectedVerse` (confidence 0.95 exact / 0.85 fuzzy) and adds to verse history exactly like the keyword path.
+   - Auto-go-live when `autoLive || autoGoLiveOnDetection` is on, using the same slide construction as the Reference Engine v2 dispatch.
+   - Sets `detectionStatus='detected'` and returns, suppressing the keyword + AI fallbacks for that chunk so we don't double-fire.
+   - Wrapped in try/catch — engine failures are silent; downstream paths still run.
+
+4. **EDIT `artifacts/imported-app/package.json`** — version 0.7.64 → 0.7.65.
+
+**Architecture rationale (why a hard-coded dictionary instead of just an LLM):**
+- **Latency:** the existing AI semantic-match (`/api/scripture/semantic-match`) costs an OpenAI roundtrip — 200–800ms typical. A local lookup is sub-millisecond, lands during the same breath the preacher takes, and works offline.
+- **Determinism:** the operator wanted "trouble don't last always → Psalm 30:5" to fire reliably every Sunday, not when the embedding happens to rank Psalm 30:5 above Job 5:7.
+- **Coverage of unaddressed call-and-response:** the keyword-search path needs ≥3 distinctive content tokens AND a stop-list-stripped tail. Preacher one-liners ("peace be still", "Lazarus come forth") fail that gate. The phrase engine catches them by intent.
+- **No regression to existing detection:** the engine inserts as a NEW stage between the v2 reference engine and the keyword search. Anything those already detect short-circuits before this stage runs. Anything they miss falls through to keyword + AI as before.
+
+**Verification:** 429/429 vitest tests pass (16 new in preacher-phrases.test.ts, 413 pre-existing). Root `pnpm run typecheck` clean for libs + scripts + api-server + imported-app + site (video-ad has the same pre-existing framer-motion errors as before, unrelated). Live API calls confirm `/api/bible?reference=John%2011:35&translation=KJV` returns "Jesus wept." and `/api/bible?reference=Psalm%2030:5&translation=KJV` returns the full verse — the two paths the engine emits in production.
+
 ## v0.7.64 — Pricing collapse: 1M → GHS 170, hide 2M–6M, drop "25% Off" badge (May 3, 2026)
 
 **Operator request (2026-05-03):** Drop the entry price from GHS 200 → GHS 170, remove the 2M / 3M / 4M / 5M / 6M middle tiers from purchase UIs, and remove the "25% Off" badge from the 1-Year plan. Originally framed as a much larger spec (per-user transcription metering with monthly resets, hard-lock-at-zero, multi-month add-on hours formula, exploit protection tied to authenticated accounts). After review, the larger spec was **deliberately not implemented** — see "What was NOT done and why" below.
