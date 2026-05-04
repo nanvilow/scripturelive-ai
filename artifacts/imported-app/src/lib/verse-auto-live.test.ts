@@ -14,7 +14,7 @@ const v = (id: string, confidence: number, detectedAt?: number) => ({
   detectedAt: detectedAt != null ? new Date(detectedAt) : undefined,
 })
 
-describe('auto-live verse selection (v0.7.93 hotfix — alts band 20-55%, live ≥55%)', () => {
+describe('auto-live verse selection (v0.7.94 — every detection ≥20% appears in alternatives)', () => {
   it('uses 0.55 (55%) as the auto-live floor — v0.7.93 raised from 0.40 after operator-reported false positives', () => {
     expect(AUTO_LIVE_MIN_CONFIDENCE).toBe(0.55)
     expect(ALTERNATIVE_MIN_CONFIDENCE).toBe(0.2)
@@ -39,16 +39,37 @@ describe('auto-live verse selection (v0.7.93 hotfix — alts band 20-55%, live �
     expect(alts.map((a) => a.id)).toEqual(['Prov.4.7'])
   })
 
-  it('alternatives bucket is exactly the [0.20, 0.55) band', () => {
+  it('v0.7.94: alternatives include EVERY ≥20% detection except the live winner', () => {
+    // Reported bug: 9 detected verses, only 1 visible. With the v0.7.93
+    // upper bound of 0.55, the high-confidence siblings of the live
+    // pick disappeared. They must now show in the right column.
     const detected = [
-      v('A', 0.95),  // main — excluded from alternatives
-      v('B', 0.55),  // main — boundary, excluded from alternatives
-      v('C', 0.54),  // alt — just below the live floor
-      v('D', 0.20),  // alt — boundary inclusive
-      v('E', 0.19),  // dropped
+      v('A', 0.95),  // live winner — excluded from alternatives
+      v('B', 0.90),  // alt — was being dropped before v0.7.94
+      v('C', 0.72),  // alt — was being dropped before v0.7.94
+      v('D', 0.55),  // alt — boundary, was being dropped before v0.7.94
+      v('E', 0.54),  // alt — just below the live floor
+      v('F', 0.20),  // alt — boundary inclusive
+      v('G', 0.19),  // dropped (below 20%)
     ]
     const alts = alternativesFor(detected, 'A')
-    expect(alts.map((a) => a.id).sort()).toEqual(['C', 'D'])
+    expect(alts.map((a) => a.id).sort()).toEqual(['B', 'C', 'D', 'E', 'F'])
+  })
+
+  it('v0.7.94: count of (live + alts) equals total detected ≥20% — badge matches list', () => {
+    // The Detected Verses card badge shows detectedVerses.length, and
+    // the operator must see every counted row. Anything ≥20% must
+    // surface in either the live column (1 row max) or the alts column.
+    const detected = [
+      v('A', 0.95, 9000),
+      v('B', 0.88, 8000),
+      v('C', 0.66, 7000),
+      v('D', 0.42, 6000),
+      v('E', 0.25, 5000),
+    ]
+    const live = pickAutoLiveMatch(detected)
+    const alts = alternativesFor(detected, live?.id ?? null)
+    expect((live ? 1 : 0) + alts.length).toBe(detected.length)
   })
 
   it('Always displays NEW detections on top of OLD ones (operator spec)', () => {

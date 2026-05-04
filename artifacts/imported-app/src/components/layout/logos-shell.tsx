@@ -2346,16 +2346,17 @@ function DetectedVersesCard() {
           mental model:
             • LEFT  "Auto-Live Match"    — the SINGLE best verse the AI
                                             picked to put on the screen
-                                            (highest confidence, ≥65%).
+                                            (highest confidence, ≥55%).
                                             Empty until the AI is
                                             confident enough to commit.
-            • RIGHT "Alternative References" — every OTHER detection,
-                                            from competing ≥50% siblings
-                                            (the ones that just didn't
-                                            beat the live pick) all the
-                                            way down to 20-49% guesses.
-                                            Operator can click any to
-                                            promote manually. */}
+            • RIGHT "Alternative References" — every OTHER detection
+                                            (≥20% confidence), newest
+                                            on top. v0.7.94: removed
+                                            the upper bound so the
+                                            visible row count matches
+                                            the badge count — operator
+                                            reported "9 detected, only
+                                            1 in there". */}
       {(() => {
         // Compute the auto-live winner inline so the card stays a pure
         // function of store state. Same ranking + 65% floor used by
@@ -2402,7 +2403,7 @@ function DetectedVersesCard() {
                 <div className="p-1.5 space-y-1.5">
                   {alternatives.length === 0 && detectedVerseCandidates.length === 0 ? (
                     <div className="text-center py-6 text-[10px] text-muted-foreground">
-                      Other possible references appear here.
+                      Other detected verses appear here, newest on top.
                       Click any to send it live instead.
                     </div>
                   ) : (
