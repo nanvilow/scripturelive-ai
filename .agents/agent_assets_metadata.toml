@@ -527,3 +527,15 @@ id = "w9JcW91Gd2aWnqDmNjATX"
 uri = "file://attached_assets/social_flyers_v2/10_download.png"
 type = "image"
 title = "10 — Get It Now / Download (Vertical • TikTok/Reels/Stories)"
+
+[[outputs]]
+id = "LyW8s6Bm2gUIRTVTj3lxA"
+uri = "file://screenshots/v078_live_display_header.png"
+type = "image"
+title = "PROOF #1 — Live Display header now has Voice + Follow toggles (close-up)"
+
+[[outputs]]
+id = "W3OcVV6MuWpiEt9OvBMH2"
+uri = "file://screenshots/v078_live_display_full.png"
+type = "image"
+title = "PROOF #1 — Full app shell with Voice ON (amber) and Follow ON (emerald)"
