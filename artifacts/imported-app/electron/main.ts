@@ -781,20 +781,30 @@ async function createMainWindow(url: string, opts: { show?: boolean } = {}) {
   //
   // Belt-and-braces recovery:
   //   • Ignore subframe failures and user-aborted loads (errorCode -3).
-  //   • Wait 800ms (server usually back inside one tick), then reload.
-  //   • Cap at 3 consecutive auto-reloads to avoid a hot loop if the
-  //     server is actually dead — at that point we surface a friendly
-  //     dialog asking the operator to relaunch.
+  //   • IMMEDIATELY paint a dark mask page so the operator never sees
+  //     Chromium's built-in "This page couldn't load" error chrome
+  //     while we wait for the server to come back. The mask is a tiny
+  //     inline data: URL — no network needed, no flash of white.
+  //   • Wait 400ms (server usually back inside one tick), then reload
+  //     the real URL.
+  //   • Cap at 8 consecutive auto-reloads to ride out brief stalls on
+  //     slow/AV-heavy machines without giving up. If we genuinely
+  //     can't reconnect after that, surface a friendly dialog.
   //   • Reset the counter on every successful did-finish-load so the
   //     budget refills for the NEXT incident.
   let failLoadAttempts = 0
   let failLoadTimer: NodeJS.Timeout | null = null
+  const MASK_HTML = `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><html><head><meta charset="utf-8"><title>ScriptureLive AI</title><style>html,body{margin:0;height:100%;background:#0a0a0a;color:#9ca3af;font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px}.s{width:32px;height:32px;border-radius:50%;border:2px solid #27272a;border-top-color:#f59e0b;animation:r 0.9s linear infinite}@keyframes r{to{transform:rotate(360deg)}}</style></head><body><div class="s"></div><div>Reconnecting…</div></body></html>`)}`
   mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame) return
     if (errorCode === -3) return // ERR_ABORTED — user cancelled / fast nav
     console.warn('[main] did-fail-load:', { errorCode, errorDescription, validatedURL, attempts: failLoadAttempts })
     if (!mainWindow || mainWindow.isDestroyed()) return
-    if (failLoadAttempts >= 3) {
+    // Mask Chromium's error page IMMEDIATELY so the operator never
+    // sees "This page couldn't load". Errors here are non-fatal — the
+    // reload below will replace whatever's painted.
+    try { void mainWindow.webContents.loadURL(MASK_HTML) } catch { /* ignore */ }
+    if (failLoadAttempts >= 8) {
       // Server is genuinely down. Tell the operator without blowing up.
       void dialog.showMessageBox(mainWindow, {
         type: 'error',
@@ -822,7 +832,7 @@ async function createMainWindow(url: string, opts: { show?: boolean } = {}) {
       } catch (err) {
         console.error('[main] auto-reload after did-fail-load threw:', err)
       }
-    }, 800)
+    }, 400)
   })
   mainWindow.webContents.on('did-finish-load', () => {
     // Reset the auto-reload budget on every successful load so a single
