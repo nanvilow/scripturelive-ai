@@ -525,6 +525,82 @@ function buildSplashHtml(version: string): string {
 </html>`
 }
 
+// v0.7.89 — Shared crash-mask + auto-reload installer for ANY
+// BrowserWindow that loads from the bundled Next server (main +
+// every popout/satellite). Without this on a window, the moment
+// the renderer's HTTP request fails Chromium paints its built-in
+// "This page couldn't load — Reload / Back" page and the operator
+// is stuck inside that window with no way out.
+//
+// Behaviour per attached window:
+//   • Listens for did-fail-load on the main frame only (subframe /
+//     user-cancelled loads are ignored).
+//   • IMMEDIATELY paints an inline data: URL "Reconnecting…" page
+//     so Chromium's error chrome NEVER becomes visible. No flash
+//     of white, no network needed.
+//   • After 400 ms, reloads the real URL. Up to 8 retries with the
+//     budget refilling on every successful did-finish-load.
+//   • If showDialogOnGiveUp is true (main window only), surface a
+//     friendly Relaunch/Quit dialog after 8 failed retries. For
+//     popouts the operator just sees the spinner — they can close
+//     the popout from the operator console.
+const __MASK_HTML = `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><html><head><meta charset="utf-8"><title>ScriptureLive AI</title><style>html,body{margin:0;height:100%;background:#0a0a0a;color:#9ca3af;font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px}.s{width:32px;height:32px;border-radius:50%;border:2px solid #27272a;border-top-color:#f59e0b;animation:r 0.9s linear infinite}@keyframes r{to{transform:rotate(360deg)}}</style></head><body><div class="s"></div><div>Reconnecting…</div></body></html>`)}`
+
+function installCrashMask(
+  win: BrowserWindow,
+  label: string,
+  opts: { showDialogOnGiveUp: boolean },
+): void {
+  let attempts = 0
+  let timer: NodeJS.Timeout | null = null
+  win.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return
+    if (errorCode === -3) return // ERR_ABORTED — user cancelled / fast nav
+    console.warn(`[${label}] did-fail-load:`, { errorCode, errorDescription, validatedURL, attempts })
+    if (win.isDestroyed()) return
+    // Mask Chromium's error page IMMEDIATELY so the operator never
+    // sees "This page couldn't load". Errors here are non-fatal — the
+    // reload below will replace whatever's painted.
+    try { void win.webContents.loadURL(__MASK_HTML) } catch { /* ignore */ }
+    if (attempts >= 8) {
+      if (opts.showDialogOnGiveUp) {
+        void dialog.showMessageBox(win, {
+          type: 'error',
+          title: 'ScriptureLive AI — connection lost',
+          message: 'The app could not reload its window after several attempts.',
+          detail: 'This usually clears up by relaunching ScriptureLive AI from the desktop shortcut. Your activation, library and settings are preserved.',
+          buttons: ['Relaunch now', 'Quit'],
+          defaultId: 0,
+          cancelId: 1,
+        }).then((r) => {
+          if (r.response === 0) app.relaunch()
+          app.exit(0)
+        }).catch(() => { /* dialog failed — leave app as-is */ })
+      } else {
+        // Popout: just keep the spinner up. Operator can close from
+        // the console. Reset budget so a later recovery still works.
+        attempts = 0
+      }
+      return
+    }
+    attempts += 1
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => {
+      timer = null
+      if (win.isDestroyed()) return
+      try {
+        win.webContents.reload()
+      } catch (err) {
+        console.error(`[${label}] auto-reload after did-fail-load threw:`, err)
+      }
+    }, 400)
+  })
+  win.webContents.on('did-finish-load', () => {
+    attempts = 0
+    if (timer) { clearTimeout(timer); timer = null }
+  })
+}
+
 function showSplash(): void {
   if (splashWindow && !splashWindow.isDestroyed()) return
   try {
@@ -792,54 +868,7 @@ async function createMainWindow(url: string, opts: { show?: boolean } = {}) {
   //     can't reconnect after that, surface a friendly dialog.
   //   • Reset the counter on every successful did-finish-load so the
   //     budget refills for the NEXT incident.
-  let failLoadAttempts = 0
-  let failLoadTimer: NodeJS.Timeout | null = null
-  const MASK_HTML = `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><html><head><meta charset="utf-8"><title>ScriptureLive AI</title><style>html,body{margin:0;height:100%;background:#0a0a0a;color:#9ca3af;font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px}.s{width:32px;height:32px;border-radius:50%;border:2px solid #27272a;border-top-color:#f59e0b;animation:r 0.9s linear infinite}@keyframes r{to{transform:rotate(360deg)}}</style></head><body><div class="s"></div><div>Reconnecting…</div></body></html>`)}`
-  mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
-    if (!isMainFrame) return
-    if (errorCode === -3) return // ERR_ABORTED — user cancelled / fast nav
-    console.warn('[main] did-fail-load:', { errorCode, errorDescription, validatedURL, attempts: failLoadAttempts })
-    if (!mainWindow || mainWindow.isDestroyed()) return
-    // Mask Chromium's error page IMMEDIATELY so the operator never
-    // sees "This page couldn't load". Errors here are non-fatal — the
-    // reload below will replace whatever's painted.
-    try { void mainWindow.webContents.loadURL(MASK_HTML) } catch { /* ignore */ }
-    if (failLoadAttempts >= 8) {
-      // Server is genuinely down. Tell the operator without blowing up.
-      void dialog.showMessageBox(mainWindow, {
-        type: 'error',
-        title: 'ScriptureLive AI — connection lost',
-        message: 'The app could not reload its window after several attempts.',
-        detail: 'This usually clears up by relaunching ScriptureLive AI from the desktop shortcut. Your activation, library and settings are preserved.',
-        buttons: ['Relaunch now', 'Quit'],
-        defaultId: 0,
-        cancelId: 1,
-      }).then((r) => {
-        if (r.response === 0) {
-          app.relaunch()
-        }
-        app.exit(0)
-      }).catch(() => { /* dialog failed — leave app as-is */ })
-      return
-    }
-    failLoadAttempts += 1
-    if (failLoadTimer) clearTimeout(failLoadTimer)
-    failLoadTimer = setTimeout(() => {
-      failLoadTimer = null
-      if (!mainWindow || mainWindow.isDestroyed()) return
-      try {
-        mainWindow.webContents.reload()
-      } catch (err) {
-        console.error('[main] auto-reload after did-fail-load threw:', err)
-      }
-    }, 400)
-  })
-  mainWindow.webContents.on('did-finish-load', () => {
-    // Reset the auto-reload budget on every successful load so a single
-    // recovered hiccup doesn't permanently consume our 3-strike budget.
-    failLoadAttempts = 0
-    if (failLoadTimer) { clearTimeout(failLoadTimer); failLoadTimer = null }
-  })
+  installCrashMask(mainWindow, 'main', { showDialogOnGiveUp: true })
   // Hide-to-tray on close. The operator complaint we're solving:
   // closing the main console window during a live service used to
   // call shutdown(), which killed the Next.js server and the NDI
@@ -2114,6 +2143,14 @@ function setupIpc() {
     win.webContents.on('zoom-changed', () => {
       win.webContents.setZoomFactor(1)
     })
+
+    // v0.7.89 — protect popout/satellite windows (congregation, stage,
+    // NDI preview, etc) with the same crash-mask + auto-reload as the
+    // main window. Without this, the chrome-error://chromewebdata
+    // "This page couldn't load" page paints in the popout the moment
+    // the bundled Next server hiccups, and the operator has no way to
+    // recover except closing and reopening the popout.
+    installCrashMask(win, `popout:${opts.title || opts.path}`, { showDialogOnGiveUp: false })
 
     win.loadURL(`${appBaseUrl}${opts.path}`)
     return win
