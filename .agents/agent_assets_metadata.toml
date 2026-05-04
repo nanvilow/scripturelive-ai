@@ -593,3 +593,9 @@ id = "U18mws2lCvg5LvRxR5_8N"
 uri = "file://exports/ScriptureLive-AI-v0.7.94-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.94 — Detected Verses panel hotfix"
+
+[[outputs]]
+id = "lLYjFkpU8KkDmXewYAq-L"
+uri = "file://artifacts/exports/ScriptureLive-AI-v0.7.95-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.95 — Source ZIP (root-cause fix for chrome-error after Deactivate / Move-to-Another-PC)"
