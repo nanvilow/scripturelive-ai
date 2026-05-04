@@ -2363,11 +2363,11 @@ function DetectedVersesCard() {
           const dc = (b.confidence ?? 0) - (a.confidence ?? 0)
           return dc !== 0 ? dc : b.id.localeCompare(a.id)
         })
-        const liveMatch = ranked.find((v) => (v.confidence ?? 0) >= 0.65) ?? null
+        const liveMatch = ranked.find((v) => (v.confidence ?? 0) >= 0.5) ?? null
         const alternatives = ranked.filter((v) => v.id !== liveMatch?.id)
         return (
           <div className="flex-1 min-h-0 grid grid-cols-2 gap-1 overflow-hidden">
-            {/* LIVE MATCH column — single best ≥65% pick */}
+            {/* LIVE MATCH column — single best ≥50% pick */}
             <div className="flex flex-col min-h-0 border-r border-border/50">
               <div className="px-2 py-1 flex items-center justify-between bg-emerald-500/5 border-b border-emerald-500/20 sticky top-0 z-10">
                 <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-300">
@@ -2382,7 +2382,7 @@ function DetectedVersesCard() {
                   {!liveMatch ? (
                     <div className="text-center py-6 text-[10px] text-muted-foreground">
                       <Mic className="h-5 w-5 mx-auto opacity-40 mb-1.5" />
-                      Waiting for a high-confidence (≥65%) verse match.
+                      Waiting for a high-confidence (≥50%) verse match.
                     </div>
                   ) : (
                     renderRow(liveMatch, 0, 'live')
@@ -3394,7 +3394,7 @@ export function LogosShell() {
   // So the rule is simple:
   //   • Always rank current detections by confidence and pick the
   //     single top match.
-  //   • If that match is high-confidence (≥0.65), put it on the
+  //   • If that match is high-confidence (≥0.50), put it on the
   //     screen — REPLACING whatever was previously live. As the
   //     speaker moves from John 4:24 to Prov 3:5 the live output
   //     follows them.
@@ -3424,7 +3424,7 @@ export function LogosShell() {
       const dc = (b.confidence ?? 0) - (a.confidence ?? 0)
       return dc !== 0 ? dc : b.id.localeCompare(a.id)
     })[0]
-    if (!best || (best.confidence ?? 0) < 0.65) return
+    if (!best || (best.confidence ?? 0) < 0.5) return
     // Same verse already live → don't re-flash the slide.
     if (best.id === lastAutoVerseId.current) return
     lastAutoVerseId.current = best.id
