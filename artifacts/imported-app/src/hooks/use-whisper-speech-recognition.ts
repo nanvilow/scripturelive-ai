@@ -389,9 +389,13 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
     const win = window as unknown as { __selectedMicrophoneId?: string | null }
     const deviceId = win.__selectedMicrophoneId || undefined
 
+    // v0.7.92 — autoGainControl:false. See use-deepgram-streaming.ts
+    // for the full rationale; tl;dr it (a) makes the operator's mic
+    // gain knob actually work and (b) stops the OS mic slider from
+    // being moved system-wide while we capture.
     const constraints: MediaStreamConstraints = deviceId
-      ? { audio: { deviceId: { exact: deviceId }, echoCancellation: true, noiseSuppression: true } }
-      : { audio: { echoCancellation: true, noiseSuppression: true } }
+      ? { audio: { deviceId: { exact: deviceId }, echoCancellation: true, noiseSuppression: true, autoGainControl: false } }
+      : { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false } }
 
     navigator.mediaDevices.getUserMedia(constraints)
       .then((stream) => {
