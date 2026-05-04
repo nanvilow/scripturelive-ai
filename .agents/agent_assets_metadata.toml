@@ -587,3 +587,9 @@ id = "-AHz8vd8o09ZuS5e-K4E0"
 uri = "file://exports/ScriptureLive-AI-v0.7.93-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.93 — Voice/AI hotfix source"
+
+[[outputs]]
+id = "U18mws2lCvg5LvRxR5_8N"
+uri = "file://exports/ScriptureLive-AI-v0.7.94-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.94 — Detected Verses panel hotfix"

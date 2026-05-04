@@ -37,3 +37,4 @@ artifacts/imported-app/release/win-unpacked/resources/app.asar filter=lfs diff=l
 artifacts/imported-app/release/ScriptureLive-AI-0.7.32-Setup-x64.exe filter=lfs diff=lfs merge=lfs -text
 artifacts/imported-app/release/ScriptureLive-AI-0.7.32-Setup-x64.zip filter=lfs diff=lfs merge=lfs -text
 exports/ScriptureLive-AI-v0.7.93-source.zip filter=lfs diff=lfs merge=lfs -text
+exports/ScriptureLive-AI-v0.7.94-source.zip filter=lfs diff=lfs merge=lfs -text

@@ -48,11 +48,19 @@ export function pickAutoLiveMatch<T extends RankedVerse>(detected: readonly T[])
   return top
 }
 
-// v0.7.91 — Alternatives are the verses the operator can MANUALLY
-// promote. Now ordered by NEWEST DETECTION FIRST per operator spec
-// ("Always display new detection on top of the old detected verse").
-// Items outside the [0.20, 0.40) band are filtered out so the column
-// only shows actionable suggestions.
+// v0.7.94 — Alternatives are EVERY detected verse the operator can
+// manually promote, except the single auto-live winner. Ordered by
+// NEWEST DETECTION FIRST per operator spec:
+//   "It says 9 detected verses, but only one is in there. I want all
+//    detected verses to be in there but new detections come on top of
+//    the old ones."
+//
+// v0.7.93 incorrectly capped this column at confidence < 0.55, which
+// meant high-confidence siblings of the live pick (the other 8 of
+// the 9 detections in the bug report) were filtered out and never
+// rendered. The Auto-Live column shows the single winner; this
+// column now shows every other ≥20 % detection so the badge count
+// and the visible rows match.
 export function alternativesFor<T extends RankedVerse>(
   detected: readonly T[],
   liveMatchId: string | null,
@@ -61,7 +69,7 @@ export function alternativesFor<T extends RankedVerse>(
     .filter((v) => {
       if (v.id === liveMatchId) return false
       const c = v.confidence ?? 0
-      return c >= ALTERNATIVE_MIN_CONFIDENCE && c < AUTO_LIVE_MIN_CONFIDENCE
+      return c >= ALTERNATIVE_MIN_CONFIDENCE
     })
     .sort((a, b) => {
       // Newest first.
