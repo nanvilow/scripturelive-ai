@@ -502,10 +502,46 @@ function load(): LicenseFile {
 function persist(file: LicenseFile) {
   ensureDir()
   const p = storagePath()
-  const tmp = p + '.tmp'
-  fs.writeFileSync(tmp, JSON.stringify(file, null, 2), { mode: 0o600 })
-  fs.renameSync(tmp, p)
-  cache = file
+  const tmp = p + '.tmp.' + process.pid + '.' + Date.now()
+  // v0.7.86 — Retry the write+rename on Windows EPERM/EBUSY/EACCES.
+  // Antivirus, OneDrive, and Windows Defender all hold short read
+  // locks on freshly-created files for a few hundred ms after they
+  // first appear, so writeFileSync(tmp) → renameSync(tmp,p) can throw
+  // EPERM on the rename even though the write itself succeeded. The
+  // unhandled exception was killing the Next child process and
+  // producing the recurring "This page couldn't load" page. Retry
+  // up to 5 times with exponential backoff; if all attempts fail we
+  // re-throw so the caller (and the new instrumentation.ts crash
+  // guard) sees it without taking the process down.
+  const data = JSON.stringify(file, null, 2)
+  let lastErr: unknown = null
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      fs.writeFileSync(tmp, data, { mode: 0o600 })
+      fs.renameSync(tmp, p)
+      cache = file
+      return
+    } catch (e) {
+      lastErr = e
+      const code = (e as NodeJS.ErrnoException)?.code
+      // Only retry the AV-lock family. Anything else (ENOSPC, etc)
+      // is a real problem and bails immediately.
+      if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') {
+        try { fs.unlinkSync(tmp) } catch { /* ignore */ }
+        throw e
+      }
+      // Backoff: 50, 100, 200, 400, 800 ms
+      const delay = 50 * Math.pow(2, attempt)
+      const wait = Date.now() + delay
+      // Synchronous spin so persist() stays sync (callers depend on
+      // load()/getFile() being fully consistent on return).
+      while (Date.now() < wait) { /* spin */ }
+      try { fs.unlinkSync(tmp) } catch { /* tmp may already be gone */ }
+    }
+  }
+  // eslint-disable-next-line no-console
+  console.error('[licensing] persist failed after 5 retries:', lastErr)
+  throw lastErr
 }
 
 // ─────────────────────────────────────────────────────────────────────

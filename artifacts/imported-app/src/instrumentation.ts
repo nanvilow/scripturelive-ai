@@ -26,6 +26,48 @@ export async function register() {
   // run our nodemailer / fs / nodejs-only code on the Node runtime.
   if (process.env.NEXT_RUNTIME !== 'nodejs') return
 
+  // v0.7.86 — Last-resort crash guards for the bundled Next.js
+  // server child process. ROOT CAUSE of the recurring "This page
+  // couldn't load" chrome-error page that Windows operators keep
+  // reporting (v0.7.82–v0.7.85): an unhandled exception inside an
+  // async route handler — most often EPERM/EBUSY raised by
+  // licensing storage.persist() when antivirus briefly locks the
+  // rename target — was killing the whole Next child process. The
+  // electron/main.ts auto-restart we shipped in v0.7.84 catches the
+  // exit and respawns, but the renderer briefly sees the dead
+  // server and Chromium paints its built-in error page until the
+  // restart completes (which is what the screenshots show).
+  //
+  // The proper fix is to never let those errors crash the process
+  // at all. Express/Next route handlers already swallow synchronous
+  // throws, but Node's default behaviour for unhandled async
+  // rejections and for uncaught exceptions raised from a `setImmediate`
+  // / I/O callback is to terminate the process. We register
+  // catch-all handlers that LOG and keep going. This is intentionally
+  // global (not per-route) because the exceptions we're protecting
+  // against come from background work fired off by route handlers
+  // (file writes, telemetry pings) where local try/catch isn't
+  // practical.
+  //
+  // We register only once per process. `(globalThis as any).__SL_CRASH_GUARDS_INSTALLED`
+  // protects against double-registration if Next reloads the module
+  // (e.g. during HMR in `next dev`).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const g = globalThis as any
+  if (!g.__SL_CRASH_GUARDS_INSTALLED) {
+    g.__SL_CRASH_GUARDS_INSTALLED = true
+    process.on('uncaughtException', (err) => {
+      // eslint-disable-next-line no-console
+      console.error('[crash-guard] uncaughtException — keeping process alive:', err)
+    })
+    process.on('unhandledRejection', (err) => {
+      // eslint-disable-next-line no-console
+      console.error('[crash-guard] unhandledRejection — keeping process alive:', err)
+    })
+    // eslint-disable-next-line no-console
+    console.log('[crash-guard] installed uncaughtException + unhandledRejection handlers')
+  }
+
   // v0.7.20 — OPENAI_API_KEY startup diagnostic removed. The v0.7.18
   // hotfix block printed the loaded OpenAI key suffix on cold-start
   // to debug a Ghana operator's 401s. v0.7.19 cut OpenAI from the
