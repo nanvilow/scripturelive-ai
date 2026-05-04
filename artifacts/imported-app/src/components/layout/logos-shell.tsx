@@ -3384,52 +3384,49 @@ export function LogosShell() {
 
   // ── Auto-advance.
   //
-  // v0.7.86 — STRICT no-displace policy per operator request:
-  //   "Anytime Alternative References detected, do not let it go
-  //    auto live unless the user double clicks it to go live."
+  // v0.7.86 — The right mental model (clarified by the operator):
   //
-  // Behaviour:
-  //   • The FIRST high-confidence (≥0.65) verse to arrive in a quiet
-  //     detection window is auto-pushed to the live output once.
-  //   • Every subsequent detection — regardless of confidence — is
-  //     treated as an Alternative Reference. It appears in the right
-  //     column of the Detected Verses card and ONLY goes live if the
-  //     operator double-clicks it. The auto-advance effect will NEVER
-  //     replace the current live verse on its own.
-  //   • The auto-live "lock" releases when the operator clicks Clear
-  //     on the Detected Verses card (which empties detectedVerses, so
-  //     the next high-confidence arrival is a fresh first-pick and
-  //     auto-fires again).
+  //   "If the speaker quotes John 4:24 correctly, John 4:24 should
+  //    GO LIVE — not land in Alternative References. Alternatives
+  //    are for OTHER verses the AI also guessed at for the same
+  //    phrase (different translations, similar-sounding refs)."
   //
-  // This eliminates the v0.7.84 +0.10 displacement window that still
-  // let an aggressive new match steamroll a verse the operator was
-  // already showing on the projector.
+  // So the rule is simple:
+  //   • Always rank current detections by confidence and pick the
+  //     single top match.
+  //   • If that match is high-confidence (≥0.65), put it on the
+  //     screen — REPLACING whatever was previously live. As the
+  //     speaker moves from John 4:24 to Prov 3:5 the live output
+  //     follows them.
+  //   • Don't fire when the same top match is already live (id
+  //     match → no-op so we don't re-flash the slide).
+  //   • Lower-confidence siblings of the SAME phrase remain visible
+  //     in the right column of the Detected Verses card as
+  //     Alternative References — they don't auto-promote, the
+  //     operator double-clicks one if they want to use it instead.
+  //     This is enforced naturally because only the single top match
+  //     is ever auto-promoted; everything else stays in the
+  //     alternatives column.
+  //
+  // Earlier attempts (v0.7.83 newest-wins, v0.7.84 +0.10 sticky,
+  // v0.7.86-pre strict no-displace) all over-corrected in one
+  // direction or the other. This version trusts the confidence
+  // ranking and simply REPLACES live whenever the top match changes.
   const lastAutoVerseId = useRef<string | null>(null)
   useEffect(() => {
     if (!autoAdvance) return
     if (!detectedVerses.length) {
-      // List was cleared — release the lock so the next detection
-      // session can auto-fire its first high-confidence match.
       lastAutoVerseId.current = null
       return
     }
-    // Sticky lock: once we've auto-promoted ANY verse, do not touch
-    // live again until the list is cleared.
-    if (lastAutoVerseId.current) {
-      // Confirm the locked verse is still in the list. If the operator
-      // cleared it individually somehow, release the lock.
-      if (!detectedVerses.some((v) => v.id === lastAutoVerseId.current)) {
-        lastAutoVerseId.current = null
-      } else {
-        return
-      }
-    }
-    // First-pick: highest-confidence verse with ≥0.65 confidence.
+    // Highest-confidence verse, ties broken by recency.
     const best = [...detectedVerses].sort((a, b) => {
       const dc = (b.confidence ?? 0) - (a.confidence ?? 0)
       return dc !== 0 ? dc : b.id.localeCompare(a.id)
     })[0]
     if (!best || (best.confidence ?? 0) < 0.65) return
+    // Same verse already live → don't re-flash the slide.
+    if (best.id === lastAutoVerseId.current) return
     lastAutoVerseId.current = best.id
     const slide = {
       id: `auto-${best.id}`,
