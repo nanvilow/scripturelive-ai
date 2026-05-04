@@ -1,62 +1,81 @@
 export interface RankedVerse {
   id: string
   confidence?: number
+  detectedAt?: Date | string | number
 }
 
-export const AUTO_LIVE_MIN_CONFIDENCE = 0.5
+// v0.7.91 — Threshold lowered 0.50 → 0.40 per operator spec
+// ("make the percentage be 20 to 40%"). Anything ≥ 40% is the MAIN
+// auto-live pick; the [0.20, 0.40) band is the Alternative References
+// bucket the operator can double-click to promote manually.
+export const AUTO_LIVE_MIN_CONFIDENCE = 0.4
+// Lower bound of the Alternative References band. Below this we don't
+// even surface the candidate — too noisy for the operator to scan.
+export const ALTERNATIVE_MIN_CONFIDENCE = 0.2
 
-// Pure ranking helper — used by the Detected Verses card to figure
-// out which row to badge as "Auto-Live Match" and which to show in
-// the right-hand Alternative References column.
-//
-// Picks the single highest-confidence verse with confidence >= 0.50.
-// Ties broken by id (deterministic).
+function detectedAtMs(v: RankedVerse): number {
+  const d = v.detectedAt
+  if (d == null) return 0
+  if (typeof d === 'number') return d
+  if (typeof d === 'string') return new Date(d).getTime() || 0
+  if (d instanceof Date) return d.getTime()
+  return 0
+}
+
+// Pure ranking helper — picks the single highest-confidence verse with
+// confidence >= 0.40. Ties broken by NEWER detectedAt first, then by
+// id (deterministic).
 export function pickAutoLiveMatch<T extends RankedVerse>(detected: readonly T[]): T | null {
   if (!detected.length) return null
   const ranked = [...detected].sort((a, b) => {
     const dc = (b.confidence ?? 0) - (a.confidence ?? 0)
-    return dc !== 0 ? dc : b.id.localeCompare(a.id)
+    if (dc !== 0) return dc
+    const dt = detectedAtMs(b) - detectedAtMs(a)
+    if (dt !== 0) return dt
+    return b.id.localeCompare(a.id)
   })
   const top = ranked[0]
   if (!top || (top.confidence ?? 0) < AUTO_LIVE_MIN_CONFIDENCE) return null
   return top
 }
 
+// v0.7.91 — Alternatives are the verses the operator can MANUALLY
+// promote. Now ordered by NEWEST DETECTION FIRST per operator spec
+// ("Always display new detection on top of the old detected verse").
+// Items outside the [0.20, 0.40) band are filtered out so the column
+// only shows actionable suggestions.
 export function alternativesFor<T extends RankedVerse>(
   detected: readonly T[],
   liveMatchId: string | null,
 ): T[] {
   return [...detected]
-    .sort((a, b) => {
-      const dc = (b.confidence ?? 0) - (a.confidence ?? 0)
-      return dc !== 0 ? dc : b.id.localeCompare(a.id)
+    .filter((v) => {
+      if (v.id === liveMatchId) return false
+      const c = v.confidence ?? 0
+      return c >= ALTERNATIVE_MIN_CONFIDENCE && c < AUTO_LIVE_MIN_CONFIDENCE
     })
-    .filter((v) => v.id !== liveMatchId)
+    .sort((a, b) => {
+      // Newest first.
+      const dt = detectedAtMs(b) - detectedAtMs(a)
+      if (dt !== 0) return dt
+      // Tiebreaker: higher confidence first, then id desc.
+      const dc = (b.confidence ?? 0) - (a.confidence ?? 0)
+      if (dc !== 0) return dc
+      return b.id.localeCompare(a.id)
+    })
 }
 
-// Auto-advance decision used by the AppShell effect. STICKY model
-// per operator clarification:
-//
+// Auto-advance decision — STICKY. Per operator clarification:
 //   "Alternative References should never auto-go-live — only the
 //    user can double-click to promote one."
-//
-// So the rule is:
-//   • If nothing is currently live, fire on the first detection
-//     whose top match clears 50%.
-//   • Once a verse is live, lock — NO subsequent detection auto-
-//     promotes anything else, no matter how confident. The operator
-//     either clicks Clear (which empties the detection list and
-//     releases the lock for the next session) or double-clicks an
-//     Alternative Reference to switch live manually.
-//
-// `currentLiveId` is the id of the verse the AppShell believes is
-// already live (tracked via lastAutoVerseId ref). Pass null when
-// nothing has ever been auto-promoted in this detection session.
+// Once a verse is live, NO subsequent detection auto-promotes
+// anything else, no matter how confident. Lock releases only when
+// the operator clicks Clear (which empties detectedVerses) or
+// double-clicks an Alternative Reference.
 export function shouldFireAutoLive<T extends RankedVerse>(
   detected: readonly T[],
   currentLiveId: string | null,
 ): { fire: false } | { fire: true; verse: T } {
-  // Sticky lock: once a verse is live, never displace it via auto.
   if (currentLiveId) return { fire: false }
   const top = pickAutoLiveMatch(detected)
   if (!top) return { fire: false }

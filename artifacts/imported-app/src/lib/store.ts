@@ -647,9 +647,9 @@ const defaultSettings: AppSettings = {
   aiAutoSendOnHigh: true,
   // v0.7.4 — Confidence tiers. Defaults match the operator spec:
   // ≥0.70 live / [0.30, 0.70) preview / <0.30 drop.
-  transcriptDropThreshold: 0.30,
+  transcriptDropThreshold: 0.20,
   transcriptPreviewThreshold: 0.60,
-  transcriptLiveThreshold: 0.70,
+  transcriptLiveThreshold: 0.50,
   ndiDisplayMode: 'full',
   // NDI typography overrides (v0.5.48): leave undefined so the NDI
   // feed mirrors Live Display by default. The operator opts in via
