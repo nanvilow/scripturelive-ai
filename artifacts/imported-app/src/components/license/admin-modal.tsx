@@ -1075,8 +1075,7 @@ export function AdminModal() {
               </button>
             </div>
             <div className="text-[10px] text-muted-foreground/70 mt-1 leading-relaxed">
-              Default password is <code className="font-mono">admin</code> on first run — change it in Settings → Admin Password.
-              Forgot it? Tap <span className="text-emerald-300">Forgot password</span> to receive a one-time code via SMS + email,
+              Forgot the password? Tap <span className="text-emerald-300">Forgot password</span> to receive a one-time code via SMS + email,
               or use your master code (saved during install) which always works.
             </div>
           </form>

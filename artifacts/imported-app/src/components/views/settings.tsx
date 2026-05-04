@@ -226,13 +226,24 @@ export function SettingsView() {
         body: file,
       })
 
+      // v0.7.78 — Defensive response parsing. Pre-v0.7.78 the client
+      // called response.json() directly on the failure path; if the
+      // server returned an HTML error page (Next 500 doc, dev overlay,
+      // antivirus block page, etc.) the JSON parse threw "Unexpected
+      // token '<'…" and the operator saw that opaque message instead
+      // of a useful error. We now read as text first and try-parse,
+      // so any non-JSON body is reported with the HTTP status text.
+      const raw = await response.text()
+      let body: { error?: string; url?: string } = {}
+      try { body = raw ? JSON.parse(raw) : {} } catch { /* HTML / empty / non-JSON */ }
       if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || 'Upload failed')
+        throw new Error(
+          body.error
+            || `Upload failed (${response.status} ${response.statusText || ''}).`.trim()
+        )
       }
-
-      const data = await response.json()
-      updateSettings({ customBackground: data.url })
+      if (!body.url) throw new Error('Upload succeeded but server returned no URL')
+      updateSettings({ customBackground: body.url })
       toast.success('Background uploaded successfully')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to upload background')

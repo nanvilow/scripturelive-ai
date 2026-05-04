@@ -161,7 +161,8 @@ const SYSTEM_PROMPT = [
   '  - Set intent to null and confidence to 0 when the utterance is not a command (e.g. preaching, prayer, filler).',
   '  - confidence is your honest 0..100 estimate. If unsure, choose < 70 so the dispatcher can ask for clarification.',
   '  - Resolve deictic phrases ("next one", "back two") using the supplied context.',
-  '  - For change_translation, normalise to a short code: niv, kjv, esv, amp, msg, nkjv, nlt, nasb.',
+  '  - For change_translation, normalise to a short code: niv, kjv, esv, amp, msg, nkjv, nlt, nasb, twi.',
+  '    "twi" maps to the Twi (Akan) Bible — recognise utterances like "give me twi version", "switch to twi", "Asante Twi", "Akan Bible", "twi please", or any utterance containing the word "twi" / "akan" as the change_translation intent with args.translation = "twi".',
   '  - Never invent a reference for go_to_reference; if you cannot extract a clear book+chapter+verse, fall back to find_by_quote with the operator\'s words as quoteText.',
 ].join('\n')
 

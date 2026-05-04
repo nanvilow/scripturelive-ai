@@ -64,6 +64,59 @@ function formatTrial(msLeft: number): string {
 // thus restores the badge to the same value the user saw when they
 // last stopped — which matches what the persisted `trialMsUsed`
 // implies and matches operator expectation.
+// v0.7.78 — Operator request: the "AI Active — Xd Yh Zm" pill looked
+// frozen because the underlying status snapshot only re-polls every
+// 30 s and the displayed string only changes once per minute, so an
+// operator staring at the badge sees no movement and concludes the
+// timer has stalled. Unlike the trial counter (which is mic-gated
+// because the SERVER budget is mic-gated), an active subscription
+// drains by wall-clock — every real second is gone whether the mic
+// is on or not — so we tick the displayed value down at 1 Hz
+// unconditionally and re-anchor on every server snapshot. Master
+// licences are exempt because they have no countdown to show.
+function useTickingSubMsLeft(serverMsLeft: number, isActive: boolean, isMaster: boolean): number {
+  const baseRef = useRef<number>(serverMsLeft)
+  const [displayed, setDisplayed] = useState<number>(serverMsLeft)
+
+  useEffect(() => {
+    baseRef.current = serverMsLeft
+    setDisplayed(serverMsLeft)
+  }, [serverMsLeft])
+
+  useEffect(() => {
+    if (!isActive || isMaster) return
+    const start = Date.now()
+    const id = setInterval(() => {
+      const elapsed = Date.now() - start
+      setDisplayed(Math.max(0, baseRef.current - elapsed))
+    }, 1000)
+    return () => clearInterval(id)
+  }, [isActive, isMaster, serverMsLeft])
+
+  return displayed
+}
+
+// v0.7.78 — Companion formatter for the active-subscription pill.
+// Above one hour we keep the compact "Xd Yh Zm" form because
+// second-precision is irrelevant at that scale. UNDER one hour we
+// switch to "MM:SS" so the operator sees the badge tick down each
+// second in the final stretch of their licence — which makes the
+// "is it actually counting?" question self-evidently yes.
+function formatSubCountdown(msLeft: number, isMaster: boolean): string {
+  if (isMaster) return '∞'
+  const safeMs = Math.max(0, msLeft)
+  const totalSecs = Math.floor(safeMs / 1000)
+  const days = Math.floor(totalSecs / 86400)
+  const hours = Math.floor((totalSecs % 86400) / 3600)
+  const mins = Math.floor((totalSecs % 3600) / 60)
+  const secs = totalSecs % 60
+  if (days >= 1 || hours >= 1) return `${days}d ${hours}h ${mins}m`
+  // Under one hour — show MM:SS so the operator sees movement.
+  const mm = String(mins).padStart(2, '0')
+  const ss = String(secs).padStart(2, '0')
+  return `${mm}:${ss}`
+}
+
 function useTickingTrialMsLeft(serverMsLeft: number, isTrial: boolean, isListening: boolean): number | null {
   const baseRef = useRef<number>(serverMsLeft)
   const [displayed, setDisplayed] = useState<number>(serverMsLeft)
@@ -104,6 +157,13 @@ export function LicenseTopBarButton({ variant = 'inline' }: Props) {
   // start/stop) so a stopped detection visibly freezes the badge.
   const isListening = useAppStore((s) => s.isListening)
   const tickingMsLeft = useTickingTrialMsLeft(status.trial?.msLeft ?? 0, isTrial, isListening)
+  // v0.7.78 — Hook called unconditionally (Rules of Hooks). The
+  // ticking value is only RENDERED in the active-subscription branch
+  // below, but we must invoke the hook on every render or React
+  // throws "Rendered more hooks than during the previous render"
+  // when the licence transitions trial → active.
+  const isMasterFlag = status.isMaster ?? false
+  const tickingSubMs = useTickingSubMsLeft(status.msLeft ?? 0, isActive && !isTrial, isMasterFlag)
 
   if (status.state === 'unknown') return null
 
@@ -127,8 +187,13 @@ export function LicenseTopBarButton({ variant = 'inline' }: Props) {
     // see the subscription draining in real time, not just integer
     // days. Long-form (e.g. "30 Days 12 Hours 45 Minutes Remaining")
     // is in the title tooltip on hover.
-    const isMaster = status.isMaster ?? false
-    const compact = formatDaysHoursMinutesShort(status.msLeft ?? 0, { master: isMaster })
+    // v0.7.78 — Tick the displayed value at 1 Hz between server
+    // snapshots so the badge visibly counts down (operators were
+    // reading the static minute-level string as "frozen"). Switches
+    // to MM:SS in the final hour so the per-second motion is
+    // unmistakable.
+    const isMaster = isMasterFlag
+    const compact = formatSubCountdown(tickingSubMs, isMaster)
     const longForm = formatDaysHoursMinutes(status.msLeft ?? 0, { master: isMaster })
     const label = isMaster ? 'AI Active — Master' : `AI Active — ${compact}`
     return (
