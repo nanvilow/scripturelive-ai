@@ -644,21 +644,19 @@ function LiveTranscriptionCard() {
                   Previously this only showed in the rose error line
                   above; engine identity was buried in the Card BADGE
                   picker dot which operators didn't notice. */}
+              {/* v0.7.81 — Engine identity removed per operator
+                  request (the row leaked "Engine: DEEPGRAM" + tech
+                  jargon to congregants reading the operator's screen
+                  during a live service). We keep the inline live-/
+                  error- state so a "dead transcription" column still
+                  tells the operator what's happening, just without
+                  naming the speech vendor. */}
               <div className="mt-3 text-[10px] text-muted-foreground space-y-0.5">
-                <div>
-                  Engine:{' '}
-                  <span className="text-foreground font-mono uppercase">
-                    {activeEngineName ?? 'idle'}
-                  </span>
-                  {preferredEngine !== 'auto' && (
-                    <span className="text-muted-foreground"> (pinned: {preferredEngine})</span>
-                  )}
-                </div>
                 {isListening && (
                   <div className="text-emerald-400">Listening — speak normally…</div>
                 )}
                 {speechError && (
-                  <div className="text-rose-400 break-words">Last error: {speechError}</div>
+                  <div className="text-rose-400 break-words">{speechError}</div>
                 )}
               </div>
             </div>
@@ -3328,6 +3326,34 @@ export function LogosShell() {
   // the same state.
   const autoAdvance = useAppStore((s) => s.autoLive)
   const setAutoAdvance = useAppStore((s) => s.setAutoLive)
+
+  // v0.7.81 — Auto-prefetch the operator's default Bible translation
+  // for offline use on first launch.
+  //
+  // The /api/bible/translations endpoint already supports caching an
+  // entire translation into the local SQLite (`bibleChapterCache`),
+  // and the lookup path on /api/bible already checks that cache
+  // before going to the network. The missing piece was a "first time
+  // online → quietly download my main translation in the background"
+  // step so the operator gets offline support out of the box without
+  // having to find Settings → Bible Downloads.
+  //
+  // We fire this once per session (the server's `inFlight` map dedupes
+  // concurrent requests, and an already-downloaded translation just
+  // re-runs in the background to refresh — cheap, idempotent). Failure
+  // is silent — if the operator is offline at first launch we'll
+  // simply try again next launch when they're online.
+  const prefetchedRef = useRef(false)
+  useEffect(() => {
+    if (prefetchedRef.current) return
+    prefetchedRef.current = true
+    const t = (settings.defaultTranslation || 'KJV').toUpperCase()
+    void fetch('/api/bible/translations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ translation: t }),
+    }).catch(() => { /* offline / boot race — retry next session */ })
+  }, [settings.defaultTranslation])
 
   // ── Auto-advance: when ON, every newly detected verse is sent straight
   // to the live output (and added to the schedule). Mirrors how Logos AI

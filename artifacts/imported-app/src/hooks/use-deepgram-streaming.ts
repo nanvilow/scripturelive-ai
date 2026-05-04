@@ -408,12 +408,26 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
           // a WebSocket upgrade handler attached (e.g. pointing at
           // the imported-app's Next.js domain instead of the
           // api-server). Spell that out so the operator can fix it.
+          // v0.7.81 — Operator-facing message. Pre-v0.7.81 we leaked
+          // server-side terminology (WebSocket / DEEPGRAM_API_KEY /
+          // /api/transcribe-stream) into the live transcription panel
+          // for code 1006 — the operator complaint was that this
+          // looked like a crash report mid-service. The overwhelmingly
+          // common cause of 1006 in the field is the operator's PC
+          // being offline (no Wi-Fi, captive portal, ISP blip), so we
+          // now surface a plain "check your internet" message and
+          // keep the technical reason only when the server actually
+          // sent one.
           const reason =
             ev.reason ||
             (code === 1006
-              ? 'WebSocket could not be established — verify the streaming endpoint hosts the api-server (DEEPGRAM_API_KEY, /api/transcribe-stream upgrade handler).'
+              ? 'Check your internet — connect to a network and try Detect again.'
               : 'connection closed')
-          setError(`Live transcription disconnected (${code}: ${reason}).`)
+          setError(
+            code === 1006 && !ev.reason
+              ? reason
+              : `Live transcription disconnected (${code}: ${reason}).`,
+          )
           teardown()
         }
       }

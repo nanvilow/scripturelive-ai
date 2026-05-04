@@ -539,3 +539,33 @@ id = "W3OcVV6MuWpiEt9OvBMH2"
 uri = "file://screenshots/v078_live_display_full.png"
 type = "image"
 title = "PROOF #1 — Full app shell with Voice ON (amber) and Follow ON (emerald)"
+
+[[outputs]]
+id = "1U0Z2qBfupPHAGWKhazV-"
+uri = "file://.local/proof-v0.7.82/upload-proof.txt"
+type = "text"
+title = "v0.7.82 Upload Proof — Background + Media (200 OK, byte-identical round-trip)"
+
+[[outputs]]
+id = "9FkIq-6LmFSV4bG_PYaXk"
+uri = "file://.local/proof-v0.7.82/test-bg.png"
+type = "image"
+title = "Background image SENT — 520 bytes"
+
+[[outputs]]
+id = "dil1ab9wChXAUTG-Wg6i4"
+uri = "file://.local/proof-v0.7.82/got-bg.png"
+type = "image"
+title = "Background image FETCHED BACK — cmp identical ✓"
+
+[[outputs]]
+id = "HBTDLp6Ctjg4n1ASVTjpg"
+uri = "file://.local/proof-v0.7.82/test-media.mp4"
+type = "video"
+title = "Media video SENT — 64 KB"
+
+[[outputs]]
+id = "-TIHET-3x0SOZHKJMjDj1"
+uri = "file://.local/proof-v0.7.82/got-media.mp4"
+type = "video"
+title = "Media video FETCHED BACK — cmp identical ✓"

@@ -78,10 +78,16 @@ public/__marketing/
 release/
 dist-electron/
 dist-electron-ui/
-uploads/
-upload/
-exports/
-download/
+# v0.7.82 — anchor these to the artifact root. The unanchored
+# `upload/` was matching `src/app/api/upload/` and silently
+# excluding the entire upload route from every git push, which is
+# why the installed Windows build kept 404'ing on background and
+# media uploads even after we "fixed" the route over and over —
+# the route was never in the repo to begin with.
+/uploads/
+/upload/
+/exports/
+/download/
 build-resources/*
 !build-resources/notarize.js
 !build-resources/icon.ico
