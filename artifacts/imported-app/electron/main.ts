@@ -391,6 +391,200 @@ function getUserUploadsDir(): string {
   return dir
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// v0.7.79 — Boot splash window.
+//
+// Operator request: clicking the desktop icon used to open onto a
+// blank/black screen for the 1-3 s it takes the embedded Next.js
+// server to come up + Chromium to mount the React tree, which felt
+// like the app had hung. Wirecast / vMix / OBS all show a small
+// branded splash with rolling status text during boot, and we now
+// match that pattern.
+//
+// The splash is a frameless 480×320 BrowserWindow that loads an
+// inline data: URL (no extra build artifact, no extraResources copy
+// to keep the installer slim) and exposes a tiny `window.__setStatus`
+// hook the main process drives via webContents.executeJavaScript at
+// each boot phase. It's `alwaysOnTop` + `skipTaskbar` so it floats
+// cleanly over a busy desktop without a taskbar entry, and it auto-
+// closes the moment the main window's DOM is ready (`did-finish-load`)
+// — never on a timer, so the splash never lingers nor disappears
+// before the main UI is actually visible.
+//
+// Suppressed when the app is launched in --hidden mode (auto-launch
+// at login boot path) since there is no operator at the keyboard to
+// see it and we want the boot to be visually invisible there.
+// ──────────────────────────────────────────────────────────────────────
+let splashWindow: BrowserWindow | null = null
+
+function buildSplashHtml(version: string): string {
+  // Inline-only HTML so we never rely on extraResources / a packaged
+  // file. Single-file dark dialog: brand mark, animated ring, status
+  // text, version footer. The body is replaced by main-process IPC
+  // (executeJavaScript -> window.__setStatus) at each boot phase.
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ScriptureLive AI</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    background: radial-gradient(ellipse at top, #1a1a1a 0%, #0a0a0a 60%, #050505 100%);
+    color: #e5e5e5;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+  }
+  .wrap {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; gap: 18px; padding: 28px;
+    -webkit-app-region: drag;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 14px;
+  }
+  .mark {
+    width: 56px; height: 56px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #f59e0b 0%, #b45309 100%);
+    display: grid; place-items: center;
+    box-shadow: 0 8px 24px -8px rgba(245, 158, 11, .55), inset 0 1px 0 rgba(255,255,255,.18);
+  }
+  .mark svg { width: 30px; height: 30px; color: #1a1a1a; }
+  .title {
+    font-size: 18px; font-weight: 600; letter-spacing: .2px;
+    color: #fafafa;
+  }
+  .subtitle {
+    font-size: 11px; color: #a3a3a3; margin-top: 2px;
+    letter-spacing: .4px; text-transform: uppercase;
+  }
+  .ring {
+    width: 22px; height: 22px;
+    border: 2px solid rgba(245, 158, 11, .18);
+    border-top-color: #f59e0b;
+    border-radius: 50%;
+    animation: spin .9s linear infinite;
+  }
+  .row {
+    display: flex; align-items: center; gap: 10px;
+    min-height: 22px;
+    margin-top: 4px;
+  }
+  .status {
+    font-size: 13px; color: #d4d4d8;
+    transition: opacity .2s ease;
+  }
+  .status.fade { opacity: .35; }
+  .footer {
+    position: absolute; bottom: 12px; left: 0; right: 0;
+    text-align: center;
+    font-size: 10px; color: #525252; letter-spacing: .5px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <div class="mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+        </svg>
+      </div>
+      <div>
+        <div class="title">ScriptureLive AI</div>
+        <div class="subtitle">Worship Console</div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="ring" aria-hidden="true"></div>
+      <div id="status" class="status">Starting up…</div>
+    </div>
+  </div>
+  <div class="footer">v${version} — by WassMedia</div>
+  <script>
+    window.__setStatus = function (text) {
+      var el = document.getElementById('status');
+      if (!el) return;
+      el.classList.add('fade');
+      setTimeout(function () {
+        el.textContent = String(text || '');
+        el.classList.remove('fade');
+      }, 120);
+    };
+  </script>
+</body>
+</html>`
+}
+
+function showSplash(): void {
+  if (splashWindow && !splashWindow.isDestroyed()) return
+  try {
+    splashWindow = new BrowserWindow({
+      width: 480,
+      height: 320,
+      frame: false,
+      transparent: false,
+      resizable: false,
+      movable: true,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      center: true,
+      show: false,
+      backgroundColor: '#0a0a0a',
+      title: 'ScriptureLive AI',
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        // No preload — splash is fully self-contained. Setting
+        // `additionalArguments: ['--splash']` would let a shared
+        // preload distinguish, but we avoid wiring one at all so
+        // the splash window has zero attack surface.
+      },
+    })
+    const html = buildSplashHtml(app.getVersion())
+    const url = 'data:text/html;charset=utf-8;base64,' + Buffer.from(html, 'utf8').toString('base64')
+    void splashWindow.loadURL(url)
+    splashWindow.once('ready-to-show', () => {
+      if (splashWindow && !splashWindow.isDestroyed()) splashWindow.show()
+    })
+    splashWindow.on('closed', () => { splashWindow = null })
+  } catch (err) {
+    // Splash is decorative — never block boot on its failure.
+    console.warn('[splash] failed to create (non-fatal):', err)
+    splashWindow = null
+  }
+}
+
+function setSplashStatus(text: string): void {
+  if (!splashWindow || splashWindow.isDestroyed()) return
+  try {
+    void splashWindow.webContents.executeJavaScript(
+      `window.__setStatus && window.__setStatus(${JSON.stringify(text)})`,
+      true,
+    ).catch(() => { /* splash gone mid-boot — ignore */ })
+  } catch { /* ignore */ }
+}
+
+function closeSplash(): void {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    try { splashWindow.close() } catch { /* ignore */ }
+  }
+  splashWindow = null
+}
+
 async function startNextServer(): Promise<string> {
   if (isDev) {
     return process.env.NEXT_DEV_URL || 'http://localhost:3000'
@@ -1857,6 +2051,18 @@ app.whenReady().then(async () => {
 
   setupFileLogging()
 
+  // v0.7.79 — Boot splash. Show ASAP (before any heavy work) so the
+  // operator gets instant visual feedback that the click on the icon
+  // registered. Suppressed when launched in --hidden mode (auto-
+  // launch at login) since no operator is at the keyboard.
+  const launchedHidden = process.argv.includes('--hidden')
+    || (process.platform === 'win32'
+        && (() => { try { return app.getLoginItemSettings().wasOpenedAsHidden === true } catch { return false } })())
+  if (!launchedHidden) {
+    showSplash()
+    setSplashStatus('Initializing…')
+  }
+
   // Hydrate the on-disk preferences (currently just `quitOnClose`)
   // before any window can be created or closed. This way the very
   // first close after launch already honors what the operator chose
@@ -1903,6 +2109,7 @@ app.whenReady().then(async () => {
   try {
     setupIpc()
   } catch (err) {
+    closeSplash()
     fatalError('setupIpc', err); app.quit(); return
   }
   // v0.7.72 — Clear Chromium HTTP cache before the embedded Next
@@ -1921,11 +2128,20 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.warn('[boot] session.clearCache failed (non-fatal):', err)
   }
+  setSplashStatus('Starting Bible engine…')
+  // Whisper a follow-up message a moment later so the operator sees
+  // the splash text actually MOVE during the typical 1-3 s server
+  // boot — silent text feels just as frozen as a black screen.
+  const warmingTimer = setTimeout(() => setSplashStatus('Warming up the worship console…'), 1200)
   try {
     appBaseUrl = await startNextServer()
   } catch (err) {
+    clearTimeout(warmingTimer)
+    closeSplash()
     fatalError('startNextServer', err); app.quit(); return
   }
+  clearTimeout(warmingTimer)
+  setSplashStatus('Loading interface…')
   // ── Launch-at-login: hidden boot detection ──────────────────────
   // The OS-registered auto-launch entry was set via
   // `app.setLoginItemSettings({ ... args: ['--hidden'], openAsHidden:
@@ -1949,7 +2165,23 @@ app.whenReady().then(async () => {
     await createMainWindow(appBaseUrl, { show: !bootHidden })
     if (bootHidden) console.log('[boot] launched hidden — main window created with show:false, tray-only UI')
   } catch (err) {
+    closeSplash()
     fatalError('createMainWindow', err); app.quit(); return
+  }
+  // v0.7.79 — Tear down the splash the moment the main window's
+  // renderer has finished loading the React tree. We listen for
+  // `did-finish-load` rather than firing a setTimeout, so the splash
+  // never disappears before the main UI is actually painted (slow
+  // disks / cold-cache first launches can take 2-3 s extra here).
+  // A 10 s safety net guarantees we never leave the splash floating
+  // on top of a wedged renderer.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const tearDown = () => closeSplash()
+    mainWindow.webContents.once('did-finish-load', tearDown)
+    mainWindow.webContents.once('did-fail-load', tearDown)
+    setTimeout(tearDown, 10_000)
+  } else {
+    closeSplash()
   }
   try {
     setupAutoUpdater({
