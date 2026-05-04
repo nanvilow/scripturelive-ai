@@ -525,25 +525,33 @@ function buildSplashHtml(version: string): string {
 </html>`
 }
 
-// v0.7.89 — Shared crash-mask + auto-reload installer for ANY
-// BrowserWindow that loads from the bundled Next server (main +
-// every popout/satellite). Without this on a window, the moment
-// the renderer's HTTP request fails Chromium paints its built-in
-// "This page couldn't load — Reload / Back" page and the operator
-// is stuck inside that window with no way out.
+// v0.7.90 — Shared crash-mask + auto-reload installer.
 //
-// Behaviour per attached window:
-//   • Listens for did-fail-load on the main frame only (subframe /
-//     user-cancelled loads are ignored).
-//   • IMMEDIATELY paints an inline data: URL "Reconnecting…" page
-//     so Chromium's error chrome NEVER becomes visible. No flash
-//     of white, no network needed.
-//   • After 400 ms, reloads the real URL. Up to 8 retries with the
-//     budget refilling on every successful did-finish-load.
-//   • If showDialogOnGiveUp is true (main window only), surface a
-//     friendly Relaunch/Quit dialog after 8 failed retries. For
-//     popouts the operator just sees the spinner — they can close
-//     the popout from the operator console.
+// ROOT CAUSES this rewrite fixes (vs v0.7.89):
+//
+//   1) reload()-loops-the-mask bug. v0.7.89 did:
+//        loadURL(MASK)  →  setTimeout(() => webContents.reload(), 400)
+//      `reload()` reloads the CURRENT url. After loadURL(MASK), the
+//      current URL IS the mask data: URL. So we kept reloading the
+//      mask forever and NEVER retried the real server URL. When the
+//      server recovered the user was stuck on the spinner; when it
+//      stayed down we never actually noticed (because did-finish-load
+//      of the mask kept resetting the attempts counter to 0).
+//
+//   2) did-finish-load resetting the counter on the MASK. Same root
+//      cause as (1) — the mask "succeeding" was treated as a recovery,
+//      so the give-up dialog never fired and the bookkeeping was lying.
+//
+// Fix:
+//   • Track the LAST REAL navigation target (via did-navigate /
+//     did-start-navigation) so we can re-attempt the right URL.
+//   • Skip ALL of our own data: URL navigations in the bookkeeping —
+//     the mask loading or "failing" never resets / increments the
+//     counter and never schedules another reload.
+//   • Use loadURL(targetURL) explicitly for retries — never reload().
+//   • Cap at 8 consecutive failures of the REAL URL, then either show
+//     the friendly Relaunch dialog (main window) or leave the spinner
+//     up indefinitely (popouts).
 const __MASK_HTML = `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><html><head><meta charset="utf-8"><title>ScriptureLive AI</title><style>html,body{margin:0;height:100%;background:#0a0a0a;color:#9ca3af;font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px}.s{width:32px;height:32px;border-radius:50%;border:2px solid #27272a;border-top-color:#f59e0b;animation:r 0.9s linear infinite}@keyframes r{to{transform:rotate(360deg)}}</style></head><body><div class="s"></div><div>Reconnecting…</div></body></html>`)}`
 
 function installCrashMask(
@@ -553,15 +561,43 @@ function installCrashMask(
 ): void {
   let attempts = 0
   let timer: NodeJS.Timeout | null = null
+  // The last REAL URL the renderer navigated to (i.e. http(s)://, not
+  // our own data: mask). This is what we re-attempt when the server
+  // hiccups. Falls back to the validatedURL from did-fail-load if we
+  // somehow never observed a navigation.
+  let lastTargetURL: string | null = null
+
+  const isMaskUrl = (u: string | null | undefined): boolean =>
+    !!u && u.startsWith('data:')
+
+  win.webContents.on('did-start-navigation', (_e, url, _isInPlace, isMainFrame) => {
+    if (!isMainFrame) return
+    if (isMaskUrl(url)) return
+    lastTargetURL = url
+  })
+
   win.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame) return
     if (errorCode === -3) return // ERR_ABORTED — user cancelled / fast nav
-    console.warn(`[${label}] did-fail-load:`, { errorCode, errorDescription, validatedURL, attempts })
+    // The mask "failing" must NEVER count against us and must NEVER
+    // schedule another retry. Just log and bail.
+    if (isMaskUrl(validatedURL)) {
+      console.warn(`[${label}] mask data: URL reported did-fail-load (ignored)`, { errorCode, errorDescription })
+      return
+    }
+    const target = lastTargetURL || validatedURL || null
+    console.warn(`[${label}] did-fail-load:`, { errorCode, errorDescription, validatedURL, target, attempts })
     if (win.isDestroyed()) return
-    // Mask Chromium's error page IMMEDIATELY so the operator never
-    // sees "This page couldn't load". Errors here are non-fatal — the
-    // reload below will replace whatever's painted.
+    // Paint the mask IMMEDIATELY so the operator sees "Reconnecting…"
+    // instead of Chromium's chrome-error://chromewebdata page. This
+    // navigates the webContents away from the failed page; any error
+    // from the mask load is non-fatal (data: URLs cannot fail with a
+    // network error and the isMaskUrl branch above ignores them).
     try { void win.webContents.loadURL(__MASK_HTML) } catch { /* ignore */ }
+    if (!target) {
+      console.error(`[${label}] no target URL recorded — cannot auto-recover`)
+      return
+    }
     if (attempts >= 8) {
       if (opts.showDialogOnGiveUp) {
         void dialog.showMessageBox(win, {
@@ -577,8 +613,9 @@ function installCrashMask(
           app.exit(0)
         }).catch(() => { /* dialog failed — leave app as-is */ })
       } else {
-        // Popout: just keep the spinner up. Operator can close from
-        // the console. Reset budget so a later recovery still works.
+        // Popout: keep the spinner up forever. Operator can close from
+        // the console. Reset the budget so if the server LATER comes
+        // back and any external nudge re-triggers a load, we cooperate.
         attempts = 0
       }
       return
@@ -589,13 +626,20 @@ function installCrashMask(
       timer = null
       if (win.isDestroyed()) return
       try {
-        win.webContents.reload()
+        // CRITICAL: use loadURL(target), NOT webContents.reload().
+        // reload() would re-load the mask we just painted, which
+        // always succeeds and would silently abandon the real URL.
+        void win.webContents.loadURL(target)
       } catch (err) {
-        console.error(`[${label}] auto-reload after did-fail-load threw:`, err)
+        console.error(`[${label}] auto-recover loadURL threw:`, err)
       }
     }, 400)
   })
   win.webContents.on('did-finish-load', () => {
+    // Only the REAL URL succeeding counts as recovery. The mask
+    // finishing must NOT reset the budget — otherwise the give-up
+    // dialog never fires when the server is permanently dead.
+    if (isMaskUrl(win.webContents.getURL())) return
     attempts = 0
     if (timer) { clearTimeout(timer); timer = null }
   })
@@ -843,8 +887,39 @@ async function createMainWindow(url: string, opts: { show?: boolean } = {}) {
     autoHideMenuBar: true,
   })
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+    // v0.7.90 — Only EXTERNAL URLs (https://ndi.video, mailto:, etc.)
+    // get handed to the system browser. Same-origin URLs against the
+    // bundled Next server (e.g. window.open('/api/output/congregation'))
+    // must NOT be opened in Edge — Edge can't resolve relative paths
+    // and shows its own "This page couldn't load" page (the exact
+    // symptom the operator screenshotted). Allow Electron to open
+    // them in a new BrowserWindow that inherits our crash-mask via
+    // did-create-window, so any hiccup paints "Reconnecting…" and
+    // auto-recovers instead of dumping into the OS browser.
+    try {
+      const u = new URL(target, appBaseUrl || 'http://localhost')
+      const sameOrigin = appBaseUrl
+        ? u.origin === new URL(appBaseUrl).origin
+        : u.hostname === 'localhost' || u.hostname === '127.0.0.1'
+      if (sameOrigin) {
+        return { action: 'allow' }
+      }
+    } catch { /* fall through to external */ }
     shell.openExternal(target)
     return { action: 'deny' }
+  })
+  // Any new BrowserWindow that Electron creates on our behalf (via
+  // window.open from the renderer with action: 'allow' above) gets
+  // the SAME crash-mask + auto-reload protection as the primary and
+  // explicit popout windows. Without this, a renderer-driven popup
+  // would be the one window in the app NOT protected — the exact
+  // class of bug v0.7.89 left unfixed.
+  mainWindow.webContents.on('did-create-window', (childWin, details) => {
+    try {
+      installCrashMask(childWin, `child:${details.url}`, { showDialogOnGiveUp: false })
+    } catch (err) {
+      console.error('[main] failed to install crash mask on child window:', err)
+    }
   })
   // v0.7.83 — Auto-recover from "This page couldn't load" (Electron's
   // chrome-error://chromewebdata page). Symptom seen in the field: an
