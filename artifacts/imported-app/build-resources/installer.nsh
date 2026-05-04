@@ -1,41 +1,74 @@
-; v0.7.85 — Custom NSIS hooks so a oneClick install over the top of a
-; running ScriptureLive AI works without forcing the operator to
-; uninstall first.
+; v0.7.88 — Hardened oneClick / auto-update install over a running app.
 ;
-; ROOT CAUSE of the "must uninstall before update" complaint:
-;   electron-builder's default oneClick installer assumes the previous
-;   version is NOT running. ScriptureLive AI lives in the system tray
-;   and also spawns a child Next.js process from the same .exe, so on
-;   most operator machines BOTH the main window process AND the child
-;   server process are alive when the new installer runs. NSIS then
-;   fails to overwrite "ScriptureLive AI.exe" / app.asar / the native
-;   modules and aborts with a generic "installation failed" dialog.
+; History:
+;   v0.7.85 — Added customInit + customUnInit macros that taskkill the
+;             running app once (200/600 ms sleeps). Worked on most boxes
+;             but operators on AV-heavy / OneDrive-synced installs still
+;             hit "ScriptureLive AI cannot be closed. Please close it
+;             manually and click Retry to continue."
+;   v0.7.88 — Root cause was a race: taskkill returns the moment the
+;             SIGTERM is delivered, but Windows can take 1–2 s to flush
+;             the kernel handle table, and Defender/AV can hold an
+;             additional read lock on the freshly-released .exe while
+;             it scans. NSIS then tries to overwrite the file before
+;             the lock is released and surfaces the "file in use" UI.
 ;
-; Fix: hook into NSIS's standard customInit (fires once at installer
-; start, BEFORE any files are touched) and customUnInit (fires at the
-; start of every uninstall, including the silent uninstall the
-; oneClick upgrade path runs internally) and forcibly terminate every
-; ScriptureLive AI process. We use taskkill, which is built into every
-; supported Windows version (no extra plugin DLL bundled into the
-; installer). /F = force, /T = kill the whole process tree (catches
-; the spawned Next child + any helpers), /IM matches by image name.
-; Errors are swallowed (SetErrors discarded with ClearErrors) — if no
-; process is running the kill is a no-op and the install proceeds
-; normally.
+; Hardening:
+;   • Hammer the kill 4 times with 400 ms between attempts. Each
+;     iteration uses /F (force) and /T (kill the whole process tree
+;     so the spawned Next child + every renderer + GPU/utility helper
+;     all die in one shot).
+;   • Also kill any node.exe whose window title matches ScriptureLive*
+;     in case a future build of the Next child uses node.exe instead
+;     of process.execPath. Cheap belt-and-braces.
+;   • After the kill loop, sleep 1500 ms to let Windows fully release
+;     handles and let AV finish its post-mortem scan. Doubles the
+;     previous 600 ms grace.
+;   • Wrap each nsExec::Exec in Pop $0 so any non-zero exit code
+;     (e.g. "no process found") is silently discarded.
+;   • ClearErrors at the end so a transient SetErrors from one of the
+;     kills doesn't poison the rest of the install.
+;
+; All commands here are built into every supported Windows version —
+; no extra plugin DLL is bundled into the installer.
 
-!macro customInit
-  ; Wait briefly so a tray icon clicked seconds ago has time to settle.
-  Sleep 200
+!macro killRunningApp
+  ; Pass 1
   nsExec::Exec 'taskkill /F /T /IM "ScriptureLive AI.exe"'
-  Pop $0 ; discard exit code
-  ; Belt-and-braces: also match the legacy product name in case an
-  ; older install used a slightly different exe filename.
+  Pop $0
   nsExec::Exec 'taskkill /F /T /IM "ScriptureLive-AI.exe"'
   Pop $0
-  ; Give Windows a moment to release the file handles before NSIS
-  ; starts copying.
-  Sleep 600
+  Sleep 400
+  ; Pass 2
+  nsExec::Exec 'taskkill /F /T /IM "ScriptureLive AI.exe"'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM "ScriptureLive-AI.exe"'
+  Pop $0
+  Sleep 400
+  ; Pass 3
+  nsExec::Exec 'taskkill /F /T /IM "ScriptureLive AI.exe"'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM "ScriptureLive-AI.exe"'
+  Pop $0
+  Sleep 400
+  ; Pass 4 — also catch any node.exe child whose window title matches
+  ; ScriptureLive (covers forks of the bundled Next server that use
+  ; node.exe directly instead of the Electron binary).
+  nsExec::Exec 'taskkill /F /T /IM "ScriptureLive AI.exe"'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM "ScriptureLive-AI.exe"'
+  Pop $0
+  nsExec::Exec 'taskkill /F /FI "WINDOWTITLE eq ScriptureLive*"'
+  Pop $0
+  ; Settle: let Windows release file handles AND let Defender/AV
+  ; finish post-kill scanning before NSIS starts copying files.
+  Sleep 1500
   ClearErrors
+!macroend
+
+!macro customInit
+  Sleep 200
+  !insertmacro killRunningApp
 !macroend
 
 !macro customUnInit
@@ -43,10 +76,5 @@
   ; needs the running process gone — otherwise the uninstall step
   ; fails halfway through and the upgrade aborts.
   Sleep 200
-  nsExec::Exec 'taskkill /F /T /IM "ScriptureLive AI.exe"'
-  Pop $0
-  nsExec::Exec 'taskkill /F /T /IM "ScriptureLive-AI.exe"'
-  Pop $0
-  Sleep 600
-  ClearErrors
+  !insertmacro killRunningApp
 !macroend
