@@ -634,8 +634,34 @@ async function startNextServer(): Promise<string> {
 
   nextProcess.stdout?.on('data', (b) => console.log(`[next] ${b.toString().trimEnd()}`))
   nextProcess.stderr?.on('data', (b) => console.error(`[next:err] ${b.toString().trimEnd()}`))
-  nextProcess.on('exit', (code) => {
-    console.log(`[next] process exited with code ${code}`)
+  // v0.7.84 — Auto-restart on unexpected death. ROOT CAUSE of the
+  // recurring "This page couldn't load" chrome-error page reported in
+  // v0.7.82/0.7.83: the bundled Next.js standalone server is a child
+  // process spawned with `spawn(process.execPath, [server.js])`. On
+  // Windows it occasionally dies during the synchronous
+  // writeFileSync + renameSync inside license storage.persist() —
+  // antivirus / OneDrive / Defender briefly locks the rename target
+  // and the unhandled EPERM exception kills the route handler thread
+  // hard enough to take the whole server process down. Pre-v0.7.84 we
+  // just LOGGED the exit and never respawned, so the renderer was
+  // permanently orphaned (which is why v0.7.83's renderer-reload
+  // handler couldn't recover — there was no server left to reload
+  // against).
+  //
+  // Auto-restart contract:
+  //   • Skip if `isQuitting` (we're shutting the app down on purpose).
+  //   • Skip if `nextProcess` was nulled (manual stop in shutdown()).
+  //   • Re-spawn with the SAME env / cwd / port and wait for the
+  //     readiness probe before reloading the renderer.
+  //   • Cap at 5 restarts within 60s so a permanently-broken server
+  //     (corrupt standalone bundle, missing dep) surfaces as a
+  //     dialog rather than a hot loop.
+  nextProcess.on('exit', (code, signal) => {
+    console.log(`[next] process exited with code ${code} signal ${signal}`)
+    if (isQuitting) return
+    if (!nextProcess) return // someone else cleaned up (shutdown())
+    nextProcess = null
+    void scheduleNextRestart()
   })
 
   // Wait for server readiness
@@ -651,6 +677,60 @@ async function startNextServer(): Promise<string> {
     await new Promise((r) => setTimeout(r, 250))
   }
   throw new Error(`Next server failed to start within 60s. Last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`)
+}
+
+// v0.7.84 — Sliding-window restart limiter for the bundled Next server.
+// Keeps the last N restart timestamps; if 5 deaths happen inside 60s
+// we stop respawning and surface a friendly dialog (the standalone
+// bundle is genuinely broken, not just antivirus-locked).
+const restartTimestamps: number[] = []
+let restartInFlight = false
+async function scheduleNextRestart(): Promise<void> {
+  if (restartInFlight) return
+  restartInFlight = true
+  const now = Date.now()
+  while (restartTimestamps.length && now - restartTimestamps[0] > 60_000) {
+    restartTimestamps.shift()
+  }
+  if (restartTimestamps.length >= 5) {
+    restartInFlight = false
+    console.error('[next] crash-loop: 5 deaths in 60s — giving up')
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      void dialog.showMessageBox(mainWindow, {
+        type: 'error',
+        title: 'ScriptureLive AI — server keeps crashing',
+        message: 'The bundled application server crashed 5 times in a minute and has stopped restarting.',
+        detail: 'This usually means antivirus is quarantining a file inside the install folder, or the install is damaged. Try (1) excluding the ScriptureLive AI install folder from antivirus, or (2) reinstalling. Your activation, library and settings are preserved.',
+        buttons: ['Relaunch now', 'Quit'],
+        defaultId: 0,
+        cancelId: 1,
+      }).then((r) => {
+        if (r.response === 0) app.relaunch()
+        app.exit(0)
+      }).catch(() => { /* dialog gone — leave app */ })
+    }
+    return
+  }
+  restartTimestamps.push(now)
+  console.log(`[next] respawning (attempt ${restartTimestamps.length} in 60s)`)
+  try {
+    const url = await startNextServer()
+    console.log(`[next] respawned and ready at ${url}`)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try { mainWindow.webContents.reload() } catch (err) {
+        console.error('[next] post-restart renderer reload threw:', err)
+      }
+    }
+  } catch (err) {
+    console.error('[next] restart failed:', err)
+    // Try once more after a short delay; the readiness probe inside
+    // startNextServer already waits up to 60s, so a fail here means
+    // spawn() itself threw (e.g. EBUSY on the executable). Schedule
+    // another attempt — the sliding-window limiter above protects us.
+    setTimeout(() => { restartInFlight = false; void scheduleNextRestart() }, 1500)
+    return
+  }
+  restartInFlight = false
 }
 
 async function createMainWindow(url: string, opts: { show?: boolean } = {}) {

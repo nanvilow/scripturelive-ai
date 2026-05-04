@@ -2341,58 +2341,85 @@ function DetectedVersesCard() {
         ) : null
       }
     >
-      {/* v0.7.60 — Two-column split: LIVE (≥50%, auto-live eligible)
-          on the left, CANDIDATES (20–49%, operator-promote-only) on
-          the right. Each column scrolls independently so a busy
-          candidates list can't push live detections off-screen. */}
-      <div className="flex-1 min-h-0 grid grid-cols-2 gap-1 overflow-hidden">
-        {/* LIVE column — ≥50% confidence */}
-        <div className="flex flex-col min-h-0 border-r border-border/50">
-          <div className="px-2 py-1 flex items-center justify-between bg-emerald-500/5 border-b border-emerald-500/20 sticky top-0 z-10">
-            <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-300">
-              Live (≥50%)
-            </span>
-            <span className="text-[9px] font-mono tabular-nums text-muted-foreground">
-              {detectedVerses.length}
-            </span>
-          </div>
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <div className="p-1.5 space-y-1.5">
-              {detectedVerses.length === 0 ? (
-                <div className="text-center py-6 text-[10px] text-muted-foreground">
-                  <Mic className="h-5 w-5 mx-auto opacity-40 mb-1.5" />
-                  Live-eligible detections appear here.
+      {/* v0.7.84 — Two-column split rebuilt around the operator's
+          mental model:
+            • LEFT  "Auto-Live Match"    — the SINGLE best verse the AI
+                                            picked to put on the screen
+                                            (highest confidence, ≥65%).
+                                            Empty until the AI is
+                                            confident enough to commit.
+            • RIGHT "Alternative References" — every OTHER detection,
+                                            from competing ≥50% siblings
+                                            (the ones that just didn't
+                                            beat the live pick) all the
+                                            way down to 20-49% guesses.
+                                            Operator can click any to
+                                            promote manually. */}
+      {(() => {
+        // Compute the auto-live winner inline so the card stays a pure
+        // function of store state. Same ranking + 65% floor used by
+        // the auto-advance effect in AppShell so the two views agree.
+        const ranked = [...detectedVerses].sort((a, b) => {
+          const dc = (b.confidence ?? 0) - (a.confidence ?? 0)
+          return dc !== 0 ? dc : b.id.localeCompare(a.id)
+        })
+        const liveMatch = ranked.find((v) => (v.confidence ?? 0) >= 0.65) ?? null
+        const alternatives = ranked.filter((v) => v.id !== liveMatch?.id)
+        return (
+          <div className="flex-1 min-h-0 grid grid-cols-2 gap-1 overflow-hidden">
+            {/* LIVE MATCH column — single best ≥65% pick */}
+            <div className="flex flex-col min-h-0 border-r border-border/50">
+              <div className="px-2 py-1 flex items-center justify-between bg-emerald-500/5 border-b border-emerald-500/20 sticky top-0 z-10">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-300">
+                  Auto-Live Match
+                </span>
+                <span className="text-[9px] font-mono tabular-nums text-muted-foreground">
+                  {liveMatch ? '1' : '0'}
+                </span>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <div className="p-1.5 space-y-1.5">
+                  {!liveMatch ? (
+                    <div className="text-center py-6 text-[10px] text-muted-foreground">
+                      <Mic className="h-5 w-5 mx-auto opacity-40 mb-1.5" />
+                      Waiting for a high-confidence (≥65%) verse match.
+                    </div>
+                  ) : (
+                    renderRow(liveMatch, 0, 'live')
+                  )}
                 </div>
-              ) : (
-                detectedVerses.map((v, i) => renderRow(v, i, 'live'))
-              )}
+              </div>
             </div>
-          </div>
-        </div>
 
-        {/* CANDIDATES column — 20–49% confidence, operator promotes manually */}
-        <div className="flex flex-col min-h-0">
-          <div className="px-2 py-1 flex items-center justify-between bg-rose-500/5 border-b border-rose-500/20 sticky top-0 z-10">
-            <span className="text-[9px] font-bold uppercase tracking-wider text-rose-300">
-              Candidates (20–49%)
-            </span>
-            <span className="text-[9px] font-mono tabular-nums text-muted-foreground">
-              {detectedVerseCandidates.length}
-            </span>
-          </div>
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <div className="p-1.5 space-y-1.5">
-              {detectedVerseCandidates.length === 0 ? (
-                <div className="text-center py-6 text-[10px] text-muted-foreground">
-                  Low-confidence guesses land here. Click to promote.
+            {/* ALTERNATIVES column — every other detection (50%+ losers + 20-49% guesses) */}
+            <div className="flex flex-col min-h-0">
+              <div className="px-2 py-1 flex items-center justify-between bg-amber-500/5 border-b border-amber-500/20 sticky top-0 z-10">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-amber-300">
+                  Alternative References
+                </span>
+                <span className="text-[9px] font-mono tabular-nums text-muted-foreground">
+                  {alternatives.length + detectedVerseCandidates.length}
+                </span>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <div className="p-1.5 space-y-1.5">
+                  {alternatives.length === 0 && detectedVerseCandidates.length === 0 ? (
+                    <div className="text-center py-6 text-[10px] text-muted-foreground">
+                      Other possible references appear here.
+                      Click any to send it live instead.
+                    </div>
+                  ) : (
+                    <>
+                      {alternatives.map((v, i) => renderRow(v, i, 'live'))}
+                      {detectedVerseCandidates.map((v, i) => renderRow(v, i, 'candidate'))}
+                    </>
+                  )}
                 </div>
-              ) : (
-                detectedVerseCandidates.map((v, i) => renderRow(v, i, 'candidate'))
-              )}
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        )
+      })()}
     </Card>
   )
 }
@@ -3355,28 +3382,62 @@ export function LogosShell() {
     }).catch(() => { /* offline / boot race — retry next session */ })
   }, [settings.defaultTranslation])
 
-  // ── Auto-advance: when ON, every newly detected verse is sent straight
-  // to the live output (and added to the schedule). Mirrors how Logos AI
-  // and similar production tools handle "follow the speaker" mode.
+  // ── Auto-advance: when ON, the SINGLE HIGHEST-CONFIDENCE verse in the
+  // current detection window is sent straight to the live output. Lower-
+  // confidence siblings stay visible in the "Detected Verses" card as
+  // alternative references the operator can manually promote — they
+  // never auto-replace a higher-confidence pick.
+  //
+  // v0.7.84 — Per operator request: previously this watched
+  // `detectedVerses[0]` (newest) and auto-fired for EVERY new arrival,
+  // which caused the bug where "Proverbs 1:7" briefly went live, then
+  // got steamrolled by a 56% Eccl 12:13 that arrived a heartbeat later.
+  // The fix: rank all currently-detected verses by confidence, pick the
+  // single best, and only fire auto-live if the best is also a
+  // genuinely high-confidence match (≥0.65). The ranked-best id is
+  // remembered so a later arrival has to BEAT the current live pick by
+  // at least +0.10 confidence to displace it (sticky live).
   const lastAutoVerseId = useRef<string | null>(null)
+  const lastAutoConfidence = useRef<number>(0)
   useEffect(() => {
     if (!autoAdvance) return
     if (!detectedVerses.length) return
-    const newest = detectedVerses[0]
-    if (!newest || newest.id === lastAutoVerseId.current) return
-    lastAutoVerseId.current = newest.id
+    // Rank by confidence, breaking ties by recency (id has Date.now()).
+    const best = [...detectedVerses].sort((a, b) => {
+      const dc = (b.confidence ?? 0) - (a.confidence ?? 0)
+      return dc !== 0 ? dc : b.id.localeCompare(a.id)
+    })[0]
+    if (!best) return
+    // High-confidence floor for auto-live: 0.65. The rest stay visible
+    // in the card so the operator can promote manually if they
+    // disagree with the AI's pick.
+    if ((best.confidence ?? 0) < 0.65) return
+    // If we've already taken this exact verse live, do nothing.
+    if (best.id === lastAutoVerseId.current) return
+    // Sticky-live: a fresh detection only displaces the current live
+    // pick if it beats the previous winner by at least +0.10. Keeps
+    // a flickery low-margin sibling from yanking the projector mid-
+    // sentence.
+    if (
+      lastAutoVerseId.current &&
+      (best.confidence ?? 0) < lastAutoConfidence.current + 0.10
+    ) {
+      return
+    }
+    lastAutoVerseId.current = best.id
+    lastAutoConfidence.current = best.confidence ?? 0
     const slide = {
-      id: `auto-${newest.id}`,
+      id: `auto-${best.id}`,
       type: 'verse' as const,
-      title: newest.reference,
-      subtitle: newest.translation,
-      content: (newest.text || '').split('\n').filter(Boolean),
+      title: best.reference,
+      subtitle: best.translation,
+      content: (best.text || '').split('\n').filter(Boolean),
       background: settings.congregationScreenTheme,
     }
     addScheduleItem({
       type: 'verse',
-      title: newest.reference,
-      subtitle: newest.translation,
+      title: best.reference,
+      subtitle: best.translation,
       slides: [slide],
     })
     setSlides([slide])
