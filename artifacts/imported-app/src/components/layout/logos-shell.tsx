@@ -3382,50 +3382,55 @@ export function LogosShell() {
     }).catch(() => { /* offline / boot race — retry next session */ })
   }, [settings.defaultTranslation])
 
-  // ── Auto-advance: when ON, the SINGLE HIGHEST-CONFIDENCE verse in the
-  // current detection window is sent straight to the live output. Lower-
-  // confidence siblings stay visible in the "Detected Verses" card as
-  // alternative references the operator can manually promote — they
-  // never auto-replace a higher-confidence pick.
+  // ── Auto-advance.
   //
-  // v0.7.84 — Per operator request: previously this watched
-  // `detectedVerses[0]` (newest) and auto-fired for EVERY new arrival,
-  // which caused the bug where "Proverbs 1:7" briefly went live, then
-  // got steamrolled by a 56% Eccl 12:13 that arrived a heartbeat later.
-  // The fix: rank all currently-detected verses by confidence, pick the
-  // single best, and only fire auto-live if the best is also a
-  // genuinely high-confidence match (≥0.65). The ranked-best id is
-  // remembered so a later arrival has to BEAT the current live pick by
-  // at least +0.10 confidence to displace it (sticky live).
+  // v0.7.86 — STRICT no-displace policy per operator request:
+  //   "Anytime Alternative References detected, do not let it go
+  //    auto live unless the user double clicks it to go live."
+  //
+  // Behaviour:
+  //   • The FIRST high-confidence (≥0.65) verse to arrive in a quiet
+  //     detection window is auto-pushed to the live output once.
+  //   • Every subsequent detection — regardless of confidence — is
+  //     treated as an Alternative Reference. It appears in the right
+  //     column of the Detected Verses card and ONLY goes live if the
+  //     operator double-clicks it. The auto-advance effect will NEVER
+  //     replace the current live verse on its own.
+  //   • The auto-live "lock" releases when the operator clicks Clear
+  //     on the Detected Verses card (which empties detectedVerses, so
+  //     the next high-confidence arrival is a fresh first-pick and
+  //     auto-fires again).
+  //
+  // This eliminates the v0.7.84 +0.10 displacement window that still
+  // let an aggressive new match steamroll a verse the operator was
+  // already showing on the projector.
   const lastAutoVerseId = useRef<string | null>(null)
-  const lastAutoConfidence = useRef<number>(0)
   useEffect(() => {
     if (!autoAdvance) return
-    if (!detectedVerses.length) return
-    // Rank by confidence, breaking ties by recency (id has Date.now()).
+    if (!detectedVerses.length) {
+      // List was cleared — release the lock so the next detection
+      // session can auto-fire its first high-confidence match.
+      lastAutoVerseId.current = null
+      return
+    }
+    // Sticky lock: once we've auto-promoted ANY verse, do not touch
+    // live again until the list is cleared.
+    if (lastAutoVerseId.current) {
+      // Confirm the locked verse is still in the list. If the operator
+      // cleared it individually somehow, release the lock.
+      if (!detectedVerses.some((v) => v.id === lastAutoVerseId.current)) {
+        lastAutoVerseId.current = null
+      } else {
+        return
+      }
+    }
+    // First-pick: highest-confidence verse with ≥0.65 confidence.
     const best = [...detectedVerses].sort((a, b) => {
       const dc = (b.confidence ?? 0) - (a.confidence ?? 0)
       return dc !== 0 ? dc : b.id.localeCompare(a.id)
     })[0]
-    if (!best) return
-    // High-confidence floor for auto-live: 0.65. The rest stay visible
-    // in the card so the operator can promote manually if they
-    // disagree with the AI's pick.
-    if ((best.confidence ?? 0) < 0.65) return
-    // If we've already taken this exact verse live, do nothing.
-    if (best.id === lastAutoVerseId.current) return
-    // Sticky-live: a fresh detection only displaces the current live
-    // pick if it beats the previous winner by at least +0.10. Keeps
-    // a flickery low-margin sibling from yanking the projector mid-
-    // sentence.
-    if (
-      lastAutoVerseId.current &&
-      (best.confidence ?? 0) < lastAutoConfidence.current + 0.10
-    ) {
-      return
-    }
+    if (!best || (best.confidence ?? 0) < 0.65) return
     lastAutoVerseId.current = best.id
-    lastAutoConfidence.current = best.confidence ?? 0
     const slide = {
       id: `auto-${best.id}`,
       type: 'verse' as const,
