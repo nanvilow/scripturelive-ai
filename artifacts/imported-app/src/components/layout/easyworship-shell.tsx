@@ -342,9 +342,14 @@ export function TopToolbar({
     let raf = 0
     const run = async () => {
       try {
+        // v0.7.92 — autoGainControl:false so the operator's mic-gain
+        // slider isn't fought by Chromium's AGC, and so the OS-level
+        // mic volume slider (which is system-wide on Windows and
+        // affects every other app reading from this mic) isn't moved
+        // by our capture session.
         const constraints: MediaStreamConstraints = selectedMicrophoneId
-          ? { audio: { deviceId: { exact: selectedMicrophoneId } } }
-          : { audio: true }
+          ? { audio: { deviceId: { exact: selectedMicrophoneId }, autoGainControl: false } }
+          : { audio: { autoGainControl: false } }
         const stream = await navigator.mediaDevices.getUserMedia(constraints)
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop())
@@ -442,7 +447,10 @@ export function TopToolbar({
 
   const requestMicAccess = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // v0.7.92 — autoGainControl:false on the permission-probe stream
+      // too, even though we stop it immediately, so the brief capture
+      // doesn't blip the OS mic slider for other apps.
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { autoGainControl: false } })
       stream.getTracks().forEach((t) => t.stop())
       setMicPermission('granted')
       await refreshMicrophones()

@@ -136,6 +136,19 @@ app.commandLine.appendSwitch('enable-speech-dispatcher')
 // need a per-session prompt the user has to click through.
 app.commandLine.appendSwitch('use-fake-ui-for-media-stream')
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+// v0.7.92 — Disable Chromium's WebRTC automatic gain control so that
+// (a) the operator's manual mic-gain knob actually has an effect
+// (AGC was renormalizing the input continuously, completely
+// overriding our renderer-side GainNode), and (b) Chromium stops
+// writing to the OS-level mic-input volume slider — that write is
+// system-wide on Windows, which is what was causing OBS / vMix /
+// Zoom etc. to suddenly find their mic level lowered the moment our
+// app captured audio. Belt-and-braces with the renderer-side
+// `autoGainControl: false` constraint added in this same release.
+app.commandLine.appendSwitch(
+  'disable-features',
+  'WebRtcAllowInputVolumeAdjustment,WebRtcHybridAgc,WebRtcAnalogAgcClippingControl',
+)
 
 const ndi = new NdiService()
 let frameCapture: FrameCapture | null = null

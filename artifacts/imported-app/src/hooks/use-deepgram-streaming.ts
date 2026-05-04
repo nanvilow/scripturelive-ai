@@ -469,9 +469,21 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
 
       const win = window as unknown as { __selectedMicrophoneId?: string | null }
       const deviceId = win.__selectedMicrophoneId || undefined
+      // v0.7.92 — autoGainControl:false is REQUIRED for two reasons:
+      //   1. Without it, Chromium's AGC continuously renormalizes the
+      //      input level, completely overriding the operator's mic-gain
+      //      slider (the slider IS hooked up to a GainNode in the audio
+      //      graph, but AGC sits upstream and undoes our scaling on
+      //      every block). With AGC off, the GainNode actually moves
+      //      the needle the operator sees.
+      //   2. AGC writes to the OS mic-input volume slider, which is
+      //      system-wide on Windows. Result: OBS / vMix / Zoom / Teams
+      //      all suddenly see their mic level dropped the moment we
+      //      capture audio. Disabling AGC keeps the OS slider where the
+      //      operator put it.
       const constraints: MediaStreamConstraints = deviceId
-        ? { audio: { deviceId: { exact: deviceId }, echoCancellation: true, noiseSuppression: true } }
-        : { audio: { echoCancellation: true, noiseSuppression: true } }
+        ? { audio: { deviceId: { exact: deviceId }, echoCancellation: true, noiseSuppression: true, autoGainControl: false } }
+        : { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false } }
 
       // Open WS + capture mic in parallel — they're independent and
       // the audio backlog buffers any frames captured before WS opens.
