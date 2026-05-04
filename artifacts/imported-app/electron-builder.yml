@@ -171,6 +171,13 @@ nsis:
   # custom translations, and the SQLite cache live there and the
   # operator wants reinstalls to be non-destructive.
   deleteAppDataOnUninstall: false
+  # v0.7.85 — Custom NSIS macros that kill the running ScriptureLive
+  # AI process tree (main window + spawned Next child + helpers)
+  # BEFORE the new installer tries to overwrite files. Without this
+  # the operator was forced to uninstall v0.7.83/v0.7.84 manually
+  # before installing the next version, because the running .exe and
+  # app.asar were locked. See build-resources/installer.nsh.
+  include: build-resources/installer.nsh
 mac:
   target:
     - target: dmg
