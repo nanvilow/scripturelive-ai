@@ -137,7 +137,14 @@ export interface LlmClassifierOptions {
 
 const DEFAULT_MODEL = 'gpt-4o-mini'
 const DEFAULT_CONFIDENCE_FLOOR = 70
-const DEFAULT_TIMEOUT_MS = 1500
+// v0.7.93 — Lowered 1500 → 800 ms after operator reports the LLM
+// fallback was perceptibly delaying commands during live services.
+// gpt-4o-mini with response_format JSON typically returns in 250-
+// 600 ms; 800 ms keeps headroom for a slow round-trip while failing
+// fast on a true outlier. Anything slower than 800 ms is worse than
+// just falling back to "I didn't catch that" and letting the
+// operator repeat.
+const DEFAULT_TIMEOUT_MS = 800
 
 const SYSTEM_PROMPT = [
   'You are an intent classifier for a church livestream operator app.',
@@ -163,6 +170,13 @@ const SYSTEM_PROMPT = [
   '  - Resolve deictic phrases ("next one", "back two") using the supplied context.',
   '  - For change_translation, normalise to a short code: niv, kjv, esv, amp, msg, nkjv, nlt, nasb, twi.',
   '    "twi" maps to the Twi (Akan) Bible — recognise utterances like "give me twi version", "switch to twi", "Asante Twi", "Akan Bible", "twi please", or any utterance containing the word "twi" / "akan" as the change_translation intent with args.translation = "twi".',
+  '    The Akan word "Twi" is pronounced "chwee" (/tɕᶣi/). English-trained ASR engines (Deepgram, Whisper) consistently mis-transcribe it.',
+  '    Treat ALL of these mis-hearings as the SAME twi intent when followed by "version" / "bible" / "translation" OR after a lead-in verb like "give me" / "switch to" / "change to":',
+  '      tree, tweet, twee, tweed, chwee, choi, qui, key, she, ghana, ghanaian, akuapem, asante, fante, local, mother tongue.',
+  '    Examples that MUST classify as change_translation with args.translation = "twi" at high confidence:',
+  '      "give me the tree version", "switch to tweet bible", "chwee version please", "akan translation",',
+  '      "the local language", "mother tongue version", "twi please", "akuapem bible".',
+  '    Confidence on these should be ≥ 90 — operators in Ghana ask for this multiple times per service and a missed switch is a visible production error.',
   '  - Never invent a reference for go_to_reference; if you cannot extract a clear book+chapter+verse, fall back to find_by_quote with the operator\'s words as quoteText.',
 ].join('\n')
 

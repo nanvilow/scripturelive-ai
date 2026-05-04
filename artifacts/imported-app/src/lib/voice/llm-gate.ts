@@ -106,9 +106,20 @@ const TRIGGER_VERBS = new Set<string>([
 const STRUCTURAL_HINTS: RegExp[] = [
   /\b(?:verse|chapter|passage)\s+(?:\d+|next|previous|last|first)\b/i,
   /\b(?:next|previous|last|first|another)\s+(?:verse|chapter|passage)\b/i,
-  /\b(?:translation|version)\s+(?:niv|kjv|esv|amp|msg|nlt|asv|net|web)\b/i,
-  /\bto\s+(?:niv|kjv|esv|amp|msg|nlt|asv|net|web)\b/i,
+  /\b(?:translation|version)\s+(?:niv|kjv|esv|amp|msg|nlt|asv|net|web|twi|akan|akuapem)\b/i,
+  /\bto\s+(?:niv|kjv|esv|amp|msg|nlt|asv|net|web|twi|akan|akuapem)\b/i,
   /\b(?:auto[- ]?scroll|autoscroll)\b/i,
+  // v0.7.93 — TWI / Akan version switches. Operators in Ghana frequently
+  // ask for "Twi version" / "Akan Bible" / "Akuapem translation" mid-
+  // sermon, plus the common Deepgram/Whisper mishearings ("tree
+  // version", "tweet version", "chwee version", "twee bible"). The
+  // suffix anchor keeps these from firing on a literal "tree of life"
+  // line — only the intent-loaded form passes the gate.
+  /\b(?:twi|akan|akuapem|tree|tweet|twee|tweed|chwee|qui|key|she|ghana|ghanaian|local|mother\s+tongue)\s+(?:version|bible|translation)\b/i,
+  // Bare "twi" / "akan" / "akuapem" anywhere — they're rare enough in
+  // English sermon vocabulary that surfacing them as command candidates
+  // is safe, and the LLM still has to confirm intent at confidenceFloor.
+  /\b(?:twi|akuapem)\b/i,
 ]
 
 const MIN_WORDS = 2

@@ -510,7 +510,19 @@ function detectTranslationCommand(
   const aliasHit = findTranslationAlias(lower)
   if (!aliasHit) return null
 
-  if (!hasLeadIn && !wokeByWakeWord) {
+  // v0.7.93 — When the matched alias ALREADY carries an explicit
+  // intent suffix ("twi version", "tree bible", "message version",
+  // "amplified translation") the suffix itself signals translation-
+  // switch intent strongly enough that we don't need a lead-in verb
+  // OR the wake word. Stops the regression where "Twi version please"
+  // was rejected (strict canon comparison failed because of the
+  // trailing "please") even though the operator's intent was
+  // unambiguous. Suffix-less aliases ("twi", "message", "amplified")
+  // still go through strict mode below to keep "the message of the
+  // cross" from accidentally swapping translations.
+  const aliasIsIntentSuffixed = /\s+(?:version|bible|translation)$/.test(aliasHit.alias)
+
+  if (!hasLeadIn && !wokeByWakeWord && !aliasIsIntentSuffixed) {
     // Strict mode: the utterance must be JUST the alias (optionally
     // wrapped in "the ..." / "... version|bible|translation"). Stops
     // sentences like "the message of the cross" from accidentally
@@ -518,13 +530,20 @@ function detectTranslationCommand(
     //
     // We canonicalise BOTH the utterance and the alias in the same
     // way (strip a leading "the ", strip a trailing "version" /
-    // "bible" / "translation"), then compare. This way both
-    // ("new king james" → matches alias "new king james version") AND
-    // ("the message" → matches alias "message") work, regardless of
-    // whether the suffix lived in the user's utterance, the alias
-    // map, or both.
+    // "bible" / "translation", strip a trailing courtesy like
+    // "please" / "thanks" / "thank you" / "now"), then compare. This
+    // way both ("new king james" → matches alias "new king james
+    // version") AND ("the message" → matches alias "message") work,
+    // regardless of whether the suffix lived in the user's utterance,
+    // the alias map, or both. v0.7.93 added the courtesy strip after
+    // operator reports of "twi please" / "message version please"
+    // bouncing.
     const canon = (s: string) =>
-      s.replace(/^the\s+/, '').replace(/\s+(version|bible|translation)$/, '').trim()
+      s
+        .replace(/^the\s+/, '')
+        .replace(/\s+(?:please|thanks|thank\s+you|now|okay|ok)$/i, '')
+        .replace(/\s+(version|bible|translation)$/, '')
+        .trim()
     if (canon(lower) !== canon(aliasHit.alias)) return null
   }
 

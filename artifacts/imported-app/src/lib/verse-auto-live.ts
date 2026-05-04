@@ -4,11 +4,20 @@ export interface RankedVerse {
   detectedAt?: Date | string | number
 }
 
-// v0.7.91 — Threshold lowered 0.50 → 0.40 per operator spec
-// ("make the percentage be 20 to 40%"). Anything ≥ 40% is the MAIN
-// auto-live pick; the [0.20, 0.40) band is the Alternative References
-// bucket the operator can double-click to promote manually.
-export const AUTO_LIVE_MIN_CONFIDENCE = 0.4
+// v0.7.93 — Auto-live floor raised back to 0.55 after operator
+// feedback that the v0.7.91 floor of 0.40 was promoting wrong verses
+// to the live screen during sermons (the regex/embedding detector
+// returns low-50 % confidence on ambiguous half-quotes that operators
+// did NOT want auto-fired). The Alternative References band is
+// widened to [0.20, 0.55) so the operator still sees the same
+// "20 to 40%" suggestions they asked for in v0.7.91 — they just have
+// to double-click to promote them, which is the safe failure mode.
+//
+// Tier summary:
+//   confidence < 0.20 → dropped (too noisy to surface)
+//   0.20 ≤ c < 0.55  → Alternative References (operator promotes)
+//   confidence ≥ 0.55 → MAIN auto-live pick
+export const AUTO_LIVE_MIN_CONFIDENCE = 0.55
 // Lower bound of the Alternative References band. Below this we don't
 // even surface the candidate — too noisy for the operator to scan.
 export const ALTERNATIVE_MIN_CONFIDENCE = 0.2

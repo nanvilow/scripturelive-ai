@@ -649,7 +649,13 @@ const defaultSettings: AppSettings = {
   // ≥0.70 live / [0.30, 0.70) preview / <0.30 drop.
   transcriptDropThreshold: 0.20,
   transcriptPreviewThreshold: 0.60,
-  transcriptLiveThreshold: 0.50,
+  // v0.7.93 — Raised 0.50 → 0.65 after operator feedback that the
+  // v0.7.91 lower threshold let too many low-confidence transcript
+  // chunks reach the verse detector and command pre-pass, surfacing
+  // wrong references and slowing the operator down. 0.65 still beats
+  // the pre-v0.7.91 default of 0.70 so sensitivity is mildly improved
+  // without the false-positive flood.
+  transcriptLiveThreshold: 0.65,
   ndiDisplayMode: 'full',
   // NDI typography overrides (v0.5.48): leave undefined so the NDI
   // feed mirrors Live Display by default. The operator opts in via
