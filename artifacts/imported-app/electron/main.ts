@@ -2168,21 +2168,14 @@ app.whenReady().then(async () => {
     closeSplash()
     fatalError('createMainWindow', err); app.quit(); return
   }
-  // v0.7.79 — Tear down the splash the moment the main window's
-  // renderer has finished loading the React tree. We listen for
-  // `did-finish-load` rather than firing a setTimeout, so the splash
-  // never disappears before the main UI is actually painted (slow
-  // disks / cold-cache first launches can take 2-3 s extra here).
-  // A 10 s safety net guarantees we never leave the splash floating
-  // on top of a wedged renderer.
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    const tearDown = () => closeSplash()
-    mainWindow.webContents.once('did-finish-load', tearDown)
-    mainWindow.webContents.once('did-fail-load', tearDown)
-    setTimeout(tearDown, 10_000)
-  } else {
-    closeSplash()
-  }
+  // v0.7.79 — Tear the splash down NOW. `createMainWindow` awaits
+  // `mainWindow.loadURL(url)`, which already resolves on the
+  // renderer's `did-finish-load`, so by the time we get here the
+  // main UI has finished loading. Attaching a listener here would
+  // never fire (the event has already passed) and we'd be stuck
+  // waiting on the 10 s safety net while the splash floats on top
+  // of the live app — exactly what the operator just hit.
+  closeSplash()
   try {
     setupAutoUpdater({
       getMainWindow: () => mainWindow,
