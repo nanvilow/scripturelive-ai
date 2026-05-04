@@ -581,3 +581,9 @@ id = "yYS0PfXUmNe8zZQqcwcZS"
 uri = "file://.local/launch/directory-submission-pack.md"
 type = "text"
 title = "Directory Submission Pack — PH / AlternativeTo / SourceForge / +10 more"
+
+[[outputs]]
+id = "-AHz8vd8o09ZuS5e-K4E0"
+uri = "file://exports/ScriptureLive-AI-v0.7.93-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.93 — Voice/AI hotfix source"

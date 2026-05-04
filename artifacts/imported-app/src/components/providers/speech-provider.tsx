@@ -1270,7 +1270,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       //   • >= live            → full pipeline as before.
       // Defaults: drop 0.30 / live 0.70. Operator-tunable in Settings.
       const dropT = state.settings.transcriptDropThreshold ?? 0.30
-      const liveT = state.settings.transcriptLiveThreshold ?? 0.70
+      const liveT = state.settings.transcriptLiveThreshold ?? 0.65
       if (confidence < liveT) {
         // Both DROP and PREVIEW tiers terminate here. The hook has
         // already appended the chunk to its internal transcript ref;
@@ -1414,8 +1414,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               liveSlide && liveSlide.type === 'verse' && typeof liveSlide.title === 'string'
                 ? liveSlide.title
                 : undefined
+            // v0.7.93 — Outer fetch timeout dropped 2000 → 1000 ms so a
+            // hung classifier round-trip never blocks the next utterance
+            // by more than a second. classifyIntent itself now caps at
+            // 800 ms (was 1500 ms), so 1000 ms here gives the network
+            // 200 ms headroom and still fails fast.
             const ac = new AbortController()
-            const timer = setTimeout(() => ac.abort(), 2000)
+            const timer = setTimeout(() => ac.abort(), 1000)
             let resp: Response
             try {
               resp = await fetch('/api/voice/classify', {
