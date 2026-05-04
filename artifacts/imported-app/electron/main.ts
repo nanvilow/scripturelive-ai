@@ -690,6 +690,66 @@ async function createMainWindow(url: string, opts: { show?: boolean } = {}) {
     shell.openExternal(target)
     return { action: 'deny' }
   })
+  // v0.7.83 — Auto-recover from "This page couldn't load" (Electron's
+  // chrome-error://chromewebdata page). Symptom seen in the field: an
+  // operator clicks Deactivate (or any flow that triggers a quick burst
+  // of API calls), the bundled Next.js standalone server has a brief
+  // hiccup mid-write (SQLite lock, slow disk, GC pause on a 4 GB box),
+  // and the NEXT renderer fetch fails with ERR_CONNECTION_REFUSED.
+  // Electron then paints the full-window chrome error page and the
+  // operator is stuck — there is no in-app reload button.
+  //
+  // Belt-and-braces recovery:
+  //   • Ignore subframe failures and user-aborted loads (errorCode -3).
+  //   • Wait 800ms (server usually back inside one tick), then reload.
+  //   • Cap at 3 consecutive auto-reloads to avoid a hot loop if the
+  //     server is actually dead — at that point we surface a friendly
+  //     dialog asking the operator to relaunch.
+  //   • Reset the counter on every successful did-finish-load so the
+  //     budget refills for the NEXT incident.
+  let failLoadAttempts = 0
+  let failLoadTimer: NodeJS.Timeout | null = null
+  mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return
+    if (errorCode === -3) return // ERR_ABORTED — user cancelled / fast nav
+    console.warn('[main] did-fail-load:', { errorCode, errorDescription, validatedURL, attempts: failLoadAttempts })
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (failLoadAttempts >= 3) {
+      // Server is genuinely down. Tell the operator without blowing up.
+      void dialog.showMessageBox(mainWindow, {
+        type: 'error',
+        title: 'ScriptureLive AI — connection lost',
+        message: 'The app could not reload its window after several attempts.',
+        detail: 'This usually clears up by relaunching ScriptureLive AI from the desktop shortcut. Your activation, library and settings are preserved.',
+        buttons: ['Relaunch now', 'Quit'],
+        defaultId: 0,
+        cancelId: 1,
+      }).then((r) => {
+        if (r.response === 0) {
+          app.relaunch()
+        }
+        app.exit(0)
+      }).catch(() => { /* dialog failed — leave app as-is */ })
+      return
+    }
+    failLoadAttempts += 1
+    if (failLoadTimer) clearTimeout(failLoadTimer)
+    failLoadTimer = setTimeout(() => {
+      failLoadTimer = null
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      try {
+        mainWindow.webContents.reload()
+      } catch (err) {
+        console.error('[main] auto-reload after did-fail-load threw:', err)
+      }
+    }, 800)
+  })
+  mainWindow.webContents.on('did-finish-load', () => {
+    // Reset the auto-reload budget on every successful load so a single
+    // recovered hiccup doesn't permanently consume our 3-strike budget.
+    failLoadAttempts = 0
+    if (failLoadTimer) { clearTimeout(failLoadTimer); failLoadTimer = null }
+  })
   // Hide-to-tray on close. The operator complaint we're solving:
   // closing the main console window during a live service used to
   // call shutdown(), which killed the Next.js server and the NDI
