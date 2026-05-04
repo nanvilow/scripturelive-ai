@@ -298,6 +298,41 @@ const TRANSLATION_ALIASES: Record<string, string> = {
   'akuapem twi': 'TWI',
   'akan': 'TWI',
   'akan bible': 'TWI',
+  // v0.7.91 — Common mishearings of "Twi" by English-trained ASR
+  // engines. Deepgram and Whisper trained primarily on American English
+  // consistently transcribe the Akan word "Twi" (/tɕᶣi/, roughly
+  // "chwee") as "tree", "tweet", "twee", "tweed", "qui", "key", or
+  // "she" depending on the speaker's accent and mic quality. Operators
+  // in Ghana hit this on every service — they say "give me the Twi
+  // version" and the engine hears "give me the tree version" so the
+  // intent never matched. Adding the phonetic neighbors with the
+  // "version/bible/translation" suffix means we only fire on the
+  // intent-loaded form (no false positives on a literal "tree").
+  'tree version': 'TWI',
+  'tree bible': 'TWI',
+  'tree translation': 'TWI',
+  'tweet version': 'TWI',
+  'tweet bible': 'TWI',
+  'twee version': 'TWI',
+  'twee bible': 'TWI',
+  'tweed version': 'TWI',
+  'tweed bible': 'TWI',
+  'chwee': 'TWI',
+  'chwee version': 'TWI',
+  'chwee bible': 'TWI',
+  'choi version': 'TWI',
+  'qui version': 'TWI',
+  'key version': 'TWI',
+  'she version': 'TWI',
+  'twi v': 'TWI',
+  'tw version': 'TWI',
+  'ghanaian version': 'TWI',
+  'ghana version': 'TWI',
+  'ghana bible': 'TWI',
+  'local version': 'TWI',
+  'local language': 'TWI',
+  'mother tongue': 'TWI',
+  'mother tongue version': 'TWI',
 }
 
 // Cached longest-first key list so we don't sort on every call.

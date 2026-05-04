@@ -1563,7 +1563,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             // so in practice this branch only fires for very strong
             // matches; the change just unblocks the rare 50–69 band
             // that the engine occasionally produces on noisy audio.
-            if (autoLiveOn2 && v2.confidence >= 50) {
+            if (autoLiveOn2 && v2.confidence >= 40) {
               const slide = {
                 id: `slide-${Date.now()}`,
                 type: 'verse' as const,

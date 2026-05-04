@@ -392,10 +392,17 @@ export class NdiService extends EventEmitter {
     this.stopKeepAlive()
     const fps = this.status.fps || 30
     const intervalMs = Math.max(16, Math.floor(1000 / fps))
-    // Threshold for "stale enough to re-emit". 1.5 frame intervals
-    // means a single missed frame triggers re-emit, but two back-to-
-    // back real frames don't double-up.
-    const staleThresholdMs = Math.floor(intervalMs * 1.5)
+    // v0.7.91 — Tighten the stale window from 1.5 frames to 1.05 frames
+    // so even a SINGLE skipped renderer frame triggers re-emit. With
+    // the previous 1.5x window, OBS/vMix would occasionally see a
+    // sub-100ms gap on top of inherent network jitter and decide our
+    // source was momentarily dead — they'd hold the last frame on
+    // their end (looks fine) but their internal "source healthy" flag
+    // would flip false and the operator's NDI tally would blink red.
+    // Tightening to 1.05x means we re-emit aggressively whenever the
+    // renderer is even one frame behind, so OBS/vMix's source-health
+    // probes never see a gap longer than ~33 ms (one frame at 30 fps).
+    const staleThresholdMs = Math.max(20, Math.floor(intervalMs * 1.05))
     this.keepAliveTimer = setInterval(() => {
       if (!this.senderInstance || !this.bindings) return
       if (this.sendBusy) return
@@ -404,7 +411,12 @@ export class NdiService extends EventEmitter {
       if (Date.now() - last.ts < staleThresholdMs) return
       // Re-emit cached frame. We deliberately do NOT touch lastFrame.ts
       // here — only real renderer frames update it, so successive
-      // stalls keep firing the keep-alive.
+      // stalls keep firing the keep-alive. This is the contract OBS
+      // and vMix rely on: "if the source is alive, frames keep coming
+      // at the advertised cadence". Drop the cadence and they tear
+      // down the connection; maintain it through hiccups and they
+      // hold the connection across renderer crashes, GC pauses,
+      // alt-tab, and Wi-Fi blips.
       this.nativeSendFrame(last.buffer, last.width, last.height)
     }, intervalMs)
     // setInterval keeps the event loop alive in Node — fine, the

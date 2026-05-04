@@ -645,8 +645,17 @@ function installCrashMask(
   })
 }
 
+// v0.7.91 — Track when the splash first became visible so closeSplash
+// can guarantee an operator-perceived minimum dwell of 4.5 s. Without
+// this, on fast machines the splash flickered for ~600 ms and the
+// operator wasn't sure their click had landed (recurring complaint
+// in the field). 4.5 s is the operator's spec ("4 to 5 sec").
+let splashOpenedAt = 0
+const SPLASH_MIN_DWELL_MS = 4500
+
 function showSplash(): void {
   if (splashWindow && !splashWindow.isDestroyed()) return
+  splashOpenedAt = Date.now()
   try {
     splashWindow = new BrowserWindow({
       width: 480,
@@ -699,10 +708,29 @@ function setSplashStatus(text: string): void {
 }
 
 function closeSplash(): void {
-  if (splashWindow && !splashWindow.isDestroyed()) {
-    try { splashWindow.close() } catch { /* ignore */ }
+  // v0.7.91 — Honor SPLASH_MIN_DWELL_MS. If the boot was fast and the
+  // splash has been visible for less than the operator's minimum, defer
+  // the actual close until the dwell elapses. The main window is
+  // already up underneath; the splash just floats on top a moment
+  // longer so the operator's brain registers "yes, the app is
+  // launching" before the operator UI replaces it.
+  if (!splashWindow || splashWindow.isDestroyed()) {
+    splashWindow = null
+    return
   }
-  splashWindow = null
+  const elapsed = Date.now() - (splashOpenedAt || Date.now())
+  const remaining = Math.max(0, SPLASH_MIN_DWELL_MS - elapsed)
+  const doClose = () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      try { splashWindow.close() } catch { /* ignore */ }
+    }
+    splashWindow = null
+  }
+  if (remaining > 0) {
+    setTimeout(doClose, remaining)
+  } else {
+    doClose()
+  }
 }
 
 async function startNextServer(): Promise<string> {
