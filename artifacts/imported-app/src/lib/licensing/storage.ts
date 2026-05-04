@@ -502,46 +502,99 @@ function load(): LicenseFile {
 function persist(file: LicenseFile) {
   ensureDir()
   const p = storagePath()
-  const tmp = p + '.tmp.' + process.pid + '.' + Date.now()
-  // v0.7.86 — Retry the write+rename on Windows EPERM/EBUSY/EACCES.
-  // Antivirus, OneDrive, and Windows Defender all hold short read
-  // locks on freshly-created files for a few hundred ms after they
-  // first appear, so writeFileSync(tmp) → renameSync(tmp,p) can throw
-  // EPERM on the rename even though the write itself succeeded. The
-  // unhandled exception was killing the Next child process and
-  // producing the recurring "This page couldn't load" page. Retry
-  // up to 5 times with exponential backoff; if all attempts fail we
-  // re-throw so the caller (and the new instrumentation.ts crash
-  // guard) sees it without taking the process down.
+  // v0.7.95 — ROOT-CAUSE FIX for the recurring "This page couldn't
+  // load" Chromium error after Deactivate / Move-to-Another-PC.
+  //
+  // Pre-v0.7.95 (v0.7.86) tried to handle Windows AV/OneDrive lock
+  // contention on the rename target by RETRYING with a SYNCHRONOUS
+  // BUSY-SPIN of up to 50+100+200+400+800 = 1550 ms. That spin pegged
+  // the Node event loop of the bundled Next.js standalone server. For
+  // up to ~1.5 s the server could not handle ANY other request,
+  // including:
+  //   • the renderer's follow-up /api/license/status fetch,
+  //   • Next.js prefetches when the operator clicked another tab,
+  //   • the renderer's hard-reload fallback when client-side nav
+  //     timed out.
+  // When the operator switched away and came back, the queued
+  // navigation hit a frozen / mid-restarting server and Chromium
+  // painted its built-in chrome-error://chromewebdata page. The
+  // crash-mask installer in main.ts caught did-fail-load and
+  // repainted, but the operator had already seen the error.
+  //
+  // The fix has three parts:
+  //   1) Update the in-memory `cache` BEFORE attempting the disk
+  //      write, so every caller sees the new state immediately even
+  //      if the disk write is slow / racing AV.
+  //   2) Try the disk write ONCE synchronously. The vast majority
+  //      of operations succeed on the first try in <5 ms — keeping
+  //      the fast path sync preserves crash-safety for the common
+  //      case (a power loss between cache update and disk write
+  //      simply re-applies the previous file on next load).
+  //   3) On the AV-lock error family (EPERM/EBUSY/EACCES), schedule
+  //      retries via setImmediate so the event loop keeps spinning.
+  //      The retries write the SAME `file` object that's already in
+  //      `cache`, so concurrent reads stay consistent.
+  //
+  // Other errors (ENOSPC, EROFS, etc) still throw immediately — those
+  // are real problems the caller / route handler needs to surface.
+  cache = file
   const data = JSON.stringify(file, null, 2)
-  let lastErr: unknown = null
-  for (let attempt = 0; attempt < 5; attempt++) {
+  const tmp = p + '.tmp.' + process.pid + '.' + Date.now()
+  try {
+    fs.writeFileSync(tmp, data, { mode: 0o600 })
+    fs.renameSync(tmp, p)
+    return
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException)?.code
+    if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') {
+      try { fs.unlinkSync(tmp) } catch { /* ignore */ }
+      throw e
+    }
+    // AV-lock — retry asynchronously so we never block the event loop.
+    try { fs.unlinkSync(tmp) } catch { /* tmp may already be gone */ }
+    schedulePersistRetry(p, data, e, 0)
+  }
+}
+
+// v0.7.95 — Async retry helper for persist(). Re-tries the atomic
+// write+rename with exponential backoff, but uses setTimeout (off the
+// event-loop critical path) instead of a busy-spin. Each retry uses a
+// FRESH tmp filename so concurrent persist() calls can't collide on
+// the same temp file. After 5 failures we log and give up — the
+// in-memory cache is correct, so the running app stays consistent;
+// the disk file will be rewritten on the next persist() call (e.g.
+// the next status sweep) once AV releases its lock.
+function schedulePersistRetry(
+  finalPath: string,
+  data: string,
+  firstErr: unknown,
+  attempt: number,
+): void {
+  // Backoff: 50, 100, 200, 400, 800 ms — same envelope as v0.7.86 but
+  // off the event-loop critical path (no CPU spin, no request stalls).
+  const delay = 50 * Math.pow(2, attempt)
+  setTimeout(() => {
+    const tmp = finalPath + '.tmp.' + process.pid + '.' + Date.now() + '.' + attempt
     try {
       fs.writeFileSync(tmp, data, { mode: 0o600 })
-      fs.renameSync(tmp, p)
-      cache = file
+      fs.renameSync(tmp, finalPath)
+      // Success — disk now matches the in-memory cache.
       return
     } catch (e) {
-      lastErr = e
+      try { fs.unlinkSync(tmp) } catch { /* ignore */ }
       const code = (e as NodeJS.ErrnoException)?.code
-      // Only retry the AV-lock family. Anything else (ENOSPC, etc)
-      // is a real problem and bails immediately.
-      if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') {
-        try { fs.unlinkSync(tmp) } catch { /* ignore */ }
-        throw e
+      const isAvLock = code === 'EPERM' || code === 'EBUSY' || code === 'EACCES'
+      if (!isAvLock || attempt >= 4) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[licensing] persist disk write failed after ${attempt + 1} async retries (in-memory cache is correct, will reconcile on next persist):`,
+          { firstErr, lastErr: e },
+        )
+        return
       }
-      // Backoff: 50, 100, 200, 400, 800 ms
-      const delay = 50 * Math.pow(2, attempt)
-      const wait = Date.now() + delay
-      // Synchronous spin so persist() stays sync (callers depend on
-      // load()/getFile() being fully consistent on return).
-      while (Date.now() < wait) { /* spin */ }
-      try { fs.unlinkSync(tmp) } catch { /* tmp may already be gone */ }
+      schedulePersistRetry(finalPath, data, firstErr, attempt + 1)
     }
-  }
-  // eslint-disable-next-line no-console
-  console.error('[licensing] persist failed after 5 retries:', lastErr)
-  throw lastErr
+  }, delay)
 }
 
 // ─────────────────────────────────────────────────────────────────────

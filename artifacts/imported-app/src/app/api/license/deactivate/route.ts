@@ -72,9 +72,27 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const status = deactivateSubscription()
-  return NextResponse.json(
-    { ok: true, transferred: false, status },
-    { headers: { 'Cache-Control': 'no-store' } },
-  )
+  // v0.7.95 — Wrap deactivateSubscription in try/catch. The pre-v0.7.95
+  // path let any exception from persist() / computeStatus() propagate
+  // up and turn into a Next.js 500 response, which the renderer treated
+  // as a generic failure (no actionable toast for the operator). Now
+  // we ALWAYS return well-formed JSON with `ok` so the renderer can
+  // render a meaningful toast and stay on the Settings screen instead
+  // of risking a hard reload that could land on the chrome-error page.
+  try {
+    const status = deactivateSubscription()
+    return NextResponse.json(
+      { ok: true, transferred: false, status },
+      { headers: { 'Cache-Control': 'no-store' } },
+    )
+  } catch (e) {
+    return NextResponse.json(
+      {
+        ok: false,
+        transferred: false,
+        error: e instanceof Error ? e.message : 'Failed to deactivate subscription',
+      },
+      { status: 500, headers: { 'Cache-Control': 'no-store' } },
+    )
+  }
 }
