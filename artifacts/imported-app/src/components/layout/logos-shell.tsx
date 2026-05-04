@@ -91,6 +91,7 @@ import {
   detectVersesInText,
 } from '@/lib/bible-api'
 import type { Slide } from '@/lib/store'
+import { alternativesFor, pickAutoLiveMatch, shouldFireAutoLive } from '@/lib/verse-auto-live'
 
 // ──────────────────────────────────────────────────────────────────────
 // Card primitives
@@ -2359,12 +2360,8 @@ function DetectedVersesCard() {
         // Compute the auto-live winner inline so the card stays a pure
         // function of store state. Same ranking + 65% floor used by
         // the auto-advance effect in AppShell so the two views agree.
-        const ranked = [...detectedVerses].sort((a, b) => {
-          const dc = (b.confidence ?? 0) - (a.confidence ?? 0)
-          return dc !== 0 ? dc : b.id.localeCompare(a.id)
-        })
-        const liveMatch = ranked.find((v) => (v.confidence ?? 0) >= 0.5) ?? null
-        const alternatives = ranked.filter((v) => v.id !== liveMatch?.id)
+        const liveMatch = pickAutoLiveMatch(detectedVerses)
+        const alternatives = alternativesFor(detectedVerses, liveMatch?.id ?? null)
         return (
           <div className="flex-1 min-h-0 grid grid-cols-2 gap-1 overflow-hidden">
             {/* LIVE MATCH column — single best ≥50% pick */}
@@ -3419,14 +3416,11 @@ export function LogosShell() {
       lastAutoVerseId.current = null
       return
     }
-    // Highest-confidence verse, ties broken by recency.
-    const best = [...detectedVerses].sort((a, b) => {
-      const dc = (b.confidence ?? 0) - (a.confidence ?? 0)
-      return dc !== 0 ? dc : b.id.localeCompare(a.id)
-    })[0]
-    if (!best || (best.confidence ?? 0) < 0.5) return
-    // Same verse already live → don't re-flash the slide.
-    if (best.id === lastAutoVerseId.current) return
+    // Delegated to the pure helper in src/lib/verse-auto-live.ts so
+    // the rules are unit-tested in isolation. See verse-auto-live.test.ts.
+    const decision = shouldFireAutoLive(detectedVerses, lastAutoVerseId.current)
+    if (!decision.fire) return
+    const best = decision.verse
     lastAutoVerseId.current = best.id
     const slide = {
       id: `auto-${best.id}`,
