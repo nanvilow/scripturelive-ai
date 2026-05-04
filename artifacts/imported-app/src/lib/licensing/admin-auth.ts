@@ -76,9 +76,13 @@ export function resolveAdminPassword(): string {
   if (!warnedDefault) {
     warnedDefault = true
     // eslint-disable-next-line no-console
-    console.warn('[admin-auth] No admin password set — using default "admin". Set ADMIN_PASSWORD before BUILD.bat (so every PC ships with the same one) or change it per-PC in Admin → Settings.')
+    console.warn('[admin-auth] No admin password set — using built-in default. Set ADMIN_PASSWORD before BUILD.bat (so every PC ships with the same one) or change it per-PC in Admin → Settings.')
   }
-  return 'admin'
+  // v0.7.78 — Operator request: ship a fixed default password instead
+  // of the legacy 'admin' fallback, so every install opens with the
+  // same known credential without needing a baked secret. Operators
+  // can still override per-PC via Settings → Admin Password.
+  return '241190'
 }
 
 /** Constant-time string comparison helper. */

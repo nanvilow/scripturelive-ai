@@ -1471,6 +1471,14 @@ function LiveDisplayCard({
     liveMonitorAudio,
     setLiveMonitorAudio,
   } = useAppStore()
+  // v0.7.78 — Voice Control + Speaker-Follow toggles surfaced in the
+  // Live Output column header so the operator can flip them mid-show
+  // without trekking back to Settings (the CardDescription already
+  // claims they're here, so this brings reality in line with copy).
+  const voiceControlEnabled = useAppStore((s) => s.voiceControlEnabled)
+  const setVoiceControlEnabled = useAppStore((s) => s.setVoiceControlEnabled)
+  const speakerFollowEnabled = useAppStore((s) => s.speakerFollowEnabled)
+  const setSpeakerFollowEnabled = useAppStore((s) => s.setSpeakerFollowEnabled)
   const liveVideoPlaying = useAppStore((s) => s.liveVideoPlaying)
   const mediaPaused = useAppStore((s) => s.mediaPaused)
   const setMediaPaused = useAppStore((s) => s.setMediaPaused)
@@ -1512,6 +1520,49 @@ function LiveDisplayCard({
       }
       actions={
         <div className="flex items-center gap-1">
+          {/* v0.7.78 — Voice Control toggle (the Settings copy
+              promised this here; now it actually exists). When ON,
+              the speech provider listens for "next verse",
+              "previous verse", "go to John 3:16", "scroll up/down",
+              "start/pause/stop auto scroll", "clear screen",
+              "blank screen", and the LLM-extended translation /
+              quote intents. Mic must still be running. */}
+          <button
+            onClick={() => setVoiceControlEnabled(!voiceControlEnabled)}
+            className={cn(
+              'flex items-center gap-1 h-6 px-2 rounded text-[10px] uppercase tracking-wider font-semibold border transition-colors',
+              voiceControlEnabled
+                ? 'bg-amber-500/20 text-amber-200 border-amber-500/50'
+                : 'bg-transparent text-muted-foreground border-transparent hover:text-foreground',
+            )}
+            title={
+              voiceControlEnabled
+                ? 'Voice Control ON — listening for spoken commands. Click to disable.'
+                : 'Voice Control OFF — click to enable. Mic must be running on the Live tab.'
+            }
+          >
+            <Mic className="h-3 w-3" />
+            Voice
+          </button>
+          {/* v0.7.78 — Speaker-Follow toggle. When ON, a multi-verse
+              passage on Live auto-advances the highlight to the
+              verse the preacher is currently reading. */}
+          <button
+            onClick={() => setSpeakerFollowEnabled(!speakerFollowEnabled)}
+            className={cn(
+              'flex items-center gap-1 h-6 px-2 rounded text-[10px] uppercase tracking-wider font-semibold border transition-colors',
+              speakerFollowEnabled
+                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/50'
+                : 'bg-transparent text-muted-foreground border-transparent hover:text-foreground',
+            )}
+            title={
+              speakerFollowEnabled
+                ? 'Speaker-Follow ON — live highlight advances with the preacher. Click to disable.'
+                : 'Speaker-Follow OFF — click to enable so the live highlight tracks the preacher.'
+            }
+          >
+            Follow
+          </button>
           <button
             onClick={() => setHidden(!hidden)}
             className={cn(
@@ -2833,21 +2884,32 @@ function MediaCard() {
           if (e.lengthComputable) setUploadPct(Math.round((e.loaded / e.total) * 100))
         }
         xhr.onload = () => {
-          try {
-            const data = JSON.parse(xhr.responseText || '{}')
-            if (xhr.status >= 200 && xhr.status < 300 && data.url) {
-              resolve({
-                id: `media-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                name: f.name,
-                url: data.url,
-                kind: data.kind || (f.type.startsWith('video/') ? 'video' : 'image'),
-                size: f.size,
-              })
-            } else {
-              reject(new Error(data.error || `Upload failed (${xhr.status})`))
-            }
-          } catch (err) {
-            reject(err instanceof Error ? err : new Error(String(err)))
+          // v0.7.78 — Defensive response parsing. Pre-v0.7.78 the
+          // outer try/catch caught HTML error pages (Next 500 doc,
+          // dev overlay, AV interception, …) and surfaced them to
+          // the operator as the raw "Unexpected token '<'…" parser
+          // error. We now parse safely and translate non-JSON bodies
+          // into the actual HTTP status so the operator gets a
+          // useful diagnostic. Server-side details still appear in
+          // the Next console for the operator's media team to grep.
+          const raw = xhr.responseText || ''
+          let data: { error?: string; url?: string; kind?: 'image' | 'video' } = {}
+          try { data = raw ? JSON.parse(raw) : {} } catch { /* HTML / non-JSON */ }
+          if (xhr.status >= 200 && xhr.status < 300 && data.url) {
+            resolve({
+              id: `media-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              name: f.name,
+              url: data.url,
+              kind: data.kind || (f.type.startsWith('video/') ? 'video' : 'image'),
+              size: f.size,
+            })
+          } else {
+            reject(new Error(
+              data.error
+                || (xhr.status === 0
+                  ? 'Upload failed — network or server unreachable'
+                  : `Upload failed (${xhr.status}${xhr.statusText ? ' ' + xhr.statusText : ''})`),
+            ))
           }
         }
         xhr.onerror = () => reject(new Error('Network error'))

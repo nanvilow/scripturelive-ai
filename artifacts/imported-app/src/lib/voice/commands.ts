@@ -104,18 +104,25 @@ const PATTERNS: Pattern[] = [
     kind: 'previous_verse',
     label: 'Previous verse',
   },
-  // v0.7.4 — Chapter navigation. Placed BEFORE the bare "next" /
-  // "previous" triggers above so the longer "next chapter" pattern
-  // wins the leading-position match. (PATTERNS is iterated in order.)
+  // v0.7.78 — Operator request: when a preacher says "next chapter"
+  // mid-sermon, jumping a whole chapter loses the line he's currently
+  // reading. Operators want the spoken "next chapter" / "previous
+  // chapter" to behave like "next verse" / "previous verse" — step
+  // ONE verse forward (rolling over to the next chapter on the
+  // boundary, which the next_verse handler already does). We keep
+  // these patterns above the bare "next" / "previous" so the longer
+  // phrase wins the leading-position match, but route the kind to
+  // the verse-step intent so the existing next_verse dispatcher
+  // (with cross-chapter rollover) handles it.
   {
     triggers: ['next chapter'],
-    kind: 'next_chapter',
-    label: 'Next chapter',
+    kind: 'next_verse',
+    label: 'Next verse',
   },
   {
     triggers: ['previous chapter', 'prev chapter', 'last chapter'],
-    kind: 'previous_chapter',
-    label: 'Previous chapter',
+    kind: 'previous_verse',
+    label: 'Previous verse',
   },
   {
     triggers: ['go to', 'goto', 'open', 'show', 'display', 'jump to', 'turn to'],
