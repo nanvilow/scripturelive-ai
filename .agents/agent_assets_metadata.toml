@@ -617,3 +617,9 @@ id = "C8pvoOj-Q5smtw7e_pcdH"
 uri = "file://exports/ScriptureLive-AI-v0.7.98-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.98 — Source ZIP"
+
+[[outputs]]
+id = "YX_a9sufIvj6Ruy50BWYl"
+uri = "file://exports/ScriptureLive-AI-v0.7.100-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.100 — Source ZIP (synchronous hard-reset, architect-fixed)"
