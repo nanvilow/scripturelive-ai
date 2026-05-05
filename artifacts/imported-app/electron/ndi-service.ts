@@ -147,6 +147,31 @@ export class NdiService extends EventEmitter {
   // FFI function pointers stay loaded across runtime recycles —
   // only the live runtime state goes away.
   private runtimeAlive = false
+  // v0.7.103 — "Linger" mode tear-down. When the operator hits
+  // Disconnect, we used to call gracefulStop() which immediately
+  // ran send_destroy + NDIlib_destroy, retracting the mDNS
+  // advertisement and forcing OBS / vMix / Wirecast / Studio
+  // Monitor to drop our source from their lists. If the operator
+  // then hit Reconnect, OBS/vMix had already torn down the
+  // connection — they had to either re-add the source or restart.
+  //
+  // Linger mode keeps the NDI sender ALIVE on the wire for a
+  // grace window (default 60s) after operator-initiated stop:
+  //   • Fade-to-black is still emitted so receivers see the
+  //     source go off-air visually.
+  //   • The cached last frame is REPLACED with black so the
+  //     keep-alive ticker keeps pumping black at the configured
+  //     fps. To OBS/vMix the source is "live, just black".
+  //   • A timer is armed for `lingerSeconds`. If start() is called
+  //     before it fires, the timer is cancelled and the existing
+  //     sender is reused — receivers see fresh frames replace the
+  //     black with NO source-acquire flicker, NO mDNS round-trip,
+  //     NO OBS/vMix reconnect dance.
+  //   • If the timer fires (operator never came back), full
+  //     stop() runs and the sender is torn down for real.
+  private lingerTimer: NodeJS.Timeout | null = null
+  private lingerStartedAt = 0
+  private lingerExpectedMs = 0
 
   constructor() {
     super()
@@ -274,6 +299,20 @@ export class NdiService extends EventEmitter {
   async start(opts: NdiStartOptions): Promise<void> {
     if (!this.bindings) {
       throw new Error(this.unavailableReason() || 'NDI not available')
+    }
+    // v0.7.103 — Cancel any pending linger tear-down BEFORE the
+    // persistent-source short-circuit below. The operator is bringing
+    // the source back on-air; we must not let the linger timer fire
+    // mid-broadcast and kill the sender we just resumed. Cancellation
+    // is unconditional — even if the start() call ends up rebuilding
+    // the sender from scratch (rename / resolution change), the linger
+    // timer would only race with the rebuild.
+    if (this.lingerTimer) {
+      clearTimeout(this.lingerTimer)
+      this.lingerTimer = null
+      this.lingerStartedAt = 0
+      this.lingerExpectedMs = 0
+      this.emit('linger-cancelled')
     }
     // Persistent-stream rule: vMix / Wirecast / OBS / Studio Monitor
     // re-acquire a source when our send instance disappears, which
@@ -473,6 +512,15 @@ export class NdiService extends EventEmitter {
   }
 
   async stop(): Promise<void> {
+    // v0.7.103 — Clear any pending linger timer so it can't double-
+    // fire after we've already torn the sender down. Safe to call
+    // even when no linger is active (no-op).
+    if (this.lingerTimer) {
+      clearTimeout(this.lingerTimer)
+      this.lingerTimer = null
+      this.lingerStartedAt = 0
+      this.lingerExpectedMs = 0
+    }
     // v0.7.12 — Always stop the keep-alive ticker first so it can't
     // race with send_destroy and crash the native runtime by writing
     // into a freed sender pointer.
@@ -532,6 +580,127 @@ export class NdiService extends EventEmitter {
    * have only milliseconds before the process exits and the fadeout
    * would add user-perceptible latency.
    */
+  /**
+   * v0.7.103 — Linger stop. The operator-initiated Disconnect path
+   * (renderer ndi:stop). Behaves like gracefulStop in that we emit
+   * a brief fade-to-black, but instead of then running send_destroy
+   * + NDIlib_destroy (which would retract the mDNS advertisement
+   * and drop the source from OBS / vMix / Wirecast / Studio Monitor)
+   * we leave the NDI sender ALIVE on the wire for `lingerSeconds`,
+   * with the keep-alive ticker pumping the cached black frame at the
+   * configured fps. To downstream receivers the source remains
+   * "live, currently black" — they keep the connection open, keep
+   * the source listed, and never need a manual re-add.
+   *
+   * If start() is called inside the linger window with a matching
+   * source name + geometry + fps, we cancel the timer and reuse
+   * the existing sender — fresh real frames replace the black with
+   * zero source-acquire flicker.
+   *
+   * If the timer fires (operator never came back), full stop() runs
+   * and the sender is torn down for real.
+   *
+   * Trade-offs vs. the previous gracefulStop-everywhere policy:
+   *   + Reconnect within ~60s is instant and seamless to receivers.
+   *   + OBS/vMix never need to be touched on the operator's
+   *     downstream machine.
+   *   + The Disconnect button still gives a clean fade-to-black
+   *     event on the wire so operators downstream visually see
+   *     "they went off-air".
+   *   – ~60s of NDI runtime + worker threads + mDNS responder are
+   *     held alive after Disconnect. No CPU impact (keep-alive
+   *     pumps ~33ms BGRA copies of a single black buffer); ~8 MB
+   *     RAM at 1080p (one black BGRA buffer + sender state).
+   */
+  async lingerStop(blackFrameMs = 200, lingerSeconds = 60): Promise<void> {
+    if (!this.senderInstance || !this.bindings) {
+      return this.stop()
+    }
+    // Cancel any in-flight linger first (e.g., operator double-clicked
+    // Disconnect, or hit Disconnect→Reconnect→Disconnect rapidly).
+    if (this.lingerTimer) {
+      clearTimeout(this.lingerTimer)
+      this.lingerTimer = null
+    }
+    const w = this.status.width ?? 1280
+    const h = this.status.height ?? 720
+    const fps = this.status.fps || 30
+    const frameMs = Math.max(1, Math.floor(1000 / fps))
+    const totalFrames = Math.max(1, Math.ceil(blackFrameMs / frameMs))
+    // BGRA opaque black: B=0,G=0,R=0,A=255. Held for the duration of
+    // the linger window via keep-alive re-emission.
+    const black = Buffer.alloc(w * h * 4)
+    for (let i = 3; i < black.length; i += 4) black[i] = 255
+    // Burst the fade-to-black so receivers see the visual go-dark
+    // event immediately. clock_video=true paces these naturally.
+    for (let i = 0; i < totalFrames; i++) {
+      this.nativeSendFrame(black, w, h)
+    }
+    // Pin the cached frame to BLACK so the keep-alive ticker keeps
+    // emitting black at the configured fps for the linger window —
+    // the source stays "alive but black" to receivers, the mDNS
+    // advertisement stays published, and OBS/vMix retain their
+    // open connection.
+    this.lastFrame = { buffer: black, width: w, height: h, ts: Date.now() }
+    // Schedule the real tear-down. clamp to [1s, 10min] for safety.
+    const lingerMs = Math.max(1000, Math.min(600_000, Math.floor(lingerSeconds * 1000)))
+    this.lingerStartedAt = Date.now()
+    this.lingerExpectedMs = lingerMs
+    this.lingerTimer = setTimeout(() => {
+      this.lingerTimer = null
+      const heldMs = Date.now() - this.lingerStartedAt
+      this.lingerStartedAt = 0
+      this.lingerExpectedMs = 0
+      console.log(`[ndi] linger window expired after ${heldMs}ms — running full stop()`)
+      void this.stop().catch(() => undefined)
+      this.emit('linger-expired')
+    }, lingerMs)
+    console.log(`[ndi] linger started — sender held alive for ${lingerMs}ms`)
+    this.emit('linger-started', { lingerMs })
+    // NOTE: do NOT change this.status.running here. From the
+    // wire/protocol perspective the sender IS still running; only
+    // the visual content is now black. main.ts will emit its own
+    // ndi:status with running=true so the renderer UI can show
+    // an appropriate "off-air (holding source)" indicator if it
+    // wants to (it doesn't have to — the existing UI just sees
+    // the source still listed in Studio Monitor and is happy).
+  }
+
+  /**
+   * v0.7.103 — Cancel an in-flight linger window without calling
+   * start(). Useful for shutdown paths where we want to skip the
+   * linger entirely and tear down immediately. Returns true if
+   * a linger was actually cancelled.
+   */
+  cancelLinger(): boolean {
+    if (this.lingerTimer) {
+      clearTimeout(this.lingerTimer)
+      this.lingerTimer = null
+      this.lingerStartedAt = 0
+      this.lingerExpectedMs = 0
+      this.emit('linger-cancelled')
+      return true
+    }
+    return false
+  }
+
+  /** v0.7.103 — Whether the sender is currently in linger mode. */
+  isLingering(): boolean {
+    return this.lingerTimer !== null
+  }
+
+  /**
+   * v0.7.103 — Diagnostic: how much of the linger window remains.
+   * Returns 0 when not lingering. Useful for surfacing a countdown
+   * to operators in the future ("source held for OBS/vMix — 47s
+   * left until full disconnect").
+   */
+  lingerRemainingMs(): number {
+    if (!this.lingerTimer) return 0
+    const elapsed = Date.now() - this.lingerStartedAt
+    return Math.max(0, this.lingerExpectedMs - elapsed)
+  }
+
   async gracefulStop(blackFrameMs = 500): Promise<void> {
     if (!this.senderInstance || !this.bindings) {
       return this.stop()

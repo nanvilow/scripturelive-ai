@@ -2225,19 +2225,53 @@ function setupIpc() {
   ipcMain.handle('ndi:stop', () =>
     serializeNdi(async () => {
       try {
-        // v0.7.12 — Stop the frame capture FIRST so no new frames
-        // arrive into nativeSendFrame while we're emitting the
-        // black-frame fadeout. Then call gracefulStop() so downstream
-        // receivers (OBS, vMix, Wirecast, NDI Studio Monitor) get a
-        // clean ~200ms fade-to-black on the wire instead of a frozen
-        // last-frame, and have a clear "source went off-air" event
-        // they can react to without the operator needing to close /
-        // reopen them. Plain stop() is reserved for emergency shutdown
-        // paths (before-quit, crash) where adding 200ms would risk
-        // losing the exit deadline.
+        // v0.7.103 — LINGER MODE on operator-initiated Disconnect.
+        //
+        // Pre-v0.7.103 behaviour: this handler called ndi.gracefulStop()
+        // which fades to black, then immediately runs send_destroy +
+        // NDIlib_destroy. The destroy retracts our mDNS advertisement,
+        // tears down the worker threads, and severs every TCP
+        // connection downstream NDI receivers had open to us. OBS and
+        // vMix react by dropping our source from their lists. If the
+        // operator then hits Reconnect, OBS/vMix have already torn
+        // down their side — they need a manual re-add, or to be
+        // restarted, before they re-acquire our new sender. Operator
+        // escalation: "OBS/vMix close before NDI can reconnect".
+        //
+        // v0.7.103 fix: ndi.lingerStop(200, 60) emits the same brief
+        // fade-to-black for downstream visual continuity, then HOLDS
+        // the NDI sender alive on the wire for 60 seconds, with the
+        // keep-alive ticker pumping a black frame at the configured
+        // fps. To OBS/vMix the source remains "live, currently black"
+        // — they keep the connection open and the source listed.
+        //
+        // If the operator hits Reconnect within the 60s window, the
+        // ndi:start handler below detects we still have a live sender
+        // (persistent-source rule in ndi.start) and reuses it — the
+        // linger timer is cancelled at the top of ndi.start, and
+        // fresh real frames replace the held black with zero source-
+        // acquire flicker on the receiver side.
+        //
+        // If the operator does not come back within 60s, the linger
+        // timer fires and runs full ndi.stop() (send_destroy +
+        // NDIlib_destroy + runtime recycle) — same end-state as the
+        // pre-v0.7.103 behaviour, just delayed by the grace window.
+        //
+        // The frame-capture BrowserWindow is still torn down here
+        // because (a) we don't want to keep capturing the renderer
+        // for a now-off-air feed, and (b) we don't want a stray
+        // capture-window frame to "un-black" the held linger frame
+        // mid-window. Reconnect inside the linger window will
+        // re-create a fresh frame-capture from scratch (see
+        // ndi:start above) which is fine — the heavy expense was
+        // the NDI sender setup + mDNS round-trip, which we skip.
+        //
+        // Plain ndi.stop() is reserved for emergency shutdown paths
+        // (before-quit, crash) where the 60s linger would block exit
+        // and where downstream UX continuity is irrelevant anyway.
         if (frameCapture) { await frameCapture.stop(); frameCapture = null }
         frameCaptureFlags = null
-        await ndi.gracefulStop()
+        await ndi.lingerStop(200, 60)
         broadcastNdiStatus(ndi.getStatus())
         return { ok: true }
       } catch (err) {

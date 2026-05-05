@@ -641,3 +641,9 @@ id = "XeOu-WEIXU2LPDLcMHCu1"
 uri = "file://exports/ScriptureLive-AI-v0.7.102-zai-handoff.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.102 — z.ai Handoff Bundle (upload this)"
+
+[[outputs]]
+id = "MvAfMl2KQRZFvofjlrPL7"
+uri = "file://exports/ScriptureLive-AI-v0.7.103-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.103 — NDI Linger Mode (OBS/vMix stays connected)"
