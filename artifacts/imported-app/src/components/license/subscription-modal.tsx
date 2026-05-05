@@ -592,7 +592,25 @@ export function SubscriptionModal() {
                 </a>
               )}
             </div>
-            <Button className="bg-emerald-600 hover:bg-emerald-500" onClick={() => setOpen(false)}>Close</Button>
+            <Button className="bg-emerald-600 hover:bg-emerald-500" onClick={() => {
+              // v0.7.99 — After a successful activation, HARD RELOAD
+              // the renderer instead of just closing the modal.
+              // Reasoning: the React tree was rendered with the
+              // pre-activation license state (locked / no subscription).
+              // Soft-closing the modal triggers a soft refresh() that
+              // tries to re-mount lock-overlay / license-provider with
+              // freshly-active subscription data while in-flight fetches
+              // (telemetry pings, settings hydration, congregation
+              // output) are still running with the old auth context.
+              // One of those crashes the renderer → chrome-error.
+              // Hard reload gives us a guaranteed-clean tree on /,
+              // entering the app fresh as a fully-activated install.
+              // Same approach as handleDeactivate / handleTransfer.
+              setOpen(false)
+              setTimeout(() => {
+                try { window.location.assign('/') } catch { window.location.href = '/' }
+              }, 100)
+            }}>Close</Button>
           </div>
         )}
       </DialogContent>
