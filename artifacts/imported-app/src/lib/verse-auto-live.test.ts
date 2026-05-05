@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   ALTERNATIVE_MIN_CONFIDENCE,
   AUTO_LIVE_MIN_CONFIDENCE,
+  EXPLICIT_AUTO_LIVE_MIN,
   LIVE_COLUMN_MIN_CONFIDENCE,
   LIVE_HOLD_MS,
+  SEMANTIC_AUTO_LIVE_MIN,
   SUGGESTION_MAX_EXCLUSIVE,
   SUGGESTION_MIN_CONFIDENCE,
   STABILITY_MIN_FRAMES,
@@ -38,25 +40,27 @@ const v = (
 })
 
 // ──────────────────────────────────────────────────────────────────
-// THRESHOLDS — v0.7.106 spec compliance (jh9YcK2h)
+// THRESHOLDS — v0.7.107 spec compliance
 // ──────────────────────────────────────────────────────────────────
-describe('thresholds (v0.7.106 — jh9YcK2h spec)', () => {
-  it('auto-live floor is 0.65 per spec ("65% – 100%")', () => {
-    expect(AUTO_LIVE_MIN_CONFIDENCE).toBe(0.65)
+describe('thresholds (v0.7.107 — per-column auto-live)', () => {
+  it('explicit / "Bible Reference Quoted" floor is 0.60 per spec', () => {
+    expect(EXPLICIT_AUTO_LIVE_MIN).toBe(0.6)
   })
-  it('suggestions band is 0.10–0.65 (failsafe rule)', () => {
+  it('semantic / "Auto Verse Match" floor is 0.80 per spec', () => {
+    expect(SEMANTIC_AUTO_LIVE_MIN).toBe(0.8)
+  })
+  it('AUTO_LIVE_MIN_CONFIDENCE legacy export = lowest per-source floor (0.60)', () => {
+    expect(AUTO_LIVE_MIN_CONFIDENCE).toBe(0.6)
+  })
+  it('suggestions band is 0.10–0.50 per spec', () => {
     expect(SUGGESTION_MIN_CONFIDENCE).toBe(0.1)
-    expect(SUGGESTION_MAX_EXCLUSIVE).toBe(0.65)
-  })
-  it('live column floor matches the suggestion ceiling (no dead-band)', () => {
-    expect(LIVE_COLUMN_MIN_CONFIDENCE).toBe(SUGGESTION_MAX_EXCLUSIVE)
-    expect(LIVE_COLUMN_MIN_CONFIDENCE).toBe(AUTO_LIVE_MIN_CONFIDENCE)
+    expect(SUGGESTION_MAX_EXCLUSIVE).toBe(0.5)
   })
   it('stability gate is 1 frame (real-time, no wait)', () => {
     expect(STABILITY_MIN_FRAMES).toBe(1)
   })
-  it('hold window is 3.5 s (mid of spec\'s "3-4 seconds")', () => {
-    expect(LIVE_HOLD_MS).toBe(3500)
+  it('hold window is 0 ms (continuous — no anti-flicker dwell)', () => {
+    expect(LIVE_HOLD_MS).toBe(0)
   })
   it('legacy ALTERNATIVE_MIN_CONFIDENCE re-exports as suggestion floor', () => {
     expect(ALTERNATIVE_MIN_CONFIDENCE).toBe(SUGGESTION_MIN_CONFIDENCE)
@@ -68,28 +72,25 @@ describe('thresholds (v0.7.106 — jh9YcK2h spec)', () => {
 })
 
 // ──────────────────────────────────────────────────────────────────
-// pickAutoLiveMatch — generic 0.65 floor
+// pickAutoLiveBySource — per-column floors
 // ──────────────────────────────────────────────────────────────────
-describe('pickAutoLiveMatch', () => {
-  it('picks the HIGHEST-confidence verse', () => {
-    const detected = [v('Prov.4.7', 0.66), v('Prov.1.7', 0.89), v('Eccl.12.13', 0.95)]
-    expect(pickAutoLiveMatch(detected)?.id).toBe('Eccl.12.13')
+describe('pickAutoLiveBySource (per-column floors)', () => {
+  it('explicit at 0.60 IS live-eligible (boundary inclusive)', () => {
+    expect(pickAutoLiveBySource([v('A', 0.6, 1, 'explicit')], 'explicit')?.id).toBe('A')
   })
-
-  it('65% IS live-eligible (boundary inclusive)', () => {
-    expect(pickAutoLiveMatch([v('Ps.23.1', 0.65)])?.id).toBe('Ps.23.1')
+  it('explicit at 0.59 is NOT live-eligible', () => {
+    expect(pickAutoLiveBySource([v('A', 0.59, 1, 'explicit')], 'explicit')).toBeNull()
   })
-
-  it('64.9% is NOT live-eligible (failsafe routes to suggestions)', () => {
-    expect(pickAutoLiveMatch([v('Ps.23.1', 0.649)])).toBeNull()
+  it('semantic at 0.80 IS live-eligible (boundary inclusive)', () => {
+    expect(pickAutoLiveBySource([v('A', 0.8, 1, 'semantic')], 'semantic')?.id).toBe('A')
   })
-})
-
-// ──────────────────────────────────────────────────────────────────
-// pickAutoLiveBySource — independence
-// ──────────────────────────────────────────────────────────────────
-describe('pickAutoLiveBySource (per-pipeline independence)', () => {
-  it('explicit pick ignores semantic candidates', () => {
+  it('semantic at 0.79 is NOT live-eligible (strict 80% floor)', () => {
+    expect(pickAutoLiveBySource([v('A', 0.79, 1, 'semantic')], 'semantic')).toBeNull()
+  })
+  it('semantic at 0.65 (would have fired pre-v0.7.107) is now NOT eligible', () => {
+    expect(pickAutoLiveBySource([v('A', 0.65, 1, 'semantic')], 'semantic')).toBeNull()
+  })
+  it('explicit pick ignores semantic candidates and vice versa', () => {
     const detected = [
       v('Amos.1.3', 0.91, 1000, 'explicit'),
       v('John.4.24', 0.99, 2000, 'semantic'),
@@ -97,33 +98,61 @@ describe('pickAutoLiveBySource (per-pipeline independence)', () => {
     expect(pickAutoLiveBySource(detected, 'explicit')?.id).toBe('Amos.1.3')
     expect(pickAutoLiveBySource(detected, 'semantic')?.id).toBe('John.4.24')
   })
-
   it('returns null when its column has no qualifying candidate', () => {
     const detected = [v('Ps.23.1', 0.92, 1000, 'semantic')]
     expect(pickAutoLiveBySource(detected, 'explicit')).toBeNull()
   })
-
-  it('an unsourced detection defaults to the explicit column', () => {
-    const detected = [v('Untagged.1.1', 0.91, 1000)]
+  it('an unsourced detection defaults to the explicit column at 0.60+', () => {
+    const detected = [v('Untagged.1.1', 0.61, 1000)]
     expect(pickAutoLiveBySource(detected, 'explicit')?.id).toBe('Untagged.1.1')
     expect(pickAutoLiveBySource(detected, 'semantic')).toBeNull()
   })
+  it('picks the NEWEST qualifying verse within its source (spec: continuous fire)', () => {
+    const detected = [
+      v('Old',    0.95, 1, 'explicit'),
+      v('Mid',    0.75, 2, 'explicit'),
+      v('Newest', 0.61, 3, 'explicit'),
+    ]
+    expect(pickAutoLiveBySource(detected, 'explicit')?.id).toBe('Newest')
+  })
 
-  it('rejects a 0.64 candidate (below the auto-live floor)', () => {
-    const detected = [v('A', 0.64, 1, 'explicit')]
-    expect(pickAutoLiveBySource(detected, 'explicit')).toBeNull()
+  it('a NEW low-confidence-but-qualifying hit displaces an OLDER high-confidence one', () => {
+    // The bug this prevents: projector gets stuck on the first 0.95
+    // hit of the sermon and never advances even when a new 0.62 hit
+    // comes in further down the page.
+    const detected = [
+      v('OldHigh',  0.95, 1000, 'explicit'),
+      v('NewLow',   0.62, 9000, 'explicit'),
+    ]
+    expect(pickAutoLiveBySource(detected, 'explicit')?.id).toBe('NewLow')
   })
 })
 
 // ──────────────────────────────────────────────────────────────────
-// suggestionsFor — column 3 contents (10-64.9% band)
+// pickAutoLiveMatch — generic floor (lowest per-source = 0.60)
 // ──────────────────────────────────────────────────────────────────
-describe('suggestionsFor (column 3 — 10%–64.9% manual-only band)', () => {
-  it('includes 0.10–0.64 detections regardless of source', () => {
+describe('pickAutoLiveMatch (legacy — lowest per-source floor)', () => {
+  it('60% IS live-eligible (boundary inclusive)', () => {
+    expect(pickAutoLiveMatch([v('Ps.23.1', 0.6)])?.id).toBe('Ps.23.1')
+  })
+  it('59% is NOT live-eligible', () => {
+    expect(pickAutoLiveMatch([v('Ps.23.1', 0.59)])).toBeNull()
+  })
+  it('picks the HIGHEST-confidence verse (legacy path retains confidence ordering)', () => {
+    const detected = [v('A', 0.66), v('B', 0.89), v('C', 0.95)]
+    expect(pickAutoLiveMatch(detected)?.id).toBe('C')
+  })
+})
+
+// ──────────────────────────────────────────────────────────────────
+// suggestionsFor — column 3 (10-49% manual-only band)
+// ──────────────────────────────────────────────────────────────────
+describe('suggestionsFor (column 3 — 10%–49% manual-only)', () => {
+  it('includes 0.10–0.49 detections regardless of source', () => {
     const detected = [
       v('A', 0.92, 1000, 'explicit'),  // → live column
-      v('B', 0.65, 2000, 'semantic'),  // → live column (boundary)
-      v('C', 0.55, 3000, 'explicit'),
+      v('B', 0.61, 2000, 'explicit'),  // → live column
+      v('C', 0.49, 3000, 'explicit'),  // 49% → spec drops; we treat <0.50 as suggestion
       v('D', 0.30, 4000, 'semantic'),
       v('E', 0.10, 5000, 'semantic'),
       v('F', 0.09, 6000, 'semantic'),  // dropped (below floor)
@@ -132,20 +161,24 @@ describe('suggestionsFor (column 3 — 10%–64.9% manual-only band)', () => {
     expect(ids).toEqual(['E', 'D', 'C'])
   })
 
-  it('a 0.65 detection lives in cols 1/2, NOT col 3 (boundary)', () => {
-    const detected = [v('SixtyFive', 0.65, 1000, 'semantic')]
-    expect(suggestionsFor(detected)).toEqual([])
+  it('a 0.50 detection is NOT in suggestions (boundary exclusive top)', () => {
+    expect(suggestionsFor([v('Half', 0.5, 1000, 'semantic')])).toEqual([])
   })
 
-  it('a 0.64 detection lives in col 3 (boundary)', () => {
-    const detected = [v('SixtyFour', 0.64, 1000, 'semantic')]
-    expect(suggestionsFor(detected).map((s) => s.id)).toEqual(['SixtyFour'])
+  it('a 0.49 detection IS in suggestions (just below the cap)', () => {
+    expect(suggestionsFor([v('JustUnder', 0.49, 1000, 'semantic')]).map((s) => s.id))
+      .toEqual(['JustUnder'])
+  })
+
+  it('a 0.10 detection IS in suggestions (boundary inclusive floor)', () => {
+    expect(suggestionsFor([v('Floor', 0.1, 1000, 'semantic')]).map((s) => s.id))
+      .toEqual(['Floor'])
   })
 
   it('includes anything tagged source=suggestion regardless of confidence', () => {
     const detected = [
       v('LowSugg', 0.05, 1000, 'suggestion'),
-      v('OtherLow', 0.05, 2000, 'semantic'), // dropped (below floor, not tagged)
+      v('OtherLow', 0.05, 2000, 'semantic'), // dropped
     ]
     expect(suggestionsFor(detected).map((s) => s.id)).toEqual(['LowSugg'])
   })
@@ -174,36 +207,59 @@ describe('alternativesFor (legacy 2-column compat)', () => {
       v('A', 0.95),
       v('B', 0.92),
       v('C', 0.55),
-      v('D', 0.09), // dropped (below 0.10 floor)
+      v('D', 0.09), // dropped
     ]
     expect(alternativesFor(detected, 'A').map((a) => a.id).sort()).toEqual(['B', 'C'])
   })
 })
 
-describe('liveColumnFor (cols 1 & 2)', () => {
-  it('includes detections at or above 0.65 from its source only', () => {
+// ──────────────────────────────────────────────────────────────────
+// liveColumnFor — per-source floor
+// ──────────────────────────────────────────────────────────────────
+describe('liveColumnFor (cols 1 & 2 — per-source floors)', () => {
+  it('explicit column includes ≥0.60 from explicit source only, NEWEST first', () => {
     const detected = [
-      v('Hi', 0.92, 1, 'explicit'),
-      v('Mid', 0.7, 2, 'explicit'),
-      v('Edge', 0.65, 3, 'explicit'),    // boundary inclusive
-      v('Sub', 0.64, 4, 'explicit'),     // → suggestions
-      v('Sem', 0.91, 5, 'semantic'),     // wrong column
+      v('Hi',   0.92, 1, 'explicit'),
+      v('Mid',  0.7,  2, 'explicit'),
+      v('Edge', 0.6,  3, 'explicit'),     // boundary inclusive
+      v('Sub',  0.59, 4, 'explicit'),     // → suggestions
+      v('Sem',  0.91, 5, 'semantic'),     // wrong column
     ]
-    expect(liveColumnFor(detected, 'explicit').map((d) => d.id)).toEqual(['Hi', 'Mid', 'Edge'])
+    // Newest detected first → Edge (3), Mid (2), Hi (1).
+    expect(liveColumnFor(detected, 'explicit').map((d) => d.id)).toEqual(['Edge', 'Mid', 'Hi'])
   })
 
-  it('orders by confidence desc, then newest', () => {
+  it('semantic column requires ≥0.80 (stricter than explicit), NEWEST first', () => {
     const detected = [
-      v('A', 0.7, 1000, 'semantic'),
+      v('A', 0.95, 1, 'semantic'),
+      v('B', 0.80, 2, 'semantic'), // boundary inclusive
+      v('C', 0.79, 3, 'semantic'), // dropped
+      v('D', 0.65, 4, 'semantic'), // dropped
+    ]
+    expect(liveColumnFor(detected, 'semantic').map((d) => d.id)).toEqual(['B', 'A'])
+  })
+
+  it('orders by NEWEST first, confidence as tiebreak only', () => {
+    const detected = [
+      v('A', 0.85, 1000, 'semantic'),
       v('B', 0.95, 2000, 'semantic'),
       v('C', 0.95, 9000, 'semantic'),
     ]
+    // C is newest → top. B then A by detectedAt.
     expect(liveColumnFor(detected, 'semantic').map((d) => d.id)).toEqual(['C', 'B', 'A'])
+  })
+
+  it('NEW low-conf detection sits ABOVE OLDER high-conf detection', () => {
+    const detected = [
+      v('OldHigh', 0.95, 1000, 'explicit'),
+      v('NewLow',  0.62, 9000, 'explicit'),
+    ]
+    expect(liveColumnFor(detected, 'explicit').map((d) => d.id)).toEqual(['NewLow', 'OldHigh'])
   })
 })
 
 // ──────────────────────────────────────────────────────────────────
-// evaluateStability — pure step function (now defaults to 1 frame)
+// evaluateStability — pure step function (defaults to 1 frame)
 // ──────────────────────────────────────────────────────────────────
 describe('evaluateStability', () => {
   it('clears state when candidate is null', () => {
@@ -240,21 +296,16 @@ describe('evaluateStability', () => {
 })
 
 // ──────────────────────────────────────────────────────────────────
-// shouldFireAutoLive — legacy two-arg sticky decision (0.65 floor)
+// shouldFireAutoLive — legacy two-arg sticky decision
 // ──────────────────────────────────────────────────────────────────
-describe('shouldFireAutoLive (legacy compat — fires on first ≥0.65)', () => {
-  it('fires on the first ≥0.65 match when nothing is live', () => {
-    const r = shouldFireAutoLive([v('John.4.24', 0.66, 1, 'semantic')], null)
+describe('shouldFireAutoLive (legacy compat)', () => {
+  it('fires on the first ≥0.60 explicit match when nothing is live', () => {
+    const r = shouldFireAutoLive([v('John.4.24', 0.66, 1, 'explicit')], null)
     expect(r.fire).toBe(true)
     if (r.fire) expect(r.verse.id).toBe('John.4.24')
   })
 
-  it('does NOT fire when the top match is below 0.65', () => {
-    const r = shouldFireAutoLive([v('Job.28.28', 0.64, 1, 'explicit')], null)
-    expect(r.fire).toBe(false)
-  })
-
-  it('STICKY: a later 0.99 match does NOT displace the live verse', () => {
+  it('STICKY: a later match does NOT displace the live verse', () => {
     const detected = [
       v('John.4.24', 0.92, 1, 'explicit'),
       v('Prov.3.5', 0.99, 2, 'semantic'),
@@ -270,14 +321,14 @@ describe('shouldFireAutoLive (legacy compat — fires on first ≥0.65)', () => 
 })
 
 // ──────────────────────────────────────────────────────────────────
-// shouldFireAutoLiveStable (v0.7.106 — hold window + real-time gate)
+// shouldFireAutoLiveStable (v0.7.107 — continuous + per-column)
 // ──────────────────────────────────────────────────────────────────
-describe('shouldFireAutoLiveStable (v0.7.106 — real-time + 3.5s hold)', () => {
+describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () => {
   const fresh = (): AutoFireGateState => ({ ...initialAutoFireGate })
 
-  it('fires IMMEDIATELY on first detection ≥0.65 (real-time spec)', () => {
+  it('fires IMMEDIATELY on first explicit ≥0.60 (real-time spec)', () => {
     const r = shouldFireAutoLiveStable(
-      [v('Amos.1.3', 0.66, 1, 'explicit')],
+      [v('Amos.1.3', 0.61, 1, 'explicit')],
       null,
       fresh(),
       { nowMs: 1000 },
@@ -286,30 +337,50 @@ describe('shouldFireAutoLiveStable (v0.7.106 — real-time + 3.5s hold)', () => 
     if (r.fire) {
       expect(r.verse.id).toBe('Amos.1.3')
       expect(r.source).toBe('explicit')
-      expect(r.nextStability.lastFireAtMs).toBe(1000)
     }
   })
 
-  it('does NOT fire when the top is below 0.65', () => {
-    const r = shouldFireAutoLiveStable([v('Lo', 0.64, 1, 'explicit')], null, fresh(), {
+  it('fires IMMEDIATELY on first semantic ≥0.80 (real-time spec)', () => {
+    const r = shouldFireAutoLiveStable(
+      [v('John.4.24', 0.81, 1, 'semantic')],
+      null,
+      fresh(),
+      { nowMs: 1000 },
+    )
+    expect(r.fire).toBe(true)
+    if (r.fire) {
+      expect(r.verse.id).toBe('John.4.24')
+      expect(r.source).toBe('semantic')
+    }
+  })
+
+  it('does NOT fire when the explicit top is below 0.60', () => {
+    const r = shouldFireAutoLiveStable([v('Lo', 0.59, 1, 'explicit')], null, fresh(), {
       nowMs: 1000,
     })
     expect(r.fire).toBe(false)
   })
 
-  it('64.9% never fires regardless of how many frames pass', () => {
+  it('does NOT fire when the semantic top is below 0.80', () => {
+    const r = shouldFireAutoLiveStable([v('Lo', 0.79, 1, 'semantic')], null, fresh(), {
+      nowMs: 1000,
+    })
+    expect(r.fire).toBe(false)
+  })
+
+  it('semantic at 0.65 NEVER fires (was firing in v0.7.106 — now correctly held)', () => {
     let g = fresh()
     let r
     for (let i = 0; i < 10; i++) {
-      r = shouldFireAutoLiveStable([v('X', 0.649, 1, 'explicit')], null, g, { nowMs: 1000 + i })
+      r = shouldFireAutoLiveStable([v('X', 0.65, 1, 'semantic')], null, g, { nowMs: 1000 + i })
       g = r.nextStability
     }
     expect(r!.fire).toBe(false)
   })
 
-  it('HOLD WINDOW: refuses to fire within 3.5s of a previous fire', () => {
+  it('CONTINUOUS: a SECOND fire happens immediately after the first (no hold window)', () => {
     let g = fresh()
-    // Fire at t=1000
+    // First fire at t=1000
     let r = shouldFireAutoLiveStable(
       [v('First', 0.9, 1, 'explicit')],
       null,
@@ -318,67 +389,45 @@ describe('shouldFireAutoLiveStable (v0.7.106 — real-time + 3.5s hold)', () => 
     )
     expect(r.fire).toBe(true)
     g = r.nextStability
-    expect(g.lastFireAtMs).toBe(1000)
 
-    // New top arrives at t=2000 (well within 3.5 s window) — must NOT fire
+    // Second fire at t=1001 (1 ms later) — was BLOCKED in v0.7.106 by
+    // the 3.5 s hold window. v0.7.107 must fire immediately.
     r = shouldFireAutoLiveStable(
-      [v('Second', 0.95, 2000, 'explicit')],
+      [v('Second', 0.95, 2, 'explicit')],
       'First',
       g,
-      { nowMs: 2000 },
-    )
-    expect(r.fire).toBe(false)
-    expect(r.nextStability).toBe(g) // gate returned unchanged
-
-    // At exactly t = 1000 + 3500 = 4500 — boundary, hold has elapsed
-    r = shouldFireAutoLiveStable(
-      [v('Second', 0.95, 2000, 'explicit')],
-      'First',
-      g,
-      { nowMs: 4500 },
+      { nowMs: 1001 },
     )
     expect(r.fire).toBe(true)
-    if (r.fire) {
-      expect(r.verse.id).toBe('Second')
-      expect(r.nextStability.lastFireAtMs).toBe(4500)
-    }
+    if (r.fire) expect(r.verse.id).toBe('Second')
   })
 
-  it('AFTER HOLD: a different top auto-fires (replaces previous)', () => {
-    let g: AutoFireGateState = { ...fresh(), lastFireAtMs: 1000 }
-    const r = shouldFireAutoLiveStable(
-      [v('NewTop', 0.91, 1, 'explicit')],
-      'OldLive',
-      g,
-      { nowMs: 5000 }, // 4 s later, hold elapsed
-    )
-    expect(r.fire).toBe(true)
-    if (r.fire) {
-      expect(r.verse.id).toBe('NewTop')
-      expect(r.nextStability.lastFireAtMs).toBe(5000)
+  it('CONTINUOUS: third, fourth, fifth fires all proceed back-to-back', () => {
+    let g = fresh()
+    const ids: string[] = []
+    for (let i = 0; i < 5; i++) {
+      const id = `V${i}`
+      const r = shouldFireAutoLiveStable(
+        [v(id, 0.9, i, 'explicit')],
+        ids[ids.length - 1] ?? null,
+        g,
+        { nowMs: 1000 + i },
+      )
+      g = r.nextStability
+      if (r.fire) ids.push(r.verse.id)
     }
+    expect(ids).toEqual(['V0', 'V1', 'V2', 'V3', 'V4'])
   })
 
-  it('SAME top.id as currentLiveId does NOT refire (current verse "stays indefinitely")', () => {
+  it('SAME top.id as currentLiveId does NOT refire (allowed dedup per spec)', () => {
     const g: AutoFireGateState = { ...fresh(), lastFireAtMs: 1000 }
     const r = shouldFireAutoLiveStable(
       [v('Already.Live', 0.99, 1, 'explicit')],
       'Already.Live',
       g,
-      { nowMs: 99999 }, // way past hold window
+      { nowMs: 99999 },
     )
     expect(r.fire).toBe(false)
-  })
-
-  it('hold window does NOT block the very FIRST fire (lastFireAtMs=0)', () => {
-    const g = fresh() // lastFireAtMs: 0
-    const r = shouldFireAutoLiveStable(
-      [v('First.Ever', 0.9, 1, 'explicit')],
-      null,
-      g,
-      { nowMs: 100 }, // even at t=100ms, fires because lastFireAtMs=0
-    )
-    expect(r.fire).toBe(true)
   })
 
   it('explicit and semantic columns track INDEPENDENTLY (counters)', () => {
@@ -387,9 +436,9 @@ describe('shouldFireAutoLiveStable (v0.7.106 — real-time + 3.5s hold)', () => 
       v('Amos.1.3', 0.91, 1, 'explicit'),
       v('John.4.24', 0.92, 2, 'semantic'),
     ]
-    // First call fires explicit (tiebreak winner) — counters both bumped
+    // minFrames=2 — both stay at count 1 on first call
     const r = shouldFireAutoLiveStable(detected, null, g, { nowMs: 1000, minFrames: 2 })
-    expect(r.fire).toBe(false) // minFrames=2, both at count 1
+    expect(r.fire).toBe(false)
     g = r.nextStability
     expect(g.explicit.count).toBe(1)
     expect(g.semantic.count).toBe(1)
@@ -404,6 +453,35 @@ describe('shouldFireAutoLiveStable (v0.7.106 — real-time + 3.5s hold)', () => 
     const r = shouldFireAutoLiveStable(detected, null, g, { nowMs: 1000 })
     expect(r.fire).toBe(true)
     if (r.fire) expect(r.source).toBe('explicit')
+  })
+
+  it('NEW detection (lower confidence) replaces OLDER live verse on next frame', () => {
+    let g = fresh()
+    // First fire: OldHigh (0.95) at t=1000
+    let r = shouldFireAutoLiveStable(
+      [v('OldHigh', 0.95, 1000, 'explicit')],
+      null,
+      g,
+      { nowMs: 1000 },
+    )
+    expect(r.fire).toBe(true)
+    if (r.fire) expect(r.verse.id).toBe('OldHigh')
+    g = r.nextStability
+
+    // Second frame: a NEW lower-confidence (but qualifying) detection
+    // arrives. Spec: it MUST become the new live verse, even though
+    // OldHigh is still in the list at higher confidence.
+    r = shouldFireAutoLiveStable(
+      [
+        v('OldHigh', 0.95, 1000, 'explicit'),
+        v('NewLow',  0.62, 2000, 'explicit'),
+      ],
+      'OldHigh',
+      g,
+      { nowMs: 2000 },
+    )
+    expect(r.fire).toBe(true)
+    if (r.fire) expect(r.verse.id).toBe('NewLow')
   })
 
   it('semantic-only candidate fires on the semantic side', () => {
@@ -436,15 +514,33 @@ describe('shouldFireAutoLiveStable (v0.7.106 — real-time + 3.5s hold)', () => 
     expect(r!.fire).toBe(false)
   })
 
-  it('honours opts.holdMs override (e.g. 0 = no anti-flicker)', () => {
-    let g: AutoFireGateState = { ...fresh(), lastFireAtMs: 1000 }
-    // With holdMs=0 the window is always elapsed, so a different
-    // top fires immediately.
-    const r = shouldFireAutoLiveStable(
-      [v('Quick', 0.9, 1, 'explicit')],
-      'Old',
+  it('honours opts.holdMs override (re-enables the dwell window)', () => {
+    let g = fresh()
+    // First fire at t=1000
+    let r = shouldFireAutoLiveStable(
+      [v('First', 0.9, 1, 'explicit')],
+      null,
       g,
-      { nowMs: 1001, holdMs: 0 },
+      { nowMs: 1000, holdMs: 3500 },
+    )
+    expect(r.fire).toBe(true)
+    g = r.nextStability
+
+    // Second fire at t=2000 — within 3.5 s window, BLOCKED
+    r = shouldFireAutoLiveStable(
+      [v('Second', 0.95, 2, 'explicit')],
+      'First',
+      g,
+      { nowMs: 2000, holdMs: 3500 },
+    )
+    expect(r.fire).toBe(false)
+
+    // After window — fires
+    r = shouldFireAutoLiveStable(
+      [v('Second', 0.95, 2, 'explicit')],
+      'First',
+      g,
+      { nowMs: 4500, holdMs: 3500 },
     )
     expect(r.fire).toBe(true)
   })

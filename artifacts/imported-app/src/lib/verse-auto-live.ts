@@ -1,51 +1,43 @@
-// v0.7.106 — Three-pipeline auto-verse detection re-tuned per
-// pastebin spec jh9YcK2h ("MASTER PROMPT FOR REPLIT"). The
-// column split from v0.7.104 is preserved; the THRESHOLDS and
-// the anti-flicker control are what changed:
+// v0.7.107 — Per-column auto-live thresholds + continuous gate per
+// operator spec ("Auto LIVE Detection System Fix — VERY IMPORTANT").
 //
-//   • Auto-live floor      0.85 → 0.65   (65% spec)
-//   • Suggestions band     0.10–0.60 → 0.10–0.65 (failsafe rule)
-//   • Stability frames     3     → 1     ("real-time, continuous")
-//   • Anti-flicker         3-frame gate → 3.5 s LIVE_HOLD_MS
-//                          ("previous verse must remain visible
-//                          for 3-4 s, then transition out")
+// REVERSAL of the v0.7.106 single-floor model. Operator complaint:
+// "auto-live detection only works once and stops". Two root causes:
 //
-// The columns:
+//   1) v0.7.106 used a 3.5 s LIVE_HOLD_MS dwell window between fires.
+//      In real preaching, the auto-fire effect in logos-shell only
+//      re-runs when `detectedVerses` changes. If a new top arrives
+//      DURING the 3.5 s window the helper refused to fire, and once
+//      the window elapsed nothing re-triggered the effect — so the
+//      app appeared to "lock" after the first fire. v0.7.107 sets
+//      LIVE_HOLD_MS = 0 (continuous, no anti-flicker dwell). The
+//      ONLY duplicate-block is the id===currentLiveId no-refire short-
+//      circuit, which the spec explicitly allows ("No duplicate
+//      blocking unless same exact verse is already LIVE").
 //
-//   1. Auto Verse Match (Live)      — explicit references parsed by
-//                                      the regex / Reference-Engine v2
-//                                      ("Amos 1:3", "John 3:16-17").
-//                                      Auto-fires on the first
-//                                      ≥ 65% top pick — provided
-//                                      the 3.5 s hold window from
-//                                      the previous fire has elapsed.
+//   2) v0.7.106 used a single 0.65 floor for both detector pipelines.
+//      The spec wants column-specific thresholds:
+//        • COL 1 "Auto Verse Match"        → semantic, ≥ 80%
+//        • COL 2 "Bible Reference Quoted"  → explicit, ≥ 60%
+//        • COL 3 "Suggested Verses"        → 10-49%, manual only
+//      Lower floor for explicit (regex hits are crisp; 60% is plenty).
+//      Higher floor for semantic (paraphrase / embedding hits are
+//      softer; 80% guards against false positives going live).
 //
-//   2. Bible Reference Quoted        — semantic / paraphrase matches
-//                                      (preacher-phrase catalogue,
-//                                      keyword text-search, AI cosine
-//                                      embedding). Same 65% floor +
-//                                      hold window as col 1, tracked
-//                                      INDEPENDENTLY: a hit in one
-//                                      column does not block a hit
-//                                      in the other (explicit wins
-//                                      on tiebreak).
+// The "Auto Verse Match" column header in logos-shell is rendered
+// over our SEMANTIC pipeline (id === 'explicit' is the regex hits
+// labelled "Bible Reference Quoted" in the UI). This is the
+// historical wiring; we keep the internal source tags 'explicit' /
+// 'semantic' but apply the new thresholds per the operator-facing
+// labels. See COLUMN_AUTO_LIVE_MIN below for the source→threshold
+// map and `pickAutoLiveBySource` for the floor lookup.
 //
-//   3. Suggested Verses Detect       — anything in the 0.10–0.65
-//                                      band from EITHER detector.
-//                                      MANUAL ONLY — operator must
-//                                      double-click a row to send
-//                                      it live. Never auto-fires
-//                                      regardless of how long the
-//                                      candidate sits.
-//
-// Confidence < 0.10 is dropped entirely (too noisy to surface).
-//
-// "Independent pipelines" is the operator-facing promise: there are
-// NO fallback chains, NO cross-trigger between columns. The 3.5 s
-// hold window is the spec's anti-slot-machine guard ("the app will
-// either spam verses like a broken slot machine, or freeze like
-// it's scared to commit"). Within the window: no fire. After the
-// window: the next ≥ 65% top auto-fires immediately (real-time).
+// Suggestions column accepts the literal 10-49% band per the spec
+// ("DO NOT auto-send live. Only send to LIVE when the user double-
+// clicks"). Anything above 49% that didn't qualify for its column's
+// auto-fire floor is currently dropped from the visible UI — this
+// is the spec's intent (the 50-79% semantic / 50-59% explicit gap
+// is a false-positive zone we deliberately don't surface).
 export type DetectionSource = 'explicit' | 'semantic' | 'suggestion'
 
 export interface RankedVerse {
@@ -55,48 +47,43 @@ export interface RankedVerse {
   source?: DetectionSource
 }
 
-// v0.7.106 — Auto-live floor lowered 0.85 → 0.65 per spec
-// jh9YcK2h ("auto-trigger to LIVE when detection confidence is
-// between 65% – 100%"). Anything below this is routed to the
-// suggestions column per the failsafe rule ("If detection
-// confidence drops below 65%: Do NOT push to live. Route to
-// Suggested Verses instead").
-export const AUTO_LIVE_MIN_CONFIDENCE = 0.65
+// v0.7.107 — Column-specific auto-live floors per operator spec.
+//   • EXPLICIT (regex / Reference-Engine hits, labelled "Bible
+//     Reference Quoted" in the UI): ≥ 0.60.
+//   • SEMANTIC (preacher-phrase / keyword / AI cosine embeddings,
+//     labelled "Auto Verse Match" in the UI): ≥ 0.80.
+export const EXPLICIT_AUTO_LIVE_MIN = 0.6
+export const SEMANTIC_AUTO_LIVE_MIN = 0.8
 
-// The "Suggested Verses" column accepts everything in the
-// 0.10–0.65 band. Operator promotes manually; no auto-fire path
-// exists from this column. Anything ≥ 0.65 lives in cols 1/2.
+const COLUMN_AUTO_LIVE_MIN: Record<Exclude<DetectionSource, 'suggestion'>, number> = {
+  explicit: EXPLICIT_AUTO_LIVE_MIN,
+  semantic: SEMANTIC_AUTO_LIVE_MIN,
+}
+
+// Generic "is this auto-live eligible at all" floor — the LOWEST of
+// the per-source minima. Kept as a back-compat export so older
+// callers (and pickAutoLiveMatch below) still resolve.
+export const AUTO_LIVE_MIN_CONFIDENCE = Math.min(
+  EXPLICIT_AUTO_LIVE_MIN,
+  SEMANTIC_AUTO_LIVE_MIN,
+)
+
+// Suggestions column: literal 10-49% band per spec.
 export const SUGGESTION_MIN_CONFIDENCE = 0.1
-export const SUGGESTION_MAX_EXCLUSIVE = 0.65
-// Live columns (explicit / semantic) start surfacing rows from
-// this floor up — below it, the row would only ever appear in
-// the suggestions column.
-export const LIVE_COLUMN_MIN_CONFIDENCE = SUGGESTION_MAX_EXCLUSIVE
-
-// v0.7.94-compat: the old `ALTERNATIVE_MIN_CONFIDENCE` symbol is kept
-// re-exported as the suggestion floor so any external imports still
-// resolve (no longer used inside this module).
+export const SUGGESTION_MAX_EXCLUSIVE = 0.5
+export const LIVE_COLUMN_MIN_CONFIDENCE = AUTO_LIVE_MIN_CONFIDENCE
 export const ALTERNATIVE_MIN_CONFIDENCE = SUGGESTION_MIN_CONFIDENCE
 
-// v0.7.106 — Stability gate relaxed 3 → 1 per spec ("real-time
-// and continuous, with zero manual interaction required, fix
-// current issue where detection does not trigger live output").
-// The old 3-frame wait was the root cause of the operator
-// complaint that v0.7.104/.105 stopped firing — most preaching
-// audio produces a single high-confidence frame at a time, so
-// the gate almost never closed. Anti-flicker is now handled by
-// LIVE_HOLD_MS instead.
+// v0.7.107 — Stability stays at 1 frame (real-time per spec).
 export const STABILITY_MIN_FRAMES = 1
 
-// v0.7.106 — Minimum dwell time between consecutive auto-fires
-// per the spec's display-timing rule: "If a new verse/reference
-// is detected: The previous verse must remain visible for 3-4
-// seconds, then transition out." 3.5 s is the midpoint. Within
-// this window after a fire, the gate refuses to fire again so
-// the projector doesn't slot-machine through rapidly-changing
-// detections; once the window elapses, the next ≥ 65% top
-// auto-fires immediately (real-time).
-export const LIVE_HOLD_MS = 3500
+// v0.7.107 — Anti-flicker dwell DISABLED (was 3500 in v0.7.106).
+// Operator spec: "Detection runs in real-time continuously. Every
+// new valid detection triggers LIVE based on rules above. No
+// duplicate blocking unless same exact verse is already LIVE
+// (optional optimization)." The id===currentLiveId no-refire
+// short-circuit is the ONLY block now.
+export const LIVE_HOLD_MS = 0
 
 function detectedAtMs(v: RankedVerse): number {
   const d = v.detectedAt
@@ -107,16 +94,19 @@ function detectedAtMs(v: RankedVerse): number {
   return 0
 }
 
-// Default a missing source to 'explicit' so detection events recorded
-// before v0.7.104 (or by a code path that hasn't been tagged yet) keep
-// flowing into the explicit column rather than vanishing.
 function sourceOf(v: RankedVerse): DetectionSource {
   return v.source ?? 'explicit'
 }
 
+function autoLiveMinFor(source: Exclude<DetectionSource, 'suggestion'>): number {
+  return COLUMN_AUTO_LIVE_MIN[source]
+}
+
 // Pure ranking helper — picks the highest-confidence verse from the
-// supplied list whose confidence ≥ AUTO_LIVE_MIN_CONFIDENCE. Ties
-// broken by NEWER detectedAt first, then by id (deterministic).
+// supplied list whose confidence ≥ AUTO_LIVE_MIN_CONFIDENCE (the
+// LOWEST per-source floor). Used by legacy callers; new code paths
+// should use pickAutoLiveBySource which respects the per-source
+// floor for the requested column.
 export function pickAutoLiveMatch<T extends RankedVerse>(detected: readonly T[]): T | null {
   if (!detected.length) return null
   const ranked = [...detected].sort((a, b) => {
@@ -131,17 +121,37 @@ export function pickAutoLiveMatch<T extends RankedVerse>(detected: readonly T[])
   return top
 }
 
-// Per-pipeline pick. Returns the highest-confidence verse tagged
-// with the requested source whose confidence clears the auto-live
-// floor. Returns null if no qualifying candidate exists.
+// Per-pipeline pick. Returns the NEWEST verse tagged with the
+// requested source whose confidence clears that source's auto-live
+// floor (explicit ≥ 0.60, semantic ≥ 0.80). Returns null if no
+// qualifying candidate exists.
+//
+// v0.7.107 — Newest-first (was confidence-desc). Operator spec:
+// "Every NEW valid detection triggers LIVE continuously". A new
+// 0.62 explicit hit must displace an older 0.95 hit, otherwise the
+// projector stays stuck on whatever scored highest at the start of
+// the sermon. Confidence is used only as a tiebreak for same-frame
+// arrivals.
 export function pickAutoLiveBySource<T extends RankedVerse>(
   detected: readonly T[],
   source: Exclude<DetectionSource, 'suggestion'>,
 ): T | null {
-  return pickAutoLiveMatch(detected.filter((v) => sourceOf(v) === source))
+  const min = autoLiveMinFor(source)
+  const candidates = detected.filter(
+    (v) => sourceOf(v) === source && (v.confidence ?? 0) >= min,
+  )
+  if (!candidates.length) return null
+  candidates.sort((a, b) => {
+    const dt = detectedAtMs(b) - detectedAtMs(a)
+    if (dt !== 0) return dt
+    const dc = (b.confidence ?? 0) - (a.confidence ?? 0)
+    if (dc !== 0) return dc
+    return b.id.localeCompare(a.id)
+  })
+  return candidates[0]
 }
 
-// Suggestions column. Returns every detection in the 0.10–0.65
+// Suggestions column. Returns every detection in the 0.10–0.50
 // band (regardless of source) plus anything explicitly tagged
 // `source: 'suggestion'`, ordered newest-first.
 export function suggestionsFor<T extends RankedVerse>(detected: readonly T[]): T[] {
@@ -160,28 +170,27 @@ export function suggestionsFor<T extends RankedVerse>(detected: readonly T[]): T
     })
 }
 
-// Per-pipeline live-column listing. Returns every detection
-// tagged with the requested source whose confidence is at least
-// LIVE_COLUMN_MIN_CONFIDENCE (0.65). Newest auto-fire winner
-// renders first; the rest as additional rows below.
+// Per-pipeline live-column listing. Uses the source-specific floor.
+// v0.7.107 — Newest detection sits on TOP (matches operator spec:
+// "always make new detection arrive on top of previous detections").
+// Confidence is the secondary tiebreak only.
 export function liveColumnFor<T extends RankedVerse>(
   detected: readonly T[],
   source: Exclude<DetectionSource, 'suggestion'>,
 ): T[] {
+  const min = autoLiveMinFor(source)
   return [...detected]
-    .filter((v) => sourceOf(v) === source && (v.confidence ?? 0) >= LIVE_COLUMN_MIN_CONFIDENCE)
+    .filter((v) => sourceOf(v) === source && (v.confidence ?? 0) >= min)
     .sort((a, b) => {
-      const dc = (b.confidence ?? 0) - (a.confidence ?? 0)
-      if (dc !== 0) return dc
       const dt = detectedAtMs(b) - detectedAtMs(a)
       if (dt !== 0) return dt
+      const dc = (b.confidence ?? 0) - (a.confidence ?? 0)
+      if (dc !== 0) return dc
       return b.id.localeCompare(a.id)
     })
 }
 
-// v0.7.94-compat: legacy single-column alternatives helper. Kept so
-// any non-shell caller still compiles. Returns everything ≥ the
-// suggestions floor minus the supplied live id, newest-first.
+// Legacy single-column alternatives helper (newest-first, ≥ 0.10).
 export function alternativesFor<T extends RankedVerse>(
   detected: readonly T[],
   liveMatchId: string | null,
@@ -203,11 +212,10 @@ export function alternativesFor<T extends RankedVerse>(
 
 // ─── Stability gate (per-pipeline frame counter) ──────────────────
 //
-// At default minFrames=1 (v0.7.106) this is a pass-through: any
-// candidate fires on its first observation. The function is kept
-// because the test suite asserts the counter behaviour and because
-// callers that want a multi-frame gate (e.g. tests or future tuning)
-// can pass `minFrames > 1`.
+// At default minFrames=1 (v0.7.106+) this is a pass-through: any
+// candidate fires on its first observation. Kept because the test
+// suite asserts the counter behaviour and callers can pass
+// `minFrames > 1` for tighter gates.
 export interface StabilityState {
   topId: string | null
   count: number
@@ -232,10 +240,9 @@ export function evaluateStability<T extends RankedVerse>(
 
 // ─── Auto-fire gate state (per-source counters + last-fire clock) ─
 //
-// `lastFireAtMs` carries the wall-clock of the most recent fire so
-// the helper can enforce the 3.5 s hold window across calls. The
-// caller persists this state in a useRef and passes Date.now() in
-// via opts.nowMs (overridable for tests).
+// `lastFireAtMs` is retained so a future call site can re-enable the
+// dwell window via opts.holdMs without changing the gate shape. With
+// the default LIVE_HOLD_MS = 0 it is effectively unused.
 export interface AutoFireGateState {
   explicit: StabilityState
   semantic: StabilityState
@@ -262,10 +269,8 @@ export type AutoFireDecision<T extends RankedVerse> =
       nextStability: AutoFireGateState
     }
 
-// v0.7.94-compat — legacy two-arg sticky decision. Fires immediately
-// on the first ≥ AUTO_LIVE_MIN_CONFIDENCE top match (no stability,
-// no hold window, no source tracking). Kept so any external caller
-// still compiles. New code paths should use shouldFireAutoLiveStable.
+// Legacy two-arg sticky decision (uses the LOWEST per-source floor).
+// Kept for any external caller still resolving this name.
 export function shouldFireAutoLive<T extends RankedVerse>(
   detected: readonly T[],
   currentLiveId: string | null,
@@ -280,30 +285,27 @@ export function shouldFireAutoLive<T extends RankedVerse>(
   }
 }
 
-// v0.7.106 — Source-aware auto-fire decision with the new
-// hold-window anti-flicker rule.
+// v0.7.107 — Source-aware auto-fire decision with per-column floors
+// and continuous (no-dwell) firing.
 //
 // Inputs:
 //   • `detected`        — full detectedVerses store array.
 //   • `currentLiveId`   — id of the verse currently shown live, or null.
-//                          The helper will NOT re-fire the same id even
-//                          after the hold window expires.
+//                          The helper will NOT re-fire the same id.
 //   • `gate`            — { explicit, semantic, lastFireAtMs } prior
 //                          frame state.
 //   • `opts.minFrames`  — override the 1-frame default (tests).
-//   • `opts.holdMs`     — override the 3.5 s hold window (tests).
+//   • `opts.holdMs`     — override the 0 ms default to RE-ENABLE the
+//                          dwell window (tests / future tuning).
 //   • `opts.nowMs`      — override Date.now() (tests).
 //
 // Behaviour:
-//   1. If less than `holdMs` has elapsed since the last fire, return
-//      `fire: false` and leave gate unchanged. This is the spec's
-//      "previous verse must remain visible for 3-4 seconds" rule
-//      and the only anti-flicker control.
-//   2. Otherwise, advance the per-source counters with the current
-//      top picks. If a counter has reached `minFrames` AND its top
-//      is not the verse currently live, fire it; explicit wins on
-//      tiebreak. On fire, stamp `lastFireAtMs = nowMs` in the
-//      returned next state.
+//   1. If `holdMs > 0` and less than `holdMs` ms have elapsed since
+//      the last fire, return `fire: false` and leave gate unchanged.
+//      Default `holdMs = 0` skips this check entirely (continuous).
+//   2. Per-source pick + stability counter advance. If a counter has
+//      reached `minFrames` AND its top is not the verse currently
+//      live, fire it; explicit wins on tiebreak.
 //   3. Suggestion-tagged candidates are ineligible to fire (they
 //      don't appear in pickAutoLiveBySource, which filters on
 //      'explicit' | 'semantic' only).
@@ -317,10 +319,10 @@ export function shouldFireAutoLiveStable<T extends RankedVerse>(
   const holdMs = opts.holdMs ?? LIVE_HOLD_MS
   const now = opts.nowMs ?? Date.now()
 
-  // Hold window: refuse to fire while the previous live verse is
-  // still inside its 3.5 s dwell. Gate state is returned unchanged
-  // so the caller persists it without bumping counters.
-  if (gate.lastFireAtMs > 0 && now - gate.lastFireAtMs < holdMs) {
+  // Hold window: only enforced when holdMs > 0 (default is 0, i.e.
+  // continuous firing per spec). Returned gate is unchanged so the
+  // caller persists it without bumping counters.
+  if (holdMs > 0 && gate.lastFireAtMs > 0 && now - gate.lastFireAtMs < holdMs) {
     return { fire: false, nextStability: gate }
   }
 
@@ -335,9 +337,9 @@ export function shouldFireAutoLiveStable<T extends RankedVerse>(
     lastFireAtMs: gate.lastFireAtMs,
   }
 
-  // Don't refire whatever's already on the projector — the spec
-  // says the current verse stays "indefinitely" if no NEW verse
-  // is detected, so picking up the same top.id again is a no-op.
+  // Spec-allowed optimization: don't refire whatever's already on
+  // the projector ("No duplicate blocking unless same exact verse
+  // is already LIVE").
   const explicitFire =
     explicitGate.fire && explicitGate.verse && explicitGate.verse.id !== currentLiveId
       ? explicitGate.verse

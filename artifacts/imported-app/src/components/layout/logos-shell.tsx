@@ -2349,27 +2349,22 @@ function DetectedVersesCard() {
         ) : null
       }
     >
-      {/* v0.7.106 — THREE-pipeline split, retuned per pastebin spec
-          jh9YcK2h. Each column is an INDEPENDENT detection pipeline.
-          Auto-live floor lowered 0.85 → 0.65, stability gate
-          relaxed 3 → 1 frame, and a new 3.5 s LIVE_HOLD_MS dwell
-          enforces the spec's "previous verse stays 3-4 s before
-          transitioning out".
+      {/* v0.7.107 — Per-column auto-live thresholds + continuous gate.
+          Each column is an INDEPENDENT detection pipeline. The 3.5 s
+          LIVE_HOLD_MS dwell from v0.7.106 is REMOVED (it was the root
+          cause of "auto-live fires once and stops" — see helper notes
+          in src/lib/verse-auto-live.ts).
 
-            • COL 1 "Auto Verse Match (Live)"
-                Source: explicit regex / Reference Engine v2 hits
-                ("Amos 1:3", "John 3:16-17"). Auto-live at ≥65%.
+            • COL 1 "Auto Verse Match"  (semantic — paraphrase/AI):
+                Auto-live at ≥80%. Stricter floor because semantic
+                hits are softer than regex.
 
-            • COL 2 "Bible Reference Quoted"
-                Source: semantic / paraphrase matches (preacher-phrase
-                catalogue, keyword text-search, AI cosine embedding).
-                Auto-live at ≥65% — runs in parallel with col 1 but
-                never displaces a live verse inside the 3.5 s hold.
+            • COL 2 "Bible Reference Quoted"  (explicit regex /
+                Reference-Engine hits like "Amos 1:3"): Auto-live
+                at ≥60%. Lower floor because regex hits are crisp.
 
-            • COL 3 "Suggested Verses Detect"
-                Anything in the 0.10–0.65 band from EITHER detector.
-                MANUAL ONLY — operator must double-click a row to send
-                live. Never auto-fires regardless of confidence. */}
+            • COL 3 "Suggested Verses": 10-49% band, MANUAL ONLY.
+                Double-click a row to send it live. */}
       {(() => {
         // Each column reads ONLY its own source slice — no cross-pull.
         const explicitRows = liveColumnFor(detectedVerses, 'explicit')
@@ -2394,7 +2389,7 @@ function DetectedVersesCard() {
                   {explicitRows.length === 0 ? (
                     <div className="text-center py-6 text-[10px] text-muted-foreground">
                       <Mic className="h-5 w-5 mx-auto opacity-40 mb-1.5" />
-                      Explicit references (e.g.&nbsp;&ldquo;Amos 1:3&rdquo;) auto-live at ≥65%.
+                      Explicit references (e.g.&nbsp;&ldquo;Amos 1:3&rdquo;) auto-live at ≥60%.
                     </div>
                   ) : (
                     // Sub-threshold rows render with the same 'live'
@@ -2424,7 +2419,7 @@ function DetectedVersesCard() {
                   {semanticRows.length === 0 ? (
                     <div className="text-center py-6 text-[10px] text-muted-foreground">
                       <Mic className="h-5 w-5 mx-auto opacity-40 mb-1.5" />
-                      Paraphrased quotations auto-live at ≥65%.
+                      Paraphrased quotations auto-live at ≥80%.
                     </div>
                   ) : (
                     semanticRows.map((row, i) => renderRow(row, i, 'live'))
@@ -2434,7 +2429,7 @@ function DetectedVersesCard() {
               </div>
             </div>
 
-            {/* COL 3 — SUGGESTIONS (10-60% manual-only) */}
+            {/* COL 3 — SUGGESTIONS (10-49% manual-only) */}
             <div className="flex flex-col min-h-0">
               <div className="px-2 py-1 flex items-center justify-between bg-amber-500/5 border-b border-amber-500/20 sticky top-0 z-10">
                 <span className="text-[9px] font-bold uppercase tracking-wider text-amber-300">
@@ -2448,7 +2443,7 @@ function DetectedVersesCard() {
                 <div className="p-1.5 space-y-1.5">
                   {suggestionRows.length === 0 && detectedVerseCandidates.length === 0 ? (
                     <div className="text-center py-6 text-[10px] text-muted-foreground">
-                      Low-confidence guesses (10–64%). Double-click to send live.
+                      Low-confidence guesses (10–49%). Double-click to send live.
                     </div>
                   ) : (
                     <>
