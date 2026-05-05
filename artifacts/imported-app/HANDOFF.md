@@ -1,6 +1,6 @@
 # ScriptureLive AI — Handoff Bundle
 
-**Version at handoff:** v0.7.101
+**Version at handoff:** v0.7.102
 **Repository:** https://github.com/nanvilow/scripturelive-ai
 **Stack:** Next.js 16 (App Router) + React + TypeScript + Electron 38 + Tailwind + shadcn/ui + Prisma + Zustand
 **Target:** Windows desktop app for live Bible projection / worship
@@ -48,7 +48,19 @@ artifacts/imported-app/
 
 ## Recent work (most recent first)
 
-**v0.7.101 — Activate-path hard reset + Settings UI consolidation (THIS BUILD)**
+**v0.7.102 — Native alert for Move-to-Another-PC (THIS BUILD)**
+- Operator confirmed v0.7.101 fixed the Activate flow but Move-to-Another-PC STILL produced "This page couldn't load" Chromium chrome-error.
+- Same root cause as the Activate fix: between `/api/license/deactivate {transfer:true}` resolving and the operator clicking "Got it" on the React `transferOpen` Dialog, the renderer ran `setTransferCode → setTransferMsLeft → setTransferOpen(true) → await refresh()` — committed a new tree, started lock-overlay re-mounting, downstream useEffect crashed against an in-flight fetch with the now-released auth context, chrome-error painted BEFORE the operator could read/copy the code.
+- Couldn't just hard-reload immediately (Activate's fix) because the operator MUST see the activation code before reload.
+- **Fix**: `handleTransfer` in `src/components/views/settings.tsx` now uses a native `window.alert` (rendered by Chromium OUTSIDE the React tree — physically cannot crash the renderer mid-paint) instead of a React Dialog. After API success:
+  1. `await navigator.clipboard.writeText(code)` — code is auto-copied to clipboard before the alert shows.
+  2. `localStorage.setItem('sl.lastTransferCode', { code, msLeft, at })` — backup if clipboard write was blocked; freshly-reloaded landing page can show it again with a 10-min TTL.
+  3. `window.alert(...)` with the code as plain selectable text + instructions.
+  4. After OK: `window.location.assign('/')` synchronous hard reload.
+  5. 8 s safety `setTimeout(setLicBusy(false), 8000)` for navigation-vetoed escape.
+- The `transferOpen` state + Dialog JSX are kept as defensive dead code.
+
+**v0.7.101 — Activate-path hard reset + Settings UI consolidation**
 - Operator confirmed v0.7.100's Deactivate flow worked but Activate still produced "This page couldn't load" Chromium chrome-error.
 - Root cause: success modal rendered with stale React tree before user could click Close, downstream useEffect crashed renderer.
 - Fix: `submitActivation` in `src/components/license/subscription-modal.tsx` now calls `window.location.assign('/')` immediately after the API confirms success, with `return` to skip `setReceipt/setPhase/refresh`. The receipt UI is sacrificed — operators see their active subscription on the reloaded Settings page.
