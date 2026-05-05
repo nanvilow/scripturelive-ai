@@ -3395,6 +3395,16 @@ export function LogosShell() {
   // the same state.
   const autoAdvance = useAppStore((s) => s.autoLive)
   const setAutoAdvance = useAppStore((s) => s.setAutoLive)
+  // v0.7.105 — Auto-fire gate honours BOTH the AUTO toggle and the
+  // legacy "Auto-go-live on detection" Setting, matching the gating
+  // the per-pipeline inline blocks in speech-provider.tsx used
+  // before they were neutered. Without this OR, operators who only
+  // had `autoGoLiveOnDetection` enabled (and never flipped the AUTO
+  // pill) would silently lose auto-fire after the v0.7.104→.105
+  // refactor. The toggle UI itself still binds to `autoAdvance`
+  // alone so its label/state stays correct.
+  const autoGoLiveOnDetection = useAppStore((s) => s.settings.autoGoLiveOnDetection)
+  const effectiveAutoFire = autoAdvance || autoGoLiveOnDetection
 
   // v0.7.81 — Auto-prefetch the operator's default Bible translation
   // for offline use on first launch.
@@ -3461,7 +3471,7 @@ export function LogosShell() {
   // service can't immediately fire on resume.
   const stabilityRef = useRef<PerSourceStabilityState>(initialPerSourceStability)
   useEffect(() => {
-    if (!autoAdvance) return
+    if (!effectiveAutoFire) return
     if (!detectedVerses.length) {
       lastAutoVerseId.current = null
       stabilityRef.current = initialPerSourceStability
@@ -3498,7 +3508,7 @@ export function LogosShell() {
     setLiveSlideIndex(0)
     setIsLive(true)
     // Toast suppressed per FRS — output actions stay silent.
-  }, [autoAdvance, detectedVerses, addScheduleItem, setSlides, setPreviewSlideIndex, setLiveSlideIndex, setIsLive, settings.congregationScreenTheme])
+  }, [effectiveAutoFire, detectedVerses, addScheduleItem, setSlides, setPreviewSlideIndex, setLiveSlideIndex, setIsLive, settings.congregationScreenTheme])
 
   // Local no-op broadcaster — the real broadcaster lives globally in
   // <OutputBroadcaster /> (mounted in page.tsx) so settings tweaks
