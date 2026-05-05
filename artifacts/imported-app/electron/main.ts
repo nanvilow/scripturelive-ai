@@ -12,7 +12,24 @@ function setupFileLogging() {
     const dir = app.getPath('userData')
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
     logFilePath = path.join(dir, 'launch.log')
-    const stream = fs.createWriteStream(logFilePath, { flags: 'w' })
+    // v0.7.98 — APPEND instead of truncating. Previously we wiped the
+    // log on every launch with flags: 'w', so the operator who hit a
+    // chrome-error and relaunched the app to recover would lose the
+    // log lines that explained what went wrong. Now we keep history
+    // across launches and only rotate when the file exceeds 2 MB so it
+    // never grows unbounded. A "----- session start -----" banner is
+    // written below so it's easy to find the current session in the
+    // log when triaging.
+    try {
+      const stat = fs.statSync(logFilePath)
+      if (stat.size > 2 * 1024 * 1024) {
+        const rotated = path.join(dir, 'launch.prev.log')
+        try { fs.unlinkSync(rotated) } catch { /* ignore */ }
+        try { fs.renameSync(logFilePath, rotated) } catch { /* ignore */ }
+      }
+    } catch { /* file doesn't exist — first launch */ }
+    const stream = fs.createWriteStream(logFilePath, { flags: 'a' })
+    stream.write(`\n----- session start ${new Date().toISOString()} -----\n`)
     const wrap = (orig: (...args: unknown[]) => void, prefix: string) =>
       (...args: unknown[]) => {
         try {
@@ -580,6 +597,19 @@ function installCrashMask(
   // somehow never observed a navigation.
   let lastTargetURL: string | null = null
 
+  // v0.7.98 — Reentrancy guard. A SINGLE failure can fire multiple
+  // events for the same chrome-error episode: did-fail-load, then
+  // did-navigate (chrome-error commit), then did-finish-load
+  // (chrome-error finished). Without dedup, beginRecovery would run
+  // 3× per real outage — the attempts counter would burn through the
+  // 60 s budget in 20 s, causing a premature give-up dialog while
+  // the bundled Next server was still respawning. recoveryActive is
+  // set on entry to beginRecovery and cleared only when the REAL
+  // target URL successfully finishes loading (or when the user
+  // dismisses the give-up dialog), so the entire recovery episode is
+  // treated atomically regardless of how many events surfaced it.
+  let recoveryActive = false
+
   // v0.7.96 — Retry budget extended to ~60 seconds. The previous
   // 8 × 400 ms = 3.2 s budget gave up LONG before scheduleNextRestart
   // (in startNextServer) finished respawning the bundled Next child
@@ -603,9 +633,33 @@ function installCrashMask(
   // for `target`. Shared between did-fail-load and render-process-gone
   // so the recovery logic is identical regardless of which event
   // surfaced the failure.
+  //
+  // v0.7.98 — Instrument the mask paint so a SILENT loadURL failure
+  // (e.g. data: URL blocked by session policy, renderer crashed mid-
+  // navigation) is now logged to launch.log. Without this we had a
+  // blind spot: the operator saw the chrome-error page persist and
+  // we had no breadcrumb explaining why our mask never showed.
   const beginRecovery = (target: string | null): void => {
     if (win.isDestroyed()) return
-    try { void win.webContents.loadURL(__MASK_HTML) } catch { /* ignore */ }
+    // v0.7.98 — dedup. If a recovery is already in flight for the
+    // current chrome-error episode, every subsequent event firing
+    // for the SAME episode (did-navigate, did-finish-load, repeat
+    // did-fail-load) is a no-op. Prevents triple-counting attempts.
+    if (recoveryActive) return
+    recoveryActive = true
+    win.webContents.loadURL(__MASK_HTML).catch((err) => {
+      console.error(`[${label}] mask loadURL failed — chrome-error may persist`, err)
+      // Fall back to an HTML inject. If even loadURL of a data: URL
+      // is rejected, we can still try to overlay the chrome-error
+      // page with our spinner via executeJavaScript.
+      try {
+        void win.webContents.executeJavaScript(
+          'document.documentElement.innerHTML = ' +
+          '\'<div style="position:fixed;inset:0;background:#0a0a0a;color:#9ca3af;display:flex;align-items:center;justify-content:center;font:14px system-ui;z-index:2147483647">Reconnecting…</div>\'',
+          true,
+        )
+      } catch { /* nothing more we can do here */ }
+    })
     if (!target) {
       console.error(`[${label}] no target URL recorded — cannot auto-recover`)
       return
@@ -629,6 +683,12 @@ function installCrashMask(
         // the console. Reset the budget so if the server LATER comes
         // back and any external nudge re-triggers a load, we cooperate.
         attempts = 0
+        // v0.7.98 — also clear the reentrancy guard so a future
+        // chrome-error event (after the operator manually reloads or
+        // the server returns) can re-arm recovery. Without this, the
+        // popout would be stuck "recovering forever" with no way to
+        // recover from a NEW failure.
+        recoveryActive = false
       }
       return
     }
@@ -685,12 +745,43 @@ function installCrashMask(
   })
 
   win.webContents.on('did-finish-load', () => {
+    const cur = win.webContents.getURL()
+    // v0.7.98 — BRUTE-FORCE chrome-error guard. If Chromium ever
+    // paints chrome-error://chromewebdata as a "successful" load
+    // (some failure classes don't fire did-fail-load — e.g. a TLS
+    // error that Chromium classifies internally as a navigation
+    // success to the error page), force-trigger recovery here so
+    // the operator never sees the raw error chrome with the
+    // "Reload / Back" buttons. This is the safety net that makes
+    // the symptom impossible regardless of which underlying event
+    // (or non-event) caused it.
+    if (cur.startsWith('chrome-error://')) {
+      console.warn(`[${label}] chrome-error painted (did-finish-load) — forcing recovery`, { cur, lastTargetURL })
+      beginRecovery(lastTargetURL)
+      return
+    }
     // Only the REAL URL succeeding counts as recovery. The mask
     // finishing must NOT reset the budget — otherwise the give-up
     // dialog never fires when the server is permanently dead.
-    if (isMaskUrl(win.webContents.getURL())) return
+    if (isMaskUrl(cur)) return
     attempts = 0
+    // v0.7.98 — REAL URL succeeded → episode is over, allow the
+    // next episode to trigger recovery again.
+    recoveryActive = false
     if (timer) { clearTimeout(timer); timer = null }
+  })
+
+  // v0.7.98 — Second safety net. did-navigate fires the moment a
+  // navigation commits (before did-finish-load), so we catch the
+  // chrome-error URL ASAP and beat the user's eyeball to it. Some
+  // chrome-error renders never reach did-finish-load (e.g. when the
+  // renderer is killed mid-paint), so catching at did-navigate AND
+  // did-finish-load gives us double coverage.
+  win.webContents.on('did-navigate', (_e, url) => {
+    if (url.startsWith('chrome-error://')) {
+      console.warn(`[${label}] chrome-error navigated (did-navigate) — forcing recovery`, { url, lastTargetURL })
+      beginRecovery(lastTargetURL)
+    }
   })
 }
 

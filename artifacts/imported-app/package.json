@@ -1,6 +1,6 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.7.97",
+  "version": "0.7.98",
   "private": true,
   "main": "dist-electron/main.js",
   "repository": {
