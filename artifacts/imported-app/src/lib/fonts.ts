@@ -120,7 +120,7 @@ export function resolveReferenceTypography(s: {
     fontStack: getFontStack(s.referenceFontFamily ?? s.fontFamily),
     fontSize: s.referenceFontSize ?? s.fontSize ?? 'lg',
     textShadow: s.referenceTextShadow ?? s.textShadow ?? true,
-    textScale: s.referenceTextScale ?? s.textScale ?? 1,
+    textScale: s.referenceTextScale ?? s.textScale ?? 0.9,
     textAlign: s.referenceTextAlign ?? s.textAlign ?? 'center',
   }
 }

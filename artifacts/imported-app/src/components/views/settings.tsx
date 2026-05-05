@@ -278,7 +278,13 @@ export function SettingsView() {
       autoGoLiveOnDetection: false,
       autoGoLiveOnLookup: false,
       displayRatio: 'fill',
-      textScale: 1,
+      // v0.7.97 — Reset returns to the same fresh-install defaults
+      // (textScale 0.9 / bibleLineHeight 0.95) so "Reset" and "first
+      // install" produce the same screen. The slider's per-button
+      // "Smaller / 100% / Larger" and "Tight / Default (1.40) / Airy"
+      // shortcuts still let an operator jump to typographic anchors.
+      textScale: 0.9,
+      bibleLineHeight: 0.95,
       // Reset the NDI-only display mode alongside the projector's so
       // the "Reset to defaults" button returns the feed to a clean
       // Full Screen state (v0.5.5 additions).
@@ -775,7 +781,10 @@ export function SettingsView() {
             <Label className="text-sm font-medium flex items-center justify-between">
               <span>Text Size on Secondary Screen</span>
               <span className="text-[11px] font-mono text-primary">
-                {Math.round((settings.textScale ?? 1) * 100)}%
+                {/* v0.7.97 — Fallback now mirrors the new install
+                    default (0.9 = 90%) so the slider reads correctly
+                    on a fresh install before the store hydrates. */}
+                {Math.round((settings.textScale ?? 0.9) * 100)}%
               </span>
             </Label>
             <input
@@ -783,7 +792,7 @@ export function SettingsView() {
               min={0.5}
               max={2}
               step={0.05}
-              value={settings.textScale ?? 1}
+              value={settings.textScale ?? 0.9}
               onChange={(e) => updateSettings({ textScale: parseFloat(e.target.value) })}
               className="w-full h-2 rounded-full bg-muted accent-primary cursor-pointer"
             />
@@ -821,7 +830,10 @@ export function SettingsView() {
             <Label className="text-sm font-medium flex items-center justify-between">
               <span>Bible Line-Height</span>
               <span className="text-[11px] font-mono text-primary">
-                {(settings.bibleLineHeight ?? 1.4).toFixed(2)}
+                {/* v0.7.97 — Fallback now mirrors the new install
+                    default (0.95) so the slider reads correctly on
+                    a fresh install before the store hydrates. */}
+                {(settings.bibleLineHeight ?? 0.95).toFixed(2)}
               </span>
             </Label>
             <input
@@ -829,7 +841,7 @@ export function SettingsView() {
               min={0.9}
               max={2.5}
               step={0.05}
-              value={settings.bibleLineHeight ?? 1.4}
+              value={settings.bibleLineHeight ?? 0.95}
               onChange={(e) => updateSettings({ bibleLineHeight: parseFloat(e.target.value) })}
               className="w-full h-2 rounded-full bg-muted accent-primary cursor-pointer"
             />
@@ -1198,7 +1210,7 @@ export function SettingsView() {
               <Label className="text-xs text-muted-foreground flex items-center justify-between">
                 <span>Reference Text Scale</span>
                 <span className="text-[11px] font-mono text-primary">
-                  {Math.round((settings.referenceTextScale ?? settings.textScale ?? 1) * 100)}%
+                  {Math.round((settings.referenceTextScale ?? settings.textScale ?? 0.9) * 100)}%
                 </span>
               </Label>
               <input
@@ -1206,7 +1218,7 @@ export function SettingsView() {
                 min={0.5}
                 max={2}
                 step={0.05}
-                value={settings.referenceTextScale ?? settings.textScale ?? 1}
+                value={settings.referenceTextScale ?? settings.textScale ?? 0.9}
                 onChange={(e) =>
                   updateSettings({ referenceTextScale: parseFloat(e.target.value) })
                 }

@@ -23,6 +23,7 @@ The project is a pnpm monorepo using Node.js 24 and TypeScript 5.9, structured a
 -   **Licensing and Activation**: Features a self-hosted, MoMo-based subscription system with a comprehensive admin dashboard. Uses an atomic-write JSON file for local license persistence. Includes a 30-minute usage-based free trial, lossless deactivation, and license transfer functionality.
 -   **Telemetry**: Centralized telemetry backend with `REPLIT_DB` backing, collecting install pings, heartbeats, and errors. An admin Records dashboard provides real-time analytics including active users, total installs, sessions today, and errors.
 -   **Persistence Strategy**: Next.js port is fixed to 47330 in Electron builds for `localStorage` origin consistency.
+-   **Secondary-Screen Defaults (v0.7.97)**: Fresh installs ship with `textScale: 0.9` (90%) and `bibleLineHeight: 0.95`. Operators reported pulling both sliders down on every fresh install — the 100% / 1.40 typographic defaults were too large/airy for their venues. Existing installs that have already persisted these fields keep their saved values; only undefined / fresh-install state seeds the new defaults. The "Reset to defaults" button and the in-flight slider fallbacks (`?? 0.9` / `?? 0.95`) all align so a reset matches a fresh install.
 -   **UI/UX and Theming**:
     -   Branding uses `public/logo.png` and a new global dark/light theme driven by `next-themes` and CSS variables.
     -   Live Display and Preview stages are visually symmetrical with static text rendering.

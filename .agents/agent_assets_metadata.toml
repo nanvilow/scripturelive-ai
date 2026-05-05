@@ -605,3 +605,9 @@ id = "DTXfBG5JO9ZMpMvRZLkuw"
 uri = "file://exports/ScriptureLive-AI-v0.7.96-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.96 — durable persistence + crash-mask hardening (with proof-tests)"
+
+[[outputs]]
+id = "vv1s-lUBJmzP7AjbKwKLY"
+uri = "file://exports/ScriptureLive-AI-v0.7.97-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.97 — default Text Size 90% + Bible Line-Height 0.95"

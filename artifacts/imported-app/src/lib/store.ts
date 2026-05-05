@@ -616,7 +616,13 @@ const defaultSettings: AppSettings = {
   textShadow: true,
   showReferenceOnOutput: true,
   displayRatio: 'fill',
-  textScale: 1,
+  // v0.7.97 — Operator request: ship the secondary screen at 90% by
+  // default. The previous 100% was too large for the typical projector
+  // distance in their venues; operators were dragging the slider down
+  // on every fresh install. 0.9 = 90% on the slider's 0.5..2.0 range.
+  // Existing installs that have already persisted a value keep theirs
+  // ("unless users want to set it to their satisfaction").
+  textScale: 0.9,
   textAlign: 'center',
   // Reference typography defaults: leave undefined so the renderer
   // falls back to the body equivalents above. Persisted operator
@@ -627,12 +633,16 @@ const defaultSettings: AppSettings = {
   referenceTextShadow: undefined,
   referenceTextScale: undefined,
   referenceTextAlign: undefined,
-  // v0.6.9 — Bible body line-height. 1.4 mirrors the typographic
-  // default the NDI panel suggested (its slider seeded at 1.40 too)
-  // so the secondary screen renders the same vertical rhythm out of
-  // the box and operators only see a visible change once they
-  // actually drag the slider.
-  bibleLineHeight: 1.4,
+  // v0.7.97 — Operator request: ship Bible line-height at 0.95 by
+  // default. The 1.40 typographic default created too much vertical
+  // breathing room for their secondary-screen layout; operators were
+  // pulling the slider toward "Tight" on every fresh install. 0.95
+  // is just past Tight (1.0) and matches what they were dialling in.
+  // The "Default (1.40)" reset button on the slider still snaps back
+  // to the typographic 1.40 — it's a one-click way for an operator
+  // who PREFERS more breathing room to opt back in.
+  // Existing installs that have already persisted a value keep theirs.
+  bibleLineHeight: 0.95,
   congregationScreenTheme: 'minimal',
   // English-only per v0.5.5 spec — the multi-language picker was a
   // footgun because Whisper's Base model is English-only and the
