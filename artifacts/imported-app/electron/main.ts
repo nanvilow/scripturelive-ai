@@ -597,6 +597,19 @@ function installCrashMask(
   // somehow never observed a navigation.
   let lastTargetURL: string | null = null
 
+  // v0.7.98 — Reentrancy guard. A SINGLE failure can fire multiple
+  // events for the same chrome-error episode: did-fail-load, then
+  // did-navigate (chrome-error commit), then did-finish-load
+  // (chrome-error finished). Without dedup, beginRecovery would run
+  // 3× per real outage — the attempts counter would burn through the
+  // 60 s budget in 20 s, causing a premature give-up dialog while
+  // the bundled Next server was still respawning. recoveryActive is
+  // set on entry to beginRecovery and cleared only when the REAL
+  // target URL successfully finishes loading (or when the user
+  // dismisses the give-up dialog), so the entire recovery episode is
+  // treated atomically regardless of how many events surfaced it.
+  let recoveryActive = false
+
   // v0.7.96 — Retry budget extended to ~60 seconds. The previous
   // 8 × 400 ms = 3.2 s budget gave up LONG before scheduleNextRestart
   // (in startNextServer) finished respawning the bundled Next child
@@ -628,6 +641,12 @@ function installCrashMask(
   // we had no breadcrumb explaining why our mask never showed.
   const beginRecovery = (target: string | null): void => {
     if (win.isDestroyed()) return
+    // v0.7.98 — dedup. If a recovery is already in flight for the
+    // current chrome-error episode, every subsequent event firing
+    // for the SAME episode (did-navigate, did-finish-load, repeat
+    // did-fail-load) is a no-op. Prevents triple-counting attempts.
+    if (recoveryActive) return
+    recoveryActive = true
     win.webContents.loadURL(__MASK_HTML).catch((err) => {
       console.error(`[${label}] mask loadURL failed — chrome-error may persist`, err)
       // Fall back to an HTML inject. If even loadURL of a data: URL
@@ -664,6 +683,12 @@ function installCrashMask(
         // the console. Reset the budget so if the server LATER comes
         // back and any external nudge re-triggers a load, we cooperate.
         attempts = 0
+        // v0.7.98 — also clear the reentrancy guard so a future
+        // chrome-error event (after the operator manually reloads or
+        // the server returns) can re-arm recovery. Without this, the
+        // popout would be stuck "recovering forever" with no way to
+        // recover from a NEW failure.
+        recoveryActive = false
       }
       return
     }
@@ -740,6 +765,9 @@ function installCrashMask(
     // dialog never fires when the server is permanently dead.
     if (isMaskUrl(cur)) return
     attempts = 0
+    // v0.7.98 — REAL URL succeeded → episode is over, allow the
+    // next episode to trigger recovery again.
+    recoveryActive = false
     if (timer) { clearTimeout(timer); timer = null }
   })
 
