@@ -481,34 +481,32 @@ export function SettingsView() {
                   <RefreshCw className="h-3.5 w-3.5" /> Renew / Extend
                 </Button>
                 {!status.subscription.isMaster && (
-                  <>
-                    {/* v0.7.11 — primary lossless flow: keeps remaining time, returns the code */}
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={handleTransfer}
-                      disabled={licBusy}
-                      className="gap-1.5 text-sky-300 hover:text-sky-200 border-sky-500/40 hover:border-sky-500/70 hover:bg-sky-500/10"
-                    >
-                      <Send className="h-3.5 w-3.5" /> Move to Another PC
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={handleDeactivate}
-                      disabled={licBusy}
-                      className="gap-1.5 text-rose-400 hover:text-rose-300 border-rose-500/30 hover:border-rose-500/60 hover:bg-rose-500/10"
-                    >
-                      <Power className="h-3.5 w-3.5" /> Deactivate on this PC
-                    </Button>
-                  </>
+                  // v0.7.101 — Single consolidated "Move to Another PC"
+                  // button per operator request. The previous two-button
+                  // layout (Move + Deactivate) caused operator confusion
+                  // about which one was safe — both are lossless, the
+                  // only meaningful difference was whether the activation
+                  // code was shown in the success dialog. We now always
+                  // show the code (handleTransfer flow), so the operator
+                  // can paste it into the new install OR re-enter it on
+                  // this PC, regardless of intent. handleDeactivate is
+                  // kept in the file as defensive dead code in case any
+                  // automated test or external caller still references
+                  // it, but no UI invokes it anymore.
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleTransfer}
+                    disabled={licBusy}
+                    className="gap-1.5 text-sky-300 hover:text-sky-200 border-sky-500/40 hover:border-sky-500/70 hover:bg-sky-500/10"
+                  >
+                    <Send className="h-3.5 w-3.5" /> Move to Another PC
+                  </Button>
                 )}
               </div>
               {!status.subscription.isMaster && (
                 <p className="text-[10px] text-muted-foreground leading-snug pt-1">
-                  Both options release the license while preserving your remaining time, so you can re-enter the same code later on this or another PC.{' '}
-                  <span className="text-sky-300">Move to Another PC</span> additionally shows the code in a copy-friendly dialog.{' '}
-                  <span className="text-rose-300">Deactivate</span> just stops the app on this PC; use it when you already know your code.
+                  Releases the license on this PC while preserving your remaining time. The activation code is shown in a copy-friendly dialog so you can paste it into the new install — or re-enter it here later — and the SAME remaining days will be restored.
                 </p>
               )}
             </div>
