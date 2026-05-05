@@ -30,6 +30,28 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
+  // v0.7.96 — Top-level try/catch around the WHOLE route. Same
+  // protection we added to /api/license/deactivate in v0.7.95: any
+  // unhandled throw inside a Next.js App-Router POST handler kills
+  // the request without a response body, which the renderer's
+  // fetch() surfaces as a network error and Chromium can paint as
+  // chrome-error://chromewebdata. Returning a JSON 500 keeps the
+  // renderer happy (toast.error) and means the bundled Next server
+  // never falls into the auto-restart path that briefly orphans the
+  // window.
+  try {
+    return await activateImpl(req)
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[license/activate] unhandled error in route handler:', e)
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : 'Activation failed unexpectedly. Please try again.' },
+      { status: 500 },
+    )
+  }
+}
+
+async function activateImpl(req: NextRequest) {
   let body: unknown
   try { body = await req.json() } catch { return NextResponse.json({ error: 'Body must be JSON' }, { status: 400 }) }
   const code = String((body as Record<string, unknown>)?.code ?? '').trim().toUpperCase()

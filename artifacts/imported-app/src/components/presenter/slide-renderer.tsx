@@ -319,7 +319,7 @@ function SlideContent({
   // Apply the operator's manual text-scale multiplier on top of the
   // base font size so they can dial readability live without rebuilding
   // the slide. Clamped to a sane band so the screen never blows up.
-  const scale = Math.min(2, Math.max(0.5, settings.textScale ?? 1))
+  const scale = Math.min(2, Math.max(0.5, settings.textScale ?? 0.9))
   const baseCqi = (fontSizeBaseCqi[settings.fontSize] || fontSizeBaseCqi.lg) * scale
 
   if (slide.type === 'title') {

@@ -120,7 +120,7 @@ export function OutputPreview({
   const fontStack = getFontStack(settings.fontFamily)
   const sizeMult =
     (FONT_SIZE_MULT[settings.fontSize] || 1) *
-    Math.min(2, Math.max(0.5, settings.textScale ?? 1))
+    Math.min(2, Math.max(0.5, settings.textScale ?? 0.9))
   // Reference typography (Bug #5) — independent controls that fall
   // back to the body equivalents when unset. The full-screen and
   // lower-third reference paragraphs both read these.
