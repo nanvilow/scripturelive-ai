@@ -647,3 +647,15 @@ id = "MvAfMl2KQRZFvofjlrPL7"
 uri = "file://exports/ScriptureLive-AI-v0.7.103-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.103 — NDI Linger Mode (OBS/vMix stays connected)"
+
+[[outputs]]
+id = "1J8m8jXKCsdwntBdGJVn5"
+uri = "file://.local/dist/scripturelive-ai-v0.7.104-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.104 — Source ZIP"
+
+[[outputs]]
+id = "ft_uflapY4B9l3nVUIJfZ"
+uri = "file://.local/dist/scripturelive-ai-v0.7.105-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.105 — Source ZIP (hotfix: centralized auto-fire gate)"

@@ -1530,6 +1530,9 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             } catch { /* fall through */ }
           }
           if (textOut) {
+            // v0.7.104 — Reference Engine v2 produces deterministic
+            // address-based hits ("Amos 1:3"); these belong in the
+            // Auto Verse Match (column 1) explicit pipeline.
             const detected: DetectedVerse = {
               id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
               reference: refKey,
@@ -1537,6 +1540,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               translation: tx,
               detectedAt: new Date(),
               confidence: v2.confidence / 100,
+              source: 'explicit',
             }
             const tBefore = useAppStore.getState().liveTranscript
             useAppStore.getState().pushTranscriptBreak(tBefore.length)
@@ -1553,38 +1557,15 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             state.setDetectionStatus('detected')
             // Reset speaker-follow / auto-scroll cursor on new passage.
             useAppStore.getState().setLiveActiveVerseIndex(0)
-            const autoLiveOn2 = state.autoLive || state.settings.autoGoLiveOnDetection
-            // v0.7.4 — Auto-go-live threshold lowered 90 → 70 to
-            // align with the new transcriptLiveThreshold tier.
-            // The transcript chunk that produced this v2 detection
-            // already passed the 0.70 confidence gate above, and v2
-            // adds its own ≥80 detection floor; the prior 90 cutoff
-            // was an artifact of pre-tier days when low-confidence
-            // chunks reached this code path. 70 matches the operator
-            // spec ("≥70% live").
-            // v0.7.60 — Lowered floor 70 → 50 per operator spec
-            // ("display 50–100% to live"). The v2 detector still
-            // applies its own ≥80 in-engine gate before we get here,
-            // so in practice this branch only fires for very strong
-            // matches; the change just unblocks the rare 50–69 band
-            // that the engine occasionally produces on noisy audio.
-            if (autoLiveOn2 && v2.confidence >= 40) {
-              const slide = {
-                id: `slide-${Date.now()}`,
-                type: 'verse' as const,
-                title: refKey,
-                subtitle: tx,
-                content: textOut.split('\n').filter(Boolean),
-                background: state.settings.congregationScreenTheme,
-              }
-              const cur = useAppStore.getState().slides
-              const next = cur.length > 0 ? [...cur, slide] : [slide]
-              const idx = next.length - 1
-              useAppStore.getState().setSlides(next)
-              useAppStore.getState().setPreviewSlideIndex(idx)
-              useAppStore.getState().setLiveSlideIndex(idx)
-              useAppStore.getState().setIsLive(true)
-            }
+            // v0.7.105 — REMOVED inline auto-go-live block.
+            // Per pastebin spec t5B6FGSD all auto-live decisions
+            // must clear the new 0.85 floor + 3-frame stability gate.
+            // The centralized auto-fire effect in logos-shell.tsx
+            // (shouldFireAutoLiveStable + PerSourceStabilityState) is
+            // now the SOLE authority for pushing verses to the
+            // projector. The pre-v0.7.105 inline path here fired at
+            // v2.confidence ≥ 40 with no stability tracking, which
+            // bypassed both rules.
             return
           }
         }
@@ -1622,6 +1603,10 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               book?: string; chapter?: number; verseStart?: number
             }
             if (v?.reference && v.text && v.translation) {
+              // v0.7.104 — Preacher-phrase catalogue hits are
+              // paraphrase / quotation matches, not address parses,
+              // so they belong in the Bible Reference Quoted column
+              // (semantic pipeline).
               const detected: DetectedVerse = {
                 id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 reference: v.reference,
@@ -1632,6 +1617,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                 // we floor at 0.85 so it lands in the auto-go-live
                 // band without depending on operator-tunable thresholds.
                 confidence: phraseHit.matchType === 'exact' ? 0.95 : 0.85,
+                source: 'semantic',
               }
               const tBefore = useAppStore.getState().liveTranscript
               useAppStore.getState().pushTranscriptBreak(tBefore.length)
@@ -1644,24 +1630,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                 chapter: v.chapter ?? 0,
                 verseStart: v.verseStart ?? 0,
               })
-              const autoLiveOnPhrase = state.autoLive || state.settings.autoGoLiveOnDetection
-              if (autoLiveOnPhrase) {
-                const slide = {
-                  id: `slide-${Date.now()}`,
-                  type: 'verse' as const,
-                  title: v.reference,
-                  subtitle: v.translation,
-                  content: v.text.split('\n').filter(Boolean),
-                  background: state.settings.congregationScreenTheme,
-                }
-                const cur = useAppStore.getState().slides
-                const next = cur.length > 0 ? [...cur, slide] : [slide]
-                const idx = next.length - 1
-                useAppStore.getState().setSlides(next)
-                useAppStore.getState().setPreviewSlideIndex(idx)
-                useAppStore.getState().setLiveSlideIndex(idx)
-                useAppStore.getState().setIsLive(true)
-              }
+              // v0.7.105 — REMOVED inline auto-go-live block.
+              // Preacher-phrase hits now route through the
+              // centralized stability gate in logos-shell.tsx via
+              // the 'semantic' source tag set above. The pre-v0.7.105
+              // inline path here fired immediately on any
+              // catalogue match when autoGoLiveOnDetection was on,
+              // bypassing the 3-frame stability requirement.
               state.setDetectionStatus('detected')
               return
             }
@@ -1755,6 +1730,10 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                 processedTextHitsRef.current = new Set(processedTextHitsRef.current).add(top.reference)
                 const baseConf = Math.min(1, 0.5 + (sim - minSim) * 0.83)
                 const confidence = hasAttribution ? Math.min(1, baseConf + 0.08) : baseConf
+                // v0.7.104 — Keyword text-search hits are paraphrase
+                // matches → semantic pipeline (column 2). Sub-0.60
+                // confidence will be re-routed to the suggestions
+                // column by the UI selector.
                 const detected: DetectedVerse = {
                   id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                   reference: top.reference,
@@ -1762,6 +1741,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   translation: top.translation,
                   detectedAt: new Date(),
                   confidence,
+                  source: confidence < 0.6 ? 'suggestion' : 'semantic',
                 }
                 const tBefore = useAppStore.getState().liveTranscript
                 useAppStore.getState().pushTranscriptBreak(tBefore.length)
@@ -1774,29 +1754,14 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   chapter: top.chapter,
                   verseStart: top.verse,
                 })
-                // v0.7.73 — Use the operator's threshold (default 0.78)
-                // instead of a hardcoded 0.50. Combined with the raised
-                // minSim floor above, this means a keyword hit only
-                // auto-displays on the projector when the spoken tail
-                // genuinely matches a verse — no more "speaker said
-                // 'love' so here's 1 Corinthians 13 on the screen".
-                if (autoLiveOn && sim >= threshold) {
-                  const slide = {
-                    id: `slide-${Date.now()}`,
-                    type: 'verse' as const,
-                    title: top.reference,
-                    subtitle: top.translation,
-                    content: top.text.split('\n').filter(Boolean),
-                    background: state.settings.congregationScreenTheme,
-                  }
-                  const cur = useAppStore.getState().slides
-                  const next = cur.length > 0 ? [...cur, slide] : [slide]
-                  const idx = next.length - 1
-                  useAppStore.getState().setSlides(next)
-                  useAppStore.getState().setPreviewSlideIndex(idx)
-                  useAppStore.getState().setLiveSlideIndex(idx)
-                  useAppStore.getState().setIsLive(true)
-                }
+                // v0.7.105 — REMOVED inline auto-go-live block.
+                // Keyword-search semantic hits now route through
+                // the centralized stability gate in logos-shell.tsx
+                // via the 'semantic' source tag set above (or
+                // 'suggestion' when confidence < 0.6). The
+                // pre-v0.7.105 inline path here fired at the
+                // operator's autoLiveThreshold (default 0.78) with
+                // no stability requirement.
               }
             }
           }
@@ -1857,7 +1822,6 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             }
             if (semJson.ok && Array.isArray(semJson.matches) && semJson.matches.length) {
               const tx = state.selectedTranslation
-              let bestLiveDispatched = false
               for (const m of semJson.matches) {
                 // v0.7.73 — Raised semantic noise floor 0.20 → 0.55.
                 // Cosine similarity of 0.20–0.50 between the transcript
@@ -1906,6 +1870,10 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   translationOut = 'KJV'
                 }
 
+                // v0.7.104 — AI cosine matcher hits are semantic by
+                // definition. Score < 0.60 → suggestions column;
+                // ≥ 0.60 → semantic live column (auto-fire still
+                // requires ≥ 0.85 + 3-frame stability).
                 const detected: DetectedVerse = {
                   id: `det-sem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                   reference: m.reference,
@@ -1913,6 +1881,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   translation: translationOut,
                   detectedAt: new Date(),
                   confidence: m.score,
+                  source: m.score < 0.6 ? 'suggestion' : 'semantic',
                 }
 
                 if (m.score >= threshold) {
@@ -1934,24 +1903,14 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                     verseEnd: m.verseEnd ?? undefined,
                   })
                   state.setDetectionStatus('detected')
-                  if (autoLiveOn && !bestLiveDispatched) {
-                    bestLiveDispatched = true
-                    const slide = {
-                      id: `slide-${Date.now()}`,
-                      type: 'verse' as const,
-                      title: m.reference,
-                      subtitle: translationOut,
-                      content: textOut.split('\n').filter(Boolean),
-                      background: state.settings.congregationScreenTheme,
-                    }
-                    const cur = useAppStore.getState().slides
-                    const next = cur.length > 0 ? [...cur, slide] : [slide]
-                    const idx = next.length - 1
-                    useAppStore.getState().setSlides(next)
-                    useAppStore.getState().setPreviewSlideIndex(idx)
-                    useAppStore.getState().setLiveSlideIndex(idx)
-                    useAppStore.getState().setIsLive(true)
-                  }
+                  // v0.7.105 — REMOVED inline auto-go-live block.
+                  // AI cosine matcher hits now route through the
+                  // centralized stability gate in logos-shell.tsx via
+                  // the 'semantic' source tag set above (or
+                  // 'suggestion' when score < 0.6). The pre-v0.7.105
+                  // inline path here fired at the operator's
+                  // autoLiveThreshold (default 0.78) with no
+                  // stability requirement.
                 } else {
                   // 0.20–0.49 band → candidates only. Operator must
                   // explicitly promote; never auto-live.
@@ -1976,6 +1935,8 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           if (verse) {
             const t = useAppStore.getState().liveTranscript
             useAppStore.getState().pushTranscriptBreak(t.length)
+            // v0.7.104 — Regex-based reference detector hits are
+            // explicit address parses → column 1.
             const detected: DetectedVerse = {
               id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
               reference: ref,
@@ -1983,33 +1944,19 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               translation: state.selectedTranslation,
               detectedAt: new Date(),
               confidence: detectedRef.confidence,
+              source: 'explicit',
             }
 
             useAppStore.getState().addDetectedVerse(detected)
             useAppStore.getState().setLiveVerse(verse)
             useAppStore.getState().addToVerseHistory(verse)
-
-            const latestState = useAppStore.getState()
-            const passesThreshold =
-              detectedRef.confidence >= threshold && detectedRef.hasExplicitVerse
-            if (autoLiveOn && passesThreshold) {
-              const slide = {
-                id: `slide-${Date.now()}`,
-                type: 'verse' as const,
-                title: detected.reference,
-                subtitle: detected.translation,
-                content: detected.text.split('\n').filter(Boolean),
-                background: latestState.settings.congregationScreenTheme,
-              }
-              const currentSlides = latestState.slides.length > 0
-                ? [...latestState.slides, slide]
-                : [slide]
-              const newLiveIndex = currentSlides.length - 1
-              useAppStore.getState().setSlides(currentSlides)
-              useAppStore.getState().setPreviewSlideIndex(newLiveIndex)
-              useAppStore.getState().setLiveSlideIndex(newLiveIndex)
-              useAppStore.getState().setIsLive(true)
-            }
+            // v0.7.105 — REMOVED inline auto-go-live block.
+            // Regex-detected explicit references now route through
+            // the centralized stability gate in logos-shell.tsx via
+            // the 'explicit' source tag set above. The pre-v0.7.105
+            // inline path here fired at the operator's
+            // autoLiveThreshold (default 0.78, floor 0.50) with no
+            // stability requirement.
           }
         } catch {
           // Silently ignore fetch errors for unrecognized references

@@ -91,7 +91,14 @@ import {
   detectVersesInText,
 } from '@/lib/bible-api'
 import type { Slide } from '@/lib/store'
-import { alternativesFor, pickAutoLiveMatch, shouldFireAutoLive } from '@/lib/verse-auto-live'
+import {
+  initialPerSourceStability,
+  liveColumnFor,
+  pickAutoLiveBySource,
+  shouldFireAutoLiveStable,
+  suggestionsFor,
+  type PerSourceStabilityState,
+} from '@/lib/verse-auto-live'
 
 // ──────────────────────────────────────────────────────────────────────
 // Card primitives
@@ -2342,73 +2349,110 @@ function DetectedVersesCard() {
         ) : null
       }
     >
-      {/* v0.7.84 — Two-column split rebuilt around the operator's
-          mental model:
-            • LEFT  "Auto-Live Match"    — the SINGLE best verse the AI
-                                            picked to put on the screen
-                                            (highest confidence, ≥55%).
-                                            Empty until the AI is
-                                            confident enough to commit.
-            • RIGHT "Alternative References" — every OTHER detection
-                                            (≥20% confidence), newest
-                                            on top. v0.7.94: removed
-                                            the upper bound so the
-                                            visible row count matches
-                                            the badge count — operator
-                                            reported "9 detected, only
-                                            1 in there". */}
+      {/* v0.7.104 — THREE-pipeline split per pastebin spec
+          (t5B6FGSD). Each column is an INDEPENDENT detection
+          pipeline with its own confidence rules. No fallback chains,
+          no cross-trigger.
+
+            • COL 1 "Auto Verse Match (Live)"
+                Source: explicit regex / Reference Engine v2 hits
+                ("Amos 1:3", "John 3:16-17"). Auto-live at ≥85%
+                confidence + 3-frame stability gate.
+
+            • COL 2 "Bible Reference Quoted"
+                Source: semantic / paraphrase matches (preacher-phrase
+                catalogue, keyword text-search, AI cosine embedding).
+                Auto-live at ≥85% confidence + 3-frame stability gate
+                — runs in parallel with col 1 but never displaces it.
+
+            • COL 3 "Suggested Verses Detect"
+                Anything in the 0.10–0.60 band from EITHER detector.
+                MANUAL ONLY — operator must double-click a row to send
+                live. Never auto-fires regardless of confidence,
+                regardless of source. */}
       {(() => {
-        // Compute the auto-live winner inline so the card stays a pure
-        // function of store state. Same ranking + 65% floor used by
-        // the auto-advance effect in AppShell so the two views agree.
-        const liveMatch = pickAutoLiveMatch(detectedVerses)
-        const alternatives = alternativesFor(detectedVerses, liveMatch?.id ?? null)
+        // Each column reads ONLY its own source slice — no cross-pull.
+        const explicitRows = liveColumnFor(detectedVerses, 'explicit')
+        const semanticRows = liveColumnFor(detectedVerses, 'semantic')
+        const explicitWinner = pickAutoLiveBySource(detectedVerses, 'explicit')
+        const semanticWinner = pickAutoLiveBySource(detectedVerses, 'semantic')
+        const suggestionRows = suggestionsFor(detectedVerses)
         return (
-          <div className="flex-1 min-h-0 grid grid-cols-2 gap-1 overflow-hidden">
-            {/* LIVE MATCH column — single best ≥50% pick */}
+          <div className="flex-1 min-h-0 grid grid-cols-3 gap-1 overflow-hidden">
+            {/* COL 1 — EXPLICIT (regex / Reference Engine v2) */}
             <div className="flex flex-col min-h-0 border-r border-border/50">
               <div className="px-2 py-1 flex items-center justify-between bg-emerald-500/5 border-b border-emerald-500/20 sticky top-0 z-10">
                 <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-300">
-                  Auto-Live Match
+                  Auto Verse Match
                 </span>
                 <span className="text-[9px] font-mono tabular-nums text-muted-foreground">
-                  {liveMatch ? '1' : '0'}
+                  {explicitRows.length}
                 </span>
               </div>
               <div className="flex-1 min-h-0 overflow-y-auto">
                 <div className="p-1.5 space-y-1.5">
-                  {!liveMatch ? (
+                  {explicitRows.length === 0 ? (
                     <div className="text-center py-6 text-[10px] text-muted-foreground">
                       <Mic className="h-5 w-5 mx-auto opacity-40 mb-1.5" />
-                      Waiting for a high-confidence (≥50%) verse match.
+                      Explicit references (e.g.&nbsp;&ldquo;Amos 1:3&rdquo;) auto-live at ≥85%.
                     </div>
                   ) : (
-                    renderRow(liveMatch, 0, 'live')
+                    // Sub-threshold rows render with the same 'live'
+                    // chrome as the winner so the operator sees the
+                    // pipeline accumulating evidence; the auto-fire
+                    // gate decides when to actually push to the
+                    // projector.
+                    explicitRows.map((row, i) => renderRow(row, i, 'live'))
                   )}
+                  {explicitWinner ? null : null /* winner is at index 0 above */}
                 </div>
               </div>
             </div>
 
-            {/* ALTERNATIVES column — every other detection (50%+ losers + 20-49% guesses) */}
-            <div className="flex flex-col min-h-0">
-              <div className="px-2 py-1 flex items-center justify-between bg-amber-500/5 border-b border-amber-500/20 sticky top-0 z-10">
-                <span className="text-[9px] font-bold uppercase tracking-wider text-amber-300">
-                  Alternative References
+            {/* COL 2 — SEMANTIC (preacher-phrase / keyword / AI) */}
+            <div className="flex flex-col min-h-0 border-r border-border/50">
+              <div className="px-2 py-1 flex items-center justify-between bg-sky-500/5 border-b border-sky-500/20 sticky top-0 z-10">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-sky-300">
+                  Bible Reference Quoted
                 </span>
                 <span className="text-[9px] font-mono tabular-nums text-muted-foreground">
-                  {alternatives.length + detectedVerseCandidates.length}
+                  {semanticRows.length}
                 </span>
               </div>
               <div className="flex-1 min-h-0 overflow-y-auto">
                 <div className="p-1.5 space-y-1.5">
-                  {alternatives.length === 0 && detectedVerseCandidates.length === 0 ? (
+                  {semanticRows.length === 0 ? (
                     <div className="text-center py-6 text-[10px] text-muted-foreground">
-                      Other detected verses appear here, newest on top.
-                      Click any to send it live instead.
+                      <Mic className="h-5 w-5 mx-auto opacity-40 mb-1.5" />
+                      Paraphrased quotations auto-live at ≥85%.
+                    </div>
+                  ) : (
+                    semanticRows.map((row, i) => renderRow(row, i, 'live'))
+                  )}
+                  {semanticWinner ? null : null /* winner is at index 0 above */}
+                </div>
+              </div>
+            </div>
+
+            {/* COL 3 — SUGGESTIONS (10-60% manual-only) */}
+            <div className="flex flex-col min-h-0">
+              <div className="px-2 py-1 flex items-center justify-between bg-amber-500/5 border-b border-amber-500/20 sticky top-0 z-10">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-amber-300">
+                  Suggested Verses
+                </span>
+                <span className="text-[9px] font-mono tabular-nums text-muted-foreground">
+                  {suggestionRows.length + detectedVerseCandidates.length}
+                </span>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <div className="p-1.5 space-y-1.5">
+                  {suggestionRows.length === 0 && detectedVerseCandidates.length === 0 ? (
+                    <div className="text-center py-6 text-[10px] text-muted-foreground">
+                      Low-confidence guesses (10–60%). Double-click to send live.
                     </div>
                   ) : (
                     <>
-                      {alternatives.map((v, i) => renderRow(v, i, 'live'))}
+                      {suggestionRows.map((v, i) => renderRow(v, i, 'candidate'))}
                       {detectedVerseCandidates.map((v, i) => renderRow(v, i, 'candidate'))}
                     </>
                   )}
@@ -3351,6 +3395,16 @@ export function LogosShell() {
   // the same state.
   const autoAdvance = useAppStore((s) => s.autoLive)
   const setAutoAdvance = useAppStore((s) => s.setAutoLive)
+  // v0.7.105 — Auto-fire gate honours BOTH the AUTO toggle and the
+  // legacy "Auto-go-live on detection" Setting, matching the gating
+  // the per-pipeline inline blocks in speech-provider.tsx used
+  // before they were neutered. Without this OR, operators who only
+  // had `autoGoLiveOnDetection` enabled (and never flipped the AUTO
+  // pill) would silently lose auto-fire after the v0.7.104→.105
+  // refactor. The toggle UI itself still binds to `autoAdvance`
+  // alone so its label/state stays correct.
+  const autoGoLiveOnDetection = useAppStore((s) => s.settings.autoGoLiveOnDetection)
+  const effectiveAutoFire = autoAdvance || autoGoLiveOnDetection
 
   // v0.7.81 — Auto-prefetch the operator's default Bible translation
   // for offline use on first launch.
@@ -3411,15 +3465,27 @@ export function LogosShell() {
   // direction or the other. This version trusts the confidence
   // ranking and simply REPLACES live whenever the top match changes.
   const lastAutoVerseId = useRef<string | null>(null)
+  // v0.7.104 — Per-pipeline stability counters (≥3 consecutive
+  // frames before auto-fire). Reset to initial whenever the operator
+  // clears detectedVerses so a stale candidate from a previous
+  // service can't immediately fire on resume.
+  const stabilityRef = useRef<PerSourceStabilityState>(initialPerSourceStability)
   useEffect(() => {
-    if (!autoAdvance) return
+    if (!effectiveAutoFire) return
     if (!detectedVerses.length) {
       lastAutoVerseId.current = null
+      stabilityRef.current = initialPerSourceStability
       return
     }
     // Delegated to the pure helper in src/lib/verse-auto-live.ts so
-    // the rules are unit-tested in isolation. See verse-auto-live.test.ts.
-    const decision = shouldFireAutoLive(detectedVerses, lastAutoVerseId.current)
+    // the source-aware rules + stability gate are unit-tested in
+    // isolation. See verse-auto-live.test.ts.
+    const decision = shouldFireAutoLiveStable(
+      detectedVerses,
+      lastAutoVerseId.current,
+      stabilityRef.current,
+    )
+    stabilityRef.current = decision.nextStability
     if (!decision.fire) return
     const best = decision.verse
     lastAutoVerseId.current = best.id
@@ -3442,7 +3508,7 @@ export function LogosShell() {
     setLiveSlideIndex(0)
     setIsLive(true)
     // Toast suppressed per FRS — output actions stay silent.
-  }, [autoAdvance, detectedVerses, addScheduleItem, setSlides, setPreviewSlideIndex, setLiveSlideIndex, setIsLive, settings.congregationScreenTheme])
+  }, [effectiveAutoFire, detectedVerses, addScheduleItem, setSlides, setPreviewSlideIndex, setLiveSlideIndex, setIsLive, settings.congregationScreenTheme])
 
   // Local no-op broadcaster — the real broadcaster lives globally in
   // <OutputBroadcaster /> (mounted in page.tsx) so settings tweaks
