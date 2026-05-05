@@ -1530,6 +1530,9 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             } catch { /* fall through */ }
           }
           if (textOut) {
+            // v0.7.104 — Reference Engine v2 produces deterministic
+            // address-based hits ("Amos 1:3"); these belong in the
+            // Auto Verse Match (column 1) explicit pipeline.
             const detected: DetectedVerse = {
               id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
               reference: refKey,
@@ -1537,6 +1540,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               translation: tx,
               detectedAt: new Date(),
               confidence: v2.confidence / 100,
+              source: 'explicit',
             }
             const tBefore = useAppStore.getState().liveTranscript
             useAppStore.getState().pushTranscriptBreak(tBefore.length)
@@ -1622,6 +1626,10 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               book?: string; chapter?: number; verseStart?: number
             }
             if (v?.reference && v.text && v.translation) {
+              // v0.7.104 — Preacher-phrase catalogue hits are
+              // paraphrase / quotation matches, not address parses,
+              // so they belong in the Bible Reference Quoted column
+              // (semantic pipeline).
               const detected: DetectedVerse = {
                 id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 reference: v.reference,
@@ -1632,6 +1640,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                 // we floor at 0.85 so it lands in the auto-go-live
                 // band without depending on operator-tunable thresholds.
                 confidence: phraseHit.matchType === 'exact' ? 0.95 : 0.85,
+                source: 'semantic',
               }
               const tBefore = useAppStore.getState().liveTranscript
               useAppStore.getState().pushTranscriptBreak(tBefore.length)
@@ -1755,6 +1764,10 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                 processedTextHitsRef.current = new Set(processedTextHitsRef.current).add(top.reference)
                 const baseConf = Math.min(1, 0.5 + (sim - minSim) * 0.83)
                 const confidence = hasAttribution ? Math.min(1, baseConf + 0.08) : baseConf
+                // v0.7.104 — Keyword text-search hits are paraphrase
+                // matches → semantic pipeline (column 2). Sub-0.60
+                // confidence will be re-routed to the suggestions
+                // column by the UI selector.
                 const detected: DetectedVerse = {
                   id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                   reference: top.reference,
@@ -1762,6 +1775,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   translation: top.translation,
                   detectedAt: new Date(),
                   confidence,
+                  source: confidence < 0.6 ? 'suggestion' : 'semantic',
                 }
                 const tBefore = useAppStore.getState().liveTranscript
                 useAppStore.getState().pushTranscriptBreak(tBefore.length)
@@ -1906,6 +1920,10 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   translationOut = 'KJV'
                 }
 
+                // v0.7.104 — AI cosine matcher hits are semantic by
+                // definition. Score < 0.60 → suggestions column;
+                // ≥ 0.60 → semantic live column (auto-fire still
+                // requires ≥ 0.85 + 3-frame stability).
                 const detected: DetectedVerse = {
                   id: `det-sem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                   reference: m.reference,
@@ -1913,6 +1931,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   translation: translationOut,
                   detectedAt: new Date(),
                   confidence: m.score,
+                  source: m.score < 0.6 ? 'suggestion' : 'semantic',
                 }
 
                 if (m.score >= threshold) {
@@ -1976,6 +1995,8 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           if (verse) {
             const t = useAppStore.getState().liveTranscript
             useAppStore.getState().pushTranscriptBreak(t.length)
+            // v0.7.104 — Regex-based reference detector hits are
+            // explicit address parses → column 1.
             const detected: DetectedVerse = {
               id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
               reference: ref,
@@ -1983,6 +2004,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               translation: state.selectedTranslation,
               detectedAt: new Date(),
               confidence: detectedRef.confidence,
+              source: 'explicit',
             }
 
             useAppStore.getState().addDetectedVerse(detected)

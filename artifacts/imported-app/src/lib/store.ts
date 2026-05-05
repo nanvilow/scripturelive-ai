@@ -83,6 +83,16 @@ export interface DetectedVerse {
   translation: BibleTranslation
   detectedAt: Date
   confidence: number
+  // v0.7.104 — Detection source tag drives the three-column split in
+  // the Detected Verses card. Each pipeline runs independently; the
+  // tag tells the UI which column to render the row in:
+  //   • 'explicit'   — Reference Engine v2 / regex hit ("Amos 1:3")
+  //   • 'semantic'   — preacher-phrase, keyword search, AI cosine
+  //   • 'suggestion' — low-confidence (0.50–0.84) band, manual only
+  // Optional for back-compat: any persisted detection from before
+  // v0.7.104 (or any new code path that hasn't been tagged yet) is
+  // treated as 'explicit' by the column selectors.
+  source?: 'explicit' | 'semantic' | 'suggestion'
 }
 
 export interface AppSettings {

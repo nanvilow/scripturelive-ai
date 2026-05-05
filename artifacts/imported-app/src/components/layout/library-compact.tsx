@@ -656,6 +656,8 @@ export function ScriptureDetectionCompact() {
         const verse = await fetchBibleVerse(ref, selectedTranslation)
         if (verse) {
           found++
+          // v0.7.104 — Operator-typed reference is the most explicit
+          // detection signal possible → column 1.
           const det: DetectedVerse = {
             id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             reference: ref,
@@ -663,6 +665,7 @@ export function ScriptureDetectionCompact() {
             translation: selectedTranslation,
             detectedAt: new Date(),
             confidence: 0.95,
+            source: 'explicit',
           }
           addDetectedVerse(det)
           addToVerseHistory(verse)
