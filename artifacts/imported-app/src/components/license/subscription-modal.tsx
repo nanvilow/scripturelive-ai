@@ -204,13 +204,42 @@ export function SubscriptionModal() {
       })
       const j = await r.json()
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
-      setReceipt(j as ActivateResp)
-      setPhase('active')
-      await refresh()
+      // v0.7.101 — IMMEDIATE hard reload, before any React state
+      // mutates from the fresh license response.
+      //
+      // Operator confirmed (https://ibb.co/B9v8T23) that even with
+      // v0.7.100's hard-reload-on-Close-button-click, activation STILL
+      // produced chrome-error. Why: the path was
+      //   API resolves
+      //   → setReceipt(j)              ← React commits new tree
+      //   → setPhase('active')         ← lock-overlay starts unmounting
+      //   → await refresh()            ← license-provider state mutates
+      //   → render activation receipt  ← downstream useEffects fire
+      //   → ONE of those useEffects throws against an in-flight fetch
+      //     made with the old auth context → renderer crashes →
+      //     chrome-error painted BEFORE the operator could click Close.
+      //
+      // The "Close button hard reload" added in v0.7.99/v0.7.100 was
+      // closing the gate AFTER the horse had bolted. The activation
+      // receipt UI itself was the trigger. We now skip the receipt
+      // entirely and reload the moment the API confirms success.
+      //
+      // The activation receipt was a nice-to-have (copy / WhatsApp).
+      // The freshly-reloaded app shows the active subscription in
+      // Settings with the same activation code, plan label, and
+      // expiry — operators get the confirmation they actually need
+      // without ever risking the chrome-error window.
+      try { window.location.assign('/') } catch { window.location.href = '/' }
+      // Safety: if navigation is blocked (CSP, beforeunload veto,
+      // renderer mid-shutdown), don't leave the modal stuck on the
+      // 'activating' spinner forever. Same 8 s pattern as v0.7.100.
+      setTimeout(() => { setBusy(false); setPhase('active') }, 8000)
+      return // do NOT fall through to setReceipt / refresh / finally
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setPhase(originPhase)
-    } finally { setBusy(false) }
+      setBusy(false)
+    }
   }
 
   // v0.5.53 — Right-click in Electron sometimes swallows the native
@@ -593,18 +622,15 @@ export function SubscriptionModal() {
               )}
             </div>
             <Button className="bg-emerald-600 hover:bg-emerald-500" onClick={() => {
-              // v0.7.99 / v0.7.100 — After successful activation,
-              // HARD RELOAD the renderer immediately instead of just
-              // closing the modal. The React tree was rendered with
-              // the pre-activation license state (locked / no
-              // subscription). Soft-closing triggers a refresh() that
-              // re-mounts lock-overlay / license-provider with the
-              // freshly-active subscription while in-flight fetches
-              // (telemetry pings, settings hydration, congregation
-              // output) are still running with the old auth context.
-              // One of those crashes the renderer → chrome-error.
-              // Hard reload gives a guaranteed-clean tree on /,
-              // entering the app fresh as a fully-activated install.
+              // v0.7.101 — This 'active' phase is now defensive dead
+              // code on the success path: submitActivation hard-reloads
+              // immediately after the API resolves, so the receipt UI
+              // never gets a chance to render. The block + this Close
+              // button are kept ONLY for the 8 s safety fallback in
+              // submitActivation (if window.location.assign is vetoed,
+              // the operator still gets a way to dismiss the modal).
+              // Same hard-reload pattern as v0.7.99/v0.7.100 in case
+              // the safety path lands here.
               setOpen(false)
               try { window.location.assign('/') } catch { window.location.href = '/' }
             }}>Close</Button>
