@@ -659,3 +659,9 @@ id = "ft_uflapY4B9l3nVUIJfZ"
 uri = "file://.local/dist/scripturelive-ai-v0.7.105-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.105 — Source ZIP (hotfix: centralized auto-fire gate)"
+
+[[outputs]]
+id = "3lPBKYTMTtTKmLftsNTyH"
+uri = "file://.local/builds/scripturelive-v0.7.106-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.106 — source (built locally, NOT pushed)"

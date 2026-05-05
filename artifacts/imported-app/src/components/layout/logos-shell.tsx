@@ -2349,27 +2349,27 @@ function DetectedVersesCard() {
         ) : null
       }
     >
-      {/* v0.7.104 — THREE-pipeline split per pastebin spec
-          (t5B6FGSD). Each column is an INDEPENDENT detection
-          pipeline with its own confidence rules. No fallback chains,
-          no cross-trigger.
+      {/* v0.7.106 — THREE-pipeline split, retuned per pastebin spec
+          jh9YcK2h. Each column is an INDEPENDENT detection pipeline.
+          Auto-live floor lowered 0.85 → 0.65, stability gate
+          relaxed 3 → 1 frame, and a new 3.5 s LIVE_HOLD_MS dwell
+          enforces the spec's "previous verse stays 3-4 s before
+          transitioning out".
 
             • COL 1 "Auto Verse Match (Live)"
                 Source: explicit regex / Reference Engine v2 hits
-                ("Amos 1:3", "John 3:16-17"). Auto-live at ≥85%
-                confidence + 3-frame stability gate.
+                ("Amos 1:3", "John 3:16-17"). Auto-live at ≥65%.
 
             • COL 2 "Bible Reference Quoted"
                 Source: semantic / paraphrase matches (preacher-phrase
                 catalogue, keyword text-search, AI cosine embedding).
-                Auto-live at ≥85% confidence + 3-frame stability gate
-                — runs in parallel with col 1 but never displaces it.
+                Auto-live at ≥65% — runs in parallel with col 1 but
+                never displaces a live verse inside the 3.5 s hold.
 
             • COL 3 "Suggested Verses Detect"
-                Anything in the 0.10–0.60 band from EITHER detector.
+                Anything in the 0.10–0.65 band from EITHER detector.
                 MANUAL ONLY — operator must double-click a row to send
-                live. Never auto-fires regardless of confidence,
-                regardless of source. */}
+                live. Never auto-fires regardless of confidence. */}
       {(() => {
         // Each column reads ONLY its own source slice — no cross-pull.
         const explicitRows = liveColumnFor(detectedVerses, 'explicit')
@@ -2394,7 +2394,7 @@ function DetectedVersesCard() {
                   {explicitRows.length === 0 ? (
                     <div className="text-center py-6 text-[10px] text-muted-foreground">
                       <Mic className="h-5 w-5 mx-auto opacity-40 mb-1.5" />
-                      Explicit references (e.g.&nbsp;&ldquo;Amos 1:3&rdquo;) auto-live at ≥85%.
+                      Explicit references (e.g.&nbsp;&ldquo;Amos 1:3&rdquo;) auto-live at ≥65%.
                     </div>
                   ) : (
                     // Sub-threshold rows render with the same 'live'
@@ -2424,7 +2424,7 @@ function DetectedVersesCard() {
                   {semanticRows.length === 0 ? (
                     <div className="text-center py-6 text-[10px] text-muted-foreground">
                       <Mic className="h-5 w-5 mx-auto opacity-40 mb-1.5" />
-                      Paraphrased quotations auto-live at ≥85%.
+                      Paraphrased quotations auto-live at ≥65%.
                     </div>
                   ) : (
                     semanticRows.map((row, i) => renderRow(row, i, 'live'))
@@ -2448,7 +2448,7 @@ function DetectedVersesCard() {
                 <div className="p-1.5 space-y-1.5">
                   {suggestionRows.length === 0 && detectedVerseCandidates.length === 0 ? (
                     <div className="text-center py-6 text-[10px] text-muted-foreground">
-                      Low-confidence guesses (10–60%). Double-click to send live.
+                      Low-confidence guesses (10–64%). Double-click to send live.
                     </div>
                   ) : (
                     <>
@@ -3480,10 +3480,13 @@ export function LogosShell() {
     // Delegated to the pure helper in src/lib/verse-auto-live.ts so
     // the source-aware rules + stability gate are unit-tested in
     // isolation. See verse-auto-live.test.ts.
+    // v0.7.106 — Pass Date.now() in so the helper can enforce its
+    // 3.5 s LIVE_HOLD_MS dwell window between consecutive fires.
     const decision = shouldFireAutoLiveStable(
       detectedVerses,
       lastAutoVerseId.current,
       stabilityRef.current,
+      { nowMs: Date.now() },
     )
     stabilityRef.current = decision.nextStability
     if (!decision.fire) return
