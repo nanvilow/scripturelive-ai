@@ -39,3 +39,4 @@ artifacts/imported-app/release/ScriptureLive-AI-0.7.32-Setup-x64.zip filter=lfs 
 exports/ScriptureLive-AI-v0.7.93-source.zip filter=lfs diff=lfs merge=lfs -text
 exports/ScriptureLive-AI-v0.7.94-source.zip filter=lfs diff=lfs merge=lfs -text
 artifacts/exports/ScriptureLive-AI-v0.7.95-source.zip filter=lfs diff=lfs merge=lfs -text
+exports/ScriptureLive-AI-v0.7.96-source.zip filter=lfs diff=lfs merge=lfs -text

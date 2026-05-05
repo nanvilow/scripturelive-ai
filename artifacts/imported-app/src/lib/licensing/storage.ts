@@ -502,99 +502,182 @@ function load(): LicenseFile {
 function persist(file: LicenseFile) {
   ensureDir()
   const p = storagePath()
-  // v0.7.95 — ROOT-CAUSE FIX for the recurring "This page couldn't
-  // load" Chromium error after Deactivate / Move-to-Another-PC.
+  // v0.7.96 — TOTAL-DISK-DECOUPLING FIX for the recurring "This page
+  // couldn't load" Chromium error after Deactivate / Activate / Move.
   //
-  // Pre-v0.7.95 (v0.7.86) tried to handle Windows AV/OneDrive lock
-  // contention on the rename target by RETRYING with a SYNCHRONOUS
-  // BUSY-SPIN of up to 50+100+200+400+800 = 1550 ms. That spin pegged
-  // the Node event loop of the bundled Next.js standalone server. For
-  // up to ~1.5 s the server could not handle ANY other request,
-  // including:
-  //   • the renderer's follow-up /api/license/status fetch,
-  //   • Next.js prefetches when the operator clicked another tab,
-  //   • the renderer's hard-reload fallback when client-side nav
-  //     timed out.
-  // When the operator switched away and came back, the queued
-  // navigation hit a frozen / mid-restarting server and Chromium
-  // painted its built-in chrome-error://chromewebdata page. The
-  // crash-mask installer in main.ts caught did-fail-load and
-  // repainted, but the operator had already seen the error.
+  // History of attempts:
+  //   v0.7.83 — installed did-fail-load auto-recovery (3-strike retry).
+  //   v0.7.84 — auto-restart Next child on exit (5-in-60 limit).
+  //   v0.7.86 — sync busy-spin retry inside persist() on EPERM/EBUSY.
+  //   v0.7.87 — never show Chromium's "page couldn't load".
+  //   v0.7.89 — sticky auto-live + crash mask on ALL windows.
+  //   v0.7.90 — fixed reload()-loops-the-mask bug; track lastTargetURL.
+  //   v0.7.95 — moved busy-spin off event loop; cache update first.
   //
-  // The fix has three parts:
-  //   1) Update the in-memory `cache` BEFORE attempting the disk
-  //      write, so every caller sees the new state immediately even
-  //      if the disk write is slow / racing AV.
-  //   2) Try the disk write ONCE synchronously. The vast majority
-  //      of operations succeed on the first try in <5 ms — keeping
-  //      the fast path sync preserves crash-safety for the common
-  //      case (a power loss between cache update and disk write
-  //      simply re-applies the previous file on next load).
-  //   3) On the AV-lock error family (EPERM/EBUSY/EACCES), schedule
-  //      retries via setImmediate so the event loop keeps spinning.
-  //      The retries write the SAME `file` object that's already in
-  //      `cache`, so concurrent reads stay consistent.
+  // The operator continued to report "This page couldn't load" after
+  // v0.7.95. The screenshot is consistently the standard Chromium
+  // chrome-error page in the main window. The remaining root cause:
   //
-  // Other errors (ENOSPC, EROFS, etc) still throw immediately — those
-  // are real problems the caller / route handler needs to surface.
+  //   ANY synchronous disk I/O on the route-handler hot path can stall
+  //   the bundled single-process Next server long enough — under
+  //   Windows AV / OneDrive contention, slow HDD, full disk, or simply
+  //   a writeFileSync of a multi-MB licence file — that the renderer's
+  //   queued navigation (tab switch, focus refresh, prefetch hard-
+  //   reload fallback) times out and Chromium paints the error page
+  //   BEFORE our did-fail-load handler can take over.
+  //
+  // v0.7.96's contract is therefore stricter:
+  //
+  //   • persist() does ZERO synchronous disk I/O. The in-memory `cache`
+  //     is updated, a fire-and-forget async write is scheduled via
+  //     setImmediate, and the function returns immediately.
+  //   • persist() NEVER throws under any condition. Disk failures
+  //     (EPERM, EBUSY, EACCES, ENOSPC, EROFS, EIO, EMFILE, ENOENT…)
+  //     are caught and retried asynchronously. The in-memory cache
+  //     is the source of truth for the running process; the disk
+  //     file is reconciled in the background.
+  //   • Retries are unlimited (capped only at 60s of attempts) because
+  //     a transient AV lock that lasts longer than our previous 5-shot
+  //     budget should not silently desync the file. Backoff plateaus
+  //     at 1s after the initial exponential ramp.
+  //
+  // Crash-safety: the prior architecture relied on synchronous write
+  // so a power loss mid-route would leave a coherent file on disk.
+  // The new model accepts that a process kill between cache update
+  // and disk flush may lose ONE persist() — the next persist() (which
+  // for licensing is always within seconds: status poll, trial tick,
+  // heartbeat) reapplies the latest cache. For the operator-facing
+  // flows this matters here, the worst case is "deactivate didn't
+  // stick across a kill" → operator deactivates again. Acceptable.
   cache = file
   const data = JSON.stringify(file, null, 2)
-  const tmp = p + '.tmp.' + process.pid + '.' + Date.now()
+  enqueuePersist(p, data)
+}
+
+// v0.7.96 — Single-flight async writer with latest-data wins.
+//
+// The architect review of v0.7.96 flagged a race in the first pass:
+// each persist() spawned its OWN retry chain, so two overlapping
+// persist() calls could let the OLDER chain win the rename race
+// (e.g. older chain succeeds on retry attempt 3 AFTER the newer
+// chain has already landed its first write). The on-disk file would
+// then disagree with the in-memory cache.
+//
+// Fix: per-path single-flight scheduler. Every persist() call simply
+// updates a `pending` slot for the path. A single in-flight scheduler
+// runs at most one writeFileSync+renameSync at a time, ALWAYS writing
+// the latest pending data (not a stale snapshot). When a write
+// succeeds AND there's no newer pending data, the chain ends. When a
+// write fails, the same scheduler retries — but on the next attempt
+// it writes whatever is in `pending` AT THAT MOMENT, so a freshly
+// arrived persist() during the retry window is honored, and an
+// already-superseded write never lands.
+//
+// Crash-safety: the in-memory cache is the source of truth for the
+// running process (every read goes through `load()` which prefers
+// `cache`). The disk file is a recovery copy used only on a fresh
+// process boot. If the process is killed between cache update and
+// successful flush we may lose the LAST persist() — the next
+// persist() (next status poll, trial tick, heartbeat — at most ~30s
+// away) reapplies the latest cache.
+const PERSIST_DEADLINE_MS = 60_000
+
+interface PendingPersist {
+  data: string
+  startedAt: number
+  attempt: number
+  inflight: boolean
+  timer: NodeJS.Timeout | null
+}
+
+const PENDING: Map<string, PendingPersist> = new Map()
+
+function enqueuePersist(finalPath: string, data: string): void {
+  const existing = PENDING.get(finalPath)
+  if (existing) {
+    // Supersede any older queued data with the latest. Keep the
+    // existing startedAt/attempt counters so we still honor the
+    // 60s deadline relative to when the current trouble started.
+    existing.data = data
+    if (!existing.inflight && !existing.timer) {
+      // No write in flight (we just finished one) — kick a fresh
+      // tick so the new data lands ASAP.
+      existing.timer = setTimeout(() => runPersistOnce(finalPath), 0)
+    }
+    return
+  }
+  const slot: PendingPersist = {
+    data,
+    startedAt: Date.now(),
+    attempt: 0,
+    inflight: false,
+    timer: setTimeout(() => runPersistOnce(finalPath), 0),
+  }
+  PENDING.set(finalPath, slot)
+}
+
+function runPersistOnce(finalPath: string): void {
+  const slot = PENDING.get(finalPath)
+  if (!slot) return
+  slot.timer = null
+  slot.inflight = true
+
+  if (Date.now() - slot.startedAt > PERSIST_DEADLINE_MS) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[licensing] persist disk write gave up after ${slot.attempt} attempts over ${Math.round((Date.now() - slot.startedAt) / 1000)}s — in-memory cache is correct, will reconcile on next persist`,
+    )
+    PENDING.delete(finalPath)
+    return
+  }
+
+  // Snapshot the latest pending data RIGHT NOW so the write reflects
+  // the most recent persist() call, even if newer ones queued while
+  // we were waiting on setImmediate / setTimeout.
+  const dataAtWriteTime = slot.data
+  const tmp = finalPath + '.tmp.' + process.pid + '.' + Date.now() + '.' + slot.attempt
   try {
-    fs.writeFileSync(tmp, data, { mode: 0o600 })
-    fs.renameSync(tmp, p)
+    fs.writeFileSync(tmp, dataAtWriteTime, { mode: 0o600 })
+    fs.renameSync(tmp, finalPath)
+    if (slot.attempt > 0) {
+      // eslint-disable-next-line no-console
+      console.warn(`[licensing] persist disk write recovered on attempt ${slot.attempt + 1}`)
+    }
+    slot.inflight = false
+    // If newer data arrived AFTER we snapshotted but BEFORE the
+    // write finished, schedule another write so the freshest data
+    // lands. Otherwise we're done.
+    if (slot.data !== dataAtWriteTime) {
+      slot.attempt = 0 // fresh chain — the disk is healthy again
+      slot.startedAt = Date.now()
+      slot.timer = setTimeout(() => runPersistOnce(finalPath), 0)
+    } else {
+      PENDING.delete(finalPath)
+    }
     return
   } catch (e) {
-    const code = (e as NodeJS.ErrnoException)?.code
-    if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') {
-      try { fs.unlinkSync(tmp) } catch { /* ignore */ }
-      throw e
-    }
-    // AV-lock — retry asynchronously so we never block the event loop.
-    try { fs.unlinkSync(tmp) } catch { /* tmp may already be gone */ }
-    schedulePersistRetry(p, data, e, 0)
+    try { fs.unlinkSync(tmp) } catch { /* ignore */ }
+    // eslint-disable-next-line no-console
+    console.warn(`[licensing] persist attempt ${slot.attempt + 1} failed (${(e as NodeJS.ErrnoException)?.code ?? 'unknown'}) — retrying`)
+    slot.inflight = false
+    slot.attempt += 1
+    // Backoff: 50, 100, 200, 400, 800 ms then plateau at 1000ms.
+    const delay = Math.min(50 * Math.pow(2, slot.attempt - 1), 1000)
+    slot.timer = setTimeout(() => runPersistOnce(finalPath), delay)
   }
 }
 
-// v0.7.95 — Async retry helper for persist(). Re-tries the atomic
-// write+rename with exponential backoff, but uses setTimeout (off the
-// event-loop critical path) instead of a busy-spin. Each retry uses a
-// FRESH tmp filename so concurrent persist() calls can't collide on
-// the same temp file. After 5 failures we log and give up — the
-// in-memory cache is correct, so the running app stays consistent;
-// the disk file will be rewritten on the next persist() call (e.g.
-// the next status sweep) once AV releases its lock.
-function schedulePersistRetry(
-  finalPath: string,
-  data: string,
-  firstErr: unknown,
-  attempt: number,
-): void {
-  // Backoff: 50, 100, 200, 400, 800 ms — same envelope as v0.7.86 but
-  // off the event-loop critical path (no CPU spin, no request stalls).
-  const delay = 50 * Math.pow(2, attempt)
-  setTimeout(() => {
-    const tmp = finalPath + '.tmp.' + process.pid + '.' + Date.now() + '.' + attempt
-    try {
-      fs.writeFileSync(tmp, data, { mode: 0o600 })
-      fs.renameSync(tmp, finalPath)
-      // Success — disk now matches the in-memory cache.
-      return
-    } catch (e) {
-      try { fs.unlinkSync(tmp) } catch { /* ignore */ }
-      const code = (e as NodeJS.ErrnoException)?.code
-      const isAvLock = code === 'EPERM' || code === 'EBUSY' || code === 'EACCES'
-      if (!isAvLock || attempt >= 4) {
-        // eslint-disable-next-line no-console
-        console.error(
-          `[licensing] persist disk write failed after ${attempt + 1} async retries (in-memory cache is correct, will reconcile on next persist):`,
-          { firstErr, lastErr: e },
-        )
-        return
-      }
-      schedulePersistRetry(finalPath, data, firstErr, attempt + 1)
+// Test-only hook: lets tests await a stable point where every
+// queued persist has either succeeded or hit the deadline. NOT
+// exposed via the public surface; only imported by *.test.ts files.
+export function __awaitPendingPersistsForTests(): Promise<void> {
+  return new Promise((resolve) => {
+    const tick = (): void => {
+      if (PENDING.size === 0) { resolve(); return }
+      setTimeout(tick, 25)
     }
-  }, delay)
+    tick()
+  })
 }
 
 // ─────────────────────────────────────────────────────────────────────

@@ -580,8 +580,74 @@ function installCrashMask(
   // somehow never observed a navigation.
   let lastTargetURL: string | null = null
 
+  // v0.7.96 — Retry budget extended to ~60 seconds. The previous
+  // 8 × 400 ms = 3.2 s budget gave up LONG before scheduleNextRestart
+  // (in startNextServer) finished respawning the bundled Next child
+  // process — that path waits up to 60 s for the readiness probe.
+  // When the give-up dialog fired before the server came back, the
+  // operator saw "could not reload its window after several attempts"
+  // and the app force-quit, which is the user-visible bug.
+  //
+  // New schedule: first attempt at 400 ms, then 800, 1200, 1600… up
+  // to a 2 s plateau, totalling ~60 s of patience. After 60 s we
+  // either show the dialog (main window) or just leave the spinner.
+  // Reset on every successful did-finish-load so subsequent hiccups
+  // get a fresh budget.
+  const MAX_ATTEMPTS = 40
+  const nextDelay = (a: number): number => Math.min(400 + a * 400, 2000)
+
   const isMaskUrl = (u: string | null | undefined): boolean =>
     !!u && u.startsWith('data:')
+
+  // v0.7.96 — Helper that paints the mask AND runs the retry timer
+  // for `target`. Shared between did-fail-load and render-process-gone
+  // so the recovery logic is identical regardless of which event
+  // surfaced the failure.
+  const beginRecovery = (target: string | null): void => {
+    if (win.isDestroyed()) return
+    try { void win.webContents.loadURL(__MASK_HTML) } catch { /* ignore */ }
+    if (!target) {
+      console.error(`[${label}] no target URL recorded — cannot auto-recover`)
+      return
+    }
+    if (attempts >= MAX_ATTEMPTS) {
+      if (opts.showDialogOnGiveUp) {
+        void dialog.showMessageBox(win, {
+          type: 'error',
+          title: 'ScriptureLive AI — connection lost',
+          message: 'The app could not reload its window after a full minute of attempts.',
+          detail: 'This usually clears up by relaunching ScriptureLive AI from the desktop shortcut. Your activation, library and settings are preserved.',
+          buttons: ['Relaunch now', 'Quit'],
+          defaultId: 0,
+          cancelId: 1,
+        }).then((r) => {
+          if (r.response === 0) app.relaunch()
+          app.exit(0)
+        }).catch(() => { /* dialog failed — leave app as-is */ })
+      } else {
+        // Popout: keep the spinner up forever. Operator can close from
+        // the console. Reset the budget so if the server LATER comes
+        // back and any external nudge re-triggers a load, we cooperate.
+        attempts = 0
+      }
+      return
+    }
+    const delay = nextDelay(attempts)
+    attempts += 1
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => {
+      timer = null
+      if (win.isDestroyed()) return
+      try {
+        // CRITICAL: use loadURL(target), NOT webContents.reload().
+        // reload() would re-load the mask we just painted, which
+        // always succeeds and would silently abandon the real URL.
+        void win.webContents.loadURL(target)
+      } catch (err) {
+        console.error(`[${label}] auto-recover loadURL threw:`, err)
+      }
+    }, delay)
+  }
 
   win.webContents.on('did-start-navigation', (_e, url, _isInPlace, isMainFrame) => {
     if (!isMainFrame) return
@@ -600,54 +666,24 @@ function installCrashMask(
     }
     const target = lastTargetURL || validatedURL || null
     console.warn(`[${label}] did-fail-load:`, { errorCode, errorDescription, validatedURL, target, attempts })
-    if (win.isDestroyed()) return
-    // Paint the mask IMMEDIATELY so the operator sees "Reconnecting…"
-    // instead of Chromium's chrome-error://chromewebdata page. This
-    // navigates the webContents away from the failed page; any error
-    // from the mask load is non-fatal (data: URLs cannot fail with a
-    // network error and the isMaskUrl branch above ignores them).
-    try { void win.webContents.loadURL(__MASK_HTML) } catch { /* ignore */ }
-    if (!target) {
-      console.error(`[${label}] no target URL recorded — cannot auto-recover`)
-      return
-    }
-    if (attempts >= 8) {
-      if (opts.showDialogOnGiveUp) {
-        void dialog.showMessageBox(win, {
-          type: 'error',
-          title: 'ScriptureLive AI — connection lost',
-          message: 'The app could not reload its window after several attempts.',
-          detail: 'This usually clears up by relaunching ScriptureLive AI from the desktop shortcut. Your activation, library and settings are preserved.',
-          buttons: ['Relaunch now', 'Quit'],
-          defaultId: 0,
-          cancelId: 1,
-        }).then((r) => {
-          if (r.response === 0) app.relaunch()
-          app.exit(0)
-        }).catch(() => { /* dialog failed — leave app as-is */ })
-      } else {
-        // Popout: keep the spinner up forever. Operator can close from
-        // the console. Reset the budget so if the server LATER comes
-        // back and any external nudge re-triggers a load, we cooperate.
-        attempts = 0
-      }
-      return
-    }
-    attempts += 1
-    if (timer) clearTimeout(timer)
-    timer = setTimeout(() => {
-      timer = null
-      if (win.isDestroyed()) return
-      try {
-        // CRITICAL: use loadURL(target), NOT webContents.reload().
-        // reload() would re-load the mask we just painted, which
-        // always succeeds and would silently abandon the real URL.
-        void win.webContents.loadURL(target)
-      } catch (err) {
-        console.error(`[${label}] auto-recover loadURL threw:`, err)
-      }
-    }, 400)
+    beginRecovery(target)
   })
+
+  // v0.7.96 — render-process-gone fires when the renderer subprocess
+  // crashes (OOM, segfault, killed by AV). did-fail-load does NOT
+  // fire in this case — the page is "gone" rather than "failed". A
+  // gone renderer leaves the window painting Chromium's "Aw, Snap!"
+  // / "This page couldn't load" page until something explicitly
+  // calls reload() or loadURL(). Without this listener, a one-off
+  // renderer crash would strand the operator on the error page
+  // permanently. We treat it identically to did-fail-load and run
+  // the same mask + retry recovery against the last known target URL.
+  win.webContents.on('render-process-gone', (_e, details) => {
+    console.warn(`[${label}] render-process-gone:`, details)
+    if (details.reason === 'clean-exit') return // intentional
+    beginRecovery(lastTargetURL)
+  })
+
   win.webContents.on('did-finish-load', () => {
     // Only the REAL URL succeeding counts as recovery. The mask
     // finishing must NOT reset the budget — otherwise the give-up

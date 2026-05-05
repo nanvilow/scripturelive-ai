@@ -599,3 +599,9 @@ id = "lLYjFkpU8KkDmXewYAq-L"
 uri = "file://artifacts/exports/ScriptureLive-AI-v0.7.95-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.95 — Source ZIP (root-cause fix for chrome-error after Deactivate / Move-to-Another-PC)"
+
+[[outputs]]
+id = "DTXfBG5JO9ZMpMvRZLkuw"
+uri = "file://exports/ScriptureLive-AI-v0.7.96-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.96 — durable persistence + crash-mask hardening (with proof-tests)"
