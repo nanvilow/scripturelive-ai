@@ -665,3 +665,9 @@ id = "3lPBKYTMTtTKmLftsNTyH"
 uri = "file://.local/builds/scripturelive-v0.7.106-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.106 — source (built locally, NOT pushed)"
+
+[[outputs]]
+id = "JMXLL7J-YMelN9IbHP6Sl"
+uri = "file://exports/ScriptureLive-AI-v0.7.107-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.107 — source (chrome-error fix + per-column auto-live + newest-on-top)"

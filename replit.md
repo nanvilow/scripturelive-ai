@@ -1,88 +1,88 @@
-# Overview
+# Imported App
 
-This project is a pnpm workspace monorepo building a Next.js application, "Imported App," for scripture-related services, targeting both web and desktop (Electron) environments. It offers features like dynamic downloads, real-time slide updates, live congregation output, NDI broadcasting, advanced speech recognition with AI semantic matching, and a comprehensive admin dashboard for managing activations and user licenses. The core ambition is a streamlined, cloud-powered Whisper transcription service. The project aims to provide a robust, operator-friendly system for presenting scripture, enhancing live service experiences, and streamlining administrative tasks related to licensing and user management.
+A Next.js application providing scripture-related services for web and desktop, enhancing live service experiences, and streamlining administrative tasks.
 
-# User Preferences
+## Run & Operate
 
-- After EVERY fix / version bump, build and present a fresh ZIP of `artifacts/imported-app/` so the user can download it and run `BUILD.bat` on their Windows PC. Naming convention: `exports/ScriptureLive-AI-v<version>-source.zip`. Exclude `node_modules`, `.next`, `dist-electron`, `release`, `.turbo`, `.git`, `*.tsbuildinfo`, `build-log.txt`. Always use the `present_asset` tool to surface the zip — never assume the user will find it on their own.
-- Bump the `BUILD.bat` banner version string to match the current `package.json` version on every release.
+-   **Install dependencies**: `pnpm install`
+-   **Run dev server**: `pnpm dev`
+-   **Build app**: `pnpm build`
+-   **Typecheck**: `pnpm typecheck`
+-   **Codegen**: `pnpm codegen` (for API client)
+-   **DB Push**: `pnpm db:push` (for Drizzle schema migrations)
+-   **Required Env Vars**: `MAIL_HOST`, `MAIL_USER`, `MAIL_PASS`, `MAIL_FROM`, `SMS_API_KEY`, `SMS_SENDER`
 
-# System Architecture
+## Stack
 
-The project is a pnpm monorepo using Node.js 24 and TypeScript 5.9, structured around an Express 5 API server, PostgreSQL with Drizzle ORM, and Zod for validation. The "Imported App" is a Next.js 16 application utilizing Prisma and SQLite. API codegen uses Orval from an OpenAPI spec, and esbuild is used for bundling.
-
-**Core Architectural Decisions:**
-
--   **Monorepo Structure**: Uses pnpm workspaces.
--   **Hybrid Deployment**: Supports both web and desktop (Electron) environments.
--   **API Routing**: The monorepo's API server is routed to `/__api-server` to prevent conflicts with Next.js routes.
--   **NDI Integration**: Features browser-only NDI output and a native NDI sender via an Electron wrapper using `grandiose`. Supports transparent overlays and configurable display modes (lower-third, full-screen). The offscreen capture `BrowserWindow` pins its zoom factor to 1 to ensure pixel parity regardless of host display scaling.
--   **Dynamic Downloads**: A `/download` page provides OS-detecting downloads, streaming files from `/api/download/<platform>` based on a `public/downloads/manifest.json`. Includes file-hashing and multi-threaded downloads with speed indicators.
--   **Speech Recognition Chain**: Implements a multi-tiered speech recognition system (Deepgram → Whisper → Browser speech engine) with auto-fallback for resilience. Includes Voice Activity Detection (VAD) and a hallucination guard. AI voice intent fallback is now ON by default, relying on an LLM for complex phrasing. v0.7.93 hotfix: AUTO_LIVE_MIN_CONFIDENCE 0.40 → 0.55 and transcriptLiveThreshold 0.50 → 0.65 so weak detections no longer auto-promote to live; LLM gate + classifier prompt + regex aliases all teach Twi mishearings ("tree", "tweet", "chwee", "twee", "akan", "akuapem") so "Twi version" / "tree version please" / "chwee bible" all switch to TWI; LLM timeouts trimmed (1500 → 800 ms internal, 2000 → 1000 ms outer) so the AI fallback never blocks the operator for more than a second. v0.7.94 hotfix: Detected Verses panel was hiding non-winning ≥55% siblings of the auto-live pick (operator reported "9 detected verses, but only 1 in there"). `alternativesFor` now returns every detection ≥20% except the live winner, sorted newest-on-top, so the badge count and visible rows always match. v0.7.95 root-cause fix: the recurring "This page couldn't load" Chromium error after Deactivate / Move-to-Another-PC was traced to a SYNCHRONOUS BUSY-SPIN inside `persist()` (v0.7.86 retry loop). On Windows the AV/OneDrive lock contention spun the Node event loop for up to 1.55 s, freezing the bundled Next.js standalone server so the renderer's queued navigation timed out and Chromium painted chrome-error://chromewebdata. v0.7.95 rewrites `persist()` to update the in-memory cache IMMEDIATELY, attempt one synchronous write, and on AV-lock errors schedule retries via `setTimeout` (off the event-loop critical path) so the server keeps serving requests during recovery. Also wraps the `/api/license/deactivate` route handler in try/catch so a thrown persist error always returns well-formed JSON instead of a 500. v0.7.96 (operator escalated — bug recurred after re-activation too) adds four defensive layers: (1) `persist()` now does ZERO synchronous disk I/O — the cache is updated and a fire-and-forget async writer takes over, with unlimited retries inside a 60 s deadline, so route handlers return instantly regardless of AV / disk contention. (2) `/api/license/activate` is wrapped in a top-level try/catch matching v0.7.95's deactivate fix so an unhandled throw can never produce a body-less response. (3) The Electron crash-mask retry budget is extended from 8 × 400 ms (3.2 s) to 40 attempts with progressive backoff (~60 s), matching the worst-case `scheduleNextRestart` window so the give-up dialog never fires before the server actually has a chance to come back. (4) A `render-process-gone` listener was added — renderer subprocess crashes (OOM, segfault, AV-killed) don't trigger `did-fail-load`, so without this they would strand the operator on Chromium's error page permanently. Both events now route through the same `beginRecovery(target)` helper.
--   **AI Semantic Verse Matching**: Employs OpenAI `text-embedding-3-small` for semantic matching of spoken phrases to scripture, complementing regex-based detection. Includes confidence tiers and a curated seed-verse corpus. Preambles like "here's a verse about" are stripped before embedding for better accuracy.
--   **Licensing and Activation**: Features a self-hosted, MoMo-based subscription system with a comprehensive admin dashboard. Uses an atomic-write JSON file for local license persistence. Includes a 30-minute usage-based free trial, lossless deactivation, and license transfer functionality.
--   **Telemetry**: Centralized telemetry backend with `REPLIT_DB` backing, collecting install pings, heartbeats, and errors. An admin Records dashboard provides real-time analytics including active users, total installs, sessions today, and errors.
--   **Persistence Strategy**: Next.js port is fixed to 47330 in Electron builds for `localStorage` origin consistency.
--   **Secondary-Screen Defaults (v0.7.97)**: Fresh installs ship with `textScale: 0.9` (90%) and `bibleLineHeight: 0.95`. Operators reported pulling both sliders down on every fresh install — the 100% / 1.40 typographic defaults were too large/airy for their venues. Existing installs that have already persisted these fields keep their saved values; only undefined / fresh-install state seeds the new defaults. The "Reset to defaults" button and the in-flight slider fallbacks (`?? 0.9` / `?? 0.95`) all align so a reset matches a fresh install.
--   **Real-Time 65% Auto-Live + 3.5s Hold Window (v0.7.106)**: Operator complaint per pastebin spec jh9YcK2h ("MASTER PROMPT FOR REPLIT"): after v0.7.104 raised the auto-live floor to 0.85 and added a 3-frame stability gate, the projector "does not trigger live output" in real preaching audio — the AI matcher's typical hits land in the 0.60–0.80 band, so the strict 0.85 + 3-frame combination almost never closed. v0.7.106 retunes the helper in `verse-auto-live.ts` to match the new spec literally: (a) `AUTO_LIVE_MIN_CONFIDENCE` lowered 0.85 → **0.65** (spec: "auto-trigger to LIVE when detection confidence is between 65% – 100%"); (b) `SUGGESTION_MAX_EXCLUSIVE` raised 0.60 → **0.65** so the failsafe rule holds (spec: "If detection confidence drops below 65%: Do NOT push to live. Route to Suggested Verses instead") — the suggestions column now spans the full 10–64.99% band with no dead zone above it; (c) `STABILITY_MIN_FRAMES` relaxed 3 → **1** so the first ≥65% top fires immediately (spec: "real-time and continuous, with zero manual interaction required"); (d) anti-flicker is replaced by a new `LIVE_HOLD_MS = 3500` dwell window — the spec's "previous verse must remain visible for 3-4 seconds, then transition out" rule. The helper signature gains a `nowMs` opt (default `Date.now()`) and the gate state shape extends to `{ explicit, semantic, lastFireAtMs }`; within `lastFireAtMs + 3500 ms` of a previous fire the gate refuses to fire again (state returned unchanged), and once the window elapses the next ≥65% top auto-fires immediately and stamps a fresh `lastFireAtMs`. The "current verse stays indefinitely if no new verse is detected" rule falls out of the `top.id === currentLiveId → no-fire` short-circuit (re-detecting the same id is a no-op). Sticky-while-live behaviour was deliberately replaced — the spec wants the next detection to displace, just not within the dwell window. `PerSourceStabilityState` is preserved as a type alias for `AutoFireGateState` so the existing `useRef` in `logos-shell.tsx` keeps working; the only call-site change is passing `{ nowMs: Date.now() }`. DetectedVersesCard column rule text + empty-state copy updated from "≥85%" / "10–60%" to "≥65%" / "10–64%". 43 unit tests rewritten to cover the new boundaries (0.65 / 0.64 / 0.649) plus the hold-window semantics (immediate fire on first detection when `lastFireAtMs=0`, refusal within 3.5 s, fire after, same-id never refires, suggestion-tagged never fires, explicit wins on tiebreak, custom `holdMs=0` disables the window for tests). Advanced features called out in the same pastebin (heat meter visualization, denomination filter, Sermon Mode AI live outline, verse usage analytics dashboard, smart partial-reference inference like "Esther" → Esther 3:1-6) are out of scope for this hotfix and tracked as follow-ups. Bumped imported-app to 0.7.106 + BUILD.bat banner.
--   **Centralized Auto-Fire Gate (v0.7.105 hotfix on top of v0.7.104)**: Code review of v0.7.104 caught that the new 0.85-floor + 3-frame stability gate in `verse-auto-live.ts` was bypassed by FIVE pre-existing inline auto-go-live blocks inside `speech-provider.tsx` — Reference Engine v2 (fired at confidence ≥ 40), preacher-phrase catalogue (fired immediately), keyword text-search semantic (fired at the operator's `autoLiveThreshold`, default 0.78), AI cosine matcher (same), and regex detected references (same). With the inline paths still firing `setIsLive(true)` directly, an "explicit ≥85% + 3 stable frames" candidate could be displaced by a noisier inline hit half a second earlier, and a 0.50-band hit could still flip the projector. v0.7.105 deletes all five inline auto-live blocks, leaving each detection site responsible only for `addDetectedVerse({source: …})` and the ancillary side-effects (transcript breaks, history, status). The auto-fire `useEffect` in `logos-shell.tsx` is now the **sole** authority for pushing verses to the projector and runs `shouldFireAutoLiveStable(detectedVerses, lastAutoVerseId, perSourceStability)`. Two safeguards added: (1) a derived `effectiveAutoFire = autoAdvance || settings.autoGoLiveOnDetection` so operators who only enabled the legacy Setting (and never flipped the AUTO pill) keep getting auto-fire — without this they'd silently lose it after the refactor; the AUTO toggle UI still binds to `autoAdvance` alone so its label/state stays correct; (2) the dead `bestLiveDispatched` flag inside the AI matcher loop was removed. The five remaining `setIsLive(true)` callsites in `speech-provider.tsx` are explicit voice-command intents (`go_to_reference`, `next_chapter`, `prev_chapter`, `verse_number`, `ai_verse_search`) — operator-triggered, not auto-detection, so they correctly bypass the stability gate. 36 unit tests still passing; no test changes needed because the helpers were already correct — only the call-site routing changed.
--   **Three-Pipeline Auto-Verse Detection (v0.7.104)**: Operator complaint per pastebin spec t5B6FGSD: the Detected Verses card was a single 2-column list (Auto-Live Match + Alternative References). Different DETECTOR types — explicit address parses ("Amos 1:3"), paraphrase / quotation matches, and low-confidence guesses — all flowed into the same column, so a strong explicit hit could be displaced by a noisy AI cosine guess at the same confidence band, and weak suggestions polluted the live column. v0.7.104 routes the three signals into three distinct columns with **independent** auto-live decisions: **Col 1 "Auto Verse Match (Live)"** is the explicit pipeline (Reference Engine v2 + regex), auto-live at ≥85% confidence + 3-frame stability gate; **Col 2 "Bible Reference Quoted"** is the semantic pipeline (preacher-phrase catalogue, keyword text-search, AI cosine embedding), same 85%+stability rule but tracked with its own counter so a stable semantic winner is never displaced by a stable explicit one (or vice-versa) — explicit wins on tiebreak; **Col 3 "Suggested Verses Detect"** is anything in the 0.10–0.60 confidence band from either detector, MANUAL ONLY (operator double-clicks). The 0.60–0.85 dead-band surfaces in cols 1/2 as sub-threshold chips so the operator sees the pipeline accumulating evidence without the projector firing. `DetectedVerse` gained an optional `source: 'explicit' | 'semantic' | 'suggestion'` field; every emission site is tagged (Reference Engine v2 + regex → `explicit`, preacher-phrase catalogue → `semantic`, keyword text-search and AI cosine matcher → `semantic` if conf ≥ 0.60 else `suggestion`, operator-typed lookup → `explicit`). The new `shouldFireAutoLiveStable()` helper takes a `PerSourceStabilityState` and returns the next state plus a fire decision; each pipeline has its own `{ topId, count }` counter that increments while the top.id of that pipeline is unchanged across consecutive auto-fire effect ticks (resets to 1 when top.id changes, fires at count ≥ 3). The legacy two-arg `shouldFireAutoLive` remains as a pure 0.85-floor sticky decision for back-compat. The auto-fire effect in `logos-shell` persists the per-source state in a `useRef` and resets it when `detectedVerses` goes empty so a stale candidate from a previous service can't immediately fire on resume. `DetectedVersesCard` rebuilt as a 3-column grid using `liveColumnFor('explicit')` / `liveColumnFor('semantic')` / `suggestionsFor()`. 36 unit tests in `verse-auto-live.test.ts` cover thresholds, per-source picks, suggestions boundary (10% / 60%), stability gate state transitions (3-frame fire, top.id reset, sticky freeze, suggestion-tagged never fires, independence between explicit/semantic counters, minFrames=1 escape hatch).
--   **NDI Linger Mode for Stronger OBS/vMix Connection (v0.7.103)**: Operator complaint: when ScriptureLive AI's NDI sender is turned off (operator hits Disconnect), OBS / vMix / Wirecast / NDI Studio Monitor immediately drop the source from their lists, and if the operator hits Reconnect they have to manually re-add the source or restart their consumer app. Root cause: the `ndi:stop` IPC handler in `electron/main.ts` was calling `ndi.gracefulStop()` which after the fade-to-black ran `NDIlib_send_destroy` + `NDIlib_destroy` — retracting our mDNS advertisement, severing the TCP connections downstream receivers had open, and forcing them to drop the source. v0.7.103 introduces "linger mode": after the brief fade-to-black, the NDI sender is HELD ALIVE on the wire for 60 seconds with the existing keep-alive ticker pumping a cached black frame at the configured fps. To OBS/vMix the source remains "live, currently black" — they keep the connection open and keep the source listed. If the operator hits Reconnect inside the 60 s window: the `ndi.start()` path cancels the linger timer at its top, the persistent-source rule keeps the existing sender (no `send_destroy`, no mDNS round-trip), a fresh frame-capture window is rebuilt and starts replacing the held black with real renderer frames — zero source-acquire flicker on the receiver side. If 60 s elapses with no reconnect: the linger timer fires `ndi.stop()` (send_destroy + NDIlib_destroy + runtime recycle), same end-state as the pre-v0.7.103 behaviour, just delayed by the grace window. Implementation: new `lingerStop(blackFrameMs, lingerSeconds)` / `cancelLinger()` / `isLingering()` / `lingerRemainingMs()` methods on `NdiService`; linger timer is unconditionally cleared at the top of `start()` and inside `stop()` to prevent double-fire. Plain `ndi.stop()` is still used by emergency shutdown paths (before-quit, crash) where the 60 s linger would block exit. Trade-offs: ~8 MB RAM held for one BGRA black buffer + sender state during linger; no CPU cost beyond the keep-alive copies (one black buffer reused).
--   **Native Alert for Move-to-Another-PC (v0.7.102)**: Operator confirmed v0.7.101 fixed Activate but Move-to-Another-PC STILL produced chrome-error. Same root cause as the Activate path: between the `/api/license/deactivate {transfer:true}` API resolving and the operator dismissing the React `transferOpen` Dialog, the renderer ran `setTransferCode → setTransferMsLeft → setTransferOpen(true) → await refresh()` which committed a new tree, started lock-overlay re-mounting, and triggered downstream useEffects against in-flight fetches with the now-released auth context — one threw → renderer died → chrome-error painted BEFORE the operator could click "Got it" to read/copy the code. The React Dialog itself was the trigger. v0.7.102 replaces it with a `window.alert` (native OS-level Chromium dialog rendered OUTSIDE the React tree — physically cannot crash the renderer mid-paint) + automatic `navigator.clipboard.writeText(code)` so the activation code is in the operator's clipboard before the alert even shows. Backup: code is stashed in `localStorage` under `sl.lastTransferCode` with a 10-minute TTL so the freshly-reloaded landing page can show it again if the operator dismissed the alert without copying. After the operator clicks OK on the alert, synchronous `window.location.assign('/')` hard reload (same pattern as v0.7.101 Activate). The `transferOpen` state + Dialog JSX are kept as defensive dead code.
--   **Activate-Path Hard Reset + UI Consolidation (v0.7.101)**: Operator confirmed (https://ibb.co/B9v8T23) that v0.7.100's Deactivate flow worked but the Activate flow STILL produced chrome-error. Root cause: v0.7.99/v0.7.100 only hard-reloaded when the operator clicked Close on the activation success modal. Between the API resolving and the click, the renderer ran `setReceipt(j) → setPhase('active') → await refresh()` which committed a new React tree, started unmounting lock-overlay, mutated license-provider, and triggered downstream useEffects against in-flight fetches still using the old auth context — one threw → renderer crashed → chrome-error painted BEFORE the operator could click Close. v0.7.101 moves the hard reload to the moment the API confirms success: `submitActivation` now calls `window.location.assign('/')` immediately after `if (!r.ok) throw`, with `return` to skip `setReceipt/setPhase/refresh` entirely. The activation receipt UI (copy receipt / WhatsApp) is sacrificed — the freshly-reloaded app shows the active subscription in Settings with the same code, plan, and expiry, which is the confirmation operators actually need. 8 s safety fallback (`setTimeout(() => { setBusy(false); setPhase('active') }, 8000)`) preserves a way out if navigation is vetoed. Also: per operator request, the Settings card consolidates the two-button layout (Move + Deactivate) into ONE "Move to Another PC" button that always shows the activation code in a copy-friendly dialog. The dual buttons caused confusion about which was safe; both were lossless and only differed in whether the code was revealed. `handleDeactivate` is kept as defensive dead code with no UI callers.
--   **Synchronous Hard-Reset (v0.7.100)**: Architect code review of v0.7.99 caught a CRITICAL race: the 700 ms toast-delay in `handleDeactivate` reintroduced the exact crash window v0.7.99 was supposed to close. In that 700 ms the React tree was still mounted, the license-provider's 30 s polling timer could fire `refresh()` against the now-deactivated session, and any downstream `useEffect` could throw → chrome-error painted before the reload. v0.7.100 ships the synchronous-reload fix: (1) `handleDeactivate` drops the toast + 700 ms timer entirely and calls `window.location.assign('/')` immediately after the API resolves — the success feedback is the freshly-reloaded "deactivated" landing page itself, which is more honest UX than a 700 ms toast that disappears with the reload. (2) Same 700 ms / 100 ms timers in the transfer-dialog `onOpenChange` and the subscription-modal Close button were removed — synchronous reload everywhere. (3) Architect-flagged HIGH "spinner stuck if reload fails" addressed via an 8 s safety `setTimeout(() => setLicBusy(false), 8000)` in `handleDeactivate` so a vetoed navigation (CSP, Electron beforeunload, renderer mid-shutdown) can never permanently freeze the UI.
--   **Hard-Reset After License State Changes (v0.7.99)**: Chrome-error STILL appeared on v0.7.98 (https://ibb.co/B9v8T23) despite three layers of recovery in `installCrashMask`. Operator pastebin (https://pastebin.com/rgyMfihF) crystallized the actual fix: stop trying to RECOVER from the renderer crash, PREVENT it. Root cause: after `/api/license/deactivate` (or activate, transfer) succeeds, the React tree is mid-flight with stale license context, in-flight `/api/license/*` fetches, SWR caches, and Next.js client-router transitions. The license-provider re-renders with newly-deactivated subscription data, downstream useEffects fire requests against the stale auth context, one throws into an unhandled boundary, the renderer dies, Chromium paints chrome-error. Soft `await refresh()` cannot avoid this — the entire React tree needs to be torn down. v0.7.99 replaces the post-license-change soft refresh with a HARD `window.location.assign('/')` reload at three sites: (a) `handleDeactivate` in `settings.tsx` (700 ms after toast.success so the toast paints), (b) the "License released" transfer dialog `onOpenChange` when the operator dismisses it (100 ms after close), (c) the activate-success modal Close button in `subscription-modal.tsx` (100 ms). The spinner state (`setLicBusy`) is intentionally left ON through the reload so a double-click can't fire a second stale request. v0.7.98's recovery layers stay as belt-and-braces — they cover any chrome-error from non-license-state failures (server crash, network blip, AV interference) — but the PRIMARY trigger that operators kept hitting is now removed at source.
--   **Chrome-error Brute-Force Guard (v0.7.98)**: Operator reported the "This page couldn't load" Chromium error chrome STILL appeared after v0.7.97. Root-causing was blocked because (a) `launch.log` was being truncated on every launch (`flags: 'w'`) so post-relaunch logs lost the failure context, and (b) the recovery only listened on `did-fail-load` + `render-process-gone` — some chrome-error renders never fire those events (e.g. when Chromium classifies the failure as a "successful" navigation to the error page). v0.7.98 adds three layers of defense regardless of root cause: (1) `installCrashMask` now also listens on `did-navigate` and `did-finish-load`, and any URL starting with `chrome-error://` immediately re-triggers `beginRecovery`. (2) The mask `loadURL(__MASK_HTML)` is instrumented with `.catch(...)` so a silent paint failure now logs to `launch.log`, with a `executeJavaScript` fallback that overlays the spinner via DOM injection if loadURL is rejected outright. (3) `setupFileLogging` switched from `flags: 'w'` to `flags: 'a'` with a 2 MB rotation cap and a `----- session start -----` banner per launch, so post-relaunch debugging has the full history of what happened.
--   **UI/UX and Theming**:
-    -   Branding uses `public/logo.png` and a new global dark/light theme driven by `next-themes` and CSS variables.
-    -   Live Display and Preview stages are visually symmetrical with static text rendering.
-    -   Output renderer prevents solid black screens by default, showing a splash watermark.
-    -   Live Transcription is Bible-only by default with a toggle.
-    -   Mic icon in Live-Display footer offers Start/Pause-Resume/Stop transport and a Mic Gain slider.
-    -   Installer downloads support cancellation and smooth quit-and-install.
-    -   Output/NDI rendering correctly handles Strong's markup and HTML-escapes content.
-    -   Media autoplay with sound is enabled by default for Preview and Live stages in Electron.
-    -   Critical SSE bug fix in `/api/output/congregation` ensures real-time updates and processes `event:'state'` payloads correctly.
-    -   Speaker-Follow uses token-trigram Jaccard for verse ranking with hysteresis.
-    -   Auto-Scroll + Highlight renders multi-verse passages with per-verse highlighting and smooth scrolling.
-    -   Theme Designer in Settings allows custom themes and presets.
-    -   Admin panel buttons fire reliably with in-modal `AlertDialog` replacements.
-    -   Multi-select bulk actions for admin payments, activations, and codes.
-    -   NDI lower-third features a fixed frame with scripture auto-fitting, using CSS line-clamp for long verses.
-    -   Settings previews bind to the selected verse for real-time display.
-    -   Instant activation and SMS overhaul with asynchronous notifications and parallel SMS to customer and admin.
-    -   Mobile entry point for Admin Panel via URL parameter (`?admin=1`).
-    -   New voice commands: "next chapter," "previous chapter," and "the bible says <ref>" (to standby only).
-    -   Live transcription confidence tiers gate the auto-fire pipeline.
-    -   Speaker-Follow polish includes anti-rewind and tighter delta for highlight stability.
-    -   Admin password changes now trigger session invalidation and re-prompt.
-    -   Bin retention for soft-deleted codes increased to 90 days, payment TTL to 30 minutes.
-    -   Geo-IP lookup falls back to server public IP for desktop Electron builds.
-    -   SMTP transport includes retry-with-backoff for transient failures, port-fallback, and TLS 1.2 floor.
-    -   Email deliverability hardening with multipart text+HTML and anti-spam headers.
-    -   Arkesel SMS API integration for customer activation receipts.
-    -   Automatic SMTP self-test on server startup.
-    -   Report Issue button is always visible in the TopToolbar and on the lock overlay for direct customer feedback.
-
-# External Dependencies
-
--   **Monorepo tool**: pnpm workspaces
--   **Node.js**: 24
--   **TypeScript**: 5.9
--   **API Framework**: Express 5
--   **Database**: PostgreSQL (main API), SQLite (`artifacts/imported-app/db/custom.db`), Replit DB (telemetry)
+-   **Monorepo**: pnpm workspaces
+-   **Runtime**: Node.js 24
+-   **Language**: TypeScript 5.9
+-   **Frontend**: Next.js 16
+-   **Backend**: Express 5
+-   **Database**: PostgreSQL, SQLite, Replit DB
 -   **ORM**: Drizzle ORM, Prisma
--   **Validation**: Zod (`zod/v4`), `drizzle-zod`
--   **API Codegen**: Orval
+-   **Validation**: Zod
 -   **Build Tool**: esbuild
--   **Frontend Framework**: Next.js 16
--   **Speech Recognition**: OpenAI `gpt-4o-mini-transcribe`, Deepgram Nova-3 (streaming)
+-   **API Codegen**: Orval
+-   **Speech Recognition**: OpenAI `gpt-4o-mini-transcribe`, Deepgram Nova-3
 -   **AI SDK**: OpenAI SDK
--   **NDI Integration**: `grandiose` binding (Electron)
--   **Image Processing**: `sharp`
--   **Desktop Packaging**: Electron Builder
--   **File Upload Handling**: Multer
--   **Hashing**: `hash-wasm`
--   **Email Service**: Custom SMTP setup (requires `MAIL_HOST`, `MAIL_USER`, `MAIL_PASS`, `MAIL_FROM` environment variables)
--   **SMS Gateway**: Arkesel (requires `SMS_API_KEY`, `SMS_SENDER` environment variables)
--   **Geo-IP Lookup**: ip-api.com
+-   **NDI Integration**: `grandiose`
+
+## Where things live
+
+-   `apps/nextjs-app`: Next.js frontend and Electron wrapper.
+-   `apps/api-server`: Express API backend.
+-   `packages/`: Shared utilities and components.
+-   `artifacts/imported-app/db/custom.db`: SQLite database for the desktop app.
+-   `public/downloads/manifest.json`: Manifest for dynamic downloads.
+-   `openapi.yaml`: API contracts (source of truth for Orval codegen).
+-   `drizzle/schema.ts`: Drizzle ORM database schema.
+-   `styles/theme/`: Theme-related files.
+
+## Architecture decisions
+
+-   **Monorepo Structure**: Uses pnpm workspaces for managing multiple related packages.
+-   **Hybrid Deployment**: Supports both web and desktop (Electron) environments from a single codebase.
+-   **API Routing**: API server is routed to `/__api-server` to avoid conflicts with Next.js routes.
+-   **NDI Integration**: Browser-only NDI output and native NDI sender via Electron, supporting transparent overlays and configurable display modes, with pixel parity via pinned zoom.
+-   **Multi-tiered Speech Recognition**: Employs Deepgram, Whisper, and browser speech engines with auto-fallback, VAD, and hallucination guard, complemented by AI semantic matching.
+-   **Atomic License Persistence**: Uses an atomic-write JSON file for local license persistence, ensuring data integrity during critical operations like deactivation and transfer.
+-   **Hard Reset for License State Changes**: Critical license state changes (activate, deactivate, transfer) trigger a hard `window.location.assign('/')` reload to prevent renderer crashes caused by stale React contexts. v0.7.107 extends the same recovery to UNCAUGHT renderer exceptions via `app/global-error.tsx` + `app/error.tsx` — any thrown React error hard-reloads to `/` instead of letting Chromium paint chrome-error://chromewebdata. Fixes the "This page couldn't load" page seen on cold boot when activation has just expired.
+-   **Per-Column Auto-Live Thresholds (v0.7.107)**: COL 1 "Auto Verse Match" (semantic) ≥80%, COL 2 "Bible Reference Quoted" (explicit regex) ≥60%, COL 3 "Suggested Verses" 10-49% manual-only. `LIVE_HOLD_MS = 0` (no anti-flicker dwell) — detection fires continuously; only same-id-as-currentLive blocks a refire. The 3.5 s hold introduced in v0.7.106 was the root cause of "auto-live fires once and stops".
+
+## Product
+
+-   Dynamic downloads for various OS, with file hashing and multi-threaded support.
+-   Real-time slide updates and live congregation output.
+-   NDI broadcasting with configurable display modes (lower-third, full-screen).
+-   Advanced speech recognition with AI semantic matching for scripture verses.
+-   Comprehensive admin dashboard for managing activations, user licenses, and telemetry.
+-   Self-hosted, MoMo-based subscription system with free trial and license transfer.
+-   Customizable UI/UX with dark/light themes and theme designer.
+-   Voice commands for navigation and verse lookup.
+-   Automated email and SMS notifications for activations.
+
+## User preferences
+
+-   After EVERY fix / version bump, build and present a fresh ZIP of `artifacts/imported-app/` so the user can download it and run `BUILD.bat` on their Windows PC. Naming convention: `exports/ScriptureLive-AI-v<version>-source.zip`. Exclude `node_modules`, `.next`, `dist-electron`, `release`, `.turbo`, `.git`, `*.tsbuildinfo`, `build-log.txt`. Always use the `present_asset` tool to surface the zip — never assume the user will find it on their own.
+-   Bump the `BUILD.bat` banner version string to match the current `package.json` version on every release.
+
+## Gotchas
+
+-   `persist()` operations are fire-and-forget async writes to prevent UI freezes, with retries for disk contention.
+-   License state changes (activate/deactivate/transfer) trigger hard page reloads; avoid complex UI interactions immediately after these operations.
+-   NDI sender has a 60-second "linger mode" after disconnect to maintain OBS/vMix connections.
+-   Renderer crashes are handled by a crash mask that attempts recovery and logs full history.
+-   Auto-live confidence thresholds and stability gates are crucial for projection; consult `verse-auto-live.ts` for current logic. As of v0.7.107: explicit ≥0.60, semantic ≥0.80, suggestions 0.10-0.49, no hold window.
+-   The "Detected Verses" card now separates explicit, semantic, and suggested verses into three distinct columns, each with independent auto-live decisions.
+
+## Pointers
+
+-   **Next.js Docs**: [https://nextjs.org/docs](https://nextjs.org/docs)
+-   **Express Docs**: [https://expressjs.com/](https://expressjs.com/)
+-   **Drizzle ORM Docs**: [https://orm.drizzle.team/](https://orm.drizzle.team/)
+-   **Zod Docs**: [https://zod.dev/](https://zod.dev/)
+-   **pnpm Workspaces**: [https://pnpm.io/workspaces](https://pnpm.io/workspaces)
+-   **Electron Docs**: [https://www.electronjs.org/docs](https://www.electronjs.org/docs)
+-   **OpenAPI/Orval**: [https://openapi-generator.tech/](https://openapi-generator.tech/), [https://orval.dev/](https://orval.dev/)
+-   **NDI SDK**: _Populate as you build_
