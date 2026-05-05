@@ -134,39 +134,37 @@ export function SettingsView() {
     try {
       const r = await fetch('/api/license/deactivate', { method: 'POST' })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      toast.success('Subscription deactivated on this device')
-      // v0.7.99 — HARD RESET the renderer instead of a soft refresh().
+      // v0.7.100 — IMMEDIATE hard reset, no toast, no delay.
       //
-      // Bug history: v0.7.96 / v0.7.97 / v0.7.98 all tried to RECOVER
-      // from the chrome-error page by painting a mask + retrying. But
-      // the chrome-error after Deactivate keeps coming back because
-      // the React tree (license context, useEffect-driven fetches,
-      // SWR caches, in-flight Next.js client-router transitions) is
-      // mid-flight when the license state changes underneath it. One
-      // of those downstream fetches throws into an unhandled boundary,
-      // the renderer dies, and Chromium paints chrome-error.
+      // v0.7.99's 700 ms toast-delay reintroduced the exact race we
+      // were trying to fix: in that 700 ms window the React tree was
+      // still mounted, the license context was still updating from a
+      // 30 s polling timer (license-provider.tsx:118), and any
+      // useEffect that fired during the window could throw into an
+      // unhandled boundary — chrome-error painted before the reload.
+      // Architect review caught this BEFORE the operator did.
       //
-      // Per operator's pastebin guidance (https://pastebin.com/rgyMfihF):
-      // PREVENT the crash instead of recovering from it. After
-      // Deactivate succeeds, force a full hard reload of the window —
-      // this kills every in-flight fetch, drops the React tree
-      // entirely, and the next render starts from a fresh /, free of
-      // any state that referenced the now-released subscription.
+      // The success feedback the operator needs is "the app reloaded
+      // and now shows the unlocked / re-activate prompt" — that IS
+      // the toast, rendered as the actual landing page after reload.
+      // A success toast that paints for 700 ms then disappears with
+      // the reload was never adding meaningful UX.
       //
-      // 700 ms delay so the toast.success above has time to paint.
-      // The hard reload then lands on / which the licensed-renderer
-      // re-loads cleanly with a deactivated license, showing the
-      // unlocked Settings + activation prompt with no crash window.
-      setTimeout(() => {
-        try { window.location.assign('/') } catch { /* hard-fall: location.href */ window.location.href = '/' }
-      }, 700)
+      // Hard reload synchronously — kills every in-flight fetch,
+      // every pending useEffect, every Next.js router transition,
+      // every SWR cache. The next render starts from a fresh / with
+      // a deactivated license. Zero chrome-error window.
+      try { window.location.assign('/') } catch { /* hard-fall */ window.location.href = '/' }
+      // Safety: if for any reason the navigation is blocked (CSP,
+      // Electron beforeunload veto, renderer mid-shutdown, etc.),
+      // clear the busy spinner after 8 s so the UI isn't permanently
+      // stuck. Architect-flagged HIGH risk on v0.7.99 where the
+      // success path never re-enabled the button if reload failed.
+      setTimeout(() => setLicBusy(false), 8000)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to deactivate')
       setLicBusy(false)
     }
-    // NOTE: setLicBusy(false) deliberately NOT in finally on the
-    // success path — we want the spinner to stay through the reload
-    // so the operator can't double-click and fire a stale request.
   }
 
   // v0.7.11 — Move-to-another-PC dialog state. After a successful
@@ -1622,19 +1620,20 @@ export function SettingsView() {
           preserved remaining time is spelled out so they understand
           the transfer did NOT renew their subscription. */}
       <Dialog open={transferOpen} onOpenChange={(next) => {
-        // v0.7.99 — When the operator dismisses the "License released"
-        // dialog (clicks "Got it", the X, hits Escape, or clicks the
-        // backdrop), do a HARD RELOAD of the window. Same reasoning as
-        // handleDeactivate: the React tree is now holding a freshly-
-        // released license context with stale subscription data, and
-        // any downstream useEffect that fires a /api/license/* request
-        // can crash the renderer → chrome-error. Hard reload gives us
-        // a guaranteed-clean tree on /, with no stale activation state.
+        // v0.7.99 / v0.7.100 — When the operator dismisses the
+        // "License released" dialog (clicks "Got it", the X, hits
+        // Escape, or clicks the backdrop), HARD RELOAD the window
+        // immediately. Same reasoning as handleDeactivate: the React
+        // tree is holding freshly-released license context, and a
+        // downstream useEffect that fires a /api/license/* request
+        // can crash the renderer → chrome-error. Hard reload gives
+        // a guaranteed-clean tree on /, with no stale activation
+        // state. The operator has already read+copied the activation
+        // code (it's still on screen via local state) so we don't
+        // lose anything by tearing the tree down immediately.
         setTransferOpen(next)
         if (!next) {
-          setTimeout(() => {
-            try { window.location.assign('/') } catch { window.location.href = '/' }
-          }, 100)
+          try { window.location.assign('/') } catch { window.location.href = '/' }
         }
       }}>
         <DialogContent className="sm:max-w-md">
