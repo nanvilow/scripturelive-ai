@@ -198,13 +198,86 @@ export function SettingsView() {
       if (!r.ok || !j.ok || !j.code) {
         throw new Error(j.error || `HTTP ${r.status}`)
       }
-      setTransferCode(j.code)
-      setTransferMsLeft(typeof j.msLeft === 'number' ? j.msLeft : 0)
-      setTransferOpen(true)
-      await refresh()
+      // v0.7.102 — Skip the React success dialog entirely. Use a
+      // native window.alert + auto-clipboard-copy + hard reload.
+      //
+      // Operator confirmed (third re-occurrence after v0.7.101) that
+      // Move-to-Another-PC STILL produced chrome-error even with the
+      // hard-reload-on-dismiss in the transferOpen Dialog onOpenChange.
+      // Same root cause as the v0.7.101 Activate fix:
+      //   API resolves
+      //   → setTransferCode / setTransferMsLeft → React commits new tree
+      //   → setTransferOpen(true)              → dialog renders, lock-
+      //                                          overlay starts mounting
+      //   → await refresh()                    → license-provider mutates
+      //   → render Dialog with deactivated state
+      //   → ONE downstream useEffect throws against an in-flight fetch
+      //     made with the old auth context → renderer crashes
+      //   → chrome-error painted BEFORE operator could click "Got it"
+      //
+      // The transferOpen React Dialog was the trigger. We replace it
+      // with a window.alert (native OS-level dialog rendered by Chromium
+      // outside the React tree — cannot crash the renderer) plus an
+      // automatic clipboard write. The operator gets:
+      //   1. The activation code in their clipboard automatically
+      //      (for paste into the new PC).
+      //   2. A native alert showing the code as plain text (read out
+      //      loud, write down, paste into WhatsApp, etc.).
+      //   3. A backup copy stashed in localStorage in case clipboard
+      //      write was blocked — they can copy it manually after the
+      //      reload from the unlocked Settings page if needed.
+      //   4. Hard reload after they click OK on the alert.
+      //
+      // The transferOpen state + Dialog JSX below are kept as
+      // defensive dead code in case any external automation still
+      // sets transferOpen=true.
+      const code = j.code
+      const msLeft = typeof j.msLeft === 'number' ? j.msLeft : 0
+      const remainingText = formatRemaining(msLeft)
+      // Auto-copy to clipboard (best-effort — may be blocked by some
+      // clipboard policies; we have the alert text as fallback).
+      try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard) {
+          await navigator.clipboard.writeText(code)
+        }
+      } catch { /* clipboard blocked — operator reads from alert below */ }
+      // Backup: stash code in localStorage so we can show it on the
+      // freshly-reloaded landing page if the operator dismissed the
+      // alert without copying. Keyed with a timestamp so it expires
+      // naturally (the landing page only shows it if <10 min old).
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('sl.lastTransferCode', JSON.stringify({
+            code,
+            msLeft,
+            at: Date.now(),
+          }))
+        }
+      } catch { /* private mode / storage full — alert is still shown */ }
+      // Native alert — blocking, OS-level, NOT rendered through React,
+      // so cannot trigger a renderer crash mid-paint. The text is
+      // selectable on Windows so the operator can manually copy if
+      // clipboard auto-write was blocked.
+      window.alert(
+        `License released on this PC.\n\n` +
+        `Your remaining time (${remainingText}) is preserved.\n\n` +
+        `ACTIVATION CODE:\n\n    ${code}\n\n` +
+        `(Already copied to your clipboard if your system allows. ` +
+        `If not, write it down or select+copy from this dialog.)\n\n` +
+        `Type or paste this code into the "Activate" dialog on the ` +
+        `new PC and the SAME remaining days will be restored.\n\n` +
+        `Click OK to reload this PC. The code will also still be ` +
+        `available on the unlocked Settings page after reload.`
+      )
+      // Hard reload — same synchronous pattern as v0.7.101 Activate.
+      try { window.location.assign('/') } catch { window.location.href = '/' }
+      // Safety: clear busy spinner after 8 s if navigation is vetoed.
+      setTimeout(() => setLicBusy(false), 8000)
+      return // do NOT fall through to old setTransferOpen / refresh path
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to transfer license')
-    } finally { setLicBusy(false) }
+      setLicBusy(false)
+    }
   }
   // Format ms → "12 days, 3 hours" (or "3 hours, 14 minutes" for short
   // remaining periods) for the transfer-success dialog. Covers the
