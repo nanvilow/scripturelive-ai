@@ -2349,20 +2349,23 @@ function DetectedVersesCard() {
         ) : null
       }
     >
-      {/* v0.7.108 — Per-column auto-live thresholds + continuous gate.
+      {/* v0.7.109 — Per-column auto-live thresholds + 1.25 s dwell.
           Each column is an INDEPENDENT detection pipeline.
 
             • COL 1 "Auto Verse Match"  (explicit regex / Reference-
                 Engine hits like "Amos 1:3"): Auto-live at ≥60%.
-                Crisp regex hits get the standard floor.
 
             • COL 2 "Bible Reference Quoted"  (semantic — paraphrased
-                quotations / AI cosine embeddings): Auto-live at
-                ≥55% per v0.7.108 spec (lowered from 80% — paraphrase
-                recall matters more than precision in live preaching).
+                quotations / AI cosine embeddings): Auto-live at ≥55%.
 
             • COL 3 "Suggested Verses": 10-49% band, MANUAL ONLY.
-                Double-click a row to send it live. */}
+                Double-click a row to send it live.
+
+            • DWELL: when a NEW detection is ready to fire, the
+                previous live verse stays on screen for ~1.25 s
+                (LIVE_HOLD_MS) before the swap. Within that window
+                further detections are queued; once it elapses the
+                next qualifying NEWEST detection takes over. */}
       {(() => {
         // Each column reads ONLY its own source slice — no cross-pull.
         const explicitRows = liveColumnFor(detectedVerses, 'explicit')

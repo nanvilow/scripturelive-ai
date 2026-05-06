@@ -42,7 +42,7 @@ const v = (
 // ──────────────────────────────────────────────────────────────────
 // THRESHOLDS — v0.7.107 spec compliance
 // ──────────────────────────────────────────────────────────────────
-describe('thresholds (v0.7.108 — per-column auto-live)', () => {
+describe('thresholds (v0.7.109 — per-column auto-live + 1.25 s dwell)', () => {
   it('explicit floor is 0.60 per spec', () => {
     expect(EXPLICIT_AUTO_LIVE_MIN).toBe(0.6)
   })
@@ -59,8 +59,8 @@ describe('thresholds (v0.7.108 — per-column auto-live)', () => {
   it('stability gate is 1 frame (real-time, no wait)', () => {
     expect(STABILITY_MIN_FRAMES).toBe(1)
   })
-  it('hold window is 0 ms (continuous — no anti-flicker dwell)', () => {
-    expect(LIVE_HOLD_MS).toBe(0)
+  it('hold window is 1250 ms (v0.7.109 — previous verse stays live ~1-1.5 s)', () => {
+    expect(LIVE_HOLD_MS).toBe(1250)
   })
   it('legacy ALTERNATIVE_MIN_CONFIDENCE re-exports as suggestion floor', () => {
     expect(ALTERNATIVE_MIN_CONFIDENCE).toBe(SUGGESTION_MIN_CONFIDENCE)
@@ -385,7 +385,7 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     if (r.fire) expect(r.source).toBe('semantic')
   })
 
-  it('CONTINUOUS: a SECOND fire happens immediately after the first (no hold window)', () => {
+  it('DWELL: a SECOND fire 1 ms after the first is BLOCKED (within 1.25 s window)', () => {
     let g = fresh()
     // First fire at t=1000
     let r = shouldFireAutoLiveStable(
@@ -397,19 +397,40 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     expect(r.fire).toBe(true)
     g = r.nextStability
 
-    // Second fire at t=1001 (1 ms later) — was BLOCKED in v0.7.106 by
-    // the 3.5 s hold window. v0.7.107 must fire immediately.
+    // Second fire at t=1001 (1 ms later) — BLOCKED by 1.25 s dwell.
     r = shouldFireAutoLiveStable(
       [v('Second', 0.95, 2, 'explicit')],
       'First',
       g,
       { nowMs: 1001 },
     )
+    expect(r.fire).toBe(false)
+  })
+
+  it('DWELL: a SECOND fire 1.25 s after the first IS allowed (boundary inclusive)', () => {
+    let g = fresh()
+    let r = shouldFireAutoLiveStable(
+      [v('First', 0.9, 1, 'explicit')],
+      null,
+      g,
+      { nowMs: 1000 },
+    )
+    expect(r.fire).toBe(true)
+    g = r.nextStability
+
+    // Second fire EXACTLY at t=2250 (1250 ms later) — boundary is
+    // `now - lastFireAtMs < holdMs`, so 1250 ms elapsed is allowed.
+    r = shouldFireAutoLiveStable(
+      [v('Second', 0.95, 2, 'explicit')],
+      'First',
+      g,
+      { nowMs: 2250 },
+    )
     expect(r.fire).toBe(true)
     if (r.fire) expect(r.verse.id).toBe('Second')
   })
 
-  it('CONTINUOUS: third, fourth, fifth fires all proceed back-to-back', () => {
+  it('DWELL: third, fourth, fifth fires all proceed when each waits 1.25 s+', () => {
     let g = fresh()
     const ids: string[] = []
     for (let i = 0; i < 5; i++) {
@@ -418,12 +439,44 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
         [v(id, 0.9, i, 'explicit')],
         ids[ids.length - 1] ?? null,
         g,
-        { nowMs: 1000 + i },
+        { nowMs: 1000 + i * 1300 }, // 1300 ms apart > 1250 dwell
       )
       g = r.nextStability
       if (r.fire) ids.push(r.verse.id)
     }
     expect(ids).toEqual(['V0', 'V1', 'V2', 'V3', 'V4'])
+  })
+
+  it('DWELL: rapid-fire detections within the window collapse to a single fire', () => {
+    let g = fresh()
+    // First fires at t=1000.
+    let r = shouldFireAutoLiveStable([v('A', 0.9, 1, 'explicit')], null, g, { nowMs: 1000 })
+    expect(r.fire).toBe(true)
+    g = r.nextStability
+    // 5 rapid detections at t=1100, 1200, 1300, 1400, 1500 — all
+    // within the 1.25 s window from t=1000 (max delta = 500 ms),
+    // so ALL 5 are blocked. Previous verse stays on screen.
+    let fires = 0
+    for (let i = 0; i < 5; i++) {
+      r = shouldFireAutoLiveStable(
+        [v(`B${i}`, 0.9, 2 + i, 'explicit')],
+        'A',
+        g,
+        { nowMs: 1000 + 100 * (i + 1) },
+      )
+      if (r.fire) fires++
+      g = r.nextStability
+    }
+    expect(fires).toBe(0)
+    // Now jump past the 1.25 s window — next detection fires.
+    r = shouldFireAutoLiveStable(
+      [v('Late', 0.9, 99, 'explicit')],
+      'A',
+      g,
+      { nowMs: 1000 + 1300 },
+    )
+    expect(r.fire).toBe(true)
+    if (r.fire) expect(r.verse.id).toBe('Late')
   })
 
   it('SAME top.id as currentLiveId does NOT refire (allowed dedup per spec)', () => {
@@ -462,7 +515,7 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     if (r.fire) expect(r.source).toBe('explicit')
   })
 
-  it('NEW detection (lower confidence) replaces OLDER live verse on next frame', () => {
+  it('NEW detection (lower confidence) replaces OLDER live verse AFTER the 1.25 s dwell', () => {
     let g = fresh()
     // First fire: OldHigh (0.95) at t=1000
     let r = shouldFireAutoLiveStable(
@@ -475,17 +528,18 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     if (r.fire) expect(r.verse.id).toBe('OldHigh')
     g = r.nextStability
 
-    // Second frame: a NEW lower-confidence (but qualifying) detection
-    // arrives. Spec: it MUST become the new live verse, even though
-    // OldHigh is still in the list at higher confidence.
+    // Second frame at t=2300 (1300 ms later — past dwell). A NEW
+    // lower-confidence (but qualifying) detection arrives. Spec: it
+    // MUST become the new live verse, even though OldHigh is still
+    // in the list at higher confidence.
     r = shouldFireAutoLiveStable(
       [
         v('OldHigh', 0.95, 1000, 'explicit'),
-        v('NewLow',  0.62, 2000, 'explicit'),
+        v('NewLow',  0.62, 2300, 'explicit'),
       ],
       'OldHigh',
       g,
-      { nowMs: 2000 },
+      { nowMs: 2300 },
     )
     expect(r.fire).toBe(true)
     if (r.fire) expect(r.verse.id).toBe('NewLow')
@@ -521,7 +575,7 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     expect(r!.fire).toBe(false)
   })
 
-  it('honours opts.holdMs override (re-enables the dwell window)', () => {
+  it('honours opts.holdMs override (caller can widen or zero the dwell window)', () => {
     let g = fresh()
     // First fire at t=1000
     let r = shouldFireAutoLiveStable(
