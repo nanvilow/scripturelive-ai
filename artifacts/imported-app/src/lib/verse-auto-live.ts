@@ -47,13 +47,18 @@ export interface RankedVerse {
   source?: DetectionSource
 }
 
-// v0.7.107 — Column-specific auto-live floors per operator spec.
-//   • EXPLICIT (regex / Reference-Engine hits, labelled "Bible
-//     Reference Quoted" in the UI): ≥ 0.60.
+// v0.7.108 — Column-specific auto-live floors per operator spec.
+//   • EXPLICIT (regex / Reference-Engine hits, labelled "Auto Verse
+//     Match" in the UI): ≥ 0.60.
 //   • SEMANTIC (preacher-phrase / keyword / AI cosine embeddings,
-//     labelled "Auto Verse Match" in the UI): ≥ 0.80.
+//     labelled "Bible Reference Quoted" in the UI — paraphrased
+//     quotations): LOWERED 0.80 → 0.55. Operator: "Bible Reference
+//     Quoted column, Paraphrased quotations auto-live should be at
+//     55% to 100%". Paraphrase recall is more important than
+//     precision in live preaching — the previous 0.80 floor was so
+//     strict it almost never fired in real audio.
 export const EXPLICIT_AUTO_LIVE_MIN = 0.6
-export const SEMANTIC_AUTO_LIVE_MIN = 0.8
+export const SEMANTIC_AUTO_LIVE_MIN = 0.55
 
 const COLUMN_AUTO_LIVE_MIN: Record<Exclude<DetectionSource, 'suggestion'>, number> = {
   explicit: EXPLICIT_AUTO_LIVE_MIN,
@@ -123,7 +128,7 @@ export function pickAutoLiveMatch<T extends RankedVerse>(detected: readonly T[])
 
 // Per-pipeline pick. Returns the NEWEST verse tagged with the
 // requested source whose confidence clears that source's auto-live
-// floor (explicit ≥ 0.60, semantic ≥ 0.80). Returns null if no
+// floor (explicit ≥ 0.60, semantic ≥ 0.55). Returns null if no
 // qualifying candidate exists.
 //
 // v0.7.107 — Newest-first (was confidence-desc). Operator spec:

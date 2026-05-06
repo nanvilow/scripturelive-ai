@@ -42,15 +42,15 @@ const v = (
 // ──────────────────────────────────────────────────────────────────
 // THRESHOLDS — v0.7.107 spec compliance
 // ──────────────────────────────────────────────────────────────────
-describe('thresholds (v0.7.107 — per-column auto-live)', () => {
-  it('explicit / "Bible Reference Quoted" floor is 0.60 per spec', () => {
+describe('thresholds (v0.7.108 — per-column auto-live)', () => {
+  it('explicit floor is 0.60 per spec', () => {
     expect(EXPLICIT_AUTO_LIVE_MIN).toBe(0.6)
   })
-  it('semantic / "Auto Verse Match" floor is 0.80 per spec', () => {
-    expect(SEMANTIC_AUTO_LIVE_MIN).toBe(0.8)
+  it('semantic / "Bible Reference Quoted" (paraphrase) floor is 0.55 per v0.7.108 spec', () => {
+    expect(SEMANTIC_AUTO_LIVE_MIN).toBe(0.55)
   })
-  it('AUTO_LIVE_MIN_CONFIDENCE legacy export = lowest per-source floor (0.60)', () => {
-    expect(AUTO_LIVE_MIN_CONFIDENCE).toBe(0.6)
+  it('AUTO_LIVE_MIN_CONFIDENCE legacy export = lowest per-source floor (0.55)', () => {
+    expect(AUTO_LIVE_MIN_CONFIDENCE).toBe(0.55)
   })
   it('suggestions band is 0.10–0.50 per spec', () => {
     expect(SUGGESTION_MIN_CONFIDENCE).toBe(0.1)
@@ -81,14 +81,17 @@ describe('pickAutoLiveBySource (per-column floors)', () => {
   it('explicit at 0.59 is NOT live-eligible', () => {
     expect(pickAutoLiveBySource([v('A', 0.59, 1, 'explicit')], 'explicit')).toBeNull()
   })
-  it('semantic at 0.80 IS live-eligible (boundary inclusive)', () => {
-    expect(pickAutoLiveBySource([v('A', 0.8, 1, 'semantic')], 'semantic')?.id).toBe('A')
+  it('semantic at 0.55 IS live-eligible (boundary inclusive — v0.7.108 floor)', () => {
+    expect(pickAutoLiveBySource([v('A', 0.55, 1, 'semantic')], 'semantic')?.id).toBe('A')
   })
-  it('semantic at 0.79 is NOT live-eligible (strict 80% floor)', () => {
-    expect(pickAutoLiveBySource([v('A', 0.79, 1, 'semantic')], 'semantic')).toBeNull()
+  it('semantic at 0.54 is NOT live-eligible (strict 55% floor)', () => {
+    expect(pickAutoLiveBySource([v('A', 0.54, 1, 'semantic')], 'semantic')).toBeNull()
   })
-  it('semantic at 0.65 (would have fired pre-v0.7.107) is now NOT eligible', () => {
-    expect(pickAutoLiveBySource([v('A', 0.65, 1, 'semantic')], 'semantic')).toBeNull()
+  it('semantic at 0.65 IS live-eligible under v0.7.108 (was rejected by v0.7.107 0.80 floor)', () => {
+    expect(pickAutoLiveBySource([v('A', 0.65, 1, 'semantic')], 'semantic')?.id).toBe('A')
+  })
+  it('semantic at 0.79 IS live-eligible under v0.7.108 (was rejected by v0.7.107 0.80 floor)', () => {
+    expect(pickAutoLiveBySource([v('A', 0.79, 1, 'semantic')], 'semantic')?.id).toBe('A')
   })
   it('explicit pick ignores semantic candidates and vice versa', () => {
     const detected = [
@@ -135,8 +138,8 @@ describe('pickAutoLiveMatch (legacy — lowest per-source floor)', () => {
   it('60% IS live-eligible (boundary inclusive)', () => {
     expect(pickAutoLiveMatch([v('Ps.23.1', 0.6)])?.id).toBe('Ps.23.1')
   })
-  it('59% is NOT live-eligible', () => {
-    expect(pickAutoLiveMatch([v('Ps.23.1', 0.59)])).toBeNull()
+  it('54% is NOT live-eligible (v0.7.108 — lowest per-source floor is 0.55)', () => {
+    expect(pickAutoLiveMatch([v('Ps.23.1', 0.54)])).toBeNull()
   })
   it('picks the HIGHEST-confidence verse (legacy path retains confidence ordering)', () => {
     const detected = [v('A', 0.66), v('B', 0.89), v('C', 0.95)]
@@ -229,14 +232,17 @@ describe('liveColumnFor (cols 1 & 2 — per-source floors)', () => {
     expect(liveColumnFor(detected, 'explicit').map((d) => d.id)).toEqual(['Edge', 'Mid', 'Hi'])
   })
 
-  it('semantic column requires ≥0.80 (stricter than explicit), NEWEST first', () => {
+  it('semantic column requires ≥0.55 (v0.7.108 — paraphrase-friendly), NEWEST first', () => {
     const detected = [
       v('A', 0.95, 1, 'semantic'),
-      v('B', 0.80, 2, 'semantic'), // boundary inclusive
-      v('C', 0.79, 3, 'semantic'), // dropped
-      v('D', 0.65, 4, 'semantic'), // dropped
+      v('B', 0.80, 2, 'semantic'),
+      v('C', 0.79, 3, 'semantic'),
+      v('D', 0.65, 4, 'semantic'),
+      v('E', 0.55, 5, 'semantic'), // boundary inclusive
+      v('F', 0.54, 6, 'semantic'), // dropped
     ]
-    expect(liveColumnFor(detected, 'semantic').map((d) => d.id)).toEqual(['B', 'A'])
+    // E,D,C,B,A — newest first, F dropped (below 55%).
+    expect(liveColumnFor(detected, 'semantic').map((d) => d.id)).toEqual(['E', 'D', 'C', 'B', 'A'])
   })
 
   it('orders by NEWEST first, confidence as tiebreak only', () => {
@@ -340,7 +346,7 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     }
   })
 
-  it('fires IMMEDIATELY on first semantic ≥0.80 (real-time spec)', () => {
+  it('fires IMMEDIATELY on first semantic ≥0.55 (v0.7.108 paraphrase floor)', () => {
     const r = shouldFireAutoLiveStable(
       [v('John.4.24', 0.81, 1, 'semantic')],
       null,
@@ -361,21 +367,22 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     expect(r.fire).toBe(false)
   })
 
-  it('does NOT fire when the semantic top is below 0.80', () => {
-    const r = shouldFireAutoLiveStable([v('Lo', 0.79, 1, 'semantic')], null, fresh(), {
+  it('does NOT fire when the semantic top is below 0.55 (v0.7.108)', () => {
+    const r = shouldFireAutoLiveStable([v('Lo', 0.54, 1, 'semantic')], null, fresh(), {
       nowMs: 1000,
     })
     expect(r.fire).toBe(false)
   })
 
-  it('semantic at 0.65 NEVER fires (was firing in v0.7.106 — now correctly held)', () => {
-    let g = fresh()
-    let r
-    for (let i = 0; i < 10; i++) {
-      r = shouldFireAutoLiveStable([v('X', 0.65, 1, 'semantic')], null, g, { nowMs: 1000 + i })
-      g = r.nextStability
-    }
-    expect(r!.fire).toBe(false)
+  it('semantic at 0.65 DOES fire under v0.7.108 (paraphrase floor lowered to 0.55)', () => {
+    const r = shouldFireAutoLiveStable(
+      [v('X', 0.65, 1, 'semantic')],
+      null,
+      fresh(),
+      { nowMs: 1000 },
+    )
+    expect(r.fire).toBe(true)
+    if (r.fire) expect(r.source).toBe('semantic')
   })
 
   it('CONTINUOUS: a SECOND fire happens immediately after the first (no hold window)', () => {

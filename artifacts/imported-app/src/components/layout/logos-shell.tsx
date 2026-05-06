@@ -2349,19 +2349,17 @@ function DetectedVersesCard() {
         ) : null
       }
     >
-      {/* v0.7.107 — Per-column auto-live thresholds + continuous gate.
-          Each column is an INDEPENDENT detection pipeline. The 3.5 s
-          LIVE_HOLD_MS dwell from v0.7.106 is REMOVED (it was the root
-          cause of "auto-live fires once and stops" — see helper notes
-          in src/lib/verse-auto-live.ts).
+      {/* v0.7.108 — Per-column auto-live thresholds + continuous gate.
+          Each column is an INDEPENDENT detection pipeline.
 
-            • COL 1 "Auto Verse Match"  (semantic — paraphrase/AI):
-                Auto-live at ≥80%. Stricter floor because semantic
-                hits are softer than regex.
+            • COL 1 "Auto Verse Match"  (explicit regex / Reference-
+                Engine hits like "Amos 1:3"): Auto-live at ≥60%.
+                Crisp regex hits get the standard floor.
 
-            • COL 2 "Bible Reference Quoted"  (explicit regex /
-                Reference-Engine hits like "Amos 1:3"): Auto-live
-                at ≥60%. Lower floor because regex hits are crisp.
+            • COL 2 "Bible Reference Quoted"  (semantic — paraphrased
+                quotations / AI cosine embeddings): Auto-live at
+                ≥55% per v0.7.108 spec (lowered from 80% — paraphrase
+                recall matters more than precision in live preaching).
 
             • COL 3 "Suggested Verses": 10-49% band, MANUAL ONLY.
                 Double-click a row to send it live. */}
@@ -2419,7 +2417,7 @@ function DetectedVersesCard() {
                   {semanticRows.length === 0 ? (
                     <div className="text-center py-6 text-[10px] text-muted-foreground">
                       <Mic className="h-5 w-5 mx-auto opacity-40 mb-1.5" />
-                      Paraphrased quotations auto-live at ≥80%.
+                      Paraphrased quotations auto-live at ≥55%.
                     </div>
                   ) : (
                     semanticRows.map((row, i) => renderRow(row, i, 'live'))
