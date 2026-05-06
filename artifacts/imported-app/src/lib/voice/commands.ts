@@ -631,9 +631,18 @@ function detectFindByQuoteCommand(
     let quote = (m[2] ?? m[1])!.trim()
     // Strip a trailing courtesy / filler ("please", "thanks", "you
     // know", "right") and trailing punctuation.
+    // v0.7.111 — Also strip a leading "in (the) bible / scripture /
+    // scriptures / word (of god)" — these prefixes leak in from the
+    // v0.7.110 broad question patterns ("show me where in the bible
+    // Jesus was crucified" → group 1 = "in the bible Jesus was
+    // crucified") and torpedo the semantic search because the
+    // matcher hashes the literal string. Operator complained the
+    // toast read `No match for "in the bible"` even though the real
+    // intent was a clear question.
     quote = quote
       .replace(/[\s,.;:!?]+$/, '')
       .replace(/\s+(?:please|thanks|thank\s+you|you\s+know|right)\s*$/i, '')
+      .replace(/^in\s+(?:the\s+)?(?:bible|scripture|scriptures|word(?:\s+of\s+god)?)\s+/i, '')
       .trim()
 
     // Sanity guard: at least 3 word chars to be a real query.

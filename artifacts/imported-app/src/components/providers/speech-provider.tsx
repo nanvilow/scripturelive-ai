@@ -780,14 +780,20 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       case 'find_by_quote': {
         const quote = (cmd.quoteText || '').trim()
         if (!quote) {
-          toast.error('No quote to search', { duration: 1500, position: 'bottom-right' })
+          // v0.7.111 — silent on empty (operator complaint about
+          // toast spam from misfired voice commands).
           break
         }
-        toast.loading(`AI: searching for "${quote.length > 40 ? quote.slice(0, 38) + '…' : quote}"…`, {
-          id: 'ai-verse-search',
-          duration: 4000,
-          position: 'bottom-right',
-        })
+        // v0.7.111 — Silenced the always-on loading toast. It only
+        // ever told the operator something they could already see in
+        // the detection panel, and on failures combined with the
+        // "No match" error toast to triple-stack noise on a single
+        // misfired utterance. Loading state is now console-only;
+        // the success toast at the bottom of this case is the only
+        // user-visible signal.
+        if (typeof console !== 'undefined') {
+          console.log('[voice] find_by_quote searching:', quote)
+        }
         let match: {
           reference: string
           book: string
@@ -830,11 +836,18 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           /* network error — fall through to "no match" toast */
         }
         if (!match) {
-          toast.error(`No match for "${quote.length > 32 ? quote.slice(0, 30) + '…' : quote}"`, {
-            id: 'ai-verse-search',
-            duration: 2500,
-            position: 'bottom-right',
-          })
+          // v0.7.111 — Silent failure (operator complaint: red
+          // "No match for ..." toasts on every misfired voice
+          // command were clutter). The semantic matcher only knows
+          // the POPULAR_VERSES_KJV shortlist, so the fail rate on
+          // arbitrary preacher questions ("in the bible Jesus was
+          // crucified", "where was Stephen stoned") is naturally
+          // high. Failure path is console-only; the operator can
+          // see the detection card if they want to debug.
+          toast.dismiss('ai-verse-search')
+          if (typeof console !== 'undefined') {
+            console.log('[voice] find_by_quote: no match for', quote)
+          }
           break
         }
         const refKey = `${match.book} ${match.chapter}:${match.verseStart}${
@@ -1365,7 +1378,15 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             speakerFollowSuspendedUntilRef.current = Date.now() + 2000
             await dispatchVoiceCommand(cmd)
             state.setDetectionStatus('detected')
-            toast.message(cmd.label, { duration: 1500, position: 'bottom-right' })
+            // v0.7.111 — Skip the outer "Find: ..." label toast for
+            // find_by_quote because the dispatcher above manages its
+            // own success / silent-failure messaging. Pre-111 the
+            // outer label toast surfaced things like
+            // `Find: in the bible Jesus was crucified` on EVERY
+            // misfire, even when the dispatcher then went quiet.
+            if (cmd.kind !== 'find_by_quote') {
+              toast.message(cmd.label, { duration: 1500, position: 'bottom-right' })
+            }
             // Suppress the rest of the pipeline for this transcript.
             return
           }

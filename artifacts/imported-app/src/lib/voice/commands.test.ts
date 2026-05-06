@@ -461,3 +461,58 @@ describe('detectCommand — find_by_quote (AI Verse Search)', () => {
     expect(c?.label).toMatch(/^Find: /)
   })
 })
+
+// ── v0.7.111 — "in the bible" prefix strip ───────────────────────
+//
+// Operator complaint after v0.7.110: "Show me where in the bible
+// Jesus was crucified" matched the new natural-question pattern but
+// captured "in the bible Jesus was crucified" as the quote, which
+// the semantic matcher couldn't resolve. Now the leading "in (the)
+// bible / scripture / scriptures / word (of god)" is stripped so the
+// search runs against the actual subject.
+describe('detectCommand — find_by_quote v0.7.111 prefix strip', () => {
+  it('"show me where in the bible Jesus was crucified" → quote = "Jesus was crucified"', () => {
+    const c = detectCommand('show me where in the bible Jesus was crucified')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('Jesus was crucified')
+  })
+
+  it('"where did in the bible David fight Goliath" strips "in the bible"', () => {
+    const c = detectCommand('where did in the bible David fight Goliath')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('David fight Goliath')
+  })
+
+  it('"show me where in scripture Stephen was stoned" strips "in scripture"', () => {
+    const c = detectCommand('show me where in scripture Stephen was stoned')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('Stephen was stoned')
+  })
+
+  it('"show me where in the scriptures Moses parted the sea" strips "in the scriptures"', () => {
+    const c = detectCommand('show me where in the scriptures Moses parted the sea')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('Moses parted the sea')
+  })
+
+  it('"show me where in the word of god love is patient" strips "in the word of god"', () => {
+    const c = detectCommand('show me where in the word of god love is patient')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('love is patient')
+  })
+
+  it('label no longer leaks the "in the bible" prefix', () => {
+    const c = detectCommand('show me where in the bible Jesus wept')
+    expect(c?.label).not.toMatch(/in the bible/i)
+    expect(c?.label).toMatch(/Jesus wept/i)
+  })
+
+  it('strip is anchored to the START — internal "in the bible" survives', () => {
+    // We only strip a leading prefix; an internal "the bible" must
+    // be preserved so questions like "what does the bible mean by
+    // grace" are not silently mangled if they reach this matcher.
+    const c = detectCommand('show me where the bible mentions grace')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toContain('bible')
+  })
+})
