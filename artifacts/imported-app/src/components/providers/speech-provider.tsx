@@ -1284,13 +1284,41 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       // Defaults: drop 0.30 / live 0.70. Operator-tunable in Settings.
       const dropT = state.settings.transcriptDropThreshold ?? 0.30
       const liveT = state.settings.transcriptLiveThreshold ?? 0.65
-      if (confidence < liveT) {
-        // Both DROP and PREVIEW tiers terminate here. The hook has
-        // already appended the chunk to its internal transcript ref;
-        // we deliberately leave it visible to the operator (helps
-        // them notice when the mic is being mis-heard) but skip all
-        // command + reference processing. _dropT is read so future
-        // diagnostics or visual styling can use it without churn.
+      // v0.7.112 — Voice commands MUST run even at low transcript
+      // confidence. Operators reported "nothing works" when preaching
+      // in noisy church environments where Deepgram returns chunk
+      // confidence < 0.65. The pre-112 gate dropped the entire
+      // pipeline (commands AND verses) in that case, so even a
+      // perfectly-spoken "next verse" was silently swallowed when the
+      // surrounding music dragged the chunk confidence down. We now
+      // always run the command pre-pass; only the heavier verse-
+      // detection / semantic-match pipeline is gated on liveT.
+      const lowConfidence = confidence < liveT
+      if (state.voiceControlEnabled) {
+        const tail0 = text.trim().slice(-200)
+        const cmd0 = detectCommand(tail0)
+        if (cmd0 && cmd0.confidence >= 80) {
+          const refSig0 = cmd0.reference
+            ? `${cmd0.reference.book}|${cmd0.reference.chapter}|${cmd0.reference.verseStart}|${cmd0.reference.verseEnd ?? ''}`
+            : ''
+          const sig0 = `${cmd0.kind}|${refSig0}|${cmd0.translation ?? ''}|${cmd0.verseNumber ?? ''}`
+          const now0 = Date.now()
+          if (cmd0.wakeWord || lastVoiceCmdRef.current.sig !== sig0 || now0 - lastVoiceCmdRef.current.at > 4000) {
+            lastVoiceCmdRef.current = { sig: sig0, at: now0 }
+            speakerFollowSuspendedUntilRef.current = Date.now() + 2000
+            await dispatchVoiceCommand(cmd0)
+            state.setDetectionStatus('detected')
+            if (cmd0.kind !== 'find_by_quote') {
+              toast.message(cmd0.label, { duration: 1500, position: 'bottom-right' })
+            }
+            return
+          }
+        }
+      }
+      if (lowConfidence) {
+        // Below the live tier — verse detection / semantic match
+        // pipeline is suppressed but the command pre-pass above
+        // already ran. Visible in transcript for operator diagnostics.
         void dropT
         state.setDetectionStatus('idle')
         return

@@ -94,34 +94,189 @@ interface Pattern {
 }
 
 const PATTERNS: Pattern[] = [
+  // v0.7.112 — Natural-phrase chapter navigation. Listed FIRST so
+  // longer multi-word triggers ("go to the next chapter") win before
+  // the simpler "go to" trigger of go_to_reference (which would try
+  // to parse "the next chapter" as a Bible reference and fail).
   // v0.7.110 — Chapter navigation MUST be listed before next_verse /
   // previous_verse because the next_verse pattern includes the bare
   // 'next' trigger, which would greedily match "next chapter" via
   // the `lower.startsWith(trig + ' ')` rule. Same for 'previous'.
-  // The dispatcher case at speech-provider.tsx ~line 910 already
-  // handles next_chapter / previous_chapter correctly.
   {
-    triggers: ['next chapter'],
+    triggers: [
+      'next chapter',
+      'the next chapter',
+      'go to next chapter',
+      'go to the next chapter',
+      "let's go to the next chapter",
+      'lets go to the next chapter',
+      'let us go to the next chapter',
+      'move to next chapter',
+      'move to the next chapter',
+      'take me to the next chapter',
+      'jump to next chapter',
+      'jump to the next chapter',
+      'turn to next chapter',
+      'turn to the next chapter',
+      'open next chapter',
+      'open the next chapter',
+      'read next chapter',
+      'read the next chapter',
+      'advance chapter',
+      'advance to next chapter',
+      'forward chapter',
+    ],
     kind: 'next_chapter',
     label: 'Next chapter',
   },
   {
-    triggers: ['previous chapter', 'prev chapter', 'last chapter'],
+    triggers: [
+      'previous chapter',
+      'prev chapter',
+      'last chapter',
+      'the previous chapter',
+      'the last chapter',
+      'go to previous chapter',
+      'go to the previous chapter',
+      "let's go to the previous chapter",
+      'lets go to the previous chapter',
+      'let us go to the previous chapter',
+      'go back a chapter',
+      'go back one chapter',
+      'back one chapter',
+      'back a chapter',
+      'previous chapter please',
+      'jump to previous chapter',
+      'jump to the previous chapter',
+      'turn to previous chapter',
+      'turn to the previous chapter',
+    ],
     kind: 'previous_chapter',
     label: 'Previous chapter',
   },
+  // v0.7.112 — Natural-phrase verse navigation. Multi-word forms
+  // BEFORE the bare "next" / "previous" triggers so they win the
+  // longest-match race.
   {
-    triggers: ['next verse', 'next slide', 'next', 'forward'],
+    triggers: [
+      'next verse',
+      'the next verse',
+      'go to next verse',
+      'go to the next verse',
+      "let's go to the next verse",
+      'lets go to the next verse',
+      'move to next verse',
+      'move to the next verse',
+      'take me to the next verse',
+      'jump to next verse',
+      'jump to the next verse',
+      'next slide',
+      'next',
+      'forward',
+      'continue',
+      'go on',
+    ],
     kind: 'next_verse',
     label: 'Next verse',
   },
   {
-    triggers: ['previous verse', 'prev verse', 'previous slide', 'back', 'go back', 'previous'],
+    triggers: [
+      'previous verse',
+      'prev verse',
+      'the previous verse',
+      'go to previous verse',
+      'go to the previous verse',
+      "let's go to the previous verse",
+      'lets go to the previous verse',
+      'move to previous verse',
+      'move to the previous verse',
+      'take me to the previous verse',
+      'jump to previous verse',
+      'previous slide',
+      'back',
+      'go back',
+      'previous',
+    ],
     kind: 'previous_verse',
     label: 'Previous verse',
   },
+  // v0.7.112 — Massively expanded preacher vocabulary for go-to-
+  // reference. Every phrase below is followed by a Bible reference
+  // ("John 3:16", "Romans chapter 8 verse 1", "the book of John
+  // chapter 3"). Without these, natural commands like "take me to
+  // John 3:16" or "let's read Romans 8" silently no-op'd because the
+  // trigger list had only 7 phrases. Each trigger goes through
+  // `parseExplicitReference` on the tail, so non-reference tails
+  // (e.g. "take me to the kitchen") naturally return null without
+  // dispatch — no false positives.
   {
-    triggers: ['go to', 'goto', 'open', 'show', 'display', 'jump to', 'turn to'],
+    triggers: [
+      'go to',
+      'goto',
+      'open',
+      'open to',
+      'show',
+      'show me',
+      'display',
+      'jump to',
+      'turn to',
+      'turn with me to',
+      'turn your bible to',
+      'turn your bibles to',
+      'open your bible to',
+      'open your bibles to',
+      'open up to',
+      'open up',
+      // Take / Bring
+      'take me to',
+      'take us to',
+      'bring up',
+      'bring me',
+      // Let's
+      "let's go to",
+      'lets go to',
+      'let us go to',
+      "let's turn to",
+      'lets turn to',
+      'let us turn to',
+      "let's read",
+      'lets read',
+      'let us read',
+      "let's open",
+      'lets open',
+      'let us open',
+      "let's look at",
+      'lets look at',
+      'let us look at',
+      'look at',
+      // Read variants
+      'read',
+      'read from',
+      'read with me',
+      'read with me from',
+      // We are / will read
+      'we are reading',
+      'we will read',
+      "we'll read",
+      'we shall read',
+      'we are in',
+      "we're in",
+      // Polite forms
+      'please go to',
+      'please open',
+      'please turn to',
+      'please read',
+      // Misc
+      'navigate to',
+      'load',
+      'pull up',
+      'come with me to',
+      'with me to',
+      // From / In the book of
+      'from the book of',
+      'in the book of',
+      'the book of',
+    ],
     kind: 'go_to_reference',
     label: 'Go to reference',
     takesReference: true,
@@ -756,7 +911,28 @@ export function detectCommand(utterance: string): VoiceCommand | null {
 
       if (pat.takesReference) {
         if (!after) return null
-        const ref = parseExplicitReference(after)
+        // v0.7.112 — Whole-chapter / "chapter N" fallback.
+        // parseExplicitReference requires a verse number ("John 3:16")
+        // and returns null for whole-chapter forms preachers actually
+        // say ("Psalm 23", "John 14", "Romans chapter 8"). Retry by
+        // appending ":1" so "let's read Psalm 23" loads Psalm 23:1
+        // (the dispatcher's verseEnd is undefined so the chapter-nav
+        // logic + auto-scroll can walk it). Also normalises "Romans
+        // chapter 8" → "Romans 8:1".
+        let after2 = after
+        const chapterWordMatch = after2.match(/^(.+?)\s+chapter\s+(\d+)(?:\s+verses?\s+(\d+)(?:\s*[-to]+\s*(\d+))?)?$/i)
+        if (chapterWordMatch) {
+          const book = chapterWordMatch[1]!.trim()
+          const ch = chapterWordMatch[2]!
+          const vs = chapterWordMatch[3]
+          const ve = chapterWordMatch[4]
+          after2 = vs ? `${book} ${ch}:${vs}${ve ? '-' + ve : ''}` : `${book} ${ch}:1`
+        }
+        let ref = parseExplicitReference(after2)
+        if (!ref && /\d/.test(after2) && !after2.includes(':')) {
+          // Bare "Book N" → assume verse 1.
+          ref = parseExplicitReference(after2.trim() + ':1')
+        }
         if (!ref) return null
         // v0.7.4 — kind-aware label so "the bible says" surfaces as
         // a distinct standby toast ("Standby: John 3:16") rather than
