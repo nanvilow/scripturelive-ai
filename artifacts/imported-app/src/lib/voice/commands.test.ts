@@ -267,6 +267,37 @@ describe('detectCommandChain — multi-command chaining', () => {
 })
 
 // ── v0.7.23 — AI Verse Search detector ────────────────────────────────
+// v0.7.110 — chapter navigation. v0.7.78 had hijacked "next chapter"
+// → next_verse (one-verse step). The current operator wants real
+// chapter jumps; the dispatcher case has always existed.
+describe('detectCommand — chapter navigation (v0.7.110)', () => {
+  it('"next chapter" → next_chapter (NOT next_verse)', () => {
+    const c = detectCommand('next chapter')
+    expect(c?.kind).toBe('next_chapter')
+  })
+
+  it('"previous chapter" → previous_chapter', () => {
+    const c = detectCommand('previous chapter')
+    expect(c?.kind).toBe('previous_chapter')
+  })
+
+  it('"prev chapter" → previous_chapter', () => {
+    const c = detectCommand('prev chapter')
+    expect(c?.kind).toBe('previous_chapter')
+  })
+
+  it('"Media, next chapter" → next_chapter with wake word', () => {
+    const c = detectCommand('Media, next chapter')
+    expect(c?.kind).toBe('next_chapter')
+    expect(c?.wakeWord).toBe(true)
+  })
+
+  it('"next verse" still routes to next_verse (one-verse step preserved)', () => {
+    const c = detectCommand('next verse')
+    expect(c?.kind).toBe('next_verse')
+  })
+})
+
 describe('detectCommand — find_by_quote (AI Verse Search)', () => {
   it('"find the verse about loving your enemies" → find_by_quote', () => {
     const c = detectCommand('find the verse about loving your enemies')
@@ -319,6 +350,46 @@ describe('detectCommand — find_by_quote (AI Verse Search)', () => {
 
   it('"show me the verse about prayer" works', () => {
     const c = detectCommand('show me the verse about prayer')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('prayer')
+  })
+
+  // v0.7.110 — Natural Bible-question patterns. Pre-110 these all
+  // returned null because the regex required the literal word
+  // "verse" / "scripture" / "passage" — production complaint:
+  // "doesn't answer Bible questions".
+  it('"show me where Jesus wept" → find_by_quote (natural question)', () => {
+    const c = detectCommand('show me where Jesus wept')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('Jesus wept')
+  })
+
+  it('"where did they say silver and gold have I none" → find_by_quote', () => {
+    const c = detectCommand('where did they say silver and gold have I none')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('they say silver and gold have I none')
+  })
+
+  it('"where was Stephen stoned to death" → find_by_quote', () => {
+    const c = detectCommand('where was Stephen stoned to death')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('Stephen stoned to death')
+  })
+
+  it('"where did Jesus weep" → find_by_quote', () => {
+    const c = detectCommand('where did Jesus weep')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('Jesus weep')
+  })
+
+  it('"who said love your enemies" → find_by_quote', () => {
+    const c = detectCommand('who said love your enemies')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('love your enemies')
+  })
+
+  it('"what did Jesus say about prayer" → find_by_quote (group 2 capture)', () => {
+    const c = detectCommand('what did Jesus say about prayer')
     expect(c?.kind).toBe('find_by_quote')
     expect(c?.quoteText).toBe('prayer')
   })
