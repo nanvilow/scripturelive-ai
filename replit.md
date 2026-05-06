@@ -48,7 +48,7 @@ A Next.js application providing scripture-related services for web and desktop, 
 -   **Multi-tiered Speech Recognition**: Employs Deepgram, Whisper, and browser speech engines with auto-fallback, VAD, and hallucination guard, complemented by AI semantic matching.
 -   **Atomic License Persistence**: Uses an atomic-write JSON file for local license persistence, ensuring data integrity during critical operations like deactivation and transfer.
 -   **Hard Reset for License State Changes**: Critical license state changes (activate, deactivate, transfer) trigger a hard `window.location.assign('/')` reload to prevent renderer crashes caused by stale React contexts. v0.7.107 extends the same recovery to UNCAUGHT renderer exceptions via `app/global-error.tsx` + `app/error.tsx` — any thrown React error hard-reloads to `/` instead of letting Chromium paint chrome-error://chromewebdata. Fixes the "This page couldn't load" page seen on cold boot when activation has just expired.
--   **Per-Column Auto-Live Thresholds (v0.7.107)**: COL 1 "Auto Verse Match" (semantic) ≥80%, COL 2 "Bible Reference Quoted" (explicit regex) ≥60%, COL 3 "Suggested Verses" 10-49% manual-only. `LIVE_HOLD_MS = 0` (no anti-flicker dwell) — detection fires continuously; only same-id-as-currentLive blocks a refire. The 3.5 s hold introduced in v0.7.106 was the root cause of "auto-live fires once and stops".
+-   **Per-Column Auto-Live Thresholds (v0.7.108)**: COL 1 "Auto Verse Match" (explicit regex hits like "Amos 1:3") ≥60%, COL 2 "Bible Reference Quoted" (semantic / paraphrased quotations) **≥55%** (lowered from 80% in v0.7.108 — paraphrase recall outweighs precision in live preaching), COL 3 "Suggested Verses" 10-49% manual-only. `LIVE_HOLD_MS = 0` (no anti-flicker dwell) — detection fires continuously; only same-id-as-currentLive blocks a refire. Newest detection always sits on top of every column; a new low-confidence qualifying hit displaces an older high-confidence one. The 3.5 s hold introduced in v0.7.106 was the root cause of "auto-live fires once and stops".
 
 ## Product
 
@@ -73,7 +73,7 @@ A Next.js application providing scripture-related services for web and desktop, 
 -   License state changes (activate/deactivate/transfer) trigger hard page reloads; avoid complex UI interactions immediately after these operations.
 -   NDI sender has a 60-second "linger mode" after disconnect to maintain OBS/vMix connections.
 -   Renderer crashes are handled by a crash mask that attempts recovery and logs full history.
--   Auto-live confidence thresholds and stability gates are crucial for projection; consult `verse-auto-live.ts` for current logic. As of v0.7.107: explicit ≥0.60, semantic ≥0.80, suggestions 0.10-0.49, no hold window.
+-   Auto-live confidence thresholds and stability gates are crucial for projection; consult `verse-auto-live.ts` for current logic. As of v0.7.108: explicit ≥0.60, semantic ≥0.55, suggestions 0.10-0.49, no hold window, newest-first ordering.
 -   The "Detected Verses" card now separates explicit, semantic, and suggested verses into three distinct columns, each with independent auto-live decisions.
 
 ## Pointers
