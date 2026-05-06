@@ -442,6 +442,36 @@ describe('detectCommand — find_by_quote (AI Verse Search)', () => {
     expect(c?.kind).toBe('next_verse')
   })
 
+  // v0.7.113 — Trailing-punctuation regression. Pre-113 the strict
+  // trigger comparison failed when ASR appended a period/comma to the
+  // final chunk, so "next chapter." silently routed through the
+  // next_verse pattern (bare "next" + tail "chapter."). These tests
+  // pin the trailing-punct strip behaviour so the regression can't
+  // come back.
+  it('next chapter with trailing period fires next_chapter', () => {
+    expect(detectCommand('next chapter.')?.kind).toBe('next_chapter')
+    expect(detectCommand('Next chapter.')?.kind).toBe('next_chapter')
+    expect(detectCommand('next chapter,')?.kind).toBe('next_chapter')
+    expect(detectCommand('next chapter?')?.kind).toBe('next_chapter')
+  })
+  it('previous chapter with trailing period fires previous_chapter', () => {
+    expect(detectCommand('previous chapter.')?.kind).toBe('previous_chapter')
+    expect(detectCommand('previous chapter,')?.kind).toBe('previous_chapter')
+  })
+  it('verse N with trailing period fires show_verse_n', () => {
+    const c = detectCommand('verse 10.')
+    expect(c?.kind).toBe('show_verse_n')
+    expect(c?.verseNumber).toBe(10)
+  })
+  it('show verse N with trailing period fires show_verse_n', () => {
+    const c = detectCommand('show verse 5.')
+    expect(c?.kind).toBe('show_verse_n')
+    expect(c?.verseNumber).toBe(5)
+  })
+  it('next verse with trailing period still fires next_verse (not regressed)', () => {
+    expect(detectCommand('next verse.')?.kind).toBe('next_verse')
+  })
+
   it('does NOT misfire on "show verse 16"', () => {
     // Existing show_verse_n behaviour must still win.
     const c = detectCommand('show verse 16')

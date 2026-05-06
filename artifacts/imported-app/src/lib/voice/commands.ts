@@ -880,7 +880,18 @@ export function detectCommand(utterance: string): VoiceCommand | null {
   // be ignored.
   if (isFillerUtterance(body)) return null
 
-  const cleaned = stripLeadingFiller(body)
+  // v0.7.113 — Trailing-punctuation strip. ASR engines routinely append
+  // a period / comma / "?" to the final transcript chunk ("next chapter."
+  // / "verse 10."). Pre-113 the strict trigger comparison (`lower !==
+  // trig && !lower.startsWith(trig + ' ')`) failed on "next chapter."
+  // and the loop fell through to the next_verse pattern, where bare
+  // "next" matched `startsWith("next ")` against "next chapter." with
+  // tail "chapter." (length 8 < the 12-char tail limit) — firing
+  // next_verse instead of next_chapter. Same regression for
+  // show_verse_n's `^...verse \d+\s*$` regex which couldn't see past
+  // a trailing period. Stripping here normalises every downstream
+  // matcher in one place.
+  const cleaned = stripLeadingFiller(body).replace(/[.,;:!?]+\s*$/, '').trim()
   const lower = cleaned.toLowerCase()
 
   // v0.7.19 — Specialised intent matchers BEFORE the generic PATTERNS
