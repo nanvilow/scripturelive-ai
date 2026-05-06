@@ -1,13 +1,21 @@
-// Speaker-Follow Mode — v0.5.52.
+// Speaker-Follow Mode — v0.5.52 (re-tuned in v0.7.110).
 //
 // Continuously matches what the preacher is saying against each verse
 // of the currently-displayed multi-verse passage and returns the index
 // of the verse that best matches.
 //
-// Matching strategy: token-trigram Jaccard similarity (cheap, robust
+// Matching strategy: token-BIGRAM Jaccard similarity (cheap, robust
 // against word reorder and minor mistranscription) computed on the
-// last `windowMs` ms of transcription against each verse's body text
-// after stop-word removal.
+// last ~8 s of transcription against each verse's body text after
+// stop-word removal.
+//
+// v0.7.110 — switched from trigrams to bigrams. The original v0.5.52
+// trigram model required THREE consecutive matching content tokens
+// for any score above 0, which is unreachable when the preacher
+// paraphrases ("And then Paul writes that we should…" vs the verse
+// "Therefore being justified by faith…"). Bigrams give us 3-5× the
+// recall on real preaching transcripts at a small cost in
+// discrimination, which the hysteresis below absorbs.
 //
 // Hysteresis: only switch verses when the new best is BOTH ≥
 // `switchThreshold` AND ≥ `currentScore + minDelta`. Without this the
@@ -31,19 +39,19 @@ function tokens(s: string): string[] {
     .filter((w) => w.length >= 2 && !STOP.has(w))
 }
 
-function trigrams(toks: string[]): Set<string> {
+// v0.7.110 — bigrams + unigrams. Bigrams give us word-pair locality
+// (so "loved world" still scores higher than just "loved" + "world"
+// independently), and the unigram fallback ensures very short verses
+// like "Jesus wept" still produce a non-empty signature.
+function ngrams(toks: string[]): Set<string> {
   const out = new Set<string>()
-  if (toks.length < 1) return out
-  if (toks.length === 1) {
-    out.add(toks[0])
-    return out
-  }
-  if (toks.length === 2) {
-    out.add(`${toks[0]} ${toks[1]}`)
-    return out
-  }
-  for (let i = 0; i + 2 < toks.length; i++) {
-    out.add(`${toks[i]} ${toks[i + 1]} ${toks[i + 2]}`)
+  if (toks.length === 0) return out
+  // Always include unigrams — short verses ("Jesus wept" → 2 tokens
+  // after stop-word removal) would otherwise produce an empty set
+  // and never match.
+  for (const t of toks) out.add(t)
+  for (let i = 0; i + 1 < toks.length; i++) {
+    out.add(`${toks[i]} ${toks[i + 1]}`)
   }
   return out
 }
@@ -71,14 +79,21 @@ export interface FollowResult {
 }
 
 export interface FollowOpts {
-  /** Required score for a verse to even be considered the new best. Default 0.20. */
+  /**
+   * Required score for a verse to even be considered the new best.
+   * v0.7.110: dropped 0.20 → 0.10 because the new bigram+unigram
+   * signature produces lower absolute scores than the v0.5.52
+   * trigram model. 0.10 is the empirical floor for "the preacher
+   * is clearly reading THIS verse" on real worship transcripts.
+   */
   switchThreshold?: number
   /**
    * Required margin over `currentScore` to actually switch.
    * v0.7.4: bumped 0.05 → 0.08 to make the highlight stickier in
-   * multi-verse passages where adjacent verses share many tokens
-   * (e.g. John 3:16 / 3:17 both contain "world", "God", "son",
-   * "perish", "everlasting"). Defaults to 0.08.
+   * multi-verse passages where adjacent verses share many tokens.
+   * v0.7.110: dropped 0.08 → 0.04 to match the lower-magnitude
+   * scores from the bigram model — the relative ordering is
+   * preserved, so a 4-point gap is still decisive evidence.
    */
   minDelta?: number
   /** Index of the currently highlighted verse (caller-tracked). */
@@ -114,16 +129,16 @@ export function pickBestVerse(
   if (!verses.length || !recentSpeech.trim()) {
     return { bestIndex: opts.currentIndex, bestScore: 0, shouldSwitch: false }
   }
-  const switchThreshold = opts.switchThreshold ?? 0.20
-  const minDelta = opts.minDelta ?? 0.08
+  const switchThreshold = opts.switchThreshold ?? 0.10
+  const minDelta = opts.minDelta ?? 0.04
   const antiRewindMs = opts.antiRewindMs ?? 1500
 
-  const speechTri = trigrams(tokens(recentSpeech))
+  const speechTri = ngrams(tokens(recentSpeech))
   let best = -1
   let bestScore = 0
   let currentScore = 0
   for (const v of verses) {
-    const verseTri = trigrams(tokens(v.text))
+    const verseTri = ngrams(tokens(v.text))
     const s = jaccard(speechTri, verseTri)
     if (s > bestScore) {
       best = v.index

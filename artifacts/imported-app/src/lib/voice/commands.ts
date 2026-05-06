@@ -94,6 +94,22 @@ interface Pattern {
 }
 
 const PATTERNS: Pattern[] = [
+  // v0.7.110 — Chapter navigation MUST be listed before next_verse /
+  // previous_verse because the next_verse pattern includes the bare
+  // 'next' trigger, which would greedily match "next chapter" via
+  // the `lower.startsWith(trig + ' ')` rule. Same for 'previous'.
+  // The dispatcher case at speech-provider.tsx ~line 910 already
+  // handles next_chapter / previous_chapter correctly.
+  {
+    triggers: ['next chapter'],
+    kind: 'next_chapter',
+    label: 'Next chapter',
+  },
+  {
+    triggers: ['previous chapter', 'prev chapter', 'last chapter'],
+    kind: 'previous_chapter',
+    label: 'Previous chapter',
+  },
   {
     triggers: ['next verse', 'next slide', 'next', 'forward'],
     kind: 'next_verse',
@@ -101,26 +117,6 @@ const PATTERNS: Pattern[] = [
   },
   {
     triggers: ['previous verse', 'prev verse', 'previous slide', 'back', 'go back', 'previous'],
-    kind: 'previous_verse',
-    label: 'Previous verse',
-  },
-  // v0.7.78 — Operator request: when a preacher says "next chapter"
-  // mid-sermon, jumping a whole chapter loses the line he's currently
-  // reading. Operators want the spoken "next chapter" / "previous
-  // chapter" to behave like "next verse" / "previous verse" — step
-  // ONE verse forward (rolling over to the next chapter on the
-  // boundary, which the next_verse handler already does). We keep
-  // these patterns above the bare "next" / "previous" so the longer
-  // phrase wins the leading-position match, but route the kind to
-  // the verse-step intent so the existing next_verse dispatcher
-  // (with cross-chapter rollover) handles it.
-  {
-    triggers: ['next chapter'],
-    kind: 'next_verse',
-    label: 'Next verse',
-  },
-  {
-    triggers: ['previous chapter', 'prev chapter', 'last chapter'],
     kind: 'previous_verse',
     label: 'Previous verse',
   },
@@ -585,13 +581,36 @@ function detectFindByQuoteCommand(
   // Patterns each capture the topic / quote text in group 1.
   // Order matters: more-specific patterns first so they win the
   // match (e.g. "find me the verse about X" before "find ... X").
+  //
+  // v0.7.110 — Added natural Bible-question patterns. The pre-110
+  // regex required the literal word "verse" / "scripture" / "passage"
+  // somewhere in the utterance, which silently rejected the natural
+  // questions a preacher actually asks ("Show me where Jesus wept",
+  // "Where did they say silver and gold have I none", "Where was
+  // Stephen stoned to death"). The new patterns 1-6 catch those
+  // forms and route them straight to the semantic matcher.
   const PATTERNS: RegExp[] = [
+    // ── Strict v0.7.23 patterns FIRST (most specific wins) ─────
     /^(?:please\s+)?(?:find|locate|search\s+for|search|look\s+up|look\s+for|pull\s+up|get\s+me)\s+(?:that\s+|the\s+|a\s+|me\s+(?:that\s+|the\s+|a\s+)?)?(?:verse|scripture|passage|bible\s+verse)s?\s+(?:about|on|that\s+says|that\s+talks?\s+about|that\s+mentions?|that\s+says\s+something\s+about|with|regarding|concerning)\s+(.+)$/i,
     /^(?:what(?:'s|\s+is|s)|where\s+is)\s+(?:the\s+|that\s+|a\s+)?(?:verse|scripture|passage)\s+(?:about|that\s+says|that\s+talks?\s+about|that\s+mentions?)\s+(.+)$/i,
     /^the\s+(?:verse|scripture|passage)\s+(?:about|that\s+says|that\s+talks?\s+about|that\s+mentions?)\s+(.+)$/i,
     /^where\s+(?:does\s+(?:it|the\s+bible)|in\s+the\s+bible)\s+(?:say|talk\s+about|mention|tell\s+(?:me\s+)?about)\s+(.+)$/i,
     /^which\s+(?:verse|scripture|passage)\s+(?:says|talks?\s+about|mentions?|is\s+about)\s+(.+)$/i,
     /^show\s+me\s+(?:the\s+|a\s+|that\s+)?(?:verse|scripture|passage)\s+(?:about|that\s+says|that\s+talks?\s+about)\s+(.+)$/i,
+    // ── v0.7.110 — Natural Bible questions LAST (broadest) ─────
+    // (1) "Show me where Jesus wept" / "show me where it says ..."
+    /^show\s+me\s+(?:where|when|what|how|who)\s+(.+)$/i,
+    // (2) "Where did they say silver and gold ..." / "where did Jesus weep"
+    /^where\s+did\s+(.+)$/i,
+    // (3) "Where was Stephen stoned" / "where was Jesus baptised"
+    /^where\s+was\s+(.+)$/i,
+    // (4) "Where does X" — runs only when the strict v0.7.23
+    // "where does the bible say X" above hasn't already matched.
+    /^where\s+does\s+(.+)$/i,
+    // (5) "Who said X" / "who wrote X" / "who asked X"
+    /^who\s+(?:said|wrote|asked|spoke|preached|prayed)\s+(.+)$/i,
+    // (6) "What did Jesus say about X" / "what does the bible teach about X"
+    /^what\s+(?:did|does|do)\s+(.+?)\s+(?:say|teach|mean|tell|do|talk\s+about)\s+(?:about\s+)?(.+)$/i,
     // v0.7.23 — bare "verse about X" / "scripture about X" only
     // accepted with wake word, otherwise far too easy to false-fire
     // on conversational phrases like "the verse about him giving up".
@@ -605,7 +624,11 @@ function detectFindByQuoteCommand(
   for (const re of PATTERNS) {
     const m = cleaned.match(re)
     if (!m) continue
-    let quote = m[1]!.trim()
+    // v0.7.110 — pattern 6 ("what did X say about Y") puts the topic
+    // in capture group 2; the subject in group 1 is descriptive
+    // colour we don't need for the semantic search. Every other
+    // pattern uses group 1.
+    let quote = (m[2] ?? m[1])!.trim()
     // Strip a trailing courtesy / filler ("please", "thanks", "you
     // know", "right") and trailing punctuation.
     quote = quote

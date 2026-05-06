@@ -2099,11 +2099,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     const verses: VerseLine[] = content.map((text, index) => ({ index, text }))
     const result = pickBestVerse(tail, verses, {
       currentIndex: liveActiveVerseIndexSF,
-      switchThreshold: 0.20,
-      // v0.7.4 — rely on speaker-follow.ts defaults (minDelta 0.08,
-      // antiRewindMs 1500). Pass the last-switch timestamp so the
-      // anti-rewind guard can suppress backward flips on a single
-      // noisy chunk.
+      // v0.7.110 — Removed the explicit switchThreshold: 0.20 override
+      // that masked the new bigram defaults (0.10 / 0.04). The hard-
+      // coded 0.20 was the production cause of "speaker-follow does
+      // nothing" — virtually no preacher paraphrase ever scored that
+      // high on the trigram model, let alone bigram. Falls back to
+      // speaker-follow.ts defaults: switchThreshold 0.10, minDelta
+      // 0.04, antiRewindMs 1500.
       lastSwitchAt: lastSpeakerSwitchAtRef.current,
     })
     if (result.shouldSwitch && result.bestIndex != null && result.bestIndex !== liveActiveVerseIndexSF) {
