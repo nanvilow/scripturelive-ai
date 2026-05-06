@@ -82,13 +82,20 @@ export const ALTERNATIVE_MIN_CONFIDENCE = SUGGESTION_MIN_CONFIDENCE
 // v0.7.107 — Stability stays at 1 frame (real-time per spec).
 export const STABILITY_MIN_FRAMES = 1
 
-// v0.7.107 — Anti-flicker dwell DISABLED (was 3500 in v0.7.106).
-// Operator spec: "Detection runs in real-time continuously. Every
-// new valid detection triggers LIVE based on rules above. No
-// duplicate blocking unless same exact verse is already LIVE
-// (optional optimization)." The id===currentLiveId no-refire
-// short-circuit is the ONLY block now.
-export const LIVE_HOLD_MS = 0
+// v0.7.109 — Anti-flicker dwell RE-ENABLED at 1250 ms.
+// Operator spec: "If there's a next Bible verse or Bible Reference
+// detection, let the previous Bible verse or Bible Reference
+// detected stay live for about 1 to 1.5 sec." 1250 ms is the
+// midpoint of that range — enough breathing room for the
+// congregation to read the previous verse before the swap, short
+// enough that the projector still feels live.
+//
+// Within `lastFireAtMs + LIVE_HOLD_MS` of a previous fire the gate
+// returns fire=false with the gate UNCHANGED so the next call can
+// re-evaluate. Once the window elapses, the next NEW qualifying
+// detection (different id from currentLiveId) fires immediately.
+// The id===currentLiveId no-refire short-circuit still applies.
+export const LIVE_HOLD_MS = 1250
 
 function detectedAtMs(v: RankedVerse): number {
   const d = v.detectedAt
@@ -245,9 +252,10 @@ export function evaluateStability<T extends RankedVerse>(
 
 // ─── Auto-fire gate state (per-source counters + last-fire clock) ─
 //
-// `lastFireAtMs` is retained so a future call site can re-enable the
-// dwell window via opts.holdMs without changing the gate shape. With
-// the default LIVE_HOLD_MS = 0 it is effectively unused.
+// `lastFireAtMs` stamps the wall-clock of the most recent fire. The
+// helper enforces the LIVE_HOLD_MS dwell window against this stamp
+// so the previous verse stays live for ~1.25 s before the next
+// qualifying detection can swap it out.
 export interface AutoFireGateState {
   explicit: StabilityState
   semantic: StabilityState
@@ -290,8 +298,9 @@ export function shouldFireAutoLive<T extends RankedVerse>(
   }
 }
 
-// v0.7.107 — Source-aware auto-fire decision with per-column floors
-// and continuous (no-dwell) firing.
+// v0.7.109 — Source-aware auto-fire decision with per-column floors
+// and a 1.25 s anti-flicker dwell window (previous verse stays live
+// for ~1-1.5 s before the next qualifying detection swaps it).
 //
 // Inputs:
 //   • `detected`        — full detectedVerses store array.
@@ -300,14 +309,15 @@ export function shouldFireAutoLive<T extends RankedVerse>(
 //   • `gate`            — { explicit, semantic, lastFireAtMs } prior
 //                          frame state.
 //   • `opts.minFrames`  — override the 1-frame default (tests).
-//   • `opts.holdMs`     — override the 0 ms default to RE-ENABLE the
-//                          dwell window (tests / future tuning).
+//   • `opts.holdMs`     — override the 1250 ms default (tests can
+//                          pass 0 to disable the dwell, or a longer
+//                          value to widen it).
 //   • `opts.nowMs`      — override Date.now() (tests).
 //
 // Behaviour:
-//   1. If `holdMs > 0` and less than `holdMs` ms have elapsed since
-//      the last fire, return `fire: false` and leave gate unchanged.
-//      Default `holdMs = 0` skips this check entirely (continuous).
+//   1. If less than `holdMs` (default 1250) ms have elapsed since
+//      the last fire, return `fire: false` and leave gate unchanged
+//      so the previous verse stays live for the dwell window.
 //   2. Per-source pick + stability counter advance. If a counter has
 //      reached `minFrames` AND its top is not the verse currently
 //      live, fire it; explicit wins on tiebreak.
@@ -324,9 +334,10 @@ export function shouldFireAutoLiveStable<T extends RankedVerse>(
   const holdMs = opts.holdMs ?? LIVE_HOLD_MS
   const now = opts.nowMs ?? Date.now()
 
-  // Hold window: only enforced when holdMs > 0 (default is 0, i.e.
-  // continuous firing per spec). Returned gate is unchanged so the
-  // caller persists it without bumping counters.
+  // Hold window: enforced for `holdMs` ms after the last fire (1250
+  // by default per v0.7.109 spec — previous verse stays live for
+  // ~1-1.5 s before the next swap). Returned gate is unchanged so
+  // the caller persists it without bumping counters.
   if (holdMs > 0 && gate.lastFireAtMs > 0 && now - gate.lastFireAtMs < holdMs) {
     return { fire: false, nextStability: gate }
   }
