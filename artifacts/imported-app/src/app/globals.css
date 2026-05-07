@@ -223,3 +223,23 @@
 .indeterminate-bar {
   animation: indeterminate-progress 1.4s ease-in-out infinite;
 }
+
+/* v0.7.119 — Dead-input app-wide fix.
+   Radix UI Dialog / Popover / DropdownMenu / Select / AlertDialog
+   portals install `pointer-events: none` on <body> while open
+   (their scroll-lock side effect) and intermittently fail to
+   remove it on close — known upstream bug
+   (radix-ui/primitives#1241, #2122). When that happens every
+   click on the page is silently swallowed, so operators report
+   "I click the input box and nothing happens, the cursor never
+   shows" across unrelated surfaces (Subscribe modal activation
+   code field, Admin panel, Bible Lookup search, Library search).
+   admin-modal.tsx:1676 already had a defensive
+   `style={{ pointerEvents: 'auto' }}` patch on ONE section that
+   confirms this bug class — this rule generalises the fix to the
+   whole document. Scroll-lock still works via the `overflow:
+   hidden` Radix also applies; only the click-blocking side
+   effect is neutralised. */
+body {
+  pointer-events: auto !important;
+}

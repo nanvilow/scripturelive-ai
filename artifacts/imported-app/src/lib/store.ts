@@ -743,9 +743,36 @@ export const useAppStore = create<AppState>()(
       setIsListening: (l) => set({ isListening: l }),
       detectedVerses: [],
       addDetectedVerse: (v) =>
-        set((state) => ({
-          detectedVerses: [v, ...state.detectedVerses].slice(0, 100),
-        })),
+        set((state) => {
+          // v0.7.119 — Cross-source dedupe. Operator reported "the
+          // verse appeared in Bible Reference Quoted but the live
+          // counter incremented in Auto Verse Match" — root cause is
+          // both pipelines firing for the same reference, leaving
+          // the same verse in BOTH columns and confusing the
+          // counter. Source priority: explicit > semantic > suggestion.
+          // Higher-priority incoming → evict any existing same-ref
+          // entries from lower-priority sources. Lower-priority
+          // incoming when a higher-priority entry already exists →
+          // skip the addition (the authoritative one stays).
+          const rank: Record<string, number> = {
+            explicit: 3, semantic: 2, suggestion: 1,
+          }
+          const incomingRank = rank[(v as { source?: string }).source ?? 'semantic'] ?? 2
+          const existing = state.detectedVerses.find((d) => d.reference === v.reference)
+          if (existing) {
+            const existingRank = rank[(existing as { source?: string }).source ?? 'semantic'] ?? 2
+            if (existingRank >= incomingRank) {
+              // Authoritative entry already present — skip duplicate.
+              return {}
+            }
+            // Incoming wins — evict the lower-ranked one(s) for this ref.
+            const filtered = state.detectedVerses.filter((d) => d.reference !== v.reference)
+            return { detectedVerses: [v, ...filtered].slice(0, 100) }
+          }
+          return {
+            detectedVerses: [v, ...state.detectedVerses].slice(0, 100),
+          }
+        }),
       clearDetectedVerses: () => set({ detectedVerses: [] }),
       // v0.7.60 — Candidates bucket. Cap at 50 entries (operator only
       // ever scans the recent few in a service, and we don't want a
