@@ -942,12 +942,16 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           )
           break
         }
-        const verseCount = struct[targetChapter - 1] ?? 1
+        // v0.7.114 — Operator complaint: "next chapter brings a bunch
+        // of scriptures and live displays them, which is very
+        // embarrassing." Pre-114 we loaded the WHOLE chapter range
+        // (e.g. John 2:1-25) into one slide. Operator wants the same
+        // jump pattern as Bible study apps: from John 1:51 → "next
+        // chapter" lands on John 2:1 (single verse). They can use
+        // "next verse" / "verse N" to walk forward from there.
         const tx = s.selectedTranslation
-        const refKey = `${ref.book} ${targetChapter}:1${verseCount > 1 ? `-${verseCount}` : ''}`
-        let textOut: string | null = null
-        const r = lookupRange(ref.book, targetChapter, 1, verseCount, tx)
-        if (r) textOut = r.text
+        const refKey = `${ref.book} ${targetChapter}:1`
+        let textOut: string | null = lookupVerse(ref.book, targetChapter, 1, tx)
         if (!textOut && !isTranslationBundled(tx)) {
           try {
             const v = await fetchBibleVerse(refKey, tx)
@@ -1790,7 +1794,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   translation: top.translation,
                   detectedAt: new Date(),
                   confidence,
-                  source: confidence < 0.6 ? 'suggestion' : 'semantic',
+                  // v0.7.114 — Was `< 0.6` which demoted 0.55-0.59
+                  // hits to the Suggested Verses column even though
+                  // they cleared SEMANTIC_AUTO_LIVE_MIN (0.55).
+                  // Operator: "59% of verse detections go to the
+                  // Suggested Verses column instead from 10 to 49%".
+                  // Now matches the live-column floor exactly.
+                  source: confidence < 0.55 ? 'suggestion' : 'semantic',
                 }
                 const tBefore = useAppStore.getState().liveTranscript
                 useAppStore.getState().pushTranscriptBreak(tBefore.length)
@@ -1930,7 +1940,12 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   translation: translationOut,
                   detectedAt: new Date(),
                   confidence: m.score,
-                  source: m.score < 0.6 ? 'suggestion' : 'semantic',
+                  // v0.7.114 — Lowered from `< 0.6` to `< 0.55` to
+                  // match SEMANTIC_AUTO_LIVE_MIN. Hits in the 0.55-
+                  // 0.59 band now correctly tag as 'semantic' so
+                  // they appear in COL 2 (Bible Reference Quoted)
+                  // and become auto-live eligible per spec.
+                  source: m.score < 0.55 ? 'suggestion' : 'semantic',
                 }
 
                 if (m.score >= threshold) {
