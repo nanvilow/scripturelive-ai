@@ -516,9 +516,15 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     if (r.fire) expect(r.source).toBe('explicit')
   })
 
-  it('NEW detection (lower confidence) replaces OLDER live verse AFTER the 1.25 s dwell', () => {
+  it('v0.7.117 READ-LOCK: lower-confidence detection within 8 s does NOT replace live verse', () => {
+    // Pre-117: this test asserted that NewLow (0.62) DID replace
+    // OldHigh (0.95) once the 1.25 s dwell elapsed. v0.7.117 reverses
+    // that behaviour per operator complaint: "Can you lock down the
+    // accurately detected Bible verse that's in live display until
+    // the AI detects another accurate one?" During the 8 s sticky
+    // window, a new candidate must clear (currentLive.confidence +
+    // 0.10) to take over — which 0.62 does not against 0.95.
     let g = fresh()
-    // First fire: OldHigh (0.95) at t=1000
     let r = shouldFireAutoLiveStable(
       [v('OldHigh', 0.95, 1000, 'explicit')],
       null,
@@ -526,13 +532,11 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
       { nowMs: 1000 },
     )
     expect(r.fire).toBe(true)
-    if (r.fire) expect(r.verse.id).toBe('OldHigh')
     g = r.nextStability
 
-    // Second frame at t=2300 (1300 ms later — past dwell). A NEW
-    // lower-confidence (but qualifying) detection arrives. Spec: it
-    // MUST become the new live verse, even though OldHigh is still
-    // in the list at higher confidence.
+    // 1.3 s later — past the 500 ms dwell but well inside the 8 s
+    // read-lock. NewLow (0.62) is far below OldHigh (0.95) so it
+    // must NOT fire.
     r = shouldFireAutoLiveStable(
       [
         v('OldHigh', 0.95, 1000, 'explicit'),
@@ -542,8 +546,86 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
       g,
       { nowMs: 2300 },
     )
+    expect(r.fire).toBe(false)
+  })
+
+  it('v0.7.117 READ-LOCK: clearly-better detection (≥ +0.10) DOES break the lock', () => {
+    let g = fresh()
+    // First fire: OldMid (0.65) — auto-derived semantic match.
+    let r = shouldFireAutoLiveStable(
+      [v('OldMid', 0.65, 1000, 'semantic')],
+      null,
+      g,
+      { nowMs: 1000 },
+    )
+    expect(r.fire).toBe(true)
+    g = r.nextStability
+    // 2 s later (still in 8 s sticky window): a much better explicit
+    // hit (0.95) for a different reference arrives. Should override.
+    r = shouldFireAutoLiveStable(
+      [
+        v('OldMid',     0.65, 1000, 'semantic'),
+        v('Explicit95', 0.95, 3000, 'explicit'),
+      ],
+      'OldMid',
+      g,
+      { nowMs: 3000 },
+    )
+    expect(r.fire).toBe(true)
+    if (r.fire) expect(r.verse.id).toBe('Explicit95')
+  })
+
+  it('v0.7.117 READ-LOCK: AFTER the 8 s window, normal swap behaviour resumes', () => {
+    let g = fresh()
+    let r = shouldFireAutoLiveStable(
+      [v('OldHigh', 0.95, 1000, 'explicit')],
+      null,
+      g,
+      { nowMs: 1000 },
+    )
+    expect(r.fire).toBe(true)
+    g = r.nextStability
+    // 9 s later — past both the 500 ms dwell and the 8 s sticky.
+    // A lower-confidence newer detection now CAN take over (the
+    // operator has moved on; the read-lock is over).
+    r = shouldFireAutoLiveStable(
+      [
+        v('OldHigh', 0.95, 1000, 'explicit'),
+        v('NewLow',  0.62, 10000, 'explicit'),
+      ],
+      'OldHigh',
+      g,
+      { nowMs: 10000 },
+    )
     expect(r.fire).toBe(true)
     if (r.fire) expect(r.verse.id).toBe('NewLow')
+  })
+
+  it('v0.7.117 READ-LOCK: same-reference re-fire is always blocked (no flicker)', () => {
+    let g = fresh()
+    let r = shouldFireAutoLiveStable(
+      [v('Same.Ref', 0.95, 1000, 'explicit')],
+      null,
+      g,
+      { nowMs: 1000 },
+    )
+    expect(r.fire).toBe(true)
+    g = r.nextStability
+    // Same reference, NEW id, much higher confidence — read-lock
+    // still blocks it because reference is identical (no real
+    // change to project).
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Same.Ref',  0.95, 1000, 'explicit'), reference: 'John 3:16' },
+        { ...v('Same.Ref2', 0.99, 3000, 'explicit'), reference: 'John 3:16' },
+      ],
+      'Same.Ref',
+      g,
+      { nowMs: 3000 },
+    )
+    // The candidate is genuinely a different id with higher conf,
+    // BUT same reference → still suppressed by the read-lock.
+    expect(r.fire).toBe(false)
   })
 
   it('semantic-only candidate fires on the semantic side', () => {
