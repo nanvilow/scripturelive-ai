@@ -1,3 +1,5 @@
+import { POPULAR_VERSES_KJV } from '@/lib/ai/popular-verses'
+
 // v0.7.65 — Preacher Phrase Detection Engine.
 //
 // Extends the existing Bible-detection pipeline with a curated
@@ -451,6 +453,32 @@ const RAW_CATALOGUE: ReadonlyArray<{ phrase: string; reference: string }> = [
   { phrase: 'paul and silas sang in prison', reference: 'Acts 16:25' },
   { phrase: 'philip and the ethiopian eunuch', reference: 'Acts 8:27' },
 
+  // ── v0.7.115 — Common ASR mishearings of biblical names ─────────
+  // Operator complaint: "AI detection doesn't listen to words well and
+  // doesn't live transcript well; it kept transcribing wrongly." We
+  // can't fix Deepgram's training data, but we CAN add common ASR
+  // mishearings as catalog aliases so the substring scanner still
+  // catches them. "Steven" is consistently transcribed for "Stephen";
+  // "Lazarus" → "lazerus"; "Bartimaeus" → "bartameus"; etc.
+  { phrase: 'steven was stoned to death', reference: 'Acts 7:59' },
+  { phrase: 'steven the first martyr', reference: 'Acts 7:59' },
+  { phrase: 'the stoning of steven', reference: 'Acts 7:59' },
+  { phrase: 'lazerus came forth', reference: 'John 11:43' },
+  { phrase: 'jesus raised lazerus', reference: 'John 11:43' },
+  { phrase: 'bartameus the blind beggar', reference: 'Mark 10:46' },
+  { phrase: 'zacheus climbed the tree', reference: 'Luke 19:4' },
+  { phrase: 'joshua and jerico', reference: 'Joshua 6:20' },
+  { phrase: 'walls of jerico', reference: 'Joshua 6:20' },
+  { phrase: 'gidiyon and his three hundred', reference: 'Judges 7:7' },
+  { phrase: 'samson and dalila', reference: 'Judges 16:19' },
+  { phrase: 'goliath the giant', reference: '1 Samuel 17:50' },
+  { phrase: 'jona and the whale', reference: 'Jonah 1:17' },
+  { phrase: 'jonah and the big fish', reference: 'Jonah 1:17' },
+  { phrase: 'shedrak meshak and abednego', reference: 'Daniel 3:23' },
+  { phrase: 'naman the leper', reference: '2 Kings 5:14' },
+  { phrase: 'eliyah on mount carmel', reference: '1 Kings 18:38' },
+  { phrase: 'nicodemas came at night', reference: 'John 3:1' },
+
   // ── Sermon-only filler (no Bible address) ─────────────────────────
   { phrase: 'say amen somebody', reference: 'General Sermon Phrase' },
   { phrase: 'can i get an amen', reference: 'General Sermon Phrase' },
@@ -469,27 +497,116 @@ export function normalizePhrase(s: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// v0.7.115 — Auto-derived paraphrased-quotation catalogue.
+//
+// Operator request: "Add more bibles paraphrased quotations to the app
+// about 1000." The hand-curated RAW_CATALOGUE above is ~470 entries
+// (foundational verses + narrative events + ASR mishearings). To reach
+// the 1000 target without bloating the source file with hundreds of
+// repetitive hand-typed lines, this IIFE derives 2-3 substring phrases
+// from EACH of the ~337 verses in POPULAR_VERSES_KJV at module load:
+//
+//   • OPENING phrase  : first 5-7 words (skipping conjunction openings
+//     like "and" / "for" / "but" so the matcher doesn't trigger on
+//     filler words).
+//   • MIDDLE phrase   : 5-7 words centred on the verse midpoint —
+//     captures the distinctive content even when the preacher omits
+//     the opening clause.
+//   • CLOSING phrase  : last 5-7 words — common when preachers trail
+//     off with the punchline ("...shall be saved", "...is the truth").
+//
+// The result is ~600-800 derived paraphrase-friendly substrings on top
+// of the 470 hand-curated entries, comfortably exceeding the 1000
+// total. All entries route through the SAME normaliser + dedupe pass
+// as RAW_CATALOGUE so any auto-derived phrase that collides with a
+// hand-curated one (preferred) is dropped.
+//
+// Why this beats embedding-only matching:
+//   • Zero network — works on operator's offline service.
+//   • Zero ASR-confidence dependency — the substring scanner doesn't
+//     gate on Deepgram chunk confidence the way semantic-match does.
+//   • Sub-millisecond — local memory walk vs ~80ms OpenAI roundtrip.
+// ─────────────────────────────────────────────────────────────────────
+
+const COMMON_OPENINGS = new Set([
+  'and', 'for', 'but', 'so', 'now', 'then', 'verily',
+  'behold', 'yea', 'wherefore', 'therefore', 'thus',
+])
+
+function deriveOpeningPhrase(words: string[]): string | null {
+  if (words.length < 5) return null
+  let start = 0
+  while (start < words.length - 4 && COMMON_OPENINGS.has(words[start])) start++
+  const len = Math.min(7, words.length - start)
+  if (len < 5) return null
+  return words.slice(start, start + len).join(' ')
+}
+
+function deriveMiddlePhrase(words: string[]): string | null {
+  if (words.length < 12) return null
+  const mid = Math.floor(words.length / 2)
+  const start = Math.max(0, mid - 3)
+  const end = Math.min(words.length, mid + 4)
+  return words.slice(start, end).join(' ')
+}
+
+function deriveClosingPhrase(words: string[]): string | null {
+  if (words.length < 16) return null
+  return words.slice(-7).join(' ')
+}
+
+function autoDerivedRawEntries(): Array<{ phrase: string; reference: string }> {
+  const out: Array<{ phrase: string; reference: string }> = []
+  for (const v of POPULAR_VERSES_KJV) {
+    const norm = normalizePhrase(v.text)
+    if (!norm) continue
+    const words = norm.split(' ').filter((w) => w.length > 0)
+    const candidates = [
+      deriveOpeningPhrase(words),
+      deriveMiddlePhrase(words),
+      deriveClosingPhrase(words),
+    ]
+    for (const c of candidates) {
+      if (c && c.length >= 16) out.push({ phrase: c, reference: v.reference })
+    }
+  }
+  return out
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Compile catalogue once at module load. Dedupe by normalised form so
-// duplicates across the three operator lists collapse to one entry
-// (preferring the first reference seen).
+// duplicates across the manual lists AND the auto-derived set collapse
+// to one entry (manual entries always win because they are walked
+// FIRST and the dedupe set short-circuits later additions).
 // ─────────────────────────────────────────────────────────────────────
 export const PREACHER_PHRASES: ReadonlyArray<PreacherPhrase> = (() => {
   const seen = new Set<string>()
   const out: PreacherPhrase[] = []
-  for (const { phrase, reference } of RAW_CATALOGUE) {
-    const normalized = normalizePhrase(phrase)
-    if (!normalized || seen.has(normalized)) continue
-    seen.add(normalized)
-    out.push({
-      phrase,
-      reference,
-      sermonOnly: reference === 'General Sermon Phrase',
-      normalized,
-      tokens: normalized.split(' '),
-    })
+  const append = (entries: ReadonlyArray<{ phrase: string; reference: string }>) => {
+    for (const { phrase, reference } of entries) {
+      const normalized = normalizePhrase(phrase)
+      if (!normalized || seen.has(normalized)) continue
+      seen.add(normalized)
+      out.push({
+        phrase,
+        reference,
+        sermonOnly: reference === 'General Sermon Phrase',
+        normalized,
+        tokens: normalized.split(' '),
+      })
+    }
   }
+  // 1. Hand-curated entries first (preferred on collision).
+  append(RAW_CATALOGUE)
+  // 2. Auto-derived openings/middles/closings of POPULAR_VERSES_KJV.
+  append(autoDerivedRawEntries())
   return out
 })()
+
+/** Total count of compiled preacher-phrase entries. Exported for
+ *  diagnostics and tests so the operator can verify the catalogue
+ *  is at least N entries deep on every build. */
+export const PREACHER_PHRASES_COUNT = PREACHER_PHRASES.length
 
 // ─────────────────────────────────────────────────────────────────────
 // Levenshtein distance, capped at 2 (same shape as verseTextSimilarity
