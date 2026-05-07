@@ -1660,17 +1660,29 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               // paraphrase / quotation matches, not address parses,
               // so they belong in the Bible Reference Quoted column
               // (semantic pipeline).
+              // v0.7.116 — Tag-then-route: hand-curated catalogue
+              // entries are still high-confidence ('semantic',
+              // 0.85-0.95) and will auto-live as before. Auto-derived
+              // entries (5-7-word slices of POPULAR_VERSES_KJV added in
+              // v0.7.115) are demoted to the suggestions column with
+              // confidence 0.42 so they never auto-fire — the operator
+              // sees them as suggestions and can promote with a click.
+              // Operator complaint after v0.7.115: "the AI detector
+              // brings up Paraphrased quotations auto-live even when
+              // it's the wrong verse, and the paraphrased quotations
+              // detect plenty of verses from a single paraphrased
+              // quotation and auto-live send them there."
+              const isAuto = phraseHit.autoDerived === true
               const detected: DetectedVerse = {
                 id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 reference: v.reference,
                 text: v.text,
                 translation: v.translation,
                 detectedAt: new Date(),
-                // Catalogue match is high-confidence by construction;
-                // we floor at 0.85 so it lands in the auto-go-live
-                // band without depending on operator-tunable thresholds.
-                confidence: phraseHit.matchType === 'exact' ? 0.95 : 0.85,
-                source: 'semantic',
+                confidence: isAuto
+                  ? 0.42
+                  : phraseHit.matchType === 'exact' ? 0.95 : 0.85,
+                source: isAuto ? 'suggestion' : 'semantic',
               }
               const tBefore = useAppStore.getState().liveTranscript
               useAppStore.getState().pushTranscriptBreak(tBefore.length)
@@ -1881,7 +1893,19 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             }
             if (semJson.ok && Array.isArray(semJson.matches) && semJson.matches.length) {
               const tx = state.selectedTranslation
-              for (const m of semJson.matches) {
+              // v0.7.116 — Cap fused multi-fire. Pre-116 the loop
+              // pushed EVERY semantic match (topK=5) above the noise
+              // floor, so a single chunk of preaching that fuzzy-
+              // matched 4 adjacent verses fired all 4 — flooding the
+              // detected list with "fused" results and confusing the
+              // auto-live picker. Cap to the highest-scoring match per
+              // chunk; the operator can still see lower-scored
+              // candidates if they appear on subsequent chunks.
+              const sortedMatches = [...semJson.matches].sort(
+                (a, b) => b.score - a.score,
+              )
+              const cappedMatches = sortedMatches.slice(0, 1)
+              for (const m of cappedMatches) {
                 // v0.7.73 — Raised semantic noise floor 0.20 → 0.55.
                 // Cosine similarity of 0.20–0.50 between the transcript
                 // and a verse means "loosely related topic" not "the

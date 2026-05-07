@@ -194,6 +194,22 @@ describe('detectCommand — show_verse_n', () => {
     ['Display verse 23', 23],
     ['Jump to verse 16', 16],
     ['Read verse 3', 3],
+    // v0.7.116 — Massively expanded triggers per operator request:
+    // "Add 'let go to verse...', 'take me to verse...', 'scroll down
+    // to verse...' etc."
+    ["Let's go to verse 5", 5],
+    ['Lets go to verse 5', 5],
+    ['Let go to verse 5', 5],
+    ['Take me to verse 12', 12],
+    ['Scroll down to verse 4', 4],
+    ['Scroll up to verse 8', 8],
+    ['Go down to verse 9', 9],
+    ['Go up to verse 2', 2],
+    ['Move to verse 6', 6],
+    ['Move down to verse 11', 11],
+    ['Skip to verse 14', 14],
+    ['Skip down to verse 17', 17],
+    ['Turn to verse 21', 21],
   ])('"%s" → verseNumber %d', (utterance, n) => {
     const cmd = detectCommand(utterance)
     expect(cmd?.kind).toBe('show_verse_n')

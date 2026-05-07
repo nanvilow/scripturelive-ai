@@ -59,8 +59,8 @@ describe('thresholds (v0.7.109 — per-column auto-live + 1.25 s dwell)', () => 
   it('stability gate is 1 frame (real-time, no wait)', () => {
     expect(STABILITY_MIN_FRAMES).toBe(1)
   })
-  it('hold window is 1250 ms (v0.7.109 — previous verse stays live ~1-1.5 s)', () => {
-    expect(LIVE_HOLD_MS).toBe(1250)
+  it('hold window is 500 ms (v0.7.116 — was 1250 ms; halved so cross-column switching is responsive)', () => {
+    expect(LIVE_HOLD_MS).toBe(500)
   })
   it('legacy ALTERNATIVE_MIN_CONFIDENCE re-exports as suggestion floor', () => {
     expect(ALTERNATIVE_MIN_CONFIDENCE).toBe(SUGGESTION_MIN_CONFIDENCE)
@@ -453,11 +453,12 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     let r = shouldFireAutoLiveStable([v('A', 0.9, 1, 'explicit')], null, g, { nowMs: 1000 })
     expect(r.fire).toBe(true)
     g = r.nextStability
-    // 5 rapid detections at t=1100, 1200, 1300, 1400, 1500 — all
-    // within the 1.25 s window from t=1000 (max delta = 500 ms),
-    // so ALL 5 are blocked. Previous verse stays on screen.
+    // v0.7.116 — Hold window halved from 1250 → 500 ms. Detections
+    // at t=1100, 1200, 1300, 1400 — all within the 500 ms window from
+    // t=1000 — are blocked (4 attempts, 0 fires). Previous verse
+    // stays on screen for the full dwell.
     let fires = 0
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 4; i++) {
       r = shouldFireAutoLiveStable(
         [v(`B${i}`, 0.9, 2 + i, 'explicit')],
         'A',
@@ -468,12 +469,12 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
       g = r.nextStability
     }
     expect(fires).toBe(0)
-    // Now jump past the 1.25 s window — next detection fires.
+    // Now jump past the 500 ms window — next detection fires.
     r = shouldFireAutoLiveStable(
       [v('Late', 0.9, 99, 'explicit')],
       'A',
       g,
-      { nowMs: 1000 + 1300 },
+      { nowMs: 1000 + 600 },
     )
     expect(r.fire).toBe(true)
     if (r.fire) expect(r.verse.id).toBe('Late')

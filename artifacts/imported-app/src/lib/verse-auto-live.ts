@@ -95,7 +95,19 @@ export const STABILITY_MIN_FRAMES = 1
 // re-evaluate. Once the window elapses, the next NEW qualifying
 // detection (different id from currentLiveId) fires immediately.
 // The id===currentLiveId no-refire short-circuit still applies.
-export const LIVE_HOLD_MS = 1250
+// v0.7.116 — Lowered 1250 → 500. Operator complaint: "when a
+// detection are being made at Bible Reference Quoted and Auto Verse
+// Match detection is already live display, it doesn't switch to the
+// new detection found in Bible Reference Quoted." The 1250 ms dwell
+// window blocked ALL cross-column switching for 1.25 s after every
+// fire — long enough that a brand-new high-confidence detection from
+// the OTHER column would be silently swallowed if it landed during
+// that window. 500 ms is still enough breathing room for the
+// congregation to register the previous verse, but short enough that
+// new detections feel immediate. Combined with v0.7.116's source-
+// crossing dwell bypass below, cross-column switching now lands on
+// the projector within ~half a second of detection.
+export const LIVE_HOLD_MS = 500
 
 function detectedAtMs(v: RankedVerse): number {
   const d = v.detectedAt
