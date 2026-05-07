@@ -109,6 +109,44 @@ export const STABILITY_MIN_FRAMES = 1
 // the projector within ~half a second of detection.
 export const LIVE_HOLD_MS = 500
 
+// v0.7.117 — READ-LOCK ("Sticky live verse"). Operator complaint:
+// "Can you lock down the accurately detected Bible verse that's in
+// live display until the AI detects another accurate one? Because
+// when an accurate Bible verse is detected and a user is reading
+// from the live display before you will see the AI detector will
+// detect another word from what is being read from the previous
+// Bible detection and then will replace it with what it detected
+// when they are reading from the live displayed one, which is not
+// fine."
+//
+// Root cause: when a verse fires live, the operator (or preacher)
+// reads it aloud. The transcript then says the verse text, the
+// catalogue / semantic matcher detects a NEARBY verse (same chapter
+// ±1-2, or a verse sharing the same opening clause), and the
+// auto-fire helper happily swaps it in. Result: the projector
+// flickers off the correct verse.
+//
+// Fix: For LIVE_STICKY_MS (8000 ms = 8 s) after a verse goes live,
+// gate any new fire by these stricter rules:
+//   1. Same reference as currentLive → never re-fire (existing rule).
+//   2. New candidate confidence < currentLiveConfidence + 0.10 → BLOCK.
+//      Stops same-chapter "near-misses" with similar confidence from
+//      hijacking the live verse during read-back.
+//   3. Otherwise allow — a clearly-better detection (e.g. an explicit
+//      regex hit at 0.95 when current live is a semantic 0.65) WILL
+//      override even within the read-lock.
+// After the 8 s window the helper falls back to v0.7.116's normal
+// 500 ms dwell and the operator gets responsive cross-column swaps
+// for the next verse the preacher quotes.
+export const LIVE_STICKY_MS = 8000
+
+// Minimum confidence delta required for a new candidate to override
+// the live verse during the read-lock window. 0.10 is large enough
+// to filter out catalogue near-misses (which usually score within a
+// few hundredths of the correct hit) but small enough that a
+// genuinely better detection from the other column still wins.
+export const LIVE_STICKY_CONFIDENCE_DELTA = 0.1
+
 function detectedAtMs(v: RankedVerse): number {
   const d = v.detectedAt
   if (d == null) return 0
@@ -336,20 +374,32 @@ export function shouldFireAutoLive<T extends RankedVerse>(
 //   3. Suggestion-tagged candidates are ineligible to fire (they
 //      don't appear in pickAutoLiveBySource, which filters on
 //      'explicit' | 'semantic' only).
-export function shouldFireAutoLiveStable<T extends RankedVerse>(
+export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: string }>(
   detected: readonly T[],
   currentLiveId: string | null,
   gate: AutoFireGateState,
-  opts: { minFrames?: number; holdMs?: number; nowMs?: number } = {},
+  opts: {
+    minFrames?: number
+    holdMs?: number
+    nowMs?: number
+    // v0.7.117 — Override the read-lock window (8 s default). Tests
+    // can pass 0 to disable.
+    stickyMs?: number
+    // v0.7.117 — Override the confidence delta required to break the
+    // read-lock (0.10 default).
+    stickyDelta?: number
+  } = {},
 ): AutoFireDecision<T> {
   const minFrames = opts.minFrames ?? STABILITY_MIN_FRAMES
   const holdMs = opts.holdMs ?? LIVE_HOLD_MS
+  const stickyMs = opts.stickyMs ?? LIVE_STICKY_MS
+  const stickyDelta = opts.stickyDelta ?? LIVE_STICKY_CONFIDENCE_DELTA
   const now = opts.nowMs ?? Date.now()
 
-  // Hold window: enforced for `holdMs` ms after the last fire (1250
-  // by default per v0.7.109 spec — previous verse stays live for
-  // ~1-1.5 s before the next swap). Returned gate is unchanged so
-  // the caller persists it without bumping counters.
+  // Hold window: enforced for `holdMs` ms after the last fire (500
+  // by default per v0.7.116 spec — previous verse stays live for
+  // ~0.5 s before any swap). Returned gate is unchanged so the
+  // caller persists it without bumping counters.
   if (holdMs > 0 && gate.lastFireAtMs > 0 && now - gate.lastFireAtMs < holdMs) {
     return { fire: false, nextStability: gate }
   }
@@ -368,14 +418,44 @@ export function shouldFireAutoLiveStable<T extends RankedVerse>(
   // Spec-allowed optimization: don't refire whatever's already on
   // the projector ("No duplicate blocking unless same exact verse
   // is already LIVE").
-  const explicitFire =
+  let explicitFire =
     explicitGate.fire && explicitGate.verse && explicitGate.verse.id !== currentLiveId
       ? explicitGate.verse
       : null
-  const semanticFire =
+  let semanticFire =
     semanticGate.fire && semanticGate.verse && semanticGate.verse.id !== currentLiveId
       ? semanticGate.verse
       : null
+
+  // ── v0.7.117 — READ-LOCK gate ────────────────────────────────────
+  // Within `stickyMs` of the last fire, suppress new fires whose
+  // confidence does not exceed the live verse by `stickyDelta`. This
+  // stops same-chapter near-miss detections from hijacking the live
+  // verse while the operator/preacher reads it aloud.
+  //
+  // The live verse is found by id in the detected[] list. If it has
+  // been pruned from the list (rare — usually it's still there) the
+  // read-lock degrades to "block any new fire below stickyDelta of
+  // the current top". Either way the live projector slide stays put.
+  if (
+    stickyMs > 0 &&
+    gate.lastFireAtMs > 0 &&
+    now - gate.lastFireAtMs < stickyMs &&
+    currentLiveId
+  ) {
+    const liveVerse = detected.find((v) => v.id === currentLiveId) ?? null
+    const liveConf = liveVerse?.confidence ?? 0
+    const liveRef = liveVerse?.reference ?? null
+    const passesReadLock = (cand: T | null): boolean => {
+      if (!cand) return false
+      // Same reference → not really a swap. Block (no visible flicker).
+      if (liveRef && cand.reference === liveRef) return false
+      const candConf = cand.confidence ?? 0
+      return candConf >= liveConf + stickyDelta
+    }
+    if (!passesReadLock(explicitFire)) explicitFire = null
+    if (!passesReadLock(semanticFire)) semanticFire = null
+  }
 
   // Independence + tiebreak: explicit wins when both fire same frame.
   if (explicitFire) {

@@ -1660,29 +1660,41 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               // paraphrase / quotation matches, not address parses,
               // so they belong in the Bible Reference Quoted column
               // (semantic pipeline).
-              // v0.7.116 — Tag-then-route: hand-curated catalogue
-              // entries are still high-confidence ('semantic',
-              // 0.85-0.95) and will auto-live as before. Auto-derived
-              // entries (5-7-word slices of POPULAR_VERSES_KJV added in
-              // v0.7.115) are demoted to the suggestions column with
-              // confidence 0.42 so they never auto-fire — the operator
-              // sees them as suggestions and can promote with a click.
-              // Operator complaint after v0.7.115: "the AI detector
-              // brings up Paraphrased quotations auto-live even when
-              // it's the wrong verse, and the paraphrased quotations
-              // detect plenty of verses from a single paraphrased
-              // quotation and auto-live send them there."
+              // v0.7.116 + v0.7.117 — Tag-then-route with refined
+              // exact-match promotion. Operator complaint after
+              // v0.7.116: "Sometimes accurate Bible detections go to
+              // Suggested Verses. Why is it so?" Root cause: v0.7.116
+              // demoted ALL auto-derived hits to 'suggestion', even
+              // when an EXACT verbatim substring was matched (which is
+              // accurate by construction — there's no fuzz, the
+              // preacher said the literal phrase). v0.7.117 refines:
+              //
+              //   • Hand-curated EXACT  → semantic  conf 0.95
+              //   • Hand-curated FUZZY  → semantic  conf 0.85
+              //   • Auto-derived EXACT  → semantic  conf 0.65
+              //                           (clears 0.55 floor, lands
+              //                           in COL 2 live-eligible)
+              //   • Auto-derived FUZZY  → suggestion conf 0.42
+              //                           (COL 3 only — operator
+              //                           clicks to promote)
+              //
+              // This keeps the v0.7.116 false-positive guard (fuzzy
+              // matches on generic 5-7-word slices stay in suggestions)
+              // while letting verbatim quotations of POPULAR_VERSES_KJV
+              // entries auto-fire as the operator expects.
               const isAuto = phraseHit.autoDerived === true
+              const isExact = phraseHit.matchType === 'exact'
+              const conf = isAuto
+                ? (isExact ? 0.65 : 0.42)
+                : (isExact ? 0.95 : 0.85)
               const detected: DetectedVerse = {
                 id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 reference: v.reference,
                 text: v.text,
                 translation: v.translation,
                 detectedAt: new Date(),
-                confidence: isAuto
-                  ? 0.42
-                  : phraseHit.matchType === 'exact' ? 0.95 : 0.85,
-                source: isAuto ? 'suggestion' : 'semantic',
+                confidence: conf,
+                source: isAuto && !isExact ? 'suggestion' : 'semantic',
               }
               const tBefore = useAppStore.getState().liveTranscript
               useAppStore.getState().pushTranscriptBreak(tBefore.length)
