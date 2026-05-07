@@ -844,7 +844,7 @@ function detectShowVerseCommand(
   //   • "skip to verse 5" / "skip down to verse 5"
   //   • "turn to verse 5"
   //   • "verse 5" alone (post wake-word)
-  const re = /^(?:(?:lets?\s+go\s+to|let\s+go\s+to|take\s+me\s+to|scroll\s+(?:down|up)\s+to|go\s+(?:down|up)\s+to|move(?:\s+(?:down|up))?\s+to|skip(?:\s+(?:down|up))?\s+to|turn\s+to|show|display|go\s+to|jump\s+to|open|read)\s+)?verse\s+(\d{1,3})\s*$/i
+  const re = /^(?:(?:let(?:'?s)?\s+go\s+to|take\s+me\s+to|scroll\s+(?:down|up)\s+to|go\s+(?:down|up)\s+to|move(?:\s+(?:down|up))?\s+to|skip(?:\s+(?:down|up))?\s+to|turn\s+to|show|display|go\s+to|jump\s+to|open|read)\s+)?verse\s+(\d{1,3})\s*$/i
   const m = lower.match(re)
   if (!m) return null
   const n = parseInt(m[1]!, 10)
