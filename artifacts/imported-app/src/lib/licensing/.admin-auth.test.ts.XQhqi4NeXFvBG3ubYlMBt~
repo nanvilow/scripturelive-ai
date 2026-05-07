@@ -92,8 +92,8 @@ describe('resolveAdminPassword', () => {
     expect(resolveAdminPassword()).toBe('baked')
   })
 
-  it('survives the baked module throwing — falls through to "241190"', () => {
+  it('survives the baked module throwing — falls through to "admin"', () => {
     mockedGetBaked.mockImplementation(() => { throw new Error('baked module gone') })
-    expect(resolveAdminPassword()).toBe('241190')
+    expect(resolveAdminPassword()).toBe('admin')
   })
 })
