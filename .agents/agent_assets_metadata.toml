@@ -737,3 +737,9 @@ id = "rwFl00FwNYdQa6rgMmHXv"
 uri = "file://exports/ScriptureLive-AI-v0.7.118-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.118 — Source ZIP"
+
+[[outputs]]
+id = "hb3ydiWDMDQlPLP8o7vZ7"
+uri = "file://artifacts/imported-app/exports/ScriptureLive-AI-v0.7.119-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.119 — Dead-Input Fix + Cross-Source Dedupe (124 MB)"
