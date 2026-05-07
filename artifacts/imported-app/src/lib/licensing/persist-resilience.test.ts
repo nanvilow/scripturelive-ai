@@ -105,8 +105,21 @@ afterEach(async () => {
 
 describe('v0.7.96 persist() resilience contract', () => {
   it('returns synchronously even when the disk write needs several retries (AV lock)', async () => {
-    // Simulate Windows AV holding the lock for 4 attempts then releasing.
-    inj.outcomes = ['EPERM', 'EPERM', 'EPERM', 'EPERM', 'ok']
+    // v0.7.120 — Warm-up the module before the timed measurement.
+    // `vi.resetModules()` + `await import('./storage')` in beforeEach
+    // gives us a cold module; the FIRST saveConfig() call pays JIT +
+    // lazy-init overhead (~70-150ms on slow CI) that is NOT part of
+    // the contract being tested here. The contract is: "saveConfig
+    // returns synchronously and does NOT block on disk-write retries".
+    // A warm-up call with a sentinel value isolates the timed call
+    // from cold-start overhead. The warm-up runs against the simulated
+    // disk too (consumes one outcome from the array), so we prepend
+    // an extra 'ok' so the timed measurement still sees the intended
+    // 4×EPERM → ok retry sequence.
+    inj.outcomes = ['ok', 'EPERM', 'EPERM', 'EPERM', 'EPERM', 'ok']
+    storage.saveConfig({ momoNumber: '0240000000' }) // warm-up (untimed)
+    await awaitPending()
+    inj.attempts = [] // reset attempt log so the timed assertion is clean
 
     const t0 = Date.now()
     storage.saveConfig({ momoNumber: '0241111111' })

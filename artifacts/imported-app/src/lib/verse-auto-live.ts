@@ -147,6 +147,28 @@ export const LIVE_STICKY_MS = 8000
 // genuinely better detection from the other column still wins.
 export const LIVE_STICKY_CONFIDENCE_DELTA = 0.1
 
+// v0.7.120 — High-confidence read-lock floor.
+// Operator escalation: COL 2 "Bible Reference Quoted" went live with a
+// verbatim preacher quotation ("Suffer not a witch to live" → Exod
+// 22:18, conf 0.85 hand-curated EXACT) and was IMMEDIATELY hijacked by
+// a COL 1 "Auto Verse Match" detection of an unrelated reference,
+// because the v0.7.117 read-lock only required candConf >= liveConf +
+// 0.10 (so an explicit 0.95 vs semantic 0.85 = 0.10 delta exactly →
+// override allowed).
+//
+// When the live verse came from a HIGH-CONFIDENCE source (>= 0.85,
+// which corresponds to hand-curated EXACT 0.95 / hand-curated FUZZY
+// 0.85 / explicit-regex 0.95) the operator's spoken intent is
+// unambiguous — the projector should STAY THERE for the full sticky
+// window regardless of what else the matcher sees in the noisy
+// transcript trailing the quote. Only an explicit operator click in
+// the Detected Verses card overrides.
+//
+// Below this threshold (semantic 0.55-0.84, auto-derived 0.65) the
+// older delta-based logic still applies — those are softer detections
+// and a clearly-better candidate should be allowed to swap in.
+export const LIVE_HIGH_CONF_LOCK = 0.85
+
 function detectedAtMs(v: RankedVerse): number {
   const d = v.detectedAt
   if (d == null) return 0
@@ -446,10 +468,19 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
     const liveVerse = detected.find((v) => v.id === currentLiveId) ?? null
     const liveConf = liveVerse?.confidence ?? 0
     const liveRef = liveVerse?.reference ?? null
+    // v0.7.120 — High-confidence absolute lock. If the live verse
+    // came from a verbatim hand-curated catalog hit (>= 0.85) the
+    // operator's intent is unambiguous; block ALL cross-ref auto
+    // swaps in the sticky window regardless of incoming candidate
+    // confidence. Manual operator click still overrides because that
+    // path doesn't go through this gate.
+    const liveIsHighConf = liveConf >= LIVE_HIGH_CONF_LOCK
     const passesReadLock = (cand: T | null): boolean => {
       if (!cand) return false
       // Same reference → not really a swap. Block (no visible flicker).
       if (liveRef && cand.reference === liveRef) return false
+      // v0.7.120 — HIGH-CONF lock blocks all cross-ref auto swaps.
+      if (liveIsHighConf) return false
       const candConf = cand.confidence ?? 0
       return candConf >= liveConf + stickyDelta
     }
