@@ -829,7 +829,22 @@ function detectShowVerseCommand(
   const lower = body.toLowerCase().trim()
   // Word forms: "verse 1" / "verse one" / "show verse 1" / "go to verse 1"
   // Post wake-word (Media): bare "verse 1".
-  const re = /^(?:show|display|go\s+to|jump\s+to|open|read)?\s*verse\s+(\d{1,3})\s*$/i
+  // v0.7.116 — Massively expanded show-verse-N triggers per operator
+  // request: "Add 'let go to verse...', 'take me to verse...', 'scroll
+  // down to verse...' etc."
+  //
+  // Pre-116 only matched: show / display / go to / jump to / open /
+  // read verse N. Now matches the natural preacher utterances:
+  //   • "let's go to verse 5" / "lets go to verse 5" / "let go to
+  //     verse 5" (ASR mishearing)
+  //   • "take me to verse 5"
+  //   • "scroll down to verse 5" / "scroll up to verse 5"
+  //   • "go down to verse 5" / "go up to verse 5"
+  //   • "move to verse 5" / "move down to verse 5"
+  //   • "skip to verse 5" / "skip down to verse 5"
+  //   • "turn to verse 5"
+  //   • "verse 5" alone (post wake-word)
+  const re = /^(?:(?:let(?:'?s)?\s+go\s+to|take\s+me\s+to|scroll\s+(?:down|up)\s+to|go\s+(?:down|up)\s+to|move(?:\s+(?:down|up))?\s+to|skip(?:\s+(?:down|up))?\s+to|turn\s+to|show|display|go\s+to|jump\s+to|open|read)\s+)?verse\s+(\d{1,3})\s*$/i
   const m = lower.match(re)
   if (!m) return null
   const n = parseInt(m[1]!, 10)
