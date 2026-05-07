@@ -675,7 +675,17 @@ const defaultSettings: AppSettings = {
   // wrong references and slowing the operator down. 0.65 still beats
   // the pre-v0.7.91 default of 0.70 so sensitivity is mildly improved
   // without the false-positive flood.
-  transcriptLiveThreshold: 0.65,
+  // v0.7.115 — Lowered from 0.65 → 0.55. Operator complaint: "AI
+  // detection doesn't listen to words well and doesn't live transcript
+  // well; it kept transcribing wrongly." In real church environments
+  // (worship band, choir, congregation noise) Deepgram chunk
+  // confidence sits in the 0.50-0.70 band. The pre-115 0.65 floor
+  // dropped the entire verse-detection / semantic-match pipeline for
+  // every chunk under 0.65, which is why "AI is confused" — it never
+  // even got a chance to look. 0.55 lets the matcher run on
+  // borderline-noisy speech while still dropping pure music chunks.
+  // Voice commands are unaffected (already always-on per v0.7.112).
+  transcriptLiveThreshold: 0.55,
   ndiDisplayMode: 'full',
   // NDI typography overrides (v0.5.48): leave undefined so the NDI
   // feed mirrors Live Display by default. The operator opts in via
