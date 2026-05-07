@@ -4,6 +4,7 @@ import { PathAwareToaster } from "@/components/ui/path-aware-toaster";
 import { GoogleFontsLink } from "@/components/google-fonts-link";
 import { UpdateBanner } from "@/components/update-banner";
 import { ThemeProvider } from "@/components/providers/theme-provider";
+import { PointerEventsWatchdog } from "@/components/pointer-events-watchdog";
 
 // NOTE: We intentionally do NOT use next/font/google here. The Electron
 // desktop build runs `next build` on the operator's machine which often
@@ -63,6 +64,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
         <ThemeProvider>
+          <PointerEventsWatchdog />
           <GoogleFontsLink />
           {children}
           <UpdateBanner />
