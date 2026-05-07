@@ -1332,9 +1332,38 @@ export function renewActivationByCode(code: string, addDays: number): Activation
     const cur = Date.parse(a.subscriptionExpiresAt)
     const base = Number.isFinite(cur) && cur > Date.now() ? cur : Date.now()
     a.subscriptionExpiresAt = new Date(base + ms).toISOString()
-    // Mirror to active subscription if this code is the active one.
+    // Mirror to active subscription if this code is the active one
+    // on THIS device (admin's PC, or operator running both roles).
     if (f.activeSubscription?.activationCode === code) {
       f.activeSubscription.expiresAt = a.subscriptionExpiresAt
+    } else {
+      // v0.7.118 — Operator escalation: "i tried renewing a code but
+      // when activating it gives error: This activation code has
+      // already been used."
+      //
+      // Pre-118 behaviour: renewActivationByCode only extended the
+      // expiry timestamp on a USED row. The `isUsed:true` flag stayed
+      // set, so when the paying customer typed the renewed code into
+      // their app, activateCode() hit its `if (activation.isUsed)
+      // throw 'This activation code has already been used.'` guard
+      // and rejected — the customer paid for renewal but couldn't
+      // activate. Almost every renewal path goes through this branch
+      // because the admin operator is running the dashboard on a
+      // DIFFERENT device than the customer (or the code's previous
+      // device has since been wiped/reinstalled), so the row is not
+      // f.activeSubscription on the admin PC.
+      //
+      // Fix: flip the row into the same "transfer-in" state that
+      // deactivateSubscription() uses (v0.7.12 LOSSLESS deactivate
+      // pattern). activateCode() already has a transfer-in branch
+      // (line 1089) that recognises { isUsed:false, transferredAt:set,
+      // subscriptionExpiresAt:<future> } and grants exactly the
+      // preserved deadline — which, after our extend above, is the
+      // renewed deadline. Customer types code, gets the time they
+      // paid for, no error.
+      a.isUsed = false
+      a.transferredAt = new Date().toISOString()
+      a.transferCount = (a.transferCount ?? 0) + 1
     }
   } else {
     // Never-used code: extend the GRANTED days so the bigger window
