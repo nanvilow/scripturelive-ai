@@ -1103,6 +1103,7 @@ export function AdminModal() {
         )}
 
         {authed && (<>
+        <RecentActivationsBanner />
         {/* Tab bar (v0.5.48). Overview keeps the existing payment +
             activation + notifications view; Settings shows the
             owner-tunable runtime config. */}
@@ -2475,6 +2476,15 @@ export function AdminModal() {
                       Sends to the configured Owner Email / Phone. Result is logged in the Notifications panel above.
                     </p>
                   </div>
+
+                  {/* v0.7.122 — AI diagnostic. Calls /api/ai/diagnostic
+                      which times one embedding + one LLM + one full
+                      semantic match round-trip and reports per-stage
+                      latency. Lets the operator confirm whether AI
+                      Search / AI Detection slowdowns are upstream
+                      (OpenAI / proxy) or local (cosine compute) without
+                      shelling into devtools. */}
+                  <AiDiagnosticButton />
                 </section>
 
                 <section className="rounded-lg border border-border bg-card/40 p-3.5 space-y-3">
@@ -3001,5 +3011,174 @@ export function AdminModal() {
         </AlertDialogContent>
       </AlertDialog>
     </Dialog>
+  )
+}
+
+// ─── v0.7.122 helper components ───────────────────────────────────────
+
+interface RecentActivationRow {
+  activationCode: string
+  planCode: string
+  days: number
+  activatedAt: string
+  expiresAt: string | null
+  installId?: string | null
+  paymentRef?: string | null
+}
+
+/** v0.7.122 — Polls /api/license/admin/recent-activations every 10 s
+ *  and surfaces any activation rows whose code we haven't yet seen.
+ *  "Seen" is tracked in localStorage under `sl-admin-seen-activations`
+ *  so a refresh of the admin panel doesn't re-flash old rows. The
+ *  banner is dismissable as a whole; individual rows show plan +
+ *  days + when. Pure read — no mutation. */
+function RecentActivationsBanner() {
+  const [rows, setRows] = useState<RecentActivationRow[]>([])
+  const [seen, setSeen] = useState<Set<string>>(() => {
+    try {
+      const raw = window.localStorage.getItem('sl-admin-seen-activations') || '[]'
+      const arr = JSON.parse(raw) as string[]
+      return new Set(Array.isArray(arr) ? arr : [])
+    } catch { return new Set() }
+  })
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const r = await fetch('/api/license/admin/recent-activations?windowHours=24', { cache: 'no-store' })
+        if (!r.ok) return
+        const j = await r.json() as { activations?: RecentActivationRow[] }
+        if (!cancelled && Array.isArray(j.activations)) setRows(j.activations)
+      } catch { /* offline-tolerant */ }
+    }
+    load()
+    const id = window.setInterval(load, 10_000)
+    return () => { cancelled = true; window.clearInterval(id) }
+  }, [])
+
+  const unseen = rows.filter((r) => !seen.has(r.activationCode))
+  if (unseen.length === 0) return null
+
+  const acknowledgeAll = () => {
+    const next = new Set(seen)
+    for (const r of unseen) next.add(r.activationCode)
+    setSeen(next)
+    try {
+      window.localStorage.setItem('sl-admin-seen-activations', JSON.stringify(Array.from(next).slice(-500)))
+    } catch { /* quota — silent */ }
+  }
+
+  return (
+    <div className="rounded-md border border-emerald-500/50 bg-emerald-500/10 p-2.5 mb-2 space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-emerald-300">
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          {unseen.length} new activation{unseen.length === 1 ? '' : 's'} (last 24h)
+        </div>
+        <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={acknowledgeAll}>
+          Mark all seen
+        </Button>
+      </div>
+      <div className="space-y-0.5 max-h-32 overflow-y-auto">
+        {unseen.slice(0, 10).map((r) => (
+          <div key={r.activationCode} className="flex items-center gap-2 text-[10px] font-mono">
+            <span className="text-foreground">{r.activationCode}</span>
+            <span className="text-muted-foreground">{r.planCode} · {r.days}d</span>
+            <span className="text-muted-foreground ml-auto">{new Date(r.activatedAt).toLocaleString()}</span>
+          </div>
+        ))}
+        {unseen.length > 10 && (
+          <div className="text-[10px] text-muted-foreground italic">+{unseen.length - 10} more…</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+interface AiDiagStage {
+  ok: boolean
+  ms: number
+  error?: string
+  detail?: { dim?: number; reply?: string; matchCount?: number; topReference?: string | null; topScore?: number | null }
+}
+interface AiDiagResp {
+  ok: boolean
+  error?: string
+  stages?: { embedding?: AiDiagStage; llm?: AiDiagStage; semantic?: AiDiagStage }
+  cache?: { ready: boolean; cacheSize: number; loading: boolean; hasApiKey: boolean }
+  timestamp?: string
+}
+
+/** v0.7.122 — Manual AI Detection / AI Search / LLM latency probe.
+ *  Runs three sequential round-trips and prints per-stage ms + the
+ *  detail (embedding dim, LLM reply, top semantic match). Lets the
+ *  operator distinguish "OpenAI is slow today" from "my embedding
+ *  cache hasn't built yet" or "the proxy is dropping requests". */
+function AiDiagnosticButton() {
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<AiDiagResp | null>(null)
+
+  const run = async () => {
+    setBusy(true)
+    setResult(null)
+    try {
+      const r = await fetch('/api/ai/diagnostic', { cache: 'no-store' })
+      const j = await r.json() as AiDiagResp
+      setResult(j)
+    } catch (e) {
+      setResult({ ok: false, error: e instanceof Error ? e.message : String(e) })
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="pt-2 border-t border-border">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">AI Health</div>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={busy}
+        onClick={run}
+        className="border-border text-foreground hover:bg-muted"
+      >
+        {busy ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Sparkles className="h-3 w-3 mr-1.5" />}
+        Run AI Health Check
+      </Button>
+      <p className="text-[10px] text-muted-foreground mt-1.5">
+        Times one embedding + one LLM call + one full semantic match. Helps confirm whether AI Detection / AI Search slowness is upstream (OpenAI / proxy) or local.
+      </p>
+      {result && (
+        <div className="mt-2 rounded-md border border-border bg-card/40 p-2 text-[10px] font-mono space-y-0.5">
+          {result.error ? (
+            <div className="text-rose-400">Error: {result.error}</div>
+          ) : (
+            <>
+              <div className={result.stages?.embedding?.ok ? 'text-emerald-300' : 'text-rose-400'}>
+                Embedding: {result.stages?.embedding?.ms ?? '?'} ms
+                {result.stages?.embedding?.detail?.dim ? ` · dim ${result.stages.embedding.detail.dim}` : ''}
+                {result.stages?.embedding?.error ? ` · ${result.stages.embedding.error}` : ''}
+              </div>
+              <div className={result.stages?.llm?.ok ? 'text-emerald-300' : 'text-rose-400'}>
+                LLM (gpt-4o-mini): {result.stages?.llm?.ms ?? '?'} ms
+                {result.stages?.llm?.detail?.reply ? ` · "${result.stages.llm.detail.reply}"` : ''}
+                {result.stages?.llm?.error ? ` · ${result.stages.llm.error}` : ''}
+              </div>
+              <div className={result.stages?.semantic?.ok ? 'text-emerald-300' : 'text-rose-400'}>
+                Semantic match: {result.stages?.semantic?.ms ?? '?'} ms
+                {result.stages?.semantic?.detail?.topReference
+                  ? ` · ${result.stages.semantic.detail.topReference} (${(result.stages.semantic.detail.topScore ?? 0).toFixed(3)})`
+                  : ''}
+                {result.stages?.semantic?.error ? ` · ${result.stages.semantic.error}` : ''}
+              </div>
+              {result.cache && (
+                <div className="text-muted-foreground pt-1">
+                  Cache: {result.cache.cacheSize} verses · {result.cache.ready ? 'ready' : result.cache.loading ? 'loading' : 'cold'}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
