@@ -77,11 +77,17 @@ async function activateImpl(req: NextRequest) {
           error: 'This is a paid activation code. Use the top box ("Enter activation code after payment") to activate it.',
         }, { status: 400 })
       }
-      if (src === 'standalone' && expectedRaw === 'activation') {
-        return NextResponse.json({
-          error: 'This is a generated (admin-issued) code, not a paid activation code. Use the bottom box ("Enter your generated and master code") to activate it.',
-        }, { status: 400 })
-      }
+      // v0.7.121 — REMOVED stale `standalone + activation` cross-rejection.
+      // The two-box UI it was guarding against was retired in v0.7.75 in
+      // favour of a single unified activation input that auto-detects
+      // master codes by SL-MASTER prefix and otherwise sends
+      // expectedType='activation'. With one input, ALL non-master codes
+      // (paid AND admin-issued/standalone) must activate from the same
+      // box. Operator escalation: "i tried activating an admin-generated
+      // code and it errored 'This is a generated (admin-issued) code,
+      // not a paid activation code. Use the bottom box…' but there IS
+      // no bottom box anymore." Master/paid cross-checks above are
+      // unchanged — only the standalone rejection is dropped.
     }
   }
 

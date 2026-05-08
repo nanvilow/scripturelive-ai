@@ -14,7 +14,7 @@
 // We re-fetch /api/license/admin/list each time the panel opens, and
 // every 5 s while it's open. Confirmation is a separate POST.
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import {
   AlertDialog,
@@ -200,6 +200,18 @@ export function AdminModal() {
   const [genEmail, setGenEmail] = useState<string>('')
   const [genWhatsapp, setGenWhatsapp] = useState<string>('')
   const [genBusy, setGenBusy] = useState(false)
+  // v0.7.121 — Operator escalation: "when i generate 1 code it generate
+  // multiple instead of 1." Root cause: the form's onSubmit guard
+  // (`if (!genBusy) generateCode()`) reads `genBusy` from the React
+  // render closure (stale value). React batches state updates, so a
+  // rapid double-trigger (Enter-press + button-click, MouseEvent +
+  // synthetic click from the pointer-events watchdog, Strict-Mode
+  // dev double-invoke, etc.) both observe `genBusy === false` in the
+  // same tick → two fetch POSTs → two activation rows minted from one
+  // operator click. `setGenBusy(true)` then can't help because it's
+  // queued for the next render. A `useRef` flips synchronously inside
+  // the same JS task and wins the race regardless of React batching.
+  const genInFlightRef = useRef(false)
   // v0.7.13 — Records dashboard state. Replaces the Reference Code
   // section (deleted in v0.7.13 per operator's spec — they were never
   // using it and wanted live install / heartbeat / error analytics
@@ -735,10 +747,15 @@ export function AdminModal() {
   }, [reload, reloadCodes, refresh])
 
   const generateCode = async () => {
+    // v0.7.121 — Synchronous re-entrancy guard (see genInFlightRef
+    // declaration above). Wins races vs React's batched setGenBusy.
+    if (genInFlightRef.current) return
+    genInFlightRef.current = true
     setGenResult(null)
-    if (!genPlan) { setGenResult({ ok: false, msg: 'Pick a plan or CUSTOM.' }); return }
+    if (!genPlan) { genInFlightRef.current = false; setGenResult({ ok: false, msg: 'Pick a plan or CUSTOM.' }); return }
     const daysNum = genDays.trim() === '' ? undefined : Math.floor(Number(genDays))
     if (genDays.trim() !== '' && (!Number.isFinite(daysNum) || (daysNum as number) < 1 || (daysNum as number) > 36500)) {
+      genInFlightRef.current = false
       setGenResult({ ok: false, msg: 'Days must be a whole number between 1 and 36500.' })
       return
     }
@@ -746,10 +763,12 @@ export function AdminModal() {
     const hoursNum = genHours.trim() === '' ? 0 : Math.floor(Number(genHours))
     const minutesNum = genMinutes.trim() === '' ? 0 : Math.floor(Number(genMinutes))
     if (!Number.isFinite(hoursNum) || hoursNum < 0 || hoursNum > 23) {
+      genInFlightRef.current = false
       setGenResult({ ok: false, msg: 'Hours must be a whole number between 0 and 23.' })
       return
     }
     if (!Number.isFinite(minutesNum) || minutesNum < 0 || minutesNum > 59) {
+      genInFlightRef.current = false
       setGenResult({ ok: false, msg: 'Minutes must be a whole number between 0 and 59.' })
       return
     }
@@ -759,12 +778,14 @@ export function AdminModal() {
     // "Months 6, Days 5" = 185 days, "Months 0, Hours 4" = 1 day.
     const monthsNum = genMonths.trim() === '' ? 0 : Math.floor(Number(genMonths))
     if (!Number.isFinite(monthsNum) || monthsNum < 0 || monthsNum > 1200) {
+      genInFlightRef.current = false
       setGenResult({ ok: false, msg: 'Months must be a whole number between 0 and 1200.' })
       return
     }
     const combinedDays = (daysNum ?? 0) + monthsNum * 30
     const finalDays = combinedDays > 0 ? combinedDays : undefined
     if (genPlan === 'CUSTOM' && finalDays == null && hoursNum === 0 && minutesNum === 0) {
+      genInFlightRef.current = false
       setGenResult({ ok: false, msg: 'CUSTOM plan requires a duration (Minutes, Hours, Days, or Months).' })
       return
     }
@@ -803,7 +824,7 @@ export function AdminModal() {
       }
     } catch (e) {
       setGenResult({ ok: false, msg: e instanceof Error ? e.message : String(e) })
-    } finally { setGenBusy(false) }
+    } finally { setGenBusy(false); genInFlightRef.current = false }
   }
 
   const emailMaster = async () => {
@@ -1681,7 +1702,9 @@ export function AdminModal() {
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
-                  if (!genBusy) generateCode()
+                  // v0.7.121 — Use ref guard, not stale `genBusy`
+                  // closure. See genInFlightRef declaration above.
+                  if (!genInFlightRef.current) generateCode()
                 }}
                 autoComplete="off"
                 className="space-y-3"
