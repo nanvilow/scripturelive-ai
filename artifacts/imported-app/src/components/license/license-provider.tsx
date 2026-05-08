@@ -15,6 +15,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useAppStore } from '@/lib/store'
+import { LowTimeWarning } from './low-time-warning'
+import { ActivationSuccessDialog } from './activation-success-dialog'
 
 export type LicenseState = 'active' | 'trial' | 'trial_expired' | 'expired' | 'never_activated' | 'unknown'
 
@@ -293,5 +295,21 @@ export function LicenseProvider({ children }: { children: React.ReactNode }) {
     ui: { subscribeOpen, adminOpen, setSubscribeOpen, setAdminOpen },
   }
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>
+  return (
+    <Ctx.Provider value={value}>
+      {children}
+      {/* v0.7.122 — Two globally-mounted license dialogs.
+          • <ActivationSuccessDialog> celebrates a freshly-activated
+            paid code on the FIRST page load after the activation
+            modal hard-reloaded the app. Tracked once per code via
+            localStorage so it never re-pops on subsequent launches.
+          • <LowTimeWarning> watches the active subscription's
+            expiresAt and pops a Radix AlertDialog at 24h / 6h / 1h
+            / 15m / 5m bands, each at most once per code. Both are
+            inside the provider so they can read status via
+            useLicense() directly. */}
+      <ActivationSuccessDialog />
+      <LowTimeWarning />
+    </Ctx.Provider>
+  )
 }

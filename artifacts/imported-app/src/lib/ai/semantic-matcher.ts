@@ -149,7 +149,7 @@ export interface OpenAIClientCreds {
   baseURL?: string
 }
 
-function resolveOpenAICreds(): OpenAIClientCreds | undefined {
+export function resolveOpenAICreds(): OpenAIClientCreds | undefined {
   const proxyUrl = (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || '').trim()
   const proxyKey = (process.env.AI_INTEGRATIONS_OPENAI_API_KEY || '').trim()
   if (proxyUrl && proxyKey) {
