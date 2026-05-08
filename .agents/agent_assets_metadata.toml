@@ -749,3 +749,9 @@ id = "9FsfreECocjPzAxHoJ9tI"
 uri = "file://artifacts/imported-app/exports/ScriptureLive-AI-v0.7.120-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.120 source"
+
+[[outputs]]
+id = "byc33NRxVWaJ9TB3eoZeK"
+uri = "file://artifacts/imported-app/exports/ScriptureLive-AI-v0.7.121-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.121 — source ZIP"

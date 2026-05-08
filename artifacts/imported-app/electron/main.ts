@@ -194,6 +194,10 @@ let frameCaptureFlags: {
   lowerThirdScale: number | null
 } | null = null
 let mainWindow: BrowserWindow | null = null
+// v0.7.121 — Tracked kiosk-style output BrowserWindows (congregation,
+// stage, etc). Re-homed to primary on screen.on('display-removed') so
+// the operator never sees a blank projector after unplugging.
+const kioskWindows: Set<BrowserWindow> = new Set()
 let tray: Tray | null = null
 let nextProcess: ChildProcess | null = null
 let appBaseUrl = ''
@@ -1922,10 +1926,21 @@ function buildAppMenu() {
 }
 
 function broadcastNdiStatus(status: NdiStatus) {
+  // v0.7.121 — Renderer-facing normalisation. While the sender is in
+  // the operator-initiated linger window (Stop pressed but the NDI
+  // sender is held alive on the wire for OBS/vMix continuity), the
+  // wire-side `running` is still true, but the UI must show "stopped"
+  // so the Stop button visibly toggles off and the Start button
+  // becomes available again. Both the panel and the on-air gate (tray
+  // / update toast) treat lingering as "not on-air" — receivers see a
+  // black frame, the operator's UX correctly says we are off.
+  const renderStatus: NdiStatus = status.lingering
+    ? { ...status, running: false }
+    : status
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('ndi:status', status)
+    mainWindow.webContents.send('ndi:status', renderStatus)
   }
-  applyNdiAirChange(status.running === true)
+  applyNdiAirChange(renderStatus.running === true)
 }
 
 /**
@@ -2430,8 +2445,42 @@ function setupIpc() {
     installCrashMask(win, `popout:${opts.title || opts.path}`, { showDialogOnGiveUp: false })
 
     win.loadURL(`${appBaseUrl}${opts.path}`)
+    // v0.7.121 — Track open kiosk output windows so screen.on('display-
+    // removed') below can re-home them to the primary display when the
+    // operator unplugs the secondary monitor mid-service. Without this
+    // the kiosk window stays pinned to the now-gone display's bounds
+    // and disappears entirely (operator escalation: "anytime i
+    // disconnect output display from the other screen from the app,
+    // the app output… becomes Blank").
+    kioskWindows.add(win)
+    win.on('closed', () => { kioskWindows.delete(win) })
     return win
   }
+
+  // v0.7.121 — Auto-recover kiosk output windows when their host display
+  // is unplugged. Without this, the BrowserWindow stays at coordinates
+  // belonging to a display that no longer exists and the operator sees
+  // a blank room projector / stage display until they restart the app.
+  // We simply move every tracked kiosk to the primary display's full
+  // bounds and re-assert kiosk + fullscreen. The renderer inside is
+  // untouched so SSE state, slide content, etc. all survive.
+  screen.on('display-removed', () => {
+    try {
+      const primary = screen.getPrimaryDisplay()
+      const { x, y, width, height } = primary.bounds
+      for (const w of Array.from(kioskWindows)) {
+        if (!w || w.isDestroyed()) { kioskWindows.delete(w); continue }
+        try {
+          w.setKiosk(false)
+          w.setFullScreen(false)
+          w.setBounds({ x, y, width, height })
+          w.setKiosk(true)
+          w.setFullScreen(true)
+          w.show()
+        } catch { /* per-window failure is non-fatal */ }
+      }
+    } catch { /* screen API unavailable on this platform */ }
+  })
 
   ipcMain.handle('output:open-window', (_e, opts?: { displayId?: number }) => {
     if (!appBaseUrl) return { ok: false, error: 'app not ready' }

@@ -35,6 +35,15 @@ export type NdiStatus = {
   frameCount: number
   error?: string
   captureMessage?: string
+  // v0.7.121 — true while the operator clicked Stop but the sender is
+  // being held alive on the wire (linger window) so OBS/vMix don't
+  // drop the source. The Stop button in the UI must flip to "Start"
+  // immediately when this is true, even though `running` may still be
+  // true on the wire-protocol side. main.ts's broadcast normalises
+  // running=false whenever lingering=true so the renderer never has
+  // to know about the distinction.
+  lingering?: boolean
+  lingerRemainingMs?: number
 }
 
 // ─── NDI native types ──────────────────────────────────────────────
@@ -293,7 +302,18 @@ export class NdiService extends EventEmitter {
   }
 
   getStatus(): NdiStatus {
-    return { ...this.status }
+    // v0.7.121 — surface linger state to callers so main.ts can
+    // normalise the wire-side `running:true` into a renderer-facing
+    // `running:false` while the linger window holds the sender alive.
+    // Without this, the Stop NDI button in the panel never visibly
+    // toggles off (operator escalation: "When i tried turning off the
+    // NDI when it on, it dosent want to go off").
+    const lingering = this.lingerTimer !== null
+    return {
+      ...this.status,
+      lingering,
+      lingerRemainingMs: lingering ? this.lingerRemainingMs() : 0,
+    }
   }
 
   async start(opts: NdiStartOptions): Promise<void> {

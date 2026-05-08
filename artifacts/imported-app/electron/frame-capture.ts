@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, screen } from 'electron'
 
 export type FrameCaptureOptions = {
   width: number
@@ -36,8 +36,27 @@ export class FrameCapture {
     }
     this.current = opts
 
+    // v0.7.121 — Pin the offscreen capture BrowserWindow to the
+    // PRIMARY display's origin. Operator escalation: "anytime i
+    // disconnect output display from the other screen from the app,
+    // the app output, and NDI becomes Blank." Root cause: with no
+    // explicit x/y, Electron places the offscreen window on the cursor
+    // / last-active display. If that's the secondary monitor and the
+    // operator unplugs it mid-service, Windows' GPU compositor can
+    // stall offscreen rendering on the now-orphaned BrowserWindow —
+    // beginFrameSubscription stops firing, NDI's keep-alive ticker
+    // pumps the last (frozen / black) frame forever, and vMix / OBS
+    // see a black source. Pinning to primary display origin guarantees
+    // the capture surface stays on a display that is always present.
+    let primaryOrigin: { x: number; y: number } = { x: 0, y: 0 }
+    try {
+      const p = screen.getPrimaryDisplay()
+      primaryOrigin = { x: p.workArea.x, y: p.workArea.y }
+    } catch { /* no display API available — fall back to (0,0) */ }
     this.window = new BrowserWindow({
       show: false,
+      x: primaryOrigin.x,
+      y: primaryOrigin.y,
       width: opts.width,
       height: opts.height,
       useContentSize: true,

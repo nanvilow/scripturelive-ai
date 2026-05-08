@@ -824,7 +824,7 @@ export function AdminModal() {
       }
     } catch (e) {
       setGenResult({ ok: false, msg: e instanceof Error ? e.message : String(e) })
-    } finally { setGenBusy(false); genInFlightRef.current = false }
+    } finally { setGenBusy(false) }
   }
 
   const emailMaster = async () => {
@@ -1702,9 +1702,7 @@ export function AdminModal() {
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
-                  // v0.7.121 — Use ref guard, not stale `genBusy`
-                  // closure. See genInFlightRef declaration above.
-                  if (!genInFlightRef.current) generateCode()
+                  if (!genBusy) generateCode()
                 }}
                 autoComplete="off"
                 className="space-y-3"
