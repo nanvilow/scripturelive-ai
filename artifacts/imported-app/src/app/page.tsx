@@ -5,7 +5,16 @@ import { SpeechProvider } from '@/components/providers/speech-provider'
 import { OutputBroadcaster } from '@/components/providers/output-broadcaster'
 import { LiveTranslationSync } from '@/components/providers/live-translation-sync'
 import { UpdateNotifier } from '@/components/providers/update-notifier'
-import { UpdateAvailableDialog } from '@/components/providers/update-dialog'
+// v0.7.140 — The duplicate `<UpdateAvailableDialog>` from
+// `@/components/providers/update-dialog` was REMOVED. The canonical
+// startup popup lives in `@/components/update-available-dialog` and
+// is mounted exactly once in `src/app/layout.tsx` (alongside
+// `<UpdateBanner>`). Operators were seeing TWO update modals stack
+// on launch — operator screenshot https://imgur.com/a/8MmmIPI shows
+// the v0.7.129 dialog (top, with "WHAT'S NEW" header) layered on
+// top of the older v0.6.6 dialog (bottom, with red "Important —
+// uninstall first" box). The old file is now deleted; do not re-
+// import it.
 // v1 licensing — wrap the app so every subtree can consult the
 // subscription state and open the Subscribe / Admin modals.
 import { LicenseProvider } from '@/components/license/license-provider'
@@ -106,13 +115,10 @@ export default function Home() {
           (or by the 4-hour interval check), so the operator never has
           to dig into Settings to find out an update exists. */}
       <UpdateNotifier />
-      {/* Prominent modal popup for new releases — complements the toast
-          above. The toast is suppressed mid-broadcast by the on-air
-          gate (and at app launch NDI auto-starts so the toast effectively
-          never fires), while the dialog is purely informational and
-          shows once per version per session so the operator actually
-          sees the update notice when they open the app. */}
-      <UpdateAvailableDialog />
+      {/* v0.7.140 — `<UpdateAvailableDialog>` is mounted ONCE in
+          `src/app/layout.tsx`. It used to be duplicated here from
+          the old `providers/update-dialog` module, which is why
+          operators saw two stacked modals on launch. */}
       {/* v1 LICENSING — wraps the entire console so the LogosShell, the
           Settings overlay, and the floating Activate button can all read
           subscription state from one source of truth. The provider also

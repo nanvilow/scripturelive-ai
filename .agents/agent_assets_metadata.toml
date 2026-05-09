@@ -863,3 +863,9 @@ id = "vEZNYqcv6FWe6SO5DZztx"
 uri = "file://exports/ScriptureLive-AI-v0.7.139-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.139 source (installer polish)"
+
+[[outputs]]
+id = "lcP5h3CE1NXjpERE1i5wp"
+uri = "file://exports/ScriptureLive-AI-v0.7.140-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.140 source (single update modal + HTML strip)"

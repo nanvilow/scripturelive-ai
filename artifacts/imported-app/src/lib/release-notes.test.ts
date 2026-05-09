@@ -1,6 +1,24 @@
 import { describe, it, expect } from 'vitest'
 import { cleanReleaseNotes, previewReleaseNotes } from './release-notes'
 
+describe('cleanReleaseNotes — v0.7.140 HTML stripping', () => {
+  it('strips raw HTML tags so ReactMarkdown does not render them as text', () => {
+    const input =
+      '<h2>Download</h2> <h3><a href="https://example.com/setup.exe">Download ScriptureLive AI v0.7.131 Setup for Windows (461M)</a></h3> <p><strong>This is the only file you need.</strong> Click the link above, run the installer, and you\'re done.</p>'
+    const out = cleanReleaseNotes(input)
+    expect(out).not.toMatch(/<\/?[a-z]/i)
+    expect(out).toContain('Download ScriptureLive AI v0.7.131 Setup for Windows (461M)')
+    expect(out).toContain('This is the only file you need.')
+  })
+
+  it('preserves anchor link text after stripping', () => {
+    const out = cleanReleaseNotes('<p>See <a href="https://example.com">the docs</a> for details.</p>')
+    expect(out).not.toMatch(/<a\b/i)
+    expect(out).toContain('the docs')
+  })
+})
+
+
 describe('cleanReleaseNotes', () => {
   it('returns an empty string for null input', () => {
     expect(cleanReleaseNotes(null)).toBe('')
