@@ -146,19 +146,43 @@ win:
       - sha256
     rfc3161TimeStampServer: http://timestamp.digicert.com
 nsis:
-  # v0.7.66 — One-click install. Eliminates the multi-step wizard
-  # (welcome screen, license, install dir picker, components, finish)
-  # so the user sees only a single progress bar and the app launches
-  # itself when copy completes. Cuts perceived install time from
-  # ~30s of clicking to ~5s of waiting. perMachine stays FALSE so
-  # no UAC prompt fires — install happens in %LOCALAPPDATA% silently.
-  # Power users who need a custom install path can still pass /D=...
-  # on the command line; the GUI path picker is what slowed people down.
-  oneClick: true
+  # v0.7.126 — Switched from oneClick to the full assisted MUI2 wizard
+  # (Welcome → License → Progress → Finish) so the installer LOOKS
+  # professional instead of the bare 1990s "Installing, please wait..."
+  # mini-dialog NSIS shows in oneClick mode (operator screenshot:
+  # https://ibb.co/fzQ95pt4 — looked like a malware installer). The
+  # wizard now mirrors Wirecast / vMix / OBS / Pro Presenter: dark
+  # branded sidebar artwork on Welcome + Finish, white header banner
+  # with logo + wordmark on inner pages, EULA on the License page,
+  # and a "Run ScriptureLive AI now" checkbox on the Finish page so
+  # the perceived flow is still ~3 clicks (Next → I Agree → Install
+  # → Finish). perMachine stays FALSE so no UAC prompt fires —
+  # install still happens in %LOCALAPPDATA% silently.
+  #
+  # The bitmaps are produced by ImageMagick at v0.7.126 release time
+  # (see scripts in CHANGELOG.md / replit.md). All three are 24-bit
+  # uncompressed BMP3 because that's the only format NSIS MUI2 reads
+  # reliably across every Windows version we ship to.
+  oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: false
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  # Show the EULA before install. license.txt sits beside this YAML
+  # in build-resources/. Plain ASCII so NSIS renders it without RTF
+  # parsing surprises.
+  license: build-resources/license.txt
+  # Branded artwork. Paths are relative to build-resources/.
+  installerIcon: build-resources/icon.ico
+  uninstallerIcon: build-resources/icon.ico
+  installerHeaderIcon: build-resources/icon.ico
+  # 150x57 BMP3, white→slate gradient with logo + wordmark, shown
+  # top-right on every inner wizard page.
+  installerHeader: build-resources/installerHeader.bmp
+  # 164x314 BMP3, dark navy→indigo gradient with centred logo +
+  # ScriptureLive AI text, shown on the left of Welcome + Finish.
+  installerSidebar: build-resources/installerSidebar.bmp
+  uninstallerSidebar: build-resources/uninstallerSidebar.bmp
   # v0.7.66 — Faster sequential install + faster auto-update apply.
   # `differentialPackage: true` tells electron-updater to download
   # ONLY the changed blocks of the .exe on subsequent updates by

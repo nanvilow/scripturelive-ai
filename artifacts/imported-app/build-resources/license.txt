@@ -1,0 +1,79 @@
+ScriptureLive AI — End User License Agreement
+================================================
+
+Copyright (c) ScriptureLive AI. All rights reserved.
+
+By installing or using ScriptureLive AI ("the Software") you agree to
+the terms below. If you do not agree, click "Cancel" to abort the
+installation.
+
+1. Grant of License
+-------------------
+ScriptureLive AI grants you a personal, non-exclusive, non-transferable
+license to install and use the Software on the personal computers
+covered by your active subscription or activation code. The Software
+remains the property of ScriptureLive AI; this agreement transfers no
+ownership rights to you.
+
+2. Permitted Use
+----------------
+The Software is intended for live worship presentation, scripture
+detection, and related ministry workflows in churches and ministries.
+You may install the Software on the number of devices permitted by
+your active license tier. The free Starter tier permits installation
+on a single device for evaluation purposes.
+
+3. Restrictions
+---------------
+You agree NOT to:
+  • Reverse engineer, decompile, or disassemble the Software except as
+    permitted by applicable law.
+  • Resell, sublicense, rent, or lease the Software.
+  • Remove or alter any copyright, trademark, or proprietary notices.
+  • Use the Software to transmit unlawful, infringing, or harmful
+    content, or in any manner that violates applicable laws.
+
+4. Updates and Telemetry
+------------------------
+The Software periodically checks for updates over the Internet and
+may transmit anonymous diagnostic and usage telemetry. You can opt
+out of update checks from within the Settings panel after install.
+
+5. Activation Codes
+-------------------
+Paid activation codes are tied to your subscription record on the
+ScriptureLive AI servers. The "Move to Another PC" feature releases
+the code from the current device while preserving the remaining
+subscription time. Lost or shared codes can be reissued at the
+operator's discretion via the admin panel.
+
+6. Disclaimer of Warranty
+-------------------------
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
+NONINFRINGEMENT. SCRIPTURELIVE AI DOES NOT WARRANT THAT THE
+SOFTWARE WILL BE ERROR-FREE OR UNINTERRUPTED.
+
+7. Limitation of Liability
+--------------------------
+IN NO EVENT SHALL SCRIPTURELIVE AI BE LIABLE FOR ANY INDIRECT,
+INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES ARISING OUT OF OR IN
+CONNECTION WITH THE USE OR PERFORMANCE OF THE SOFTWARE.
+
+8. Third-Party Components
+-------------------------
+The Software bundles open-source components (Electron, Next.js,
+React, NDI Tools runtime stub, and others) used under their
+respective licenses. The full list of attributions is available
+inside the app under Settings → About → Open-Source Notices.
+
+9. Termination
+--------------
+This license terminates automatically if you fail to comply with
+any term. Upon termination you must cease all use of the Software
+and remove all copies from your devices.
+
+10. Acceptance
+--------------
+Clicking "I Agree" indicates you have read and accept these terms.

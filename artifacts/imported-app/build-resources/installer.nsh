@@ -91,8 +91,49 @@
 !macroend
 
 !macro customUnInit
-  ; The silent uninstall that oneClick runs as part of an upgrade also
-  ; needs the running process gone — otherwise the uninstall step
-  ; fails halfway through and the upgrade aborts.
+  ; The silent uninstall that the assisted installer runs as part of
+  ; an upgrade also needs the running process gone — otherwise the
+  ; uninstall step fails halfway through and the upgrade aborts.
   !insertmacro killRunningApp
+!macroend
+
+; v0.7.126 — Branded MUI2 wizard customisations.
+;
+; electron-builder's NSIS template already wires up MUI2 with our
+; installerHeader.bmp / installerSidebar.bmp / license.txt from
+; electron-builder.yml, so we DON'T need to !insertmacro any MUI
+; pages here — that would double-define them and crash makensis.
+;
+; What we DO override:
+;   • The wizard window caption shown in the Windows taskbar and on
+;     every page header. Default electron-builder caption is just
+;     "ScriptureLive AI Setup"; we extend it with the version + a
+;     short tagline so operators can tell at a glance whether the
+;     installer they double-clicked is the right build.
+;   • Header banner sub-text on the Welcome page so it doesn't feel
+;     blank. customWelcomePage runs BEFORE the page is shown and
+;     pushes a friendlier multi-line description.
+;   • Finish-page run-app checkbox text — the default literally
+;     reads "&Run ${PRODUCT_NAME}" which collides with our brand
+;     casing (we want "Launch ScriptureLive AI"). electron-builder
+;     auto-checks the box for us.
+
+!macro customHeader
+  ; Window title on every page. Wirecast / vMix do exactly this so
+  ; the wizard chrome reinforces the brand rather than just saying
+  ; "Setup". $(^Name) resolves to "ScriptureLive AI" from
+  ; productName, ${VERSION} is injected by electron-builder.
+  !define MUI_PAGE_HEADER_TEXT "ScriptureLive AI"
+  !define MUI_PAGE_HEADER_SUBTEXT "AI-Powered Worship Presentation"
+!macroend
+
+!macro customWelcomePage
+  !define MUI_WELCOMEPAGE_TITLE "Welcome to ScriptureLive AI"
+  !define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of ScriptureLive AI v${VERSION}.$\r$\n$\r$\nReal-time scripture detection, AI-powered slide generation, and broadcast-quality NDI output for live worship.$\r$\n$\r$\nClick Next to continue."
+!macroend
+
+!macro customFinishPage
+  !define MUI_FINISHPAGE_TITLE "ScriptureLive AI is ready"
+  !define MUI_FINISHPAGE_TEXT "ScriptureLive AI v${VERSION} has been installed on your computer.$\r$\n$\r$\nClick Finish to close this wizard."
+  !define MUI_FINISHPAGE_RUN_TEXT "Launch ScriptureLive AI now"
 !macroend
