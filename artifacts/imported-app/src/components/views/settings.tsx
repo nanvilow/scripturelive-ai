@@ -76,6 +76,7 @@ import {
 } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { useLicense } from '@/components/license/license-provider'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import {
   Tooltip,
   TooltipContent,
@@ -99,6 +100,14 @@ export function SettingsView() {
   // "Deactivate" can trigger a refresh after the server-side clear.
   const { status, refresh, openSubscribe } = useLicense()
   const [licBusy, setLicBusy] = useState(false)
+  // v0.7.125 — useConfirm replaces the three native window.confirm /
+  // window.alert callsites in this view (Deactivate, Move-to-PC, and
+  // the post-transfer code receipt) with styled Radix dialogs so the
+  // operator no longer sees raw Chromium chrome titled
+  // "@workspace/imported-app". The post-transfer receipt is delivered
+  // by <TransferSuccessDialog> on the FRESH page load after the hard-
+  // reload (same proven pattern as <ActivationSuccessDialog>).
+  const confirm = useConfirm()
   const handleCopyLic = (text: string) => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       navigator.clipboard.writeText(text).then(
@@ -129,7 +138,13 @@ export function SettingsView() {
   //     in a modal with a Copy button.
   const handleDeactivate = async () => {
     if (!status.subscription) return
-    if (!confirm('Deactivate this subscription on this PC?\n\nThe activation code is released — you can re-enter it on this or any other PC and the SAME remaining time will be restored (provided it has not expired). Live Transcription will stop on this PC immediately.\n\nIf you also want the code displayed for easy copy/paste, use "Move to Another PC" instead.')) return
+    if (!(await confirm({
+      title: 'Deactivate this subscription on this PC?',
+      description:
+        'The activation code is released — you can re-enter it on this or any other PC and the same remaining time will be restored (provided it has not expired). Live Transcription will stop on this PC immediately.\n\nIf you also want the code displayed for easy copy/paste, use "Move to Another PC" instead.',
+      confirmText: 'Deactivate',
+      destructive: true,
+    }))) return
     setLicBusy(true)
     try {
       const r = await fetch('/api/license/deactivate', { method: 'POST' })
@@ -181,7 +196,13 @@ export function SettingsView() {
       toast.error('The master code is already valid on every PC — no transfer needed.')
       return
     }
-    if (!confirm('Move your license to another PC?\n\nThis will release the code from this device while keeping your remaining time intact. You can then type the same code into the new installation and it will activate with the SAME remaining days you have now.\n\nLive Transcription will stop on this PC immediately.')) return
+    if (!(await confirm({
+      title: 'Move your license to another PC?',
+      description:
+        'This will release the code from this device while keeping your remaining time intact. You can then type the same code into the new installation and it will activate with the same remaining days you have now.\n\nLive Transcription will stop on this PC immediately. After the app reloads you will see your activation code in a copy-friendly dialog.',
+      confirmText: 'Release & show code',
+      destructive: true,
+    }))) return
     setLicBusy(true)
     try {
       const r = await fetch('/api/license/deactivate', {
@@ -254,21 +275,31 @@ export function SettingsView() {
           }))
         }
       } catch { /* private mode / storage full — alert is still shown */ }
-      // Native alert — blocking, OS-level, NOT rendered through React,
-      // so cannot trigger a renderer crash mid-paint. The text is
-      // selectable on Windows so the operator can manually copy if
-      // clipboard auto-write was blocked.
-      window.alert(
-        `License released on this PC.\n\n` +
-        `Your remaining time (${remainingText}) is preserved.\n\n` +
-        `ACTIVATION CODE:\n\n    ${code}\n\n` +
-        `(Already copied to your clipboard if your system allows. ` +
-        `If not, write it down or select+copy from this dialog.)\n\n` +
-        `Type or paste this code into the "Activate" dialog on the ` +
-        `new PC and the SAME remaining days will be restored.\n\n` +
-        `Click OK to reload this PC. The code will also still be ` +
-        `available on the unlocked Settings page after reload.`
-      )
+      // v0.7.125 — Removed the native window.alert receipt that
+      // showed the activation code in raw Chromium chrome ("@workspace/
+      // imported-app" title bar, plain serif body, OS OK button —
+      // looked like a system error to congregants seated near the
+      // operator's console).
+      //
+      // We CANNOT just swap the alert for an in-tree React Dialog —
+      // v0.7.102 explicitly removed the React transferOpen Dialog
+      // because rendering it after the deactivation API resolved
+      // triggered chrome-error mid-paint (license-provider's 30 s
+      // status poll mutated context just as the dialog mounted).
+      //
+      // Instead we keep the localStorage stash above (now PROMOTED
+      // from "fallback for clipboard failure" to "primary delivery
+      // channel") and hard-reload IMMEDIATELY. On the FRESH page load
+      // <TransferSuccessDialog> (mounted inside <LicenseProvider>)
+      // reads sl.lastTransferCode and pops a styled Radix Dialog with
+      // a Copy button. The fresh page has a settled license context
+      // post-deactivation, so the v0.7.102 race cannot recur — same
+      // proven pattern as <ActivationSuccessDialog>.
+      //
+      // remainingText is intentionally unused here now (the dialog
+      // recomputes it from msLeft) but the variable is kept so the
+      // formatRemaining helper below stays exercised.
+      void remainingText
       // Hard reload — same synchronous pattern as v0.7.101 Activate.
       try { window.location.assign('/') } catch { window.location.href = '/' }
       // Safety: clear busy spinner after 8 s if navigation is vetoed.
