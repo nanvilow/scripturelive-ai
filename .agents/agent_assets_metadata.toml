@@ -833,3 +833,9 @@ id = "ycjleApS21c1XNN6NLfDL"
 uri = "file://exports/ScriptureLive-AI-v0.7.134-source.zip"
 type = "unspecified"
 title = "ScriptureLive-AI-v0.7.134-source.zip"
+
+[[outputs]]
+id = "tCduCIq1MkCEDOx-CWID4"
+uri = "file://exports/ScriptureLive-AI-v0.7.135-source.zip"
+type = "unspecified"
+title = "ScriptureLive-AI-v0.7.135-source.zip"

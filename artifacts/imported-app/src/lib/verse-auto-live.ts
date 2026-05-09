@@ -239,6 +239,13 @@ export const LIVE_HIGH_CONF_LOCK = 0.85
 //   • EXPLICIT column floor (v0.7.133): 0.58
 //   • SEMANTIC column floor (v0.7.127): 0.50
 //
+// v0.7.135 — As of this version, BOTH cross-pipeline directions
+// resolve to 0.58 (see CROSS_PIPELINE_SEMANTIC_VS_EXPLICIT_MIN
+// docstring). The asymmetric protection introduced in v0.7.133
+// has been removed at operator request — they want any 58%
+// detection from EITHER pipeline to break a lock from the OTHER
+// pipeline.
+//
 // v0.7.133 — Lowered 0.70 → 0.58 to match the new EXPLICIT auto-live
 // floor and to honour the operator's literal directive: "MAKE THE
 // 100% UNBLOCK ITSELF WHEN NEW VERSE IS DETECTED IN Bible Reference
@@ -259,13 +266,27 @@ export const LIVE_HIGH_CONF_LOCK = 0.85
 // against a SEMANTIC lock get the 0.58 escape (which is the bug the
 // operator hit in production).
 export const CROSS_PIPELINE_CORROBORATION_MIN = 0.58
-// v0.7.133 — Stricter floor for SEMANTIC candidates trying to break
-// an EXPLICIT-high-conf live verse (operator-loaded chapter / verbatim
-// regex address). Preserves v0.7.120 protection: a soft preacher-
-// phrase paraphrase shouldn't be able to hijack a deliberately
-// loaded chapter. Only fires for hand-curated EXACT semantic hits
-// (typical 0.85-0.95) or strong AI cosine matches.
-export const CROSS_PIPELINE_SEMANTIC_VS_EXPLICIT_MIN = 0.7
+// v0.7.135 — Operator escalation: re-asked v0.7.133 fix in EXACT
+// reverse direction. The operator's screenshot pointed at "Auto
+// Verse Match" (the UI label for the EXPLICIT pipeline) latched at
+// 100%, blocking a 58% detection in "Bible Reference Quoted" (the
+// UI label for the SEMANTIC pipeline) from going live. v0.7.133
+// only opened the EXPLICIT-cand-vs-SEMANTIC-live direction; this
+// (SEMANTIC cand vs EXPLICIT live) was still gated at 0.70 — the
+// operator hit it again. Spec verbatim, second pass: "MAKE THE
+// 100% UNBLOCK ITSELF WHEN NEW VERSE IS DETECTED IN Bible Reference
+// Quoted WHEN IT 58% GOING." Floor dropped 0.70 → 0.58 — symmetric
+// with CROSS_PIPELINE_CORROBORATION_MIN. The cross-pipeline escape
+// is now uniformly 0.58 in BOTH directions: an auto-live-eligible
+// detection from EITHER pipeline can break a high-conf lock from
+// the OTHER pipeline. v0.7.120 operator-loaded-chapter protection
+// is preserved for SAME-pipeline near-misses (the same-pipeline
+// branch below still requires LIVE_HIGH_CONF_LOCK), and for cross-
+// pipeline noise BELOW 0.58 (which is also below the column auto-
+// live floor — won't surface anywhere in the UI). The constant is
+// kept (rather than collapsing to one) so the test suite and any
+// future tuning can address the two directions independently.
+export const CROSS_PIPELINE_SEMANTIC_VS_EXPLICIT_MIN = 0.58
 
 function detectedAtMs(v: RankedVerse): number {
   const d = v.detectedAt
@@ -613,15 +634,15 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
       // v0.7.120/v0.7.128 path below (a same-pipeline near-miss is
       // noise, not corroboration — must stay blocked).
       if (liveSource && candSource !== liveSource) {
-        // v0.7.133 — Asymmetric floor. EXPLICIT candidates (regex
-        // address parses, crisp by construction) get the lower 0.58
-        // floor against a SEMANTIC lock — this is the operator's
-        // production bug (semantic 1.00 false-positive blocking a
-        // 0.70 Acts 16 explicit). SEMANTIC candidates (paraphrase /
-        // phrase matchers, softer by construction) keep the 0.70
-        // floor against an EXPLICIT lock — preserves the v0.7.120
-        // protection that an operator-loaded chapter shouldn't be
-        // hijacked by a soft phrase match.
+        // v0.7.135 — Symmetric 0.58 floor in BOTH directions. The
+        // operator re-reported the same bug in the reverse pipeline:
+        // a 100% EXPLICIT live verse (Auto Verse Match) was blocking
+        // a 58% SEMANTIC detection (Bible Reference Quoted) from
+        // going live. v0.7.133 only opened EXPLICIT-cand-vs-SEMANTIC-
+        // live; we now mirror it. Both constants intentionally
+        // resolve to 0.58 — kept as separate exports so the two
+        // directions can be retuned independently without another
+        // refactor if the operator changes their mind.
         const min =
           candSource === 'explicit'
             ? CROSS_PIPELINE_CORROBORATION_MIN
