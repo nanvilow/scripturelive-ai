@@ -68,7 +68,6 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useDesktop, useNdi, type UpdateState } from '@/lib/use-electron'
 import { cleanReleaseNotes } from '@/lib/release-notes'
-import { releaseTagUrl } from '@/lib/github-repo'
 
 const DISMISS_KEY_PREFIX = 'sl.update-popup-dismissed.'
 
@@ -185,7 +184,6 @@ export function UpdateAvailableDialog() {
 
   const cleaned = offer.rawNotes ? cleanReleaseNotes(offer.rawNotes) : ''
   const previewNotes = cleaned ? truncateNotes(cleaned) : ''
-  const releaseUrl = releaseTagUrl(offer.version)
 
   // The headline message changes with readiness — "downloaded" means
   // the binary is on disk and one click installs it; "available"
@@ -272,18 +270,13 @@ export function UpdateAvailableDialog() {
                 {previewNotes}
               </ReactMarkdown>
             </div>
-            {releaseUrl && (
-              <div className="mt-2 text-right">
-                <a
-                  href={releaseUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs font-medium text-primary hover:underline"
-                >
-                  View full release notes on GitHub →
-                </a>
-              </div>
-            )}
+            {/* v0.7.130 — Removed the "View full release notes on GitHub →"
+                link per operator request. The popup is for operators
+                during the pre-service rush, not a place to send them
+                off to a browser tab. The truncated preview above is
+                the only context they need to make the update
+                decision; the full notes are still one click away in
+                the bottom-right <UpdateBanner> if they want them. */}
           </div>
         )}
 
