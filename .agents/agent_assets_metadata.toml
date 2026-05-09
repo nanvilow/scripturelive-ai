@@ -785,3 +785,9 @@ id = "qkE03HaMBtMtc_gH5GWBX"
 uri = "file://exports/ScriptureLive-AI-v0.7.126-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.126 — Branded Installer Wizard"
+
+[[outputs]]
+id = "XRbctTwnB8tgxCtdgoVBY"
+uri = "file://exports/ScriptureLive-AI-v0.7.127-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.127 — source ZIP"

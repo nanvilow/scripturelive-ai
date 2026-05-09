@@ -378,8 +378,8 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     expect(r.fire).toBe(false)
   })
 
-  it('does NOT fire when the semantic top is below 0.55 (v0.7.108)', () => {
-    const r = shouldFireAutoLiveStable([v('Lo', 0.54, 1, 'semantic')], null, fresh(), {
+  it('does NOT fire when the semantic top is below 0.50 (v0.7.127 — floor lowered from 0.55)', () => {
+    const r = shouldFireAutoLiveStable([v('Lo', 0.49, 1, 'semantic')], null, fresh(), {
       nowMs: 1000,
     })
     expect(r.fire).toBe(false)
