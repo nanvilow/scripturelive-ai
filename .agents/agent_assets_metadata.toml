@@ -857,3 +857,9 @@ id = "XivUSBxqc-9sFRQsck9x6"
 uri = "file://exports/ScriptureLive-AI-v0.7.138-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.138 source (admin route tsc fix)"
+
+[[outputs]]
+id = "vEZNYqcv6FWe6SO5DZztx"
+uri = "file://exports/ScriptureLive-AI-v0.7.139-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.139 source (installer polish)"
