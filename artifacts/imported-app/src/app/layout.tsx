@@ -3,6 +3,7 @@ import "./globals.css";
 import { PathAwareToaster } from "@/components/ui/path-aware-toaster";
 import { GoogleFontsLink } from "@/components/google-fonts-link";
 import { UpdateBanner } from "@/components/update-banner";
+import { UpdateAvailableDialog } from "@/components/update-available-dialog";
 import { ThemeProvider } from "@/components/providers/theme-provider";
 import { PointerEventsWatchdog } from "@/components/pointer-events-watchdog";
 import { ConfirmDialogProvider } from "@/components/ui/confirm-dialog";
@@ -76,6 +77,16 @@ export default function RootLayout({
             <PointerEventsWatchdog />
             <GoogleFontsLink />
             {children}
+            {/* v0.7.129 — Startup-time "Update Available" modal that
+                hijacks the foreground the moment the app opens with
+                a fresh release on disk or on GitHub. Mounted
+                alongside <UpdateBanner> (which stays as the passive
+                progress surface) so operators see the prompt even
+                if they ignored the bottom-right banner on a previous
+                launch. Per-version dismissal in localStorage stops
+                the modal from nagging for the same release twice;
+                each new release re-engages it. */}
+            <UpdateAvailableDialog />
             <UpdateBanner />
             {/* Toasts are suppressed on /congregation, /presenter, and
                 the NDI fan-out so display/output actions never appear
