@@ -875,3 +875,15 @@ id = "QHVqEHZMAAsNFH4NG16Fh"
 uri = "file://exports/ScriptureLive-AI-v0.7.141-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.141 source (hide DG engine badge)"
+
+[[outputs]]
+id = "zkm3RQySdcVFiCe3v7LcT"
+uri = "file://exports/ScriptureLive-AI-v0.7.142-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.142 source (post-install \"Open now?\" prompt)"
+
+[[outputs]]
+id = "QyVHj5FSy_dzA2BXy_MTr"
+uri = "file://exports/ScriptureLive-AI-v0.7.143-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.143 source (no double-launch)"
