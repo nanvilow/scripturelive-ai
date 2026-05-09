@@ -57,7 +57,16 @@ export interface RankedVerse {
 //     55% to 100%". Paraphrase recall is more important than
 //     precision in live preaching — the previous 0.80 floor was so
 //     strict it almost never fired in real audio.
-export const EXPLICIT_AUTO_LIVE_MIN = 0.6
+// v0.7.133 — Lowered EXPLICIT floor 0.60 → 0.58. Operator escalation
+// after v0.7.131: "WHAT I WANT IS ANY Bible Reference DETECTED [AS LOW
+// AS] 58% SHOULD AUTO GO LIVE." Same screenshot as v0.7.131
+// (https://imgur.com/a/8MmmIPI) — a regex address-parse hit on Acts 16
+// at the operator's required floor must auto-fire and must also break
+// any in-flight semantic high-conf lock (see
+// CROSS_PIPELINE_CORROBORATION_MIN below — also lowered to 0.58 in
+// lockstep so the new floor is honoured both for fresh fires and for
+// breaking an existing lock).
+export const EXPLICIT_AUTO_LIVE_MIN = 0.58
 // v0.7.127 — Lowered SEMANTIC floor 0.55 → 0.50 to close the
 // 50–54 % dead gap between the suggestions cap (<0.50) and the
 // previous semantic floor (≥0.55). Operator screenshot showed a
@@ -227,15 +236,36 @@ export const LIVE_STICKY_CONFIDENCE_DELTA = 0.1
 export const LIVE_HIGH_CONF_LOCK = 0.85
 
 // v0.7.131 — Cross-pipeline corroboration floor.
-//   • EXPLICIT column floor (v0.7.108): 0.60
+//   • EXPLICIT column floor (v0.7.133): 0.58
 //   • SEMANTIC column floor (v0.7.127): 0.50
-// 0.70 sits comfortably above both column floors so a borderline
-// detection in EITHER pipeline still can't hijack a high-conf
-// live verse — but a confident regex address parse (typical
-// 0.70-0.95) or a strong preacher-phrase match (typical 0.65-0.95)
-// from the OTHER pipeline correctly breaks the lock. Matches the
-// operator's reported case at exactly 0.70.
-export const CROSS_PIPELINE_CORROBORATION_MIN = 0.7
+//
+// v0.7.133 — Lowered 0.70 → 0.58 to match the new EXPLICIT auto-live
+// floor and to honour the operator's literal directive: "MAKE THE
+// 100% UNBLOCK ITSELF WHEN NEW VERSE IS DETECTED IN Bible Reference
+// Quoted." The v0.7.131 0.70 boundary was the very floor the operator
+// reported as still-blocked (cand@0.70 vs sticky semantic@1.00 — the
+// floating-point boundary plus any upstream `source`-tag inconsistency
+// kept the lock engaged). At 0.58 the escape fires at the same floor
+// as the column itself, so any auto-live-eligible explicit detection
+// is *by definition* allowed to break a same-instant semantic lock —
+// no second, stricter gate to trip over. Same-pipeline near-misses
+// still go through the v0.7.120/v0.7.128 path below (a same-pipeline
+// near-miss is noise, not corroboration — that protection stays
+// intact). Risk: a 0.58 semantic could now break an operator-loaded
+// explicit chapter (the v0.7.120 case in reverse). Mitigated by
+// asymmetric application: see passesReadLock — when the candidate is
+// SEMANTIC and the live verse is EXPLICIT-high-conf (operator-loaded
+// chapter), we keep the v0.7.131 0.70 floor; only EXPLICIT candidates
+// against a SEMANTIC lock get the 0.58 escape (which is the bug the
+// operator hit in production).
+export const CROSS_PIPELINE_CORROBORATION_MIN = 0.58
+// v0.7.133 — Stricter floor for SEMANTIC candidates trying to break
+// an EXPLICIT-high-conf live verse (operator-loaded chapter / verbatim
+// regex address). Preserves v0.7.120 protection: a soft preacher-
+// phrase paraphrase shouldn't be able to hijack a deliberately
+// loaded chapter. Only fires for hand-curated EXACT semantic hits
+// (typical 0.85-0.95) or strong AI cosine matches.
+export const CROSS_PIPELINE_SEMANTIC_VS_EXPLICIT_MIN = 0.7
 
 function detectedAtMs(v: RankedVerse): number {
   const d = v.detectedAt
@@ -583,7 +613,20 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
       // v0.7.120/v0.7.128 path below (a same-pipeline near-miss is
       // noise, not corroboration — must stay blocked).
       if (liveSource && candSource !== liveSource) {
-        return candConf >= CROSS_PIPELINE_CORROBORATION_MIN
+        // v0.7.133 — Asymmetric floor. EXPLICIT candidates (regex
+        // address parses, crisp by construction) get the lower 0.58
+        // floor against a SEMANTIC lock — this is the operator's
+        // production bug (semantic 1.00 false-positive blocking a
+        // 0.70 Acts 16 explicit). SEMANTIC candidates (paraphrase /
+        // phrase matchers, softer by construction) keep the 0.70
+        // floor against an EXPLICIT lock — preserves the v0.7.120
+        // protection that an operator-loaded chapter shouldn't be
+        // hijacked by a soft phrase match.
+        const min =
+          candSource === 'explicit'
+            ? CROSS_PIPELINE_CORROBORATION_MIN
+            : CROSS_PIPELINE_SEMANTIC_VS_EXPLICIT_MIN
+        return candConf >= min
       }
       // v0.7.120 — HIGH-CONF lock blocks all cross-ref auto swaps.
       // v0.7.128 — UNLESS the new candidate is also high-conf

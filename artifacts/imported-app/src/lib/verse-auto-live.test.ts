@@ -43,8 +43,8 @@ const v = (
 // THRESHOLDS — v0.7.107 spec compliance
 // ──────────────────────────────────────────────────────────────────
 describe('thresholds (v0.7.109 — per-column auto-live + 1.25 s dwell)', () => {
-  it('explicit floor is 0.60 per spec', () => {
-    expect(EXPLICIT_AUTO_LIVE_MIN).toBe(0.6)
+  it('explicit floor is 0.58 per v0.7.133 operator spec ("any Bible Reference detected as low as 58% should auto go live")', () => {
+    expect(EXPLICIT_AUTO_LIVE_MIN).toBe(0.58)
   })
   it('semantic / "Bible Reference Quoted" (paraphrase) floor is 0.50 per v0.7.127 spec (was 0.55, lowered to close 50–54 % gap)', () => {
     expect(SEMANTIC_AUTO_LIVE_MIN).toBe(0.5)
@@ -75,11 +75,14 @@ describe('thresholds (v0.7.109 — per-column auto-live + 1.25 s dwell)', () => 
 // pickAutoLiveBySource — per-column floors
 // ──────────────────────────────────────────────────────────────────
 describe('pickAutoLiveBySource (per-column floors)', () => {
-  it('explicit at 0.60 IS live-eligible (boundary inclusive)', () => {
-    expect(pickAutoLiveBySource([v('A', 0.6, 1, 'explicit')], 'explicit')?.id).toBe('A')
+  it('explicit at 0.58 IS live-eligible (v0.7.133 boundary inclusive)', () => {
+    expect(pickAutoLiveBySource([v('A', 0.58, 1, 'explicit')], 'explicit')?.id).toBe('A')
   })
-  it('explicit at 0.59 is NOT live-eligible', () => {
-    expect(pickAutoLiveBySource([v('A', 0.59, 1, 'explicit')], 'explicit')).toBeNull()
+  it('explicit at 0.57 is NOT live-eligible (v0.7.133 below the 0.58 floor)', () => {
+    expect(pickAutoLiveBySource([v('A', 0.57, 1, 'explicit')], 'explicit')).toBeNull()
+  })
+  it('explicit at 0.59 IS live-eligible (above the v0.7.133 0.58 floor)', () => {
+    expect(pickAutoLiveBySource([v('A', 0.59, 1, 'explicit')], 'explicit')?.id).toBe('A')
   })
   it('semantic at 0.50 IS live-eligible (boundary inclusive — v0.7.127 floor)', () => {
     expect(pickAutoLiveBySource([v('A', 0.5, 1, 'semantic')], 'semantic')?.id).toBe('A')
@@ -105,7 +108,7 @@ describe('pickAutoLiveBySource (per-column floors)', () => {
     const detected = [v('Ps.23.1', 0.92, 1000, 'semantic')]
     expect(pickAutoLiveBySource(detected, 'explicit')).toBeNull()
   })
-  it('an unsourced detection defaults to the explicit column at 0.60+', () => {
+  it('an unsourced detection defaults to the explicit column at 0.58+ (v0.7.133)', () => {
     const detected = [v('Untagged.1.1', 0.61, 1000)]
     expect(pickAutoLiveBySource(detected, 'explicit')?.id).toBe('Untagged.1.1')
     expect(pickAutoLiveBySource(detected, 'semantic')).toBeNull()
@@ -231,12 +234,12 @@ describe('alternativesFor (legacy 2-column compat)', () => {
 // liveColumnFor — per-source floor
 // ──────────────────────────────────────────────────────────────────
 describe('liveColumnFor (cols 1 & 2 — per-source floors)', () => {
-  it('explicit column includes ≥0.60 from explicit source only, NEWEST first', () => {
+  it('explicit column includes ≥0.58 from explicit source only, NEWEST first (v0.7.133)', () => {
     const detected = [
       v('Hi',   0.92, 1, 'explicit'),
       v('Mid',  0.7,  2, 'explicit'),
-      v('Edge', 0.6,  3, 'explicit'),     // boundary inclusive
-      v('Sub',  0.59, 4, 'explicit'),     // → suggestions
+      v('Edge', 0.58, 3, 'explicit'),     // v0.7.133 boundary inclusive
+      v('Sub',  0.57, 4, 'explicit'),     // → suggestions
       v('Sem',  0.91, 5, 'semantic'),     // wrong column
     ]
     // Newest detected first → Edge (3), Mid (2), Hi (1).
@@ -371,8 +374,8 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     }
   })
 
-  it('does NOT fire when the explicit top is below 0.60', () => {
-    const r = shouldFireAutoLiveStable([v('Lo', 0.59, 1, 'explicit')], null, fresh(), {
+  it('does NOT fire when the explicit top is below 0.58 (v0.7.133)', () => {
+    const r = shouldFireAutoLiveStable([v('Lo', 0.57, 1, 'explicit')], null, fresh(), {
       nowMs: 1000,
     })
     expect(r.fire).toBe(false)
@@ -728,10 +731,11 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     }
   })
 
-  it('v0.7.131 CROSS-PIPELINE CORROBORATION: cross-pipeline candidate BELOW 0.70 floor still cannot hijack a high-conf live verse', () => {
-    // Make sure the cross-pipeline escape didn't open the floodgates
-    // — a 0.65 cross-pipeline candidate is still too weak to break
-    // a high-conf lock. Only ≥0.70 corroboration counts.
+  it('v0.7.133 CROSS-PIPELINE: explicit candidate BELOW 0.58 floor still cannot hijack a high-conf semantic lock', () => {
+    // v0.7.133 lowered the cross-pipeline EXPLICIT floor 0.70 → 0.58
+    // (operator spec "any Bible Reference detected as low as 58%").
+    // The escape still has a floor — sub-0.58 explicit hits are
+    // below the auto-live column floor itself and remain blocked.
     let g = fresh()
     let r = shouldFireAutoLiveStable(
       [{ ...v('Live.High', 0.95, 1000, 'semantic'), reference: 'John 3:16' }],
@@ -744,10 +748,72 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     r = shouldFireAutoLiveStable(
       [
         { ...v('Live.High', 0.95, 1000, 'semantic'), reference: 'John 3:16' },
-        // Cross-pipeline (explicit), but only 0.65 — under the floor.
-        { ...v('Weak.Hit',  0.65, 3000, 'explicit'), reference: 'Some Other 1:1' },
+        // Cross-pipeline explicit at 0.55 — below the 0.58 floor.
+        { ...v('Weak.Hit',  0.55, 3000, 'explicit'), reference: 'Some Other 1:1' },
       ],
       'Live.High',
+      g,
+      { nowMs: 3000 },
+    )
+    expect(r.fire).toBe(false)
+  })
+
+  it('v0.7.133 CROSS-PIPELINE: explicit candidate at the 0.58 boundary breaks a 1.00 semantic lock (operator screenshot reproduction)', () => {
+    // Operator screenshot https://imgur.com/a/8MmmIPI — the same
+    // case v0.7.131 tried to fix but at exactly 0.70 the boundary
+    // was still failing in production. v0.7.133 drops the floor to
+    // 0.58 so a 0.58/0.60/0.65/0.70 explicit hit ALL break the lock.
+    for (const candConf of [0.58, 0.6, 0.65, 0.7]) {
+      let g = fresh()
+      let r = shouldFireAutoLiveStable(
+        [{ ...v('Phrase.False', 1.0, 1000, 'semantic'), reference: 'Wrong 1:1' }],
+        null,
+        g,
+        { nowMs: 1000 },
+      )
+      expect(r.fire).toBe(true)
+      g = r.nextStability
+      r = shouldFireAutoLiveStable(
+        [
+          { ...v('Phrase.False', 1.0,        1000, 'semantic'), reference: 'Wrong 1:1' },
+          { ...v('Acts.16.25',   candConf,  3000, 'explicit'), reference: 'Acts 16:25' },
+        ],
+        'Phrase.False',
+        g,
+        { nowMs: 3000 },
+      )
+      expect(r.fire, `cand=${candConf}`).toBe(true)
+      if (r.fire) {
+        expect(r.verse.id).toBe('Acts.16.25')
+        expect(r.source).toBe('explicit')
+      }
+    }
+  })
+
+  it('v0.7.133 ASYMMETRIC: a 0.58 SEMANTIC paraphrase still cannot hijack a 1.00 EXPLICIT operator-loaded chapter', () => {
+    // The asymmetric mitigation. SEMANTIC candidates against an
+    // EXPLICIT-high-conf live verse still need the stricter 0.70
+    // floor (CROSS_PIPELINE_SEMANTIC_VS_EXPLICIT_MIN). Preserves
+    // v0.7.120's protection: a soft phrase match shouldn't be able
+    // to displace a chapter the operator deliberately loaded.
+    let g = fresh()
+    let r = shouldFireAutoLiveStable(
+      [{ ...v('Loaded.Chap', 1.0, 1000, 'explicit'), reference: 'Deut 2:1' }],
+      null,
+      g,
+      { nowMs: 1000 },
+    )
+    expect(r.fire).toBe(true)
+    g = r.nextStability
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Loaded.Chap',     1.0,  1000, 'explicit'), reference: 'Deut 2:1' },
+        // Cross-pipeline semantic at 0.65 — would clear EXPLICIT's
+        // 0.58 floor but NOT the asymmetric 0.70 SEMANTIC-vs-EXPLICIT
+        // floor.
+        { ...v('Soft.Paraphrase', 0.65, 3000, 'semantic'), reference: 'Other 1:1' },
+      ],
+      'Loaded.Chap',
       g,
       { nowMs: 3000 },
     )
