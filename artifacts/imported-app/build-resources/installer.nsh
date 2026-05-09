@@ -163,3 +163,48 @@
   !define MUI_FINISHPAGE_TEXT "ScriptureLive AI v${VERSION} has been successfully installed on your computer.$\r$\n$\r$\nLeave the box below ticked and click Finish to open ScriptureLive AI now.$\r$\n$\r$\nUntick the box and click Finish to just close this installer — you can open ScriptureLive AI later from your desktop or the Start menu."
   !define MUI_FINISHPAGE_RUN_TEXT "Open ScriptureLive AI now"
 !macroend
+
+; v0.7.142 — Operator follow-up (screenshot https://imgur.com/a/iB0bQ2K):
+; "inform users anytime the app is completely installed on their PC then
+; you add an option if they want to open it or close the installer after
+; installation."
+;
+; v0.7.139 already wired up the MUI Finish page with the right copy + a
+; "Open ScriptureLive AI now" run-checkbox. But two real-world install
+; flows can suppress or skip past that page so operators never see it:
+;
+;   1. **Auto-updater silent install.** When the in-app updater fires the
+;      installer with /S (silent), MUI's Finish page is suppressed
+;      entirely — no notification, app just relaunches. Operators
+;      reported feeling like the update "did nothing".
+;   2. **Click-through flow.** Some operators dismiss the Finish page
+;      without reading (it looks like a generic "Setup wizard finished"
+;      screen), miss the run-checkbox state, and end up unsure whether
+;      the app actually installed.
+;
+; Belt-and-braces fix: fire an explicit MessageBox right after the file
+; copy succeeds, BEFORE the Finish page renders. It is unmissable
+; (modal, ICONINFORMATION, "Installed! Open now?" Yes/No), it works for
+; both fresh installs AND user-initiated updates, and operators get
+; instant confirmation that the new version is on disk.
+;
+; We deliberately:
+;   • Skip the prompt on silent installs (`IfSilent skipPrompt`) so the
+;     auto-updater can still relaunch the app without freezing on a
+;     dialog the user can't see. The auto-updater path already shows
+;     its own in-app "Update installed, restart?" affordance via the
+;     `<UpdateAvailableDialog>` IPC channel — we don't double-prompt.
+;   • Use Exec (not ExecShell) so the new instance inherits a clean
+;     env and doesn't get confused by the installer's elevated token.
+;     The installer is per-user (perMachine: false in
+;     electron-builder.yml), so no UAC step needed.
+;   • Quote the path because `Program Files\…` always contains spaces.
+;   • ClearErrors at the end so a "user said No" doesn't poison the
+;     installer exit code.
+!macro customInstall
+  IfSilent skipLaunchPrompt
+  MessageBox MB_YESNO|MB_ICONINFORMATION "ScriptureLive AI v${VERSION} has been successfully installed on your computer.$\r$\n$\r$\nWould you like to open ScriptureLive AI now?$\r$\n$\r$\n(You can also open it later from your desktop or Start menu.)" /SD IDYES IDNO skipLaunchPrompt
+  Exec '"$INSTDIR\ScriptureLive AI.exe"'
+  skipLaunchPrompt:
+  ClearErrors
+!macroend
