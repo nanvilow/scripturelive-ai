@@ -790,12 +790,15 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     }
   })
 
-  it('v0.7.133 ASYMMETRIC: a 0.58 SEMANTIC paraphrase still cannot hijack a 1.00 EXPLICIT operator-loaded chapter', () => {
-    // The asymmetric mitigation. SEMANTIC candidates against an
-    // EXPLICIT-high-conf live verse still need the stricter 0.70
-    // floor (CROSS_PIPELINE_SEMANTIC_VS_EXPLICIT_MIN). Preserves
-    // v0.7.120's protection: a soft phrase match shouldn't be able
-    // to displace a chapter the operator deliberately loaded.
+  it('v0.7.135 SYMMETRIC: a 0.58 SEMANTIC paraphrase NOW breaks a 1.00 EXPLICIT live verse (operator spec — "MAKE THE 100% UNBLOCK ITSELF")', () => {
+    // The operator's reverse-direction escalation. v0.7.133 only
+    // opened EXPLICIT-cand-vs-SEMANTIC-live at the 0.58 floor;
+    // SEMANTIC-cand-vs-EXPLICIT-live was still gated at 0.70 by
+    // CROSS_PIPELINE_SEMANTIC_VS_EXPLICIT_MIN. Operator hit the same
+    // bug in mirror: 100% in "Auto Verse Match" (EXPLICIT) blocked a
+    // 58% detection in "Bible Reference Quoted" (SEMANTIC). v0.7.135
+    // drops the floor 0.70 → 0.58 in this direction too — both
+    // directions are now symmetric at 0.58.
     let g = fresh()
     let r = shouldFireAutoLiveStable(
       [{ ...v('Loaded.Chap', 1.0, 1000, 'explicit'), reference: 'Deut 2:1' }],
@@ -808,10 +811,39 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     r = shouldFireAutoLiveStable(
       [
         { ...v('Loaded.Chap',     1.0,  1000, 'explicit'), reference: 'Deut 2:1' },
-        // Cross-pipeline semantic at 0.65 — would clear EXPLICIT's
-        // 0.58 floor but NOT the asymmetric 0.70 SEMANTIC-vs-EXPLICIT
-        // floor.
-        { ...v('Soft.Paraphrase', 0.65, 3000, 'semantic'), reference: 'Other 1:1' },
+        // Cross-pipeline semantic at 0.58 — exactly the operator's
+        // floor. Must now displace the 1.00 EXPLICIT lock.
+        { ...v('Para.Quote',      0.58, 3000, 'semantic'), reference: 'Acts 16:25' },
+      ],
+      'Loaded.Chap',
+      g,
+      { nowMs: 3000 },
+    )
+    expect(r.fire).toBe(true)
+    if (r.fire) {
+      expect(r.verse.id).toBe('Para.Quote')
+      expect(r.source).toBe('semantic')
+    }
+  })
+
+  it('v0.7.135 SYMMETRIC boundary: a 0.57 SEMANTIC against a 1.00 EXPLICIT lock is STILL blocked (below the 0.58 floor)', () => {
+    // 0.57 is below the column auto-live floor anyway (semantic
+    // floor is 0.50, but the cross-pipeline corroboration floor is
+    // 0.58 — below it, the lock holds. Sanity-check the boundary so
+    // a future tweak can't accidentally let sub-floor noise through.
+    let g = fresh()
+    let r = shouldFireAutoLiveStable(
+      [{ ...v('Loaded.Chap', 1.0, 1000, 'explicit'), reference: 'Deut 2:1' }],
+      null,
+      g,
+      { nowMs: 1000 },
+    )
+    expect(r.fire).toBe(true)
+    g = r.nextStability
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Loaded.Chap', 1.0,  1000, 'explicit'), reference: 'Deut 2:1' },
+        { ...v('Soft.Sub',    0.57, 3000, 'semantic'), reference: 'Other 1:1' },
       ],
       'Loaded.Chap',
       g,
