@@ -651,12 +651,12 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     }
   })
 
-  it('v0.7.128 HIGH-CONF VS LOW-CONF: a low-conf candidate STILL cannot hijack a high-conf live verse (v0.7.120 protection intact)', () => {
-    // Inverse of the v0.7.128 fix above — make sure relaxing the
-    // high-conf lock for high-conf candidates didn't accidentally
-    // also let weak detections through. v0.7.120's original case:
-    // verbatim "Suffer not a witch to live" @ 0.85 hand-curated
-    // EXACT must NOT be displaced by a regex 0.65-ish near-miss.
+  it('v0.7.128 HIGH-CONF VS LOW-CONF SAME-PIPELINE: a low-conf same-pipeline candidate STILL cannot hijack a high-conf live verse (v0.7.120 protection intact)', () => {
+    // v0.7.131 narrows this case: only SAME-pipeline near-misses are
+    // treated as noise. CROSS-pipeline disagreement is corroboration
+    // and gets its own escape (see v0.7.131 tests below). Original
+    // v0.7.120 scenario was a verbatim semantic phrase being
+    // hijacked by a same-column near-miss — that protection stays.
     let g = fresh()
     let r = shouldFireAutoLiveStable(
       [{ ...v('Exo.22.18', 0.95, 1000, 'semantic'), reference: 'Exodus 22:18' }],
@@ -668,10 +668,112 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     g = r.nextStability
     r = shouldFireAutoLiveStable(
       [
-        { ...v('Exo.22.18',  0.95, 1000, 'semantic'),  reference: 'Exodus 22:18' },
-        { ...v('Some.Other', 0.70, 3000, 'explicit'),  reference: 'Some Other 1:1' },
+        { ...v('Exo.22.18',  0.95, 1000, 'semantic'), reference: 'Exodus 22:18' },
+        // Same SEMANTIC pipeline near-miss — must NOT break the lock.
+        { ...v('Some.Other', 0.70, 3000, 'semantic'), reference: 'Some Other 1:1' },
       ],
       'Exo.22.18',
+      g,
+      { nowMs: 3000 },
+    )
+    expect(r.fire).toBe(false)
+  })
+
+  it('v0.7.131 CROSS-PIPELINE CORROBORATION: a moderate-conf EXPLICIT detection DOES break a high-conf SEMANTIC false-positive lock', () => {
+    // Reproduces the operator screenshot https://imgur.com/a/8MmmIPI:
+    // preacher said "Paul and Silas were locked up in prison" → COL 1
+    // "Auto Verse Match" (semantic pipeline) had latched onto a
+    // phrase-only false-positive at 1.00 confidence and gone live.
+    // COL 2 "Bible Reference Quoted" (explicit pipeline) correctly
+    // detected Acts 16 at 0.70. Pre-v0.7.131 the v0.7.128 escape
+    // required BOTH detections ≥0.85, so the 0.70 explicit was
+    // permanently locked out by the spurious 1.00 semantic.
+    // v0.7.131: cross-pipeline disagreement at ≥0.70 breaks the lock.
+    let g = fresh()
+    let r = shouldFireAutoLiveStable(
+      [
+        {
+          ...v('Phrase.Match', 1.0, 1000, 'semantic'),
+          reference: 'Some Wrong Verse 1:1',
+        },
+      ],
+      null,
+      g,
+      { nowMs: 1000 },
+    )
+    expect(r.fire).toBe(true)
+    g = r.nextStability
+    // 2 s later (well inside the 8 s sticky window): explicit
+    // pipeline detects Acts 16 at exactly 0.70 — operator's exact
+    // reported case. Cross-pipeline + ≥0.70 → lock yields.
+    r = shouldFireAutoLiveStable(
+      [
+        {
+          ...v('Phrase.Match', 1.0, 1000, 'semantic'),
+          reference: 'Some Wrong Verse 1:1',
+        },
+        {
+          ...v('Acts.16.25', 0.7, 3000, 'explicit'),
+          reference: 'Acts 16:25',
+        },
+      ],
+      'Phrase.Match',
+      g,
+      { nowMs: 3000 },
+    )
+    expect(r.fire).toBe(true)
+    if (r.fire) {
+      expect(r.verse.id).toBe('Acts.16.25')
+      expect(r.source).toBe('explicit')
+    }
+  })
+
+  it('v0.7.131 CROSS-PIPELINE CORROBORATION: cross-pipeline candidate BELOW 0.70 floor still cannot hijack a high-conf live verse', () => {
+    // Make sure the cross-pipeline escape didn't open the floodgates
+    // — a 0.65 cross-pipeline candidate is still too weak to break
+    // a high-conf lock. Only ≥0.70 corroboration counts.
+    let g = fresh()
+    let r = shouldFireAutoLiveStable(
+      [{ ...v('Live.High', 0.95, 1000, 'semantic'), reference: 'John 3:16' }],
+      null,
+      g,
+      { nowMs: 1000 },
+    )
+    expect(r.fire).toBe(true)
+    g = r.nextStability
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Live.High', 0.95, 1000, 'semantic'), reference: 'John 3:16' },
+        // Cross-pipeline (explicit), but only 0.65 — under the floor.
+        { ...v('Weak.Hit',  0.65, 3000, 'explicit'), reference: 'Some Other 1:1' },
+      ],
+      'Live.High',
+      g,
+      { nowMs: 3000 },
+    )
+    expect(r.fire).toBe(false)
+  })
+
+  it('v0.7.131 CROSS-PIPELINE CORROBORATION: same-reference cross-pipeline candidate is still blocked (no flicker)', () => {
+    // The same-reference no-flicker guard runs FIRST, before the
+    // cross-pipeline escape. A 0.95 explicit hit on the same
+    // reference as a 0.95 semantic live verse must NOT cause a
+    // visible reswap.
+    let g = fresh()
+    let r = shouldFireAutoLiveStable(
+      [{ ...v('Sem.Live', 0.95, 1000, 'semantic'), reference: 'John 3:16' }],
+      null,
+      g,
+      { nowMs: 1000 },
+    )
+    expect(r.fire).toBe(true)
+    g = r.nextStability
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Sem.Live', 0.95, 1000, 'semantic'), reference: 'John 3:16' },
+        { ...v('Exp.Echo', 0.95, 3000, 'explicit'), reference: 'John 3:16' },
+      ],
+      'Sem.Live',
       g,
       { nowMs: 3000 },
     )

@@ -201,7 +201,41 @@ export const LIVE_STICKY_CONFIDENCE_DELTA = 0.1
 // against a high-conf live verse still cannot break the lock — the
 // v0.7.120 protection against navigation/regex spurious hits
 // hijacking a verbatim quote stays intact.
+//
+// v0.7.131 — Cross-pipeline corroboration escape hatch.
+// Operator screenshot https://imgur.com/a/8MmmIPI: preacher said
+// "Paul and Silas were locked up in prison" → COL 1 "Auto Verse
+// Match" (semantic pipeline) had latched onto a phrase-only match
+// at 1.00 confidence and gone live. Simultaneously COL 2 "Bible
+// Reference Quoted" (explicit/regex pipeline) correctly detected
+// the actual reference (Acts 16) at 0.70. v0.7.128's escape only
+// fired when BOTH detections were ≥0.85, so a high-conf SEMANTIC
+// false-positive could permanently lock out a moderate-confidence
+// EXPLICIT correction — exactly the operator-reported bug.
+//
+// Insight: a high-conf same-pipeline near-miss is noise (the v0.7.120
+// case — which we MUST keep blocked). But a moderate-conf detection
+// from the OTHER pipeline is independent corroboration: two different
+// matchers (regex address parser + semantic phrase matcher) seeing
+// different content is a strong signal that the live verse is wrong
+// and the preacher has moved on. v0.7.131 adds a cross-pipeline
+// escape: if the candidate's source != the live verse's source AND
+// the candidate clears CROSS_PIPELINE_CORROBORATION_MIN, the lock
+// yields. Same-pipeline candidates still go through the original
+// v0.7.120/v0.7.128 logic — the v0.7.120 protection against same-
+// pipeline near-misses hijacking a verbatim quote is unchanged.
 export const LIVE_HIGH_CONF_LOCK = 0.85
+
+// v0.7.131 — Cross-pipeline corroboration floor.
+//   • EXPLICIT column floor (v0.7.108): 0.60
+//   • SEMANTIC column floor (v0.7.127): 0.50
+// 0.70 sits comfortably above both column floors so a borderline
+// detection in EITHER pipeline still can't hijack a high-conf
+// live verse — but a confident regex address parse (typical
+// 0.70-0.95) or a strong preacher-phrase match (typical 0.65-0.95)
+// from the OTHER pipeline correctly breaks the lock. Matches the
+// operator's reported case at exactly 0.70.
+export const CROSS_PIPELINE_CORROBORATION_MIN = 0.7
 
 function detectedAtMs(v: RankedVerse): number {
   const d = v.detectedAt
@@ -515,6 +549,7 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
     const liveVerse = detected.find((v) => v.id === currentLiveId) ?? null
     const liveConf = liveVerse?.confidence ?? 0
     const liveRef = liveVerse?.reference ?? null
+    const liveSource = liveVerse ? sourceOf(liveVerse) : null
     // v0.7.120 — High-confidence absolute lock. If the live verse
     // came from a verbatim hand-curated catalog hit (>= 0.85) the
     // operator's intent is unambiguous; block ALL cross-ref auto
@@ -522,11 +557,34 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
     // confidence. Manual operator click still overrides because that
     // path doesn't go through this gate.
     const liveIsHighConf = liveConf >= LIVE_HIGH_CONF_LOCK
-    const passesReadLock = (cand: T | null): boolean => {
+    const passesReadLock = (
+      cand: T | null,
+      candSource: 'explicit' | 'semantic',
+    ): boolean => {
       if (!cand) return false
       // Same reference → not really a swap. Block (no visible flicker).
       if (liveRef && cand.reference === liveRef) return false
       const candConf = cand.confidence ?? 0
+      // v0.7.131 — CROSS-PIPELINE corroboration escape (runs FIRST,
+      // before the same-pipeline same-source rules). When the
+      // candidate comes from a DIFFERENT detection pipeline than the
+      // currently live verse, treat it as independent verification
+      // that the preacher has moved on. The semantic phrase matcher
+      // and the explicit address parser are causally independent
+      // signals — when they DIS-agree on which reference is current,
+      // the cross-pipeline disagreement is itself a strong signal
+      // the live verse is wrong (typically a high-conf semantic
+      // phrase false-positive being corrected by the regex address
+      // parser, or vice versa). Allow the swap iff the candidate
+      // clears CROSS_PIPELINE_CORROBORATION_MIN — comfortably above
+      // both column auto-live floors so noise can't break through,
+      // but reachable for a confident detection from the other
+      // pipeline. Same-pipeline candidates still go through the
+      // v0.7.120/v0.7.128 path below (a same-pipeline near-miss is
+      // noise, not corroboration — must stay blocked).
+      if (liveSource && candSource !== liveSource) {
+        return candConf >= CROSS_PIPELINE_CORROBORATION_MIN
+      }
       // v0.7.120 — HIGH-CONF lock blocks all cross-ref auto swaps.
       // v0.7.128 — UNLESS the new candidate is also high-conf
       // (≥ LIVE_HIGH_CONF_LOCK). Two independent high-conf
@@ -536,8 +594,8 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
       if (liveIsHighConf) return candConf >= LIVE_HIGH_CONF_LOCK
       return candConf >= liveConf + stickyDelta
     }
-    if (!passesReadLock(explicitFire)) explicitFire = null
-    if (!passesReadLock(semanticFire)) semanticFire = null
+    if (!passesReadLock(explicitFire, 'explicit')) explicitFire = null
+    if (!passesReadLock(semanticFire, 'semantic')) semanticFire = null
   }
 
   // Independence + tiebreak: explicit wins when both fire same frame.
