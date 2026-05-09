@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { useLicense } from './license-provider'
-import { Copy, ShieldCheck, Lock, Sparkles, AlertTriangle, Phone, Mail, Loader2, Check, Crown, Building2, Gift } from 'lucide-react'
+import { Copy, ShieldCheck, Lock, Sparkles, AlertTriangle, Phone, Mail, Loader2, Check, Crown, Building2, Gift, Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -313,14 +313,12 @@ export function SubscriptionModal() {
               name: 'Starter',
               blurb: 'Perfect for small churches just getting started with smart scripture display.',
               price: 'Free',
-              priceSuffix: '',
+              priceSuffix: 'forever',
               icon: Gift,
               features: [
                 'AI Verse Detection (Free Trial)',
                 'Dual Screen Display',
-                'Basic Typography Customization',
                 'Up to 2 screens',
-                'Email Support',
               ],
               ctaLabel: 'Get Started',
               featured: false,
@@ -331,16 +329,13 @@ export function SubscriptionModal() {
               name: 'Pro',
               blurb: 'The full ScriptureLive experience for growing congregations.',
               price: proPlan ? `GHS ${proPlan.amountGhs.toLocaleString()}` : 'GHS —',
-              priceSuffix: '/per month',
+              priceSuffix: 'per month',
               icon: Crown,
               features: [
-                'AI Verse Detection (OpenAI Mode)',
                 'NDI Output Integration',
-                'Unlimited Screens',
                 'Full Typography & Styling',
-                'Smart Chapter Navigator',
                 'Priority Support',
-                'All future updates',
+                'AI Verse Detection (OpenAI Mode)',
               ],
               ctaLabel: 'Get Started',
               featured: true,
@@ -350,17 +345,17 @@ export function SubscriptionModal() {
             {
               id: 'church',
               name: 'Church License',
-              blurb: 'A permanent license for established ministries — pay once, own it forever.',
+              blurb: 'A long-term license for established ministries: pay once and own it for a year without interruptions.',
               price: churchPlan ? `GHS ${churchPlan.amountGhs.toLocaleString()}` : 'GHS —',
-              priceSuffix: '/Year',
+              priceSuffix: 'Year',
               icon: Building2,
               features: [
                 'Everything in Pro',
-                'Lifetime license (no subscription)',
-                'Install on up to 5 machines',
-                'Setup & onboarding call',
                 'Dedicated WhatsApp support',
-                'Custom branding options',
+                'AI Verse Detection (OpenAI Mode)',
+                'Unlimited Screens',
+                'All future updates',
+                'Full Typography & Styling',
               ],
               ctaLabel: 'Get Started',
               featured: false,
@@ -441,8 +436,8 @@ export function SubscriptionModal() {
                     )}
                   >
                     {tier.featured && (
-                      <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-amber-500 text-amber-950 text-[9px] font-bold uppercase tracking-wider shadow-lg whitespace-nowrap">
-                        Most Popular
+                      <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-amber-500 text-amber-950 text-[10px] font-semibold shadow-lg whitespace-nowrap inline-flex items-center gap-1">
+                        <Star className="h-2.5 w-2.5" /> Popular
                       </div>
                     )}
                     <div className="flex items-center gap-1.5">
