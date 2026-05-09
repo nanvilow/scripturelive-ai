@@ -26,7 +26,13 @@ export interface RecentActivation {
   days: number
   activatedAt: string
   expiresAt: string | null
-  installId?: string | null
+  /** v0.7.137 — paymentRef is sourced from `generatedFor.paymentRef`
+   *  on the activation row. `installId` was previously read off the
+   *  AdminCodeRow but that type only carries fields shared across all
+   *  codes (name, plan, days, status); the install identifier lives
+   *  on the LicenseFile, not per-code, and there's no per-code
+   *  install tracking on the admin side, so we just expose
+   *  paymentRef here. */
   paymentRef?: string | null
 }
 
@@ -56,8 +62,7 @@ export async function GET(req: NextRequest) {
       days: row.days,
       activatedAt: row.usedAt,
       expiresAt: row.subscriptionExpiresAt ?? null,
-      installId: row.installId ?? null,
-      paymentRef: row.paymentRef ?? null,
+      paymentRef: row.generatedFor?.paymentRef ?? null,
     })
   }
   recent.sort((a, b) => Date.parse(b.activatedAt) - Date.parse(a.activatedAt))

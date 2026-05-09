@@ -27,12 +27,114 @@ fs.mkdirSync(OUT_DIR, { recursive: true })
 // lookupVerse / lookupRange return null, so callers transparently fall
 // back to the online fetchBibleVerse path. FORCE=1 leaves the stubs
 // alone and lets the download below overwrite them.
-for (const t of ['kjv', 'niv', 'esv']) {
+// v0.7.137 — Ghanaian translations bundled alongside the English
+// trio so the Windows build runs offline. Sourced from
+// wldeh/bible-api (different shape from bolls — see bundleWldeh below).
+for (const t of ['kjv', 'niv', 'esv', 'twi', 'twiasante', 'ewe']) {
   const f = path.join(OUT_DIR, `${t}.json`)
   if (!fs.existsSync(f)) {
     fs.writeFileSync(f, '{}')
     console.log(`[stub]  wrote empty ${t}.json so the next build never errors on a missing import`)
   }
+}
+
+// v0.7.137 — wldeh/bible-api per-translation config. Mirrors
+// WLDEH_TRANSLATIONS in src/lib/bibles/twi-bible.ts but lives here
+// to keep this script free of the @/ alias.
+const WLDEH = {
+  twi: {
+    cdnSlug: 'tw-wakna',
+    bookSlugs: {
+      Genesis: '1mose', Exodus: '2mose', Leviticus: '3mose', Numbers: '4mose', Deuteronomy: '5mose',
+      Joshua: 'yosua', Judges: 'atemmufo', Ruth: 'rut',
+      '1 Samuel': '1samuel', '2 Samuel': '2samuel',
+      '1 Kings': '1ahemfo', '2 Kings': '2ahemfo',
+      '1 Chronicles': '1beresosɛm', '2 Chronicles': '2beresosɛm',
+      Ezra: 'ɛsra', Nehemiah: 'nehemia', Esther: 'ɛster',
+      Job: 'hiob', Psalms: 'nnwom', Proverbs: 'mmebusɛm',
+      Ecclesiastes: 'ɔsɛnkafo', 'Song of Solomon': 'nnwommudwom',
+      Isaiah: 'yesaia', Jeremiah: 'yeremia', Lamentations: 'kwadwom',
+      Ezekiel: 'hesekiel', Daniel: 'daniel',
+      Hosea: 'hosea', Joel: 'yoɛl', Amos: 'amos', Obadiah: 'obadia',
+      Jonah: 'yona', Micah: 'mika', Nahum: 'nahum', Habakkuk: 'habakuk',
+      Zephaniah: 'sefania', Haggai: 'hagai', Zechariah: 'sakaria', Malachi: 'malaki',
+      Matthew: 'mateo', Mark: 'marko', Luke: 'luka', John: 'yohane',
+      Acts: 'asomafo',
+      Romans: 'romafo',
+      '1 Corinthians': '1korintofo', '2 Corinthians': '2korintofo',
+      Galatians: 'galatifo', Ephesians: 'efesofo',
+      Philippians: 'filipifo', Colossians: 'kolosefo',
+      '1 Thessalonians': '1tesalonikafo', '2 Thessalonians': '2tesalonikafo',
+      '1 Timothy': '1timoteo', '2 Timothy': '2timoteo',
+      Titus: 'tito', Philemon: 'filemon',
+      Hebrews: 'hebrifo', James: 'yakobo',
+      '1 Peter': '1petro', '2 Peter': '2petro',
+      '1 John': '1yohane', '2 John': '2yohane', '3 John': '3yohane',
+      Jude: 'yuda', Revelation: 'adiyisɛm',
+    },
+  },
+  twiasante: {
+    cdnSlug: 'tw-wasna',
+    bookSlugs: {
+      Genesis: '1mose', Exodus: '2mose', Leviticus: '3mose', Numbers: '4mose', Deuteronomy: '5mose',
+      Joshua: 'yosua', Judges: 'atemmufoɔ', Ruth: 'rut',
+      '1 Samuel': '1samuel', '2 Samuel': '2samuel',
+      '1 Kings': '1ahemfo', '2 Kings': '2ahemfo',
+      '1 Chronicles': '1berɛsosɛm', '2 Chronicles': '2berɛsosɛm',
+      Ezra: 'ɛsra', Nehemiah: 'nehemia', Esther: 'ɛster',
+      Job: 'hiob', Psalms: 'nnwom', Proverbs: 'mmɛbusɛm',
+      Ecclesiastes: 'ɔsɛnkafoɔ', 'Song of Solomon': 'nnwommudwom',
+      Isaiah: 'yesaia', Jeremiah: 'yeremia', Lamentations: 'kwadwom',
+      Ezekiel: 'hesekiel', Daniel: 'daniel',
+      Hosea: 'hosea', Joel: 'yoɛl', Amos: 'amos', Obadiah: 'obadia',
+      Jonah: 'yona', Micah: 'mika', Nahum: 'nahum', Habakkuk: 'habakuk',
+      Zephaniah: 'sefania', Haggai: 'hagai', Zechariah: 'sakaria', Malachi: 'malaki',
+      Matthew: 'mateo', Mark: 'marko', Luke: 'luka', John: 'yohane',
+      Acts: 'asomafoɔ',
+      Romans: 'romafoɔ',
+      '1 Corinthians': '1korintofoɔ', '2 Corinthians': '2korintofoɔ',
+      Galatians: 'galatifoɔ', Ephesians: 'efesofoɔ',
+      Philippians: 'filipifoɔ', Colossians: 'kolosefoɔ',
+      '1 Thessalonians': '1tesalonikafoɔ', '2 Thessalonians': '2tesalonikafoɔ',
+      '1 Timothy': '1timoteo', '2 Timothy': '2timoteo',
+      Titus: 'tito', Philemon: 'filemon',
+      Hebrews: 'hebrifoɔ', James: 'yakobo',
+      '1 Peter': '1petro', '2 Peter': '2petro',
+      '1 John': '1yohane', '2 John': '2yohane', '3 John': '3yohane',
+      Jude: 'yuda', Revelation: 'adiyisɛm',
+    },
+  },
+  ewe: {
+    cdnSlug: 'ee-oal',
+    bookSlugs: {
+      Genesis: 'mose1', Exodus: 'mose2', Leviticus: 'mose3', Numbers: 'mose4', Deuteronomy: 'mose5',
+      Joshua: 'yosua', Judges: 'ʋɔnudrɔ̃lawo', Ruth: 'rut',
+      '1 Samuel': 'samuel1', '2 Samuel': 'samuel2',
+      '1 Kings': 'fiawo1', '2 Kings': 'fiawo2',
+      '1 Chronicles': 'kronika1', '2 Chronicles': 'kronika2',
+      Ezra: 'ezra', Nehemiah: 'nehemia', Esther: 'ester',
+      Job: 'hiob', Psalms: 'psalmowo', Proverbs: 'lododowo',
+      Ecclesiastes: 'nyagblɔla', 'Song of Solomon': 'hawo',
+      Isaiah: 'yesaya', Jeremiah: 'yeremia', Lamentations: 'konyifahawo',
+      Ezekiel: 'hezekiel', Daniel: 'daniel',
+      Hosea: 'hosea', Joel: 'yoel', Amos: 'amos', Obadiah: 'obadia',
+      Jonah: 'yona', Micah: 'mika', Nahum: 'nahum', Habakkuk: 'habakuk',
+      Zephaniah: 'zefania', Haggai: 'hagai', Zechariah: 'zekaria', Malachi: 'malaki',
+      Matthew: 'mateo', Mark: 'marko', Luke: 'luka', John: 'yohanes',
+      Acts: 'dɔwɔwɔwo',
+      Romans: 'romatɔwo',
+      '1 Corinthians': 'korintotɔwo1', '2 Corinthians': 'korintotɔwo2',
+      Galatians: 'galatiatɔwo', Ephesians: 'efesotɔwo',
+      Philippians: 'filipitɔwo', Colossians: 'kolosetɔwo',
+      '1 Thessalonians': 'tesalonikatɔwo1', '2 Thessalonians': 'tesalonikatɔwo2',
+      '1 Timothy': 'timoteo1', '2 Timothy': 'timoteo2',
+      Titus: 'tito', Philemon: 'filemon',
+      Hebrews: 'hebritɔwo', James: 'yakobo',
+      '1 Peter': 'petro1', '2 Peter': 'petro2',
+      '1 John': 'yohanes1', '2 John': 'yohanes2', '3 John': 'yohanes3',
+      Jude: 'yuda', Revelation: 'nyaɖeɖefia',
+    },
+  },
 }
 
 function bookId(book) {
@@ -266,13 +368,58 @@ async function fetchChapter(translation, book, chapter) {
   return {}
 }
 
+// v0.7.137 — wldeh chapter fetcher. Returns a map of {verseNum: text}
+// shaped exactly like fetchChapter() above so bundleTranslation()
+// stays source-agnostic.
+async function fetchWldehChapter(translation, book, chapter) {
+  const cfg = WLDEH[translation]
+  if (!cfg) return {}
+  const slug = cfg.bookSlugs[book]
+  if (!slug) return {}
+  const url = `https://cdn.jsdelivr.net/gh/wldeh/bible-api/bibles/${cfg.cdnSlug}/books/${encodeURIComponent(slug)}/chapters/${chapter}.json`
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const r = await fetch(url, { headers: { Accept: 'application/json' } })
+      if (!r.ok) {
+        // 404 = chapter doesn't exist in this translation (some
+        // small books have variable chapter counts upstream). Don't
+        // retry — just return empty so the bundle stays consistent.
+        if (r.status === 404) return {}
+        throw new Error(`HTTP ${r.status}`)
+      }
+      const data = await r.json()
+      const rows = Array.isArray(data && data.data) ? data.data : []
+      const out = {}
+      for (const row of rows) {
+        const v = typeof row.verse === 'string' ? parseInt(row.verse, 10) : Number(row.verse)
+        const text = typeof row.text === 'string' ? row.text.trim() : ''
+        if (Number.isFinite(v) && v > 0 && text) out[v] = text
+      }
+      return out
+    } catch (e) {
+      const wait = 500 * Math.pow(2, attempt)
+      console.warn(`  retry ${book} ${chapter} (${translation}/${cfg.cdnSlug}) attempt ${attempt + 1}: ${e.message}; sleep ${wait}ms`)
+      await new Promise((r) => setTimeout(r, wait))
+    }
+  }
+  console.error(`  FAIL ${translation} ${book} ${chapter} — leaving empty`)
+  return {}
+}
+
 async function bundleTranslation(translation) {
   const outFile = path.join(OUT_DIR, `${translation.toLowerCase()}.json`)
   if (fs.existsSync(outFile) && !process.env.FORCE) {
-    console.log(`[skip] ${translation} (${outFile} exists; set FORCE=1 to redownload)`)
-    return
+    // Skip only if file is non-trivially populated. Empty `{}` stub
+    // (~2 bytes) should be redownloaded so the operator's first
+    // explicit `node bundle-bibles.mjs twi` actually writes data.
+    const sz = fs.statSync(outFile).size
+    if (sz > 1024) {
+      console.log(`[skip] ${translation} (${outFile} exists, ${sz} B; set FORCE=1 to redownload)`)
+      return
+    }
   }
-  console.log(`[start] downloading ${translation.toUpperCase()} from bolls.life`)
+  const isWldeh = translation in WLDEH
+  console.log(`[start] downloading ${translation.toUpperCase()} from ${isWldeh ? `wldeh/bible-api (${WLDEH[translation].cdnSlug})` : 'bolls.life'}`)
   const result = {}
   const concurrency = 12
   const queue = []
@@ -287,7 +434,9 @@ async function bundleTranslation(translation) {
     while (true) {
       const job = queue[cursor++]
       if (!job) return
-      const ch = await fetchChapter(translation, job.book, job.chapter)
+      const ch = isWldeh
+        ? await fetchWldehChapter(translation, job.book, job.chapter)
+        : await fetchChapter(translation, job.book, job.chapter)
       if (!result[job.book]) result[job.book] = {}
       result[job.book][job.chapter] = ch
       done++
