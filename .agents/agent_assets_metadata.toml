@@ -803,3 +803,9 @@ id = "uZCclSbGIcx82ajU7nu0e"
 uri = "file://exports/ScriptureLive-AI-v0.7.129-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.129 — Startup Update Popup"
+
+[[outputs]]
+id = "wWekM7XWUY_KvNB_FjMAx"
+uri = "file://exports/ScriptureLive-AI-v0.7.130-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.130 — Update popup without external link"
