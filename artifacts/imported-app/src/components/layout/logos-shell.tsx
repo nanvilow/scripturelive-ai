@@ -2146,6 +2146,7 @@ function DetectedVersesCard() {
   const {
     detectedVerses,
     clearDetectedVerses,
+    clearDetectedVersesBySource,
     detectedVerseCandidates,
     clearDetectedVerseCandidates,
     promoteDetectedVerseCandidate,
@@ -2381,16 +2382,28 @@ function DetectedVersesCard() {
                 <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-300">
                   Auto Verse Match
                 </span>
-                <span className="text-[9px] font-mono tabular-nums text-muted-foreground">
-                  {explicitRows.length}
-                </span>
+                {/* v0.7.134 — Per-column Clear button (operator
+                    request, screenshot https://imgur.com/37pTmau).
+                    Falls back to a count-only display when the column
+                    is empty so the chrome doesn't jitter. */}
+                {explicitRows.length > 0 ? (
+                  <button
+                    onClick={() => clearDetectedVersesBySource('explicit')}
+                    className="text-[9px] font-bold uppercase tracking-wider text-emerald-300/70 hover:text-emerald-200 px-1"
+                    aria-label="Clear Auto Verse Match column"
+                  >
+                    Clear · {explicitRows.length}
+                  </button>
+                ) : (
+                  <span className="text-[9px] font-mono tabular-nums text-muted-foreground">0</span>
+                )}
               </div>
               <div className="flex-1 min-h-0 overflow-y-auto">
                 <div className="p-1.5 space-y-1.5">
                   {explicitRows.length === 0 ? (
                     <div className="text-center py-6 text-[10px] text-muted-foreground">
                       <Mic className="h-5 w-5 mx-auto opacity-40 mb-1.5" />
-                      Explicit references (e.g.&nbsp;&ldquo;Amos 1:3&rdquo;) auto-live at ≥60%.
+                      Explicit references (e.g.&nbsp;&ldquo;Amos 1:3&rdquo;) auto-live at ≥58%.
                     </div>
                   ) : (
                     // Sub-threshold rows render with the same 'live'
@@ -2411,16 +2424,24 @@ function DetectedVersesCard() {
                 <span className="text-[9px] font-bold uppercase tracking-wider text-sky-300">
                   Bible Reference Quoted
                 </span>
-                <span className="text-[9px] font-mono tabular-nums text-muted-foreground">
-                  {semanticRows.length}
-                </span>
+                {semanticRows.length > 0 ? (
+                  <button
+                    onClick={() => clearDetectedVersesBySource('semantic')}
+                    className="text-[9px] font-bold uppercase tracking-wider text-sky-300/70 hover:text-sky-200 px-1"
+                    aria-label="Clear Bible Reference Quoted column"
+                  >
+                    Clear · {semanticRows.length}
+                  </button>
+                ) : (
+                  <span className="text-[9px] font-mono tabular-nums text-muted-foreground">0</span>
+                )}
               </div>
               <div className="flex-1 min-h-0 overflow-y-auto">
                 <div className="p-1.5 space-y-1.5">
                   {semanticRows.length === 0 ? (
                     <div className="text-center py-6 text-[10px] text-muted-foreground">
                       <Mic className="h-5 w-5 mx-auto opacity-40 mb-1.5" />
-                      Paraphrased quotations auto-live at ≥55%.
+                      Paraphrased quotations auto-live at ≥50%.
                     </div>
                   ) : (
                     semanticRows.map((row, i) => renderRow(row, i, 'live'))
@@ -2436,9 +2457,24 @@ function DetectedVersesCard() {
                 <span className="text-[9px] font-bold uppercase tracking-wider text-amber-300">
                   Suggested Verses
                 </span>
-                <span className="text-[9px] font-mono tabular-nums text-muted-foreground">
-                  {suggestionRows.length + detectedVerseCandidates.length}
-                </span>
+                {suggestionRows.length + detectedVerseCandidates.length > 0 ? (
+                  <button
+                    onClick={() => {
+                      // Suggestions live in BOTH detectedVerses
+                      // (band 0.10–0.49 from either pipeline) and the
+                      // separate detectedVerseCandidates bucket — wipe
+                      // both so the column actually empties.
+                      clearDetectedVersesBySource('suggestion')
+                      clearDetectedVerseCandidates()
+                    }}
+                    className="text-[9px] font-bold uppercase tracking-wider text-amber-300/70 hover:text-amber-200 px-1"
+                    aria-label="Clear Suggested Verses column"
+                  >
+                    Clear · {suggestionRows.length + detectedVerseCandidates.length}
+                  </button>
+                ) : (
+                  <span className="text-[9px] font-mono tabular-nums text-muted-foreground">0</span>
+                )}
               </div>
               <div className="flex-1 min-h-0 overflow-y-auto">
                 <div className="p-1.5 space-y-1.5">

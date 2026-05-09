@@ -131,9 +131,15 @@ const DEFAULT_TRANSCRIBE_PROXY_URL =
 // the two surfaces never disagree. Next.js inlines NEXT_PUBLIC_* at
 // renderer build time, and Electron's main process picks the same
 // var up from `process.env` at launch.
+// v0.7.134 — Default flipped from `scripturelive.replit.app` →
+// `scriptureliveai.com` so every operator-clicked "Visit website" link
+// (Help menu, Help & Updates card, first-run welcome dialog, the
+// desktop links from https://imgur.com/a/gZoZtsp) opens the public
+// marketing domain. Mirrors the matching default in
+// `src/lib/website-url.ts` — keep them in lockstep.
 const WEBSITE_URL =
   process.env.NEXT_PUBLIC_WEBSITE_URL?.trim() ||
-  'https://scripturelive.replit.app/'
+  'https://scriptureliveai.com/'
 
 const isDev = !app.isPackaged
 

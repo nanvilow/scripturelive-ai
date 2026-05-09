@@ -277,6 +277,14 @@ interface AppState {
   detectedVerses: DetectedVerse[]
   addDetectedVerse: (v: DetectedVerse) => void
   clearDetectedVerses: () => void
+  // v0.7.134 — Per-column Clear button on the Detected Verses card.
+  // `'explicit'` clears the "Auto Verse Match" column (regex hits),
+  // `'semantic'` clears the "Bible Reference Quoted" column (paraphrase
+  // hits), `'suggestion'` clears the SUGGESTIONS bucket entries that
+  // live in detectedVerses (10–49% band). detectedVerseCandidates is
+  // cleared by clearDetectedVerseCandidates() — the Suggested Verses
+  // column wipe calls BOTH so the UI matches what the operator sees.
+  clearDetectedVersesBySource: (source: 'explicit' | 'semantic' | 'suggestion') => void
   // v0.7.60 — Low-confidence "candidate" detections (0.20–0.49). The
   // operator can promote one to live with a click; auto-go-live is
   // never permitted from this bucket. Kept separate from
@@ -774,6 +782,33 @@ export const useAppStore = create<AppState>()(
           }
         }),
       clearDetectedVerses: () => set({ detectedVerses: [] }),
+      // v0.7.134 — Per-column wipe. Source matching mirrors
+      // verse-auto-live.ts `sourceOf()`: untagged detections default
+      // to 'explicit'. SUGGESTION wipe drops anything below the
+      // SEMANTIC floor (0.50) — that's the same band the Suggested
+      // Verses column renders via suggestionsFor() — so the operator
+      // sees the column actually empty after the click. We deliberately
+      // keep it source-agnostic for the suggestion band because the
+      // 10–49% suggestions bucket can contain rows from EITHER pipeline
+      // (an explicit regex hit at 0.45 still falls into suggestions).
+      clearDetectedVersesBySource: (source) =>
+        set((state) => {
+          if (source === 'suggestion') {
+            return {
+              detectedVerses: state.detectedVerses.filter(
+                (v) => (v.confidence ?? 0) >= 0.5,
+              ),
+            }
+          }
+          return {
+            detectedVerses: state.detectedVerses.filter((v) => {
+              const conf = v.confidence ?? 0
+              if (conf < 0.5) return true // leave the suggestions band alone
+              const vSrc = (v.source as 'explicit' | 'semantic' | undefined) ?? 'explicit'
+              return vSrc !== source
+            }),
+          }
+        }),
       // v0.7.60 — Candidates bucket. Cap at 50 entries (operator only
       // ever scans the recent few in a service, and we don't want a
       // long quiet stretch of low-confidence noise to keep growing).

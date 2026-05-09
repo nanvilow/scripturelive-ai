@@ -2,12 +2,16 @@
 // the desktop app (Help menu, Help & Updates card, first-run welcome
 // dialog) so operators can share a link with their pastor or IT lead.
 //
-// As of v0.7.37 the `scriptureliveai.com` marketing domain has been
-// fully disconnected from this project — both the website-default
-// here and the matching constant in `electron/main.ts` now point at
-// `https://scripturelive.replit.app/` (this Repl's published Bible-app
-// URL). When/if a separate marketing site comes back online, set
-// `NEXT_PUBLIC_WEBSITE_URL` at build time to override.
+// v0.7.134 — Operator request: every "Visit website" surface (Help
+// menu, Help & Updates card, first-run welcome dialog, the desktop
+// links the user pointed at in https://imgur.com/a/gZoZtsp) should
+// open the public marketing domain `https://scriptureliveai.com/`,
+// NOT the Replit-app fallback. The Replit-app domain is still the
+// transcribe / telemetry / auto-update HOST (those wires intentionally
+// stay independent — they're API endpoints, not user-facing links),
+// but anything an operator clicks goes to scriptureliveai.com so the
+// branding is consistent. Same default mirrored in `electron/main.ts`
+// so the Electron Help menu and the renderer never disagree.
 //
 // The runtime preference order is:
 //
@@ -28,7 +32,7 @@
 // This file deliberately has no runtime dependencies so it can be
 // kept narrowly focused on the single constant.
 
-const DEFAULT_WEBSITE_URL = 'https://scripturelive.replit.app/'
+const DEFAULT_WEBSITE_URL = 'https://scriptureliveai.com/'
 
 function pickWebsiteUrl(): string {
   const fromEnv = process.env.NEXT_PUBLIC_WEBSITE_URL?.trim()
