@@ -180,6 +180,27 @@ export const LIVE_STICKY_CONFIDENCE_DELTA = 0.1
 // Below this threshold (semantic 0.55-0.84, auto-derived 0.65) the
 // older delta-based logic still applies — those are softer detections
 // and a clearly-better candidate should be allowed to swap in.
+//
+// v0.7.128 — High-confidence VS high-confidence escape hatch.
+// Operator screenshot https://imgur.com/a/uf6ndTK: live = Deuteronomy
+// 2:1 @ 100 % (came from a Chapter Navigator lookup that pre-loaded
+// the chapter — explicit pipeline tagged it 1.0). Preacher then
+// quoted "My help cometh from the Lord" verbatim → COL 2 "Bible
+// Reference Quoted" detected Psalm 121:2 @ 95 % (semantic, hand-
+// curated preacher-phrase EXACT). The v0.7.120 high-conf lock
+// blocked the swap because liveIsHighConf = true and there was no
+// escape clause — meaning the projector stayed on Deuteronomy 2:1
+// while the preacher was actively quoting Psalms.
+//
+// v0.7.128 fix: when the live verse is high-conf AND the new
+// candidate is ALSO ≥ LIVE_HIGH_CONF_LOCK, the lock yields and the
+// newer detection wins (subject to the same-reference no-flicker
+// guard). Two independent high-conf detections from different
+// columns is a near-zero-false-positive signal that the preacher
+// has moved to a new verse. A weak detection (e.g. semantic 0.65)
+// against a high-conf live verse still cannot break the lock — the
+// v0.7.120 protection against navigation/regex spurious hits
+// hijacking a verbatim quote stays intact.
 export const LIVE_HIGH_CONF_LOCK = 0.85
 
 function detectedAtMs(v: RankedVerse): number {
@@ -505,9 +526,14 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
       if (!cand) return false
       // Same reference → not really a swap. Block (no visible flicker).
       if (liveRef && cand.reference === liveRef) return false
-      // v0.7.120 — HIGH-CONF lock blocks all cross-ref auto swaps.
-      if (liveIsHighConf) return false
       const candConf = cand.confidence ?? 0
+      // v0.7.120 — HIGH-CONF lock blocks all cross-ref auto swaps.
+      // v0.7.128 — UNLESS the new candidate is also high-conf
+      // (≥ LIVE_HIGH_CONF_LOCK). Two independent high-conf
+      // detections means the preacher has demonstrably moved on
+      // (e.g. lookup-loaded Deut 2:1 @ 1.0 → verbatim Psalm 121:2 @
+      // 0.95 quoted from the pulpit). The newer detection wins.
+      if (liveIsHighConf) return candConf >= LIVE_HIGH_CONF_LOCK
       return candConf >= liveConf + stickyDelta
     }
     if (!passesReadLock(explicitFire)) explicitFire = null

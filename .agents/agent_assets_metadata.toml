@@ -791,3 +791,9 @@ id = "XRbctTwnB8tgxCtdgoVBY"
 uri = "file://exports/ScriptureLive-AI-v0.7.127-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.127 — source ZIP"
+
+[[outputs]]
+id = "6y-GX1E-cgj2gLvp1KeGT"
+uri = "file://exports/ScriptureLive-AI-v0.7.128-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.128 — High-Conf VS High-Conf escape hatch"

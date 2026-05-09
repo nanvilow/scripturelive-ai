@@ -612,6 +612,72 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     if (r.fire) expect(r.verse.id).toBe('NewLow')
   })
 
+  it('v0.7.128 HIGH-CONF VS HIGH-CONF: a high-conf semantic verbatim quote DOES break a high-conf explicit lookup lock', () => {
+    // Reproduces the operator screenshot https://imgur.com/a/uf6ndTK:
+    // Live = Deuteronomy 2:1 @ 1.00 (explicit, came from a Chapter
+    // Navigator lookup). Preacher then quotes "My help cometh from
+    // the Lord" verbatim → Psalm 121:2 @ 0.95 (semantic, hand-curated
+    // preacher-phrase EXACT). Pre-v0.7.128 the v0.7.120 high-conf
+    // lock blocked the swap entirely (liveIsHighConf → return false
+    // for ALL cross-ref candidates) so the projector stayed on
+    // Deuteronomy 2:1 while the preacher was actively quoting Psalms.
+    // v0.7.128: the lock yields when the new candidate is also
+    // ≥ LIVE_HIGH_CONF_LOCK (0.85).
+    let g = fresh()
+    let r = shouldFireAutoLiveStable(
+      [{ ...v('Deut.2.1', 1.0, 1000, 'explicit'), reference: 'Deuteronomy 2:1' }],
+      null,
+      g,
+      { nowMs: 1000 },
+    )
+    expect(r.fire).toBe(true)
+    g = r.nextStability
+    // 2 s later (still well inside the 8 s sticky window): preacher
+    // quotes Psalm 121:2 verbatim. Both detections are high-conf so
+    // the high-conf lock yields and the newer wins.
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Deut.2.1', 1.0, 1000, 'explicit'),  reference: 'Deuteronomy 2:1' },
+        { ...v('Psa.121.2', 0.95, 3000, 'semantic'), reference: 'Psalm 121:2' },
+      ],
+      'Deut.2.1',
+      g,
+      { nowMs: 3000 },
+    )
+    expect(r.fire).toBe(true)
+    if (r.fire) {
+      expect(r.verse.id).toBe('Psa.121.2')
+      expect(r.source).toBe('semantic')
+    }
+  })
+
+  it('v0.7.128 HIGH-CONF VS LOW-CONF: a low-conf candidate STILL cannot hijack a high-conf live verse (v0.7.120 protection intact)', () => {
+    // Inverse of the v0.7.128 fix above — make sure relaxing the
+    // high-conf lock for high-conf candidates didn't accidentally
+    // also let weak detections through. v0.7.120's original case:
+    // verbatim "Suffer not a witch to live" @ 0.85 hand-curated
+    // EXACT must NOT be displaced by a regex 0.65-ish near-miss.
+    let g = fresh()
+    let r = shouldFireAutoLiveStable(
+      [{ ...v('Exo.22.18', 0.95, 1000, 'semantic'), reference: 'Exodus 22:18' }],
+      null,
+      g,
+      { nowMs: 1000 },
+    )
+    expect(r.fire).toBe(true)
+    g = r.nextStability
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Exo.22.18',  0.95, 1000, 'semantic'),  reference: 'Exodus 22:18' },
+        { ...v('Some.Other', 0.70, 3000, 'explicit'),  reference: 'Some Other 1:1' },
+      ],
+      'Exo.22.18',
+      g,
+      { nowMs: 3000 },
+    )
+    expect(r.fire).toBe(false)
+  })
+
   it('v0.7.117 READ-LOCK: same-reference re-fire is always blocked (no flicker)', () => {
     let g = fresh()
     let r = shouldFireAutoLiveStable(
