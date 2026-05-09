@@ -25,13 +25,35 @@ on a single device for evaluation purposes.
 
 3. Restrictions
 ---------------
-You agree NOT to:
-  • Reverse engineer, decompile, or disassemble the Software except as
-    permitted by applicable law.
-  • Resell, sublicense, rent, or lease the Software.
-  • Remove or alter any copyright, trademark, or proprietary notices.
-  • Use the Software to transmit unlawful, infringing, or harmful
-    content, or in any manner that violates applicable laws.
+While using ScriptureLive AI, you agree NOT to do any of the following:
+
+  (a) Copy, modify, reverse engineer, decompile, or disassemble the
+      Software, or attempt to extract its source code, except to the
+      limited extent that applicable law expressly permits despite this
+      restriction.
+
+  (b) Sell, resell, rent, lease, sublicense, redistribute, or share
+      your activation code or copies of the Software with any third
+      party. Each paid activation code is tied to one congregation or
+      operator and is not for resale.
+
+  (c) Remove, hide, or change any copyright notice, trademark, brand
+      name, logo, version string, or other proprietary marking that
+      appears in the Software, its installer, its update files, or any
+      output it produces.
+
+  (d) Use the Software to display, broadcast, project, or distribute
+      content that is unlawful, defamatory, obscene, hateful, harassing,
+      or that infringes anyone else's copyright, trademark, privacy, or
+      other rights.
+
+  (e) Use the Software in a way that violates the laws of your country,
+      state, or local jurisdiction, or that breaches the rules of the
+      venue, congregation, or platform where it is being used.
+
+  (f) Bypass, disable, or tamper with the Software's licensing,
+      activation, telemetry, update, or anti-piracy mechanisms, or use
+      forged, stolen, leaked, or chargeback-reversed activation codes.
 
 4. Updates and Telemetry
 ------------------------

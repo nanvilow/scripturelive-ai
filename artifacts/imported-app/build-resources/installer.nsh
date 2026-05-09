@@ -132,8 +132,34 @@
   !define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of ScriptureLive AI v${VERSION}.$\r$\n$\r$\nReal-time scripture detection, AI-powered slide generation, and broadcast-quality NDI output for live worship.$\r$\n$\r$\nClick Next to continue."
 !macroend
 
+; v0.7.139 — Operator request: at the end of install, make it explicit
+; that the install is complete AND give a clear choice between
+; "open the app now" or "just close the installer (open it later)".
+;
+; MUI2's Finish page already supports this via the optional run
+; checkbox electron-builder injects when `runAfterFinish` is true
+; (default). What was missing was clear copy. The defaults read like a
+; generic "click Finish to exit" — operators reported they didn't
+; realise they could launch the app from here, OR didn't realise they
+; could leave it un-launched if they just wanted to install and walk
+; away (e.g. installing on a sanctuary PC ahead of Sunday).
+;
+; The new copy:
+;   • TITLE confirms install actually completed (was the operator's
+;     #1 ask — "inform users anytime the app is completely installed").
+;   • TEXT spells out the two choices:
+;       1. Leave the box ticked and click Finish to launch now.
+;       2. Untick the box and click Finish to just close the installer
+;          (the desktop / Start menu shortcut will still open the app
+;          later).
+;   • RUN_TEXT is the checkbox label itself, kept short so it fits.
+;
+; Keep all four lines on a single MUI_FINISHPAGE_TEXT call — NSIS
+; concatenates $\r$\n into wizard line breaks. We deliberately do NOT
+; use MUI_FINISHPAGE_RUN_NOTCHECKED so the box stays ticked by default
+; (most operators do want to launch immediately after a fresh install).
 !macro customFinishPage
-  !define MUI_FINISHPAGE_TITLE "ScriptureLive AI is ready"
-  !define MUI_FINISHPAGE_TEXT "ScriptureLive AI v${VERSION} has been installed on your computer.$\r$\n$\r$\nClick Finish to close this wizard."
-  !define MUI_FINISHPAGE_RUN_TEXT "Launch ScriptureLive AI now"
+  !define MUI_FINISHPAGE_TITLE "Installation Complete"
+  !define MUI_FINISHPAGE_TEXT "ScriptureLive AI v${VERSION} has been successfully installed on your computer.$\r$\n$\r$\nLeave the box below ticked and click Finish to open ScriptureLive AI now.$\r$\n$\r$\nUntick the box and click Finish to just close this installer — you can open ScriptureLive AI later from your desktop or the Start menu."
+  !define MUI_FINISHPAGE_RUN_TEXT "Open ScriptureLive AI now"
 !macroend
