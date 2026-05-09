@@ -209,6 +209,20 @@ var IS_NDI=false;
 var FORCE_TRANSPARENT=false;
 var FORCE_LT=false;
 var FORCE_POS=null;
+// v0.7.127 — Settings-page Preview iframe mode. When ?preview=1 is
+// set, this page does NOT connect to SSE / poll. Instead it listens
+// for postMessage from the parent window with payloads built by the
+// SAME buildOutputPayload() the broadcaster uses, then hands them to
+// the SAME applyRender() the live secondary screen + NDI capture
+// use. Result: the preview is the live renderer running off-screen,
+// so what the operator sees in Settings is byte-identical to what
+// the projector + NDI feed will paint. ?fullScreen=1 forces the
+// full-screen layout regardless of operator's displayMode (used by
+// the side-by-side "Preview (Full Screen)" + "Preview (Lower Third)"
+// cards on Display & Output so both modes render simultaneously
+// without the operator having to toggle their actual setting).
+var IS_PREVIEW=false;
+var FORCE_FULL=false;
 // v0.7.5.1 — FORCE_LH / FORCE_SC let the Electron NDI capture pin the
 // operator's lower-third HEIGHT bucket and SCALE multiplier into the
 // URL itself, so the captured BrowserWindow renders the right box
@@ -231,6 +245,8 @@ try{
   if(__lh==='sm'||__lh==='md'||__lh==='lg')FORCE_LH=__lh;
   var __sc=parseFloat(__qp.get('sc')||'');
   if(isFinite(__sc)&&__sc>=0.5&&__sc<=2)FORCE_SC=__sc;
+  IS_PREVIEW=(__qp.get('preview')==='1');
+  FORCE_FULL=(__qp.get('fullScreen')==='1');
 }catch(e){}
 // Drop body / stage / output backgrounds when running as an NDI
 // alpha-keyed overlay so vMix/OBS receives a clean matte. Done at
@@ -610,11 +626,16 @@ function render(s){
   //   2. NDI surface (?ndi=1) → independent ndiDisplayMode if set.
   //   3. Projector / secondary screen → operator's main displayMode.
   // Falls back to 'full' when nothing else is set.
-  var dm=FORCE_LT
-    ?'lower-third'
-    :((IS_NDI&&s.settings&&s.settings.ndiDisplayMode)
-      ?s.settings.ndiDisplayMode
-      :(s.displayMode||'full'));
+  // v0.7.127 — FORCE_FULL wins over FORCE_LT so the side-by-side
+  // Settings preview cards can pin the layout per card without the
+  // operator's projector displayMode bleeding through.
+  var dm=FORCE_FULL
+    ?'full'
+    :(FORCE_LT
+      ?'lower-third'
+      :((IS_NDI&&s.settings&&s.settings.ndiDisplayMode)
+        ?s.settings.ndiDisplayMode
+        :(s.displayMode||'full')));
   var st=s.settings||{};
   // v0.5.57 — NDI surface gets its own aspect ratio when set.
   // 'auto' or undefined → fall back to displayRatio (Live Display).
@@ -1208,7 +1229,30 @@ document.addEventListener('mousemove',function(){
   clearTimeout(window._ht);
   window._ht=setTimeout(function(){$('status').classList.remove('visible')},3000);
 });
-connect();
+// v0.7.127 — Preview iframe mode. Skip SSE / poll entirely. Listen
+// for {__sl_preview:1, payload} messages from the parent Settings
+// page, then hand the payload to the SAME applyRender() the live
+// secondary screen + NDI capture use. The handshake ping tells the
+// parent we are ready so it can flush its first snapshot — without
+// it the very first paint after the iframe loads would be the
+// splash watermark until the operator next mutated a setting.
+if(IS_PREVIEW){
+  window.addEventListener('message',function(ev){
+    try{
+      var d=ev&&ev.data;
+      if(!d||typeof d!=='object')return;
+      if(d.__sl_preview!==1)return;
+      if(d.payload)applyRender(d.payload);
+    }catch(e){}
+  });
+  try{
+    if(window.parent&&window.parent!==window){
+      window.parent.postMessage({__sl_preview_ready:1},'*');
+    }
+  }catch(e){}
+} else {
+  connect();
+}
 </script>
 </body>
 </html>`

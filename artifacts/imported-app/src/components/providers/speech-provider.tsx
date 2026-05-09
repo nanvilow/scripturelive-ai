@@ -1820,11 +1820,16 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   confidence,
                   // v0.7.114 — Was `< 0.6` which demoted 0.55-0.59
                   // hits to the Suggested Verses column even though
-                  // they cleared SEMANTIC_AUTO_LIVE_MIN (0.55).
-                  // Operator: "59% of verse detections go to the
-                  // Suggested Verses column instead from 10 to 49%".
-                  // Now matches the live-column floor exactly.
-                  source: confidence < 0.55 ? 'suggestion' : 'semantic',
+                  // they cleared SEMANTIC_AUTO_LIVE_MIN.
+                  // v0.7.127 — Moved 0.55 → 0.50 to track the new
+                  // SEMANTIC_AUTO_LIVE_MIN (lowered to close the
+                  // 50–54 % dead gap; see verse-auto-live.ts comment
+                  // block). Operator: same complaint pattern, one
+                  // band lower — "Suggested Verses keeps catching
+                  // 50–54 % detections even though the column says
+                  // 10–49%". This keeps tag-floor == column-floor so
+                  // there's no slot a detection can fall through.
+                  source: confidence < 0.5 ? 'suggestion' : 'semantic',
                 }
                 const tBefore = useAppStore.getState().liveTranscript
                 useAppStore.getState().pushTranscriptBreak(tBefore.length)
@@ -1977,11 +1982,18 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   detectedAt: new Date(),
                   confidence: m.score,
                   // v0.7.114 — Lowered from `< 0.6` to `< 0.55` to
-                  // match SEMANTIC_AUTO_LIVE_MIN. Hits in the 0.55-
-                  // 0.59 band now correctly tag as 'semantic' so
-                  // they appear in COL 2 (Bible Reference Quoted)
-                  // and become auto-live eligible per spec.
-                  source: m.score < 0.55 ? 'suggestion' : 'semantic',
+                  // match SEMANTIC_AUTO_LIVE_MIN.
+                  // v0.7.127 — Lowered again 0.55 → 0.50 to track the
+                  // new SEMANTIC_AUTO_LIVE_MIN (closes the 50–54 %
+                  // dead gap). The 52 % Matthew 4:19 leak the
+                  // operator screenshotted came through THIS path:
+                  // m.score=0.52 was tagged 'suggestion' by the old
+                  // `< 0.55` predicate AND fell outside the 10-49%
+                  // suggestion band, so it appeared briefly via the
+                  // (now-removed) source==='suggestion' bypass in
+                  // suggestionsFor() then vanished. Tagging at <0.50
+                  // keeps it in the semantic column where it belongs.
+                  source: m.score < 0.5 ? 'suggestion' : 'semantic',
                 }
 
                 if (m.score >= threshold) {

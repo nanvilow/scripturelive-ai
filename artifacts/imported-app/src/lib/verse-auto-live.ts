@@ -58,7 +58,20 @@ export interface RankedVerse {
 //     precision in live preaching — the previous 0.80 floor was so
 //     strict it almost never fired in real audio.
 export const EXPLICIT_AUTO_LIVE_MIN = 0.6
-export const SEMANTIC_AUTO_LIVE_MIN = 0.55
+// v0.7.127 — Lowered SEMANTIC floor 0.55 → 0.50 to close the
+// 50–54 % dead gap between the suggestions cap (<0.50) and the
+// previous semantic floor (≥0.55). Operator screenshot showed a
+// 52 % Matthew 4:19 paint into "SUGGESTED VERSES" then immediately
+// vanish to "Low-confidence guesses (10–49%)" because nothing in the
+// gap had a home column. Mirrors the v0.7.114 fix that closed the
+// 55–59 % gap by aligning the suggestion-tag threshold with this
+// floor (see speech-provider.tsx L1827 + L1984 — both also moved
+// from `< 0.55` to `< 0.50` in v0.7.127). Auto-go-live is still
+// gated by the per-source stability + 1.25 s anti-flicker dwell, so
+// the lower visibility floor does NOT mean every 50 % hit fires
+// immediately — it means the operator can SEE 50 %+ semantic hits in
+// COL 2 instead of having them disappear into a typography gap.
+export const SEMANTIC_AUTO_LIVE_MIN = 0.5
 
 const COLUMN_AUTO_LIVE_MIN: Record<Exclude<DetectionSource, 'suggestion'>, number> = {
   explicit: EXPLICIT_AUTO_LIVE_MIN,
@@ -235,13 +248,26 @@ export function pickAutoLiveBySource<T extends RankedVerse>(
   return candidates[0]
 }
 
-// Suggestions column. Returns every detection in the 0.10–0.50
-// band (regardless of source) plus anything explicitly tagged
-// `source: 'suggestion'`, ordered newest-first.
+// Suggestions column. Returns every detection in the 0.10–0.499
+// band, ordered newest-first.
+//
+// v0.7.127 — Removed the `source === 'suggestion'` short-circuit
+// that previously bypassed the upper-bound check. The bypass let
+// upstream taggers leak ≥0.50-confidence detections into this
+// column (e.g. AI cosine matcher returning 0.52 + tagged
+// 'suggestion' by speech-provider.tsx pre-fix) — a 52 % Matthew
+// 4:19 painted into the column whose own header reads
+// "Low-confidence guesses (10–49%)". The band is now enforced
+// strictly for ALL sources. The 'suggestion' tag remains a hint to
+// downstream consumers (it never auto-fires) but it no longer
+// overrides the column's confidence contract. Auto-derived FUZZY
+// hits from the preacher-phrase pipeline (hard-coded conf=0.42 in
+// speech-provider.tsx L1685–1689) still appear here because their
+// confidence sits inside the band — the bypass was redundant for
+// them anyway.
 export function suggestionsFor<T extends RankedVerse>(detected: readonly T[]): T[] {
   return [...detected]
     .filter((v) => {
-      if (sourceOf(v) === 'suggestion') return true
       const c = v.confidence ?? 0
       return c >= SUGGESTION_MIN_CONFIDENCE && c < SUGGESTION_MAX_EXCLUSIVE
     })
