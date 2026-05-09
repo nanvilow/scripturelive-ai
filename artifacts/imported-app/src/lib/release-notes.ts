@@ -33,15 +33,38 @@ const WHATS_CHANGED_HEADING = /^[ \t]*#{1,6}[ \t]+What['’]s Changed[ \t]*$/gim
 // with `(?![\s\S])`). The `m` flag makes `^` line-aware.
 const NEW_CONTRIBUTORS_SECTION = /^[ \t]*#{1,6}[ \t]+New Contributors[ \t]*\n?[\s\S]*?(?=^[ \t]*#{1,6}[ \t]|(?![\s\S]))/gim
 
+// v0.7.132 — Operator: "I don't want GitHub showing in the What's
+// new message." Strip every GitHub URL from the cleaned notes —
+// markdown links pointing at github.com collapse to just their
+// label, then any remaining bare github.com URLs are dropped.
+// Trailing "by @user in <url>" attribution that GitHub auto-
+// generates on its bullet entries is also dropped (the prose-only
+// summary is what operators care about pre-service).
+const GITHUB_MARKDOWN_LINK = /\[([^\]]+)\]\(\s*https?:\/\/(?:www\.)?github\.com\/[^\s)]+\s*\)/gi
+const GITHUB_BARE_URL = /\bhttps?:\/\/(?:www\.)?github\.com\/\S+/gi
+const BY_AUTHOR_IN_URL = /\s+by\s+@[\w.-]+(?:\s+in\s+\S+)?/gi
+
 export function cleanReleaseNotes(raw: string | null | undefined): string {
   if (!raw) return ''
   let out = raw.replace(/\r\n?/g, '\n')
   out = out.replace(NEW_CONTRIBUTORS_SECTION, '')
   out = out.replace(WHATS_CHANGED_HEADING, '')
   out = out.replace(FULL_CHANGELOG_LINE, '')
+  // v0.7.132 — strip GitHub references entirely.
+  out = out.replace(GITHUB_MARKDOWN_LINK, '$1')
+  out = out.replace(BY_AUTHOR_IN_URL, '')
+  out = out.replace(GITHUB_BARE_URL, '')
   // Collapse runs of 3+ blank lines that the strips can leave behind
   // so the rendered markdown doesn't end up with awkward gaps.
   out = out.replace(/\n{3,}/g, '\n\n')
+  // Trim trailing whitespace from each line + collapse trailing
+  // empty bullet markers ("* " with nothing after) left behind by
+  // the GitHub-stripping pass.
+  out = out
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+$/, '').replace(/^\s*[-*]\s*$/, ''))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
   return out.trim()
 }
 

@@ -815,3 +815,9 @@ id = "IZjI6VAZ28bgkgxIvnALP"
 uri = "file://exports/ScriptureLive-AI-v0.7.131-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.131 — Cross-pipeline auto-live fix"
+
+[[outputs]]
+id = "tENwwhfvWmh-F6x5S7yJG"
+uri = "file://exports/ScriptureLive-AI-v0.7.132-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.132 — No more GitHub in the UI, single update popup, Ezekiel + dry bones"

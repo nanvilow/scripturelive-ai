@@ -5,7 +5,6 @@ import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import { useDesktop, useNdi, type UpdateState } from '@/lib/use-electron'
 import { cleanReleaseNotes } from '@/lib/release-notes'
-import { releaseTagUrl } from '@/lib/github-repo'
 
 function formatPercent(p: number): string {
   if (!Number.isFinite(p)) return '0%'
@@ -50,14 +49,6 @@ function getNotes(state: UpdateState): string {
   return ''
 }
 
-function getReleaseUrl(state: UpdateState): string | null {
-  if (state.status !== 'available' && state.status !== 'downloaded') return null
-  // electron-updater hands us bare semvers (e.g. "1.4.2"). releaseTagUrl
-  // tolerates either "1.4.2" or "v1.4.2" and falls back to the "latest"
-  // release page when the version is missing.
-  return releaseTagUrl(state.version)
-}
-
 export function UpdateBanner() {
   const desktop = useDesktop()
   // While NDI is on the air, hold the banner — an accidental click on
@@ -98,6 +89,25 @@ export function UpdateBanner() {
   if (!desktop) return null
   if (dismissed) return null
   if (onAir) return null
+  // v0.7.132 — Suppress while the foreground <UpdateAvailableDialog>
+  // owns the screen. Operator screenshot showed the modal AND this
+  // banner stacked on top of each other for the same release,
+  // looking like "two different popups". The dialog handles the
+  // 'available' / 'downloaded' first-impression; this banner is only
+  // useful for ACTIVE download progress (and as a fallback after the
+  // operator has dismissed the modal for this version).
+  //
+  // Dialog dismissal contract (from update-available-dialog.tsx):
+  //   localStorage["sl.update-popup-dismissed.<version>"] = "1"
+  // While the dialog could still pop (state in {available, downloaded}
+  // AND no per-version dismissal flag), we hide this banner. Once
+  // the operator dismisses ("Later") the dialog stays shut for that
+  // version and the banner re-appears. During 'downloading' the
+  // dialog is always closed so the banner shows progress + cancel.
+  const isDialogVisible =
+    (state.status === 'available' || state.status === 'downloaded') &&
+    !isDialogDismissedForVersion(state.version)
+  if (isDialogVisible) return null
 
   let body: React.ReactNode = null
   if (state.status === 'available') {
@@ -154,7 +164,6 @@ export function UpdateBanner() {
   const showInstall = state.status === 'downloaded'
   const notes = getNotes(state)
   const hasNotes = notes.length > 0
-  const releaseUrl = getReleaseUrl(state)
 
   return (
     <div
@@ -239,32 +248,32 @@ export function UpdateBanner() {
               </ReactMarkdown>
             </div>
           )}
-          {releaseUrl && showNotes && (
-            <div className="mt-2 text-right">
-              <a
-                href={releaseUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs font-medium text-primary hover:underline"
-              >
-                View full release notes on GitHub →
-              </a>
-            </div>
-          )}
-        </div>
-      )}
-      {releaseUrl && (!hasNotes || !showNotes) && (
-        <div className="border-t border-border/60 pt-2 text-right">
-          <a
-            href={releaseUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs font-medium text-primary hover:underline"
-          >
-            View full release notes on GitHub →
-          </a>
+          {/* v0.7.132 — Removed the "View full release notes on
+              GitHub →" anchor per operator request: "I don't want
+              GitHub showing in the What's new message." Mirrors the
+              same removal from <UpdateAvailableDialog> in v0.7.130.
+              Operators get the cleaned prose preview right here in
+              the panel; nothing in the workflow needs them to leave
+              the app for the full notes. */}
         </div>
       )}
     </div>
   )
+}
+
+// v0.7.132 — Mirror of update-available-dialog.tsx's per-version
+// dismissal flag so this banner can tell whether the modal could
+// currently be on screen (and stay out of its way). Defensive
+// against missing localStorage (private mode / file://): on any
+// throw we treat the dialog as NOT dismissed → suppress the banner
+// → operator sees the modal alone, never a stacked pair. Worst
+// case: banner stays hidden one extra frame.
+function isDialogDismissedForVersion(version: string | undefined): boolean {
+  if (!version) return false
+  if (typeof window === 'undefined') return false
+  try {
+    return window.localStorage.getItem(`sl.update-popup-dismissed.${version}`) === '1'
+  } catch {
+    return false
+  }
 }
