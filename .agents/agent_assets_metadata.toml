@@ -869,3 +869,9 @@ id = "lcP5h3CE1NXjpERE1i5wp"
 uri = "file://exports/ScriptureLive-AI-v0.7.140-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.140 source (single update modal + HTML strip)"
+
+[[outputs]]
+id = "QHVqEHZMAAsNFH4NG16Fh"
+uri = "file://exports/ScriptureLive-AI-v0.7.141-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.141 source (hide DG engine badge)"

@@ -447,14 +447,19 @@ function LiveTranscriptionCard() {
     <Card
       title="Live Transcription"
       badge={
-        // v0.5.49 — The engine picker lives in the BADGE slot now. The
-        // mic Button below already conveys listening state (rose color
-        // + MicOff icon + "Stop" label when active), so the legacy
-        // Listening/Idle pill was redundant. Putting the picker here
-        // frees the actions row for the four control buttons (Bible /
-        // Clear / Mic / Auto) and gives the engine badge full breathing
-        // room. The dot before the label pulses when the mic is hot,
-        // preserving the "live" cue.
+        // v0.7.141 — Operator request (screenshot https://imgur.com/a/elWJh5G):
+        // hide the "DG" engine badge from end users. The picker is
+        // functionally vestigial since v0.7.19 (only Deepgram routes
+        // remain — "Auto" and "Deepgram" both map to the same engine),
+        // and showing a "DG" pill next to LIVE TRANSCRIPTION just
+        // confused operators. We keep the DropdownMenu mounted but
+        // wrap it in a hidden container so the engine state /
+        // setPreferredEngine wiring (still consumed elsewhere in the
+        // file) and the keyboard-accessible picker remain available
+        // for support escalation, without painting any visible chrome
+        // in the card header. If we ever re-introduce a second engine
+        // we can flip `hidden` → '' to bring it back instantly.
+        <div hidden aria-hidden="true">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -502,6 +507,7 @@ function LiveTranscriptionCard() {
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        </div>
       }
       actions={
         <div className="flex items-center gap-1">
