@@ -3,7 +3,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useAppStore } from '@/lib/store'
 import { parseVerseReference, fetchBibleVerse, splitVerseIntoSlides, TRANSLATIONS_INFO, getAutocompleteSuggestions, type AutocompleteSuggestion } from '@/lib/bible-api'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -34,6 +33,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { OutputPreview } from '@/components/settings/output-preview'
 
 export function BibleLookupView() {
   const {
@@ -431,50 +431,40 @@ export function BibleLookupView() {
                 </div>
               )}
 
-              {/* Verse Text */}
-              <Card
-                className="relative bg-gradient-to-br from-card to-card/80 border-border/50 overflow-hidden"
-              >
-                {settings.customBackground && (
-                  <div className="absolute inset-0">
-                    <img
-                      src={settings.customBackground}
-                      alt=""
-                      className="w-full h-full object-cover opacity-30"
-                    />
-                    <div className="absolute inset-0 bg-black/50" />
-                  </div>
-                )}
-                <CardContent className="relative p-8 md:p-12">
-                  {splitMode && splitSlides.length > 0 ? (
-                    <div className="text-center space-y-1 slide-transition" key={currentSplitIndex}>
-                      {splitSlides[currentSplitIndex].map((line, i) => (
-                        <p
-                          key={i}
-                          className="text-2xl md:text-3xl lg:text-4xl font-medium text-foreground leading-relaxed"
-                          style={{ textShadow: settings.textShadow ? '0 2px 12px rgba(0,0,0,0.3)' : 'none' }}
-                        >
-                          {line}
-                        </p>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center">
-                      <p
-                        className="text-xl md:text-2xl lg:text-3xl font-medium text-foreground leading-relaxed whitespace-pre-line verse-highlight"
-                        style={{ textShadow: settings.textShadow ? '0 2px 12px rgba(0,0,0,0.3)' : 'none' }}
-                      >
-                        {currentVerse.text}
-                      </p>
-                    </div>
-                  )}
-                  {settings.showReferenceOnOutput && (
-                    <p className="text-center mt-6 text-sm md:text-base text-primary font-medium">
-                      — {currentVerse.reference} ({currentVerse.translation})
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
+              {/*
+                v0.7.136 — Verse Text PREVIEW (operator screenshot
+                https://imgur.com/a/0EOFpjI). Pre-v0.7.136 this card
+                rendered the verse with its own font sizes
+                (text-xl/md:2xl/lg:3xl), padding (p-8/md:p-12),
+                customBackground handling, reference styling, and
+                shadow defaults — none of which matched what the
+                projector / NDI / Settings → Display & Output
+                preview painted. Operator pulled image 1 (live preview)
+                next to image 2 (this card) and they were demonstrably
+                different surfaces.
+
+                Fix: identical to v0.7.127 — collapse onto the single
+                renderer. <OutputPreview> mounts the live route in an
+                iframe and posts the same buildOutputPayload() payload
+                the SSE broadcaster ships, so every typography / theme
+                / ratio / lower-third / customBackground / reference
+                / textShadow knob flows through automatically. Splits
+                are rendered by passing the current split slide's text
+                via the `sample` prop; the synthetic-slide branch in
+                OutputPreview honours it. Future render-affecting
+                fields are picked up for free — there is no second
+                renderer to maintain in this view either.
+              */}
+              <OutputPreview
+                mode="auto"
+                sample={{
+                  reference: currentVerse.reference,
+                  text:
+                    splitMode && splitSlides.length > 0
+                      ? splitSlides[currentSplitIndex].join('\n')
+                      : currentVerse.text,
+                }}
+              />
             </div>
           ) : error ? (
             <div className="text-center space-y-3">
