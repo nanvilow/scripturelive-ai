@@ -484,6 +484,32 @@ const TRANSLATION_ALIASES: Record<string, string> = {
   'local language': 'TWI',
   'mother tongue': 'TWI',
   'mother tongue version': 'TWI',
+  // v0.7.137 — Twerɛ Kronkron (Asante Twi via wldeh `tw-wasna`).
+  'twere kronkron': 'TWIASANTE',
+  'twere kronkron version': 'TWIASANTE',
+  'twere kronkron bible': 'TWIASANTE',
+  'twerɛ kronkron': 'TWIASANTE',
+  'twereɛ kronkron': 'TWIASANTE',
+  'kronkron': 'TWIASANTE',
+  'kronkron version': 'TWIASANTE',
+  'kronkron bible': 'TWIASANTE',
+  'asante': 'TWIASANTE',
+  'asante twi': 'TWIASANTE',
+  'asante version': 'TWIASANTE',
+  'asante bible': 'TWIASANTE',
+  'ashanti': 'TWIASANTE',
+  'ashanti twi': 'TWIASANTE',
+  'ashanti version': 'TWIASANTE',
+  'ashanti bible': 'TWIASANTE',
+  // v0.7.137 — Ewe (Agbenya La via wldeh `ee-oal`).
+  'ewe': 'EWE',
+  'ewe version': 'EWE',
+  'ewe bible': 'EWE',
+  'ewe translation': 'EWE',
+  'agbenya la': 'EWE',
+  'agbenya': 'EWE',
+  'volta version': 'EWE',
+  'volta bible': 'EWE',
 }
 
 // Cached longest-first key list so we don't sort on every call.

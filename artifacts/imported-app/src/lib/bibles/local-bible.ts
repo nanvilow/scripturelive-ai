@@ -52,6 +52,18 @@ function loadTranslation(t: BibleTranslation): TranslationMap | null {
       case 'esv':
         mod = require('@/data/bibles/esv.json')
         break
+      // v0.7.137 — Ghanaian translations bundled offline so the
+      // Electron desktop build keeps working without an internet
+      // connection during a live service. wldeh/bible-api source.
+      case 'twi':
+        mod = require('@/data/bibles/twi.json')
+        break
+      case 'twiasante':
+        mod = require('@/data/bibles/twiasante.json')
+        break
+      case 'ewe':
+        mod = require('@/data/bibles/ewe.json')
+        break
       default:
         mod = null
     }

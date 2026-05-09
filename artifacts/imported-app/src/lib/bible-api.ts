@@ -96,8 +96,8 @@ export async function fetchBibleChapterFromAPI(
     // explicitly asked for Twi, and substituting KJV would silently
     // put the wrong language on the projector during a service.
     if (info?.source === 'wldeh') {
-      const { fetchTwiChapter } = await import('@/lib/bibles/twi-bible')
-      return await fetchTwiChapter(book, chapter)
+      const { fetchWldehChapter } = await import('@/lib/bibles/twi-bible')
+      return await fetchWldehChapter(book, chapter, translation)
     }
     // Modern translations via bolls.life
     if (info?.source === 'bolls') {
@@ -184,6 +184,16 @@ export const TRANSLATIONS_INFO: Record<string, { name: string; full: string; abb
   // Lets a preacher say "give me the Twi version" mid-service and have
   // the live verse swap to its Akuapem Twi text in place.
   TWI: { name: 'TWI', full: 'Twi (Akuapem) Bible', abbreviation: 'tw-wakna', source: 'wldeh' },
+  // v0.7.137 — Twerɛ Kronkron (Asante Twi). Operator request:
+  // "add Ghanaian Twere Kronkron version". "Twerɛ Kronkron" is the
+  // generic Twi name for "Holy Scripture"; the only Asante Twi
+  // dataset on wldeh/bible-api is `tw-wasna` (Biblica Open Asante
+  // Twi Contemporary Bible 2020) so we surface it under that label.
+  TWIASANTE: { name: 'TWIASANTE', full: 'Twerɛ Kronkron (Asante Twi)', abbreviation: 'tw-wasna', source: 'wldeh' },
+  // v0.7.137 — Ewe Bible. Operator request: "add … EWE bible
+  // version". Sourced from the public-domain wldeh/bible-api
+  // dataset `ee-oal` (Biblica Open Agbenya La 2020, Ghana).
+  EWE: { name: 'EWE', full: 'Agbenya La (Ewe)', abbreviation: 'ee-oal', source: 'wldeh' },
 }
 
 // API translation mapping (bible-api.com slugs only; bolls translations use the key directly)
@@ -854,8 +864,8 @@ export async function fetchBibleVerseFromAPI(
     // English for an explicitly-requested Twi verse would be worse
     // than returning null (which short-circuits the slide push).
     if (info?.source === 'wldeh') {
-      const { fetchTwiVerse } = await import('@/lib/bibles/twi-bible')
-      return await fetchTwiVerse(parsed, reference)
+      const { fetchWldehVerse } = await import('@/lib/bibles/twi-bible')
+      return await fetchWldehVerse(parsed, reference, translation)
     }
     // Modern translations (NIV/ESV/NLT/...) are served by bolls.life
     if (info?.source === 'bolls') {
