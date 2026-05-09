@@ -447,67 +447,36 @@ function LiveTranscriptionCard() {
     <Card
       title="Live Transcription"
       badge={
-        // v0.7.141 — Operator request (screenshot https://imgur.com/a/elWJh5G):
-        // hide the "DG" engine badge from end users. The picker is
-        // functionally vestigial since v0.7.19 (only Deepgram routes
-        // remain — "Auto" and "Deepgram" both map to the same engine),
-        // and showing a "DG" pill next to LIVE TRANSCRIPTION just
-        // confused operators. We keep the DropdownMenu mounted but
-        // wrap it in a hidden container so the engine state /
-        // setPreferredEngine wiring (still consumed elsewhere in the
-        // file) and the keyboard-accessible picker remain available
-        // for support escalation, without painting any visible chrome
-        // in the card header. If we ever re-introduce a second engine
-        // we can flip `hidden` → '' to bring it back instantly.
-        <div hidden aria-hidden="true">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              title={engineTitle}
-              className={cn(
-                'inline-flex items-center gap-1 h-5 px-1.5 rounded-md text-[9px] uppercase tracking-wider font-semibold border whitespace-nowrap',
-                'bg-card hover:bg-muted text-foreground border-border',
-              )}
-            >
-              <span
-                className={cn(
-                  'inline-block h-1.5 w-1.5 rounded-full',
-                  engineDotColor,
-                  isListening && 'animate-pulse',
-                )}
-              />
-              {engineLabel}
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[14rem]">
-            {/* v0.7.19 — OpenAI Whisper option removed. The OpenAI
-                project key was rotated and never propagated cleanly to
-                the deployed proxy, so Whisper-routed chunks 401-ed for
-                every customer in the field. We've consolidated on
-                Deepgram for both the streaming and batched HTTP paths
-                — the picker now reflects that. 'Auto' is kept so old
-                presets keep working; with only Deepgram in the chain
-                it behaves identically to picking 'Deepgram' directly. */}
-            {([
-              { v: 'auto',     label: 'Auto (recommended)',    sub: 'Deepgram-only (single engine)' },
-              { v: 'deepgram', label: 'Deepgram (streaming)',  sub: 'Lowest latency, requires WSS' },
-            ] as const).map((opt) => (
-              <DropdownMenuItem
-                key={opt.v}
-                onClick={() => setPreferredEngine(opt.v)}
-                className="flex flex-col items-start gap-0.5"
-              >
-                <span className="flex items-center gap-2 text-[12px] font-medium">
-                  {preferredEngine === opt.v && <Check className="h-3 w-3 text-emerald-400" />}
-                  {opt.label}
-                </span>
-                <span className="text-[10px] text-muted-foreground pl-5">{opt.sub}</span>
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        </div>
+        // v0.7.144 — REVERT v0.7.141's full-badge hide.
+        //
+        // v0.7.141 wrapped this whole DropdownMenu in `<div hidden>` to
+        // remove the "DG" pill operators complained about
+        // (https://imgur.com/a/elWJh5G). That ALSO hid the pulsing
+        // colored dot inside the pill — and that dot was the operators'
+        // primary visual cue that the mic was hot and transcription was
+        // running. With it gone the LIVE TRANSCRIPTION card looked dead
+        // even when audio was streaming, and operators reported the app
+        // had stopped transcribing entirely.
+        //
+        // New compromise: keep the pulsing-dot indicator (so operators
+        // can SEE the mic is live at a glance), drop the "DG" text label
+        // (the original UI-noise complaint), and drop the dropdown
+        // trigger entirely (the picker is functionally vestigial since
+        // v0.7.19 collapsed every option to Deepgram). Result is a
+        // single, unobtrusive emerald/amber dot that pulses iff the mic
+        // is capturing. `engineDotColor`, `preferredEngine`,
+        // `setPreferredEngine`, `engineLabel`, and `engineTitle` are
+        // still defined above and consumed by the speech-provider chain
+        // — only the visible chrome here is trimmed.
+        <span
+          title={isListening ? 'Live — microphone is capturing audio' : 'Idle — click Mic to start transcription'}
+          aria-label={isListening ? 'Live' : 'Idle'}
+          className={cn(
+            'inline-block h-2 w-2 rounded-full',
+            engineDotColor,
+            isListening && 'animate-pulse',
+          )}
+        />
       }
       actions={
         <div className="flex items-center gap-1">
