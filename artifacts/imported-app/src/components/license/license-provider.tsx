@@ -17,6 +17,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { useAppStore } from '@/lib/store'
 import { LowTimeWarning } from './low-time-warning'
 import { ActivationSuccessDialog } from './activation-success-dialog'
+import { TransferSuccessDialog } from './transfer-success-dialog'
 
 export type LicenseState = 'active' | 'trial' | 'trial_expired' | 'expired' | 'never_activated' | 'unknown'
 
@@ -309,6 +310,7 @@ export function LicenseProvider({ children }: { children: React.ReactNode }) {
             inside the provider so they can read status via
             useLicense() directly. */}
       <ActivationSuccessDialog />
+      <TransferSuccessDialog />
       <LowTimeWarning />
     </Ctx.Provider>
   )

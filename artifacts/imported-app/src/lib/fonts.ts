@@ -160,3 +160,53 @@ export function lowerThirdClamp(args: {
   const reference = `clamp(${refMin}rem,min(${refBand * 0.5}cqw,${refBand}cqh),${refCap}rem)`
   return { body, reference }
 }
+
+// ── Full-screen clamp formula (v0.7.124) ────────────────────────────
+// Single source of truth for the FULL-SCREEN body font-size clamp()
+// string. Mirrors fitFont() inside /api/output/congregation so the
+// Settings WYSIWYG preview, the secondary screen, and the NDI capture
+// window all produce visually identical full-screen metrics for the
+// same content + settings.
+//
+// Pre-v0.7.124 the OutputPreview used its own ad-hoc clamp with a
+// 28px·sizeMult cap and 4cqw·sizeMult band — which capped the verse
+// body at ~31px in a small preview card while the real output (vw-
+// based, 7rem cap = 112px) painted the verse at ~112px on a 1920px
+// screen. Operators saw the full-screen preview render as a tiny
+// centred banner while the actual second-screen output painted huge
+// text filling the entire frame. Using cqw inside the preview's
+// container-type:size box reproduces vw-equivalent proportions.
+export function fullScreenClamp(args: {
+  totalChars: number
+  fontSize: 'sm' | 'md' | 'lg' | 'xl'
+  textScale: number
+}): { body: string; reference: string } {
+  const { totalChars, fontSize, textScale } = args
+  const bandTextMap: Record<'sm' | 'md' | 'lg' | 'xl', number> = {
+    sm: 4.0,
+    md: 4.6,
+    lg: 5.2,
+    xl: 6.0,
+  }
+  let band: number = bandTextMap[fontSize] ?? 5.2
+  if (totalChars > 140) band -= 0.4
+  if (totalChars > 220) band -= 0.5
+  if (totalChars > 320) band -= 0.5
+  if (totalChars > 440) band -= 0.5
+  if (totalChars > 600) band -= 0.5
+  if (totalChars > 800) band -= 0.5
+  if (band < 2.2) band = 2.2
+  const ts = Math.min(2, Math.max(0.5, textScale))
+  const scale = (FONT_SIZE_MULT[fontSize] ?? 1) * ts
+  band *= scale
+  // cqw inside the preview's container-type:size wrapper behaves like
+  // vw inside the real output's full-viewport #output container, so
+  // the same coefficient produces matching proportions on both
+  // surfaces. 7rem (112px) cap matches the real renderer.
+  const body = `clamp(1.1rem,${band}cqw,7rem)`
+  // Reference uses the static .slide-reference rule from the real
+  // output: clamp(.85rem, 1.4vw, 1.6rem). Substituting cqw for vw
+  // for container-aware preview equivalence.
+  const reference = `clamp(.85rem,1.4cqw,1.6rem)`
+  return { body, reference }
+}

@@ -5,6 +5,7 @@ import { GoogleFontsLink } from "@/components/google-fonts-link";
 import { UpdateBanner } from "@/components/update-banner";
 import { ThemeProvider } from "@/components/providers/theme-provider";
 import { PointerEventsWatchdog } from "@/components/pointer-events-watchdog";
+import { ConfirmDialogProvider } from "@/components/ui/confirm-dialog";
 
 // NOTE: We intentionally do NOT use next/font/google here. The Electron
 // desktop build runs `next build` on the operator's machine which often
@@ -64,14 +65,24 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
         <ThemeProvider>
-          <PointerEventsWatchdog />
-          <GoogleFontsLink />
-          {children}
-          <UpdateBanner />
-          {/* Toasts are suppressed on /congregation, /presenter, and the
-              NDI fan-out so display/output actions never appear on the
-              audience screen. The operator console still sees toasts. */}
-          <PathAwareToaster />
+          {/* v0.7.125 — Provides useConfirm() so destructive actions
+              (deactivate, move-to-PC, remove offline bible) prompt
+              with a styled Radix AlertDialog instead of the native
+              Chromium window.confirm box. Mounted INSIDE ThemeProvider
+              so the AlertDialog inherits the operator's dark/light
+              theme; mounted at the root so any descendant can call
+              useConfirm() without re-wrapping. */}
+          <ConfirmDialogProvider>
+            <PointerEventsWatchdog />
+            <GoogleFontsLink />
+            {children}
+            <UpdateBanner />
+            {/* Toasts are suppressed on /congregation, /presenter, and
+                the NDI fan-out so display/output actions never appear
+                on the audience screen. The operator console still
+                sees toasts. */}
+            <PathAwareToaster />
+          </ConfirmDialogProvider>
         </ThemeProvider>
       </body>
     </html>

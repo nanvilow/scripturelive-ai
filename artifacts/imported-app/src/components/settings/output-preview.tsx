@@ -7,6 +7,7 @@ import {
   FONT_SIZE_MULT,
   resolveReferenceTypography,
   lowerThirdClamp,
+  fullScreenClamp,
 } from '@/lib/fonts'
 
 /**
@@ -118,9 +119,14 @@ export function OutputPreview({
   // clamp() bands keeps text readable at every preview width while
   // still visibly stepping between buckets.
   const fontStack = getFontStack(settings.fontFamily)
+  // v0.7.124 — textScale default unified to 1 (was 0.9). The real
+  // /api/output/congregation renderer defaults to 1 (route.ts line
+  // 653), so the prior 0.9 default made the preview look ~10 %
+  // smaller than the secondary-screen output even when the operator
+  // hadn't touched the slider.
   const sizeMult =
     (FONT_SIZE_MULT[settings.fontSize] || 1) *
-    Math.min(2, Math.max(0.5, settings.textScale ?? 0.9))
+    Math.min(2, Math.max(0.5, settings.textScale ?? 1))
   // Reference typography (Bug #5) — independent controls that fall
   // back to the body equivalents when unset. The full-screen and
   // lower-third reference paragraphs both read these.
@@ -131,8 +137,29 @@ export function OutputPreview({
   const refShadowCss = refTypo.textShadow
     ? '0 2px 12px rgba(0,0,0,.4)'
     : 'none'
-  const refFs = `clamp(${7 * refSizeMult}px, min(${2 * refSizeMult}cqw, ${4 * refSizeMult}cqh), ${18 * refSizeMult}px)`
-  const bodyFs = `clamp(${10 * sizeMult}px, min(${4 * sizeMult}cqw, ${8 * sizeMult}cqh), ${28 * sizeMult}px)`
+  // v0.7.124 — Full-screen body + reference clamps now come from the
+  // shared fullScreenClamp() helper, which mirrors fitFont() inside
+  // /api/output/congregation. Pre-v0.7.124 the preview body capped at
+  // 28px·sizeMult (≈31 px) with a 4cqw·sizeMult band, while the real
+  // renderer caps at 7rem (112 px) with a 5.2vw·scale band — so a
+  // standard `lg` verse painted as a tiny centred banner in the
+  // preview but as huge text filling the secondary screen. Operator
+  // screenshots showed the two surfaces diverged so completely that
+  // the "PREVIEW (FULL SCREEN)" thumbnail no longer reflected what
+  // the audience actually saw. Using cqw inside the preview's
+  // container-type:size wrapper reproduces vw-equivalent proportions,
+  // and the shared shrink schedule keeps long passages legible on
+  // both surfaces.
+  const refFs = fullScreenClamp({
+    totalChars: body.length,
+    fontSize: refTypo.fontSize,
+    textScale: refTypo.textScale,
+  }).reference
+  const bodyFs = fullScreenClamp({
+    totalChars: body.length,
+    fontSize: settings.fontSize,
+    textScale: settings.textScale ?? 1,
+  }).body
   // Lower-third clamps (Bug #4): use the SAME shared formula as the
   // congregation broadcast HTML so the Settings WYSIWYG preview
   // matches what the projector + NDI feed actually render.
@@ -177,7 +204,15 @@ export function OutputPreview({
               textClass,
             )}
             style={{
-              padding: '6% 6%',
+              // v0.7.124 — padding trimmed 6% → 3% to match the real
+              // /api/output/congregation full-screen layout, where
+              // #output fills 100vw × 100vh with no padding and the
+              // verse body sits inside a flex-centred 90% wrapper
+              // (.slide-content padding:4vh 3vw). The old 6% gutter
+              // pushed text inward and made the preview look like a
+              // banner inset rather than an edge-to-edge full-screen
+              // render.
+              padding: '3% 3%',
               fontFamily: fontStack,
               textShadow: shadow,
             }}

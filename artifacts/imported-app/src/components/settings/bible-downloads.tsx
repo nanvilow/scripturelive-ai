@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Download, Trash2, CheckCircle2, AlertCircle, Loader2, BookOpen } from 'lucide-react'
 import { toast } from 'sonner'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 
 interface DownloadRow {
   id: string
@@ -36,6 +37,7 @@ interface CatalogueEntry {
  * poll the status endpoint every couple seconds while jobs are active.
  */
 export function BibleOfflineDownloads() {
+  const confirm = useConfirm()
   const [items, setItems] = useState<CatalogueEntry[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -77,7 +79,12 @@ export function BibleOfflineDownloads() {
 
   const removeDownload = async (entry: CatalogueEntry) => {
     if (!entry.download) return
-    if (!confirm(`Remove the offline copy of ${entry.name}?`)) return
+    if (!(await confirm({
+      title: 'Remove offline copy?',
+      description: `Remove the offline copy of ${entry.name}?\n\nThe app will fall back to the online edition until you download it again.`,
+      confirmText: 'Remove',
+      destructive: true,
+    }))) return
     try {
       const res = await fetch(`/api/bible/translations?t=${encodeURIComponent(entry.translation)}`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Delete failed')
