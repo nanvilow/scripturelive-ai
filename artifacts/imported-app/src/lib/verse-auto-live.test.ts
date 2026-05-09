@@ -46,11 +46,11 @@ describe('thresholds (v0.7.109 — per-column auto-live + 1.25 s dwell)', () => 
   it('explicit floor is 0.60 per spec', () => {
     expect(EXPLICIT_AUTO_LIVE_MIN).toBe(0.6)
   })
-  it('semantic / "Bible Reference Quoted" (paraphrase) floor is 0.55 per v0.7.108 spec', () => {
-    expect(SEMANTIC_AUTO_LIVE_MIN).toBe(0.55)
+  it('semantic / "Bible Reference Quoted" (paraphrase) floor is 0.50 per v0.7.127 spec (was 0.55, lowered to close 50–54 % gap)', () => {
+    expect(SEMANTIC_AUTO_LIVE_MIN).toBe(0.5)
   })
-  it('AUTO_LIVE_MIN_CONFIDENCE legacy export = lowest per-source floor (0.55)', () => {
-    expect(AUTO_LIVE_MIN_CONFIDENCE).toBe(0.55)
+  it('AUTO_LIVE_MIN_CONFIDENCE legacy export = lowest per-source floor (0.50)', () => {
+    expect(AUTO_LIVE_MIN_CONFIDENCE).toBe(0.5)
   })
   it('suggestions band is 0.10–0.50 per spec', () => {
     expect(SUGGESTION_MIN_CONFIDENCE).toBe(0.1)
@@ -81,11 +81,11 @@ describe('pickAutoLiveBySource (per-column floors)', () => {
   it('explicit at 0.59 is NOT live-eligible', () => {
     expect(pickAutoLiveBySource([v('A', 0.59, 1, 'explicit')], 'explicit')).toBeNull()
   })
-  it('semantic at 0.55 IS live-eligible (boundary inclusive — v0.7.108 floor)', () => {
-    expect(pickAutoLiveBySource([v('A', 0.55, 1, 'semantic')], 'semantic')?.id).toBe('A')
+  it('semantic at 0.50 IS live-eligible (boundary inclusive — v0.7.127 floor)', () => {
+    expect(pickAutoLiveBySource([v('A', 0.5, 1, 'semantic')], 'semantic')?.id).toBe('A')
   })
-  it('semantic at 0.54 is NOT live-eligible (strict 55% floor)', () => {
-    expect(pickAutoLiveBySource([v('A', 0.54, 1, 'semantic')], 'semantic')).toBeNull()
+  it('semantic at 0.49 is NOT live-eligible (strict 50% floor — falls into suggestions instead)', () => {
+    expect(pickAutoLiveBySource([v('A', 0.49, 1, 'semantic')], 'semantic')).toBeNull()
   })
   it('semantic at 0.65 IS live-eligible under v0.7.108 (was rejected by v0.7.107 0.80 floor)', () => {
     expect(pickAutoLiveBySource([v('A', 0.65, 1, 'semantic')], 'semantic')?.id).toBe('A')
@@ -138,8 +138,11 @@ describe('pickAutoLiveMatch (legacy — lowest per-source floor)', () => {
   it('60% IS live-eligible (boundary inclusive)', () => {
     expect(pickAutoLiveMatch([v('Ps.23.1', 0.6)])?.id).toBe('Ps.23.1')
   })
-  it('54% is NOT live-eligible (v0.7.108 — lowest per-source floor is 0.55)', () => {
-    expect(pickAutoLiveMatch([v('Ps.23.1', 0.54)])).toBeNull()
+  it('49% is NOT live-eligible (v0.7.127 — lowest per-source floor is 0.50)', () => {
+    expect(pickAutoLiveMatch([v('Ps.23.1', 0.49)])).toBeNull()
+  })
+  it('50% IS live-eligible (v0.7.127 — boundary inclusive on the new lowered floor)', () => {
+    expect(pickAutoLiveMatch([v('Ps.23.1', 0.5)])?.id).toBe('Ps.23.1')
   })
   it('picks the HIGHEST-confidence verse (legacy path retains confidence ordering)', () => {
     const detected = [v('A', 0.66), v('B', 0.89), v('C', 0.95)]
@@ -178,12 +181,20 @@ describe('suggestionsFor (column 3 — 10%–49% manual-only)', () => {
       .toEqual(['Floor'])
   })
 
-  it('includes anything tagged source=suggestion regardless of confidence', () => {
+  it('v0.7.127 — source=suggestion tag NO LONGER bypasses the band: low-conf still dropped, in-band still in', () => {
+    // Pre-v0.7.127 the `source==='suggestion'` short-circuit let any
+    // suggestion-tagged verse appear regardless of confidence. That
+    // leaked 0.50+ verses (e.g. the operator-screenshotted 52%
+    // Matthew 4:19) into the column whose header reads
+    // "Low-confidence guesses (10–49%)". Now the band is enforced
+    // strictly for every source.
     const detected = [
-      v('LowSugg', 0.05, 1000, 'suggestion'),
-      v('OtherLow', 0.05, 2000, 'semantic'), // dropped
+      v('TooLow',     0.05, 1000, 'suggestion'),  // dropped (<0.10)
+      v('TooHigh',    0.52, 2000, 'suggestion'),  // dropped (≥0.50) — would have leaked pre-fix
+      v('InBandSugg', 0.30, 3000, 'suggestion'),  // kept (in band)
+      v('InBandSem',  0.30, 4000, 'semantic'),    // kept (in band)
     ]
-    expect(suggestionsFor(detected).map((s) => s.id)).toEqual(['LowSugg'])
+    expect(suggestionsFor(detected).map((s) => s.id)).toEqual(['InBandSem', 'InBandSugg'])
   })
 
   it('returns newest-first', () => {
@@ -232,16 +243,16 @@ describe('liveColumnFor (cols 1 & 2 — per-source floors)', () => {
     expect(liveColumnFor(detected, 'explicit').map((d) => d.id)).toEqual(['Edge', 'Mid', 'Hi'])
   })
 
-  it('semantic column requires ≥0.55 (v0.7.108 — paraphrase-friendly), NEWEST first', () => {
+  it('semantic column requires ≥0.50 (v0.7.127 — closes 50–54% gap), NEWEST first', () => {
     const detected = [
       v('A', 0.95, 1, 'semantic'),
       v('B', 0.80, 2, 'semantic'),
-      v('C', 0.79, 3, 'semantic'),
-      v('D', 0.65, 4, 'semantic'),
-      v('E', 0.55, 5, 'semantic'), // boundary inclusive
-      v('F', 0.54, 6, 'semantic'), // dropped
+      v('C', 0.65, 3, 'semantic'),
+      v('D', 0.55, 4, 'semantic'),
+      v('E', 0.50, 5, 'semantic'), // boundary inclusive on the new v0.7.127 floor
+      v('F', 0.49, 6, 'semantic'), // dropped → routed to suggestions
     ]
-    // E,D,C,B,A — newest first, F dropped (below 55%).
+    // E,D,C,B,A — newest first, F dropped (below 50%).
     expect(liveColumnFor(detected, 'semantic').map((d) => d.id)).toEqual(['E', 'D', 'C', 'B', 'A'])
   })
 

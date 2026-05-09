@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { useAppStore } from '@/lib/store'
+import { buildOutputPayload } from '@/lib/output-payload'
 
 /**
  * Global Output Broadcaster.
@@ -72,7 +73,16 @@ export function OutputBroadcaster() {
   useEffect(() => {
     let cancelled = false
 
-    const buildPayload = () => {
+    // v0.7.127 — payload construction lives in src/lib/output-payload.ts
+    // so the Settings Preview iframe can build an IDENTICAL payload
+    // and hand it to the same /api/output/congregation renderer via
+    // postMessage. Single source of truth → preview ↔ live ↔ NDI all
+    // consume the same shape. The rest of this loop (debounce, retry,
+    // stale-snapshot guard) is untouched.
+    const buildPayload = () => buildOutputPayload(useAppStore.getState())
+    void buildPayload
+    if (false as boolean) {
+    const _legacy = () => {
       const s = useAppStore.getState()
       const baseCur = s.liveSlideIndex >= 0 ? s.slides[s.liveSlideIndex] : null
       // Stamp the current operator transport flag onto the live slide
@@ -238,6 +248,8 @@ export function OutputBroadcaster() {
             blanked,
             audio,
           }
+    }
+    void _legacy
     }
 
     const flush = async () => {
