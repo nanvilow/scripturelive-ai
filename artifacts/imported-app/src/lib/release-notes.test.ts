@@ -32,8 +32,14 @@ describe('cleanReleaseNotes', () => {
     expect(out).not.toMatch(/New Contributors/)
     expect(out).not.toMatch(/Full Changelog/)
     expect(out).not.toMatch(/@carol made their first contribution/)
-    expect(out).toContain('Fix thing by @alice in https://github.com/org/repo/pull/12')
-    expect(out).toContain('Add thing by @bob in https://github.com/org/repo/pull/13')
+    // v0.7.132 — `by @user in <github-url>` attribution and bare
+    // github.com URLs are stripped per operator request. The visible
+    // change description survives.
+    expect(out).toContain('Fix thing')
+    expect(out).toContain('Add thing')
+    expect(out).not.toMatch(/github\.com/)
+    expect(out).not.toMatch(/@alice/)
+    expect(out).not.toMatch(/@bob/)
   })
 
   it('preserves manual notes mixed with auto-generated boilerplate', () => {
@@ -57,7 +63,10 @@ describe('cleanReleaseNotes', () => {
     expect(out).toContain('### Highlights')
     expect(out).toContain('- New mixer view')
     expect(out).toContain('- Faster startup')
-    expect(out).toContain('Fix thing by @alice')
+    // v0.7.132 — `by @alice in <url>` stripped; change description kept.
+    expect(out).toContain('Fix thing')
+    expect(out).not.toMatch(/@alice/)
+    expect(out).not.toMatch(/github\.com/)
     expect(out).not.toMatch(/What['’]s Changed/)
     expect(out).not.toMatch(/New Contributors/)
     expect(out).not.toMatch(/Full Changelog/)
@@ -172,7 +181,9 @@ describe('cleanReleaseNotes', () => {
 
     expect(out).not.toMatch(/\n{3,}/)
     expect(out).toContain('- Before')
-    expect(out).toContain('* Fix thing by @alice')
+    // v0.7.132 — attribution stripped; change description kept.
+    expect(out).toContain('Fix thing')
+    expect(out).not.toMatch(/@alice/)
     expect(out).toContain('- After footer')
   })
 
@@ -192,7 +203,9 @@ describe('cleanReleaseNotes', () => {
     expect(out).not.toMatch(/changed/i)
     expect(out).not.toMatch(/contributors/i)
     expect(out).not.toMatch(/changelog/i)
-    expect(out).toContain('Fix by @alice')
+    // v0.7.132 — `by @alice` attribution stripped; "Fix" survives.
+    expect(out).toContain('Fix')
+    expect(out).not.toMatch(/@alice/)
   })
 })
 
@@ -317,7 +330,9 @@ describe('previewReleaseNotes', () => {
     expect(out).toContain('New mixer view')
     expect(out).toContain('PR 42')
     expect(out).toContain('Faster startup')
-    expect(out).toContain('Fix thing by @alice')
+    // v0.7.132 — attribution stripped; change description kept.
+    expect(out).toContain('Fix thing')
+    expect(out).not.toMatch(/@alice/)
     expect(out).not.toMatch(/https?:\/\//)
     expect(out).not.toMatch(/github\.com/)
     expect(out).not.toMatch(/What['’]s Changed/)

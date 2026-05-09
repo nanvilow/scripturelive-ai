@@ -1389,9 +1389,8 @@ export default function DownloadPage() {
                   />
                   {!available && !loading && (
                     <p className="text-[10px] text-muted-foreground leading-snug">
-                      First cloud build pending. The GitHub Actions pipeline at
-                      {' '}<code className="bg-muted px-1 rounded">.github/workflows/release-desktop.yml</code>{' '}
-                      builds this on a real {key.startsWith('mac') ? 'Mac' : 'Windows machine'} when you push a <code className="bg-muted px-1 rounded">v*</code> tag.
+                      First cloud build pending — the {key.startsWith('mac') ? 'macOS' : 'Windows'} installer
+                      will appear here once it&apos;s been built and published.
                     </p>
                   )}
                 </div>
@@ -1415,7 +1414,7 @@ export default function DownloadPage() {
 
           {/* Local file drop zone — re-verify an installer the user already
               has on disk (e.g. downloaded earlier or grabbed straight from
-              GitHub Releases) without re-downloading or shelling out. The
+              the release feed) without re-downloading or shelling out. The
               hash is computed by streaming the file through hash-wasm so it
               works for installers larger than the in-browser fetch cap. */}
           {localOk && (
@@ -1549,9 +1548,9 @@ export default function DownloadPage() {
           {/* End-to-end verification: a detached minisign signature on the
               manifest + checksums file lets admins verify the chain even if
               the page itself is compromised — the public key is published
-              out-of-band on this site and the GitHub README, so an attacker
-              who swaps both an installer and its hash on the page still can't
-              forge a signature without the maintainer's private key. */}
+              out-of-band on this site, so an attacker who swaps both an
+              installer and its hash on the page still can't forge a
+              signature without the maintainer's private key. */}
           {manifest?.externalReleaseUrl && (
             <div className="mt-4 rounded-md border border-border/70 bg-muted/30 p-3">
               <div className="flex items-center gap-2 mb-2 text-[11px] font-semibold text-foreground">
@@ -1564,8 +1563,8 @@ export default function DownloadPage() {
                 <code className="rounded bg-muted px-1 font-mono">manifest.json</code>{' '}
                 and its detached{' '}
                 <code className="rounded bg-muted px-1 font-mono">.minisig</code>{' '}
-                signature from the GitHub Release, plus our public key (also
-                pinned in the GitHub README), and verify with{' '}
+                signature from the release feed, plus our public key (also
+                pinned on this site), and verify with{' '}
                 <a
                   href="https://jedisct1.github.io/minisign/"
                   target="_blank"
@@ -1617,9 +1616,8 @@ sha256sum -c SHA256SUMS.txt`}
               </pre>
               <p className="mt-2 text-[10px] text-muted-foreground leading-snug">
                 Cross-check the public-key fingerprint against the copy
-                pinned in the project's GitHub repo README — that out-of-band
-                channel is what makes the chain tamper-evident. (If you got
-                here from a link in that README, you've already done it.)
+                pinned on the project's website — that out-of-band
+                channel is what makes the chain tamper-evident.
               </p>
             </div>
           )}

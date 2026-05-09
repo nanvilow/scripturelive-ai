@@ -88,7 +88,11 @@ import { NdiOutputPanel } from './ndi-output-panel'
 import { StartupCard } from './startup-card'
 import { OutputPreview } from '@/components/settings/output-preview'
 import { FONT_REGISTRY } from '@/lib/fonts'
-import { quickStartUrl, troubleshootingUrl, newIssueUrl } from '@/lib/github-repo'
+// v0.7.132 — Operator: "Do not show GitHub anywhere in the app again."
+// Removed quickStartUrl / troubleshootingUrl / newIssueUrl imports (all
+// resolved to https://github.com/...) along with the three help-card
+// links that consumed them. Operators reach support via the website
+// link above, which is white-label and stays inside our domain.
 import { APP_VERSION } from '@/lib/app-version'
 import { WEBSITE_URL } from '@/lib/website-url'
 import { useNdi } from '@/lib/use-electron'
@@ -2019,12 +2023,12 @@ function HelpAndUpdatesCard() {
       case 'not-available':
         return `You're on the latest version (v${appVersion}).`
       case 'checking':
-        return 'Checking GitHub Releases…'
+        return 'Checking for updates…'
       case 'error':
         return `Last check failed: ${state.message}`
       case 'idle':
       default:
-        return `Installed: v${appVersion}. Click Check Now to query GitHub Releases.`
+        return `Installed: v${appVersion}. Click Check Now to check for updates.`
     }
   })()
 
@@ -2278,35 +2282,11 @@ function HelpAndUpdatesCard() {
           <ExternalLink className="h-3 w-3 opacity-60" />
         </a>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <a
-            href={quickStartUrl()}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border hover:bg-muted/40 text-xs"
-          >
-            <span className="font-medium">Quick Start</span>
-            <ExternalLink className="h-3 w-3 opacity-60" />
-          </a>
-          <a
-            href={troubleshootingUrl()}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border hover:bg-muted/40 text-xs"
-          >
-            <span className="font-medium">Troubleshooting</span>
-            <ExternalLink className="h-3 w-3 opacity-60" />
-          </a>
-          <a
-            href={newIssueUrl()}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border hover:bg-muted/40 text-xs"
-          >
-            <span className="font-medium">Report a Bug</span>
-            <ExternalLink className="h-3 w-3 opacity-60" />
-          </a>
-        </div>
+        {/* v0.7.132 — Removed Quick Start / Troubleshooting / Report
+            a Bug grid. All three resolved to https://github.com/...
+            URLs and the operator's directive is "do not show GitHub
+            anywhere in the app again." Support is reachable via the
+            white-label website link above. */}
       </CardContent>
     </Card>
   )
