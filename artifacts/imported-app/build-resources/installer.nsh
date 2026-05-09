@@ -155,13 +155,31 @@
 ;   • RUN_TEXT is the checkbox label itself, kept short so it fits.
 ;
 ; Keep all four lines on a single MUI_FINISHPAGE_TEXT call — NSIS
-; concatenates $\r$\n into wizard line breaks. We deliberately do NOT
-; use MUI_FINISHPAGE_RUN_NOTCHECKED so the box stays ticked by default
-; (most operators do want to launch immediately after a fresh install).
+; concatenates $\r$\n into wizard line breaks.
+;
+; v0.7.143 — Run-checkbox now starts UNCHECKED (`MUI_FINISHPAGE_RUN_NOTCHECKED`).
+; v0.7.142 added a `customInstall` MessageBox that fires BEFORE this
+; Finish page and lets operators launch the app immediately if they
+; click Yes. If we left the Finish-page run-checkbox ticked by default
+; (the original v0.7.139 behaviour), an operator who clicked Yes in
+; the MessageBox would see the app launch, then click Finish and
+; trigger a SECOND launch — Electron's single-instance lock catches
+; the duplicate but the renderer briefly flickers and operators get
+; confused by the "double window" effect (architect review v0.7.142).
+;
+; New flow:
+;   • MessageBox Yes → app launches now → Finish page checkbox shown
+;     unchecked → click Finish → no second launch. ✓
+;   • MessageBox No → app does NOT launch → Finish page checkbox
+;     shown unchecked → operator can still tick it as a backup if
+;     they change their mind. ✓
+;   • Silent (/S) → no MessageBox, no Finish page, app handled by
+;     auto-updater IPC. ✓
 !macro customFinishPage
   !define MUI_FINISHPAGE_TITLE "Installation Complete"
-  !define MUI_FINISHPAGE_TEXT "ScriptureLive AI v${VERSION} has been successfully installed on your computer.$\r$\n$\r$\nLeave the box below ticked and click Finish to open ScriptureLive AI now.$\r$\n$\r$\nUntick the box and click Finish to just close this installer — you can open ScriptureLive AI later from your desktop or the Start menu."
+  !define MUI_FINISHPAGE_TEXT "ScriptureLive AI v${VERSION} has been successfully installed on your computer.$\r$\n$\r$\nClick Finish to close this installer.$\r$\n$\r$\nIf the app is not already open, tick the box below and click Finish to launch ScriptureLive AI now — or open it later from your desktop or the Start menu."
   !define MUI_FINISHPAGE_RUN_TEXT "Open ScriptureLive AI now"
+  !define MUI_FINISHPAGE_RUN_NOTCHECKED
 !macroend
 
 ; v0.7.142 — Operator follow-up (screenshot https://imgur.com/a/iB0bQ2K):
