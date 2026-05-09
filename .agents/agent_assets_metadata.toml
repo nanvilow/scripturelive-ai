@@ -809,3 +809,9 @@ id = "wWekM7XWUY_KvNB_FjMAx"
 uri = "file://exports/ScriptureLive-AI-v0.7.130-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.130 — Update popup without external link"
+
+[[outputs]]
+id = "IZjI6VAZ28bgkgxIvnALP"
+uri = "file://exports/ScriptureLive-AI-v0.7.131-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.131 — Cross-pipeline auto-live fix"
