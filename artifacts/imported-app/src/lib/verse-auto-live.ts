@@ -464,12 +464,27 @@ export interface AutoFireGateState {
   explicit: StabilityState
   semantic: StabilityState
   lastFireAtMs: number
+  // v0.7.150 — Explicit-Owns-Live latch.
+  // Once an EXPLICIT (Bible Reference Quoted) verse fires to live, the
+  // semantic (Auto Verse Match) pipeline is FROZEN from auto-firing
+  // for as long as a live verse is shown. Operator's literal ask:
+  // "be freezed without interferening with the Reference Quoted column
+  // detection, until a quotation is made by the pastor then you
+  // unfreeze it [and] display the quotation". Explicit fires still
+  // win over each other (the new explicit replaces the old). Semantic
+  // detections continue to populate the Auto Verse Match column for
+  // operator visibility — only the auto-FIRE-to-live pathway is
+  // suppressed. The latch resets the moment `currentLiveId` becomes
+  // null (operator pressed STOP LIVE / CLEAR / BLACK), so the next
+  // semantic detection is free to claim the projector again.
+  explicitOwnsLive: boolean
 }
 
 export const initialAutoFireGate: AutoFireGateState = {
   explicit: initialStabilityState,
   semantic: initialStabilityState,
   lastFireAtMs: 0,
+  explicitOwnsLive: false,
 }
 
 // Backwards-compat alias — older callers (and the existing
@@ -563,10 +578,15 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
 
   const explicitGate = evaluateStability(gate.explicit, explicitTop, { minFrames })
   const semanticGate = evaluateStability(gate.semantic, semanticTop, { minFrames })
+  // v0.7.150 — Explicit-Owns-Live latch RESETS when nothing is live
+  // (operator pressed STOP LIVE / CLEAR / BLACK, or the projector
+  // cleared itself). Carries the previous frame's value otherwise.
+  const explicitOwnsLive = currentLiveId == null ? false : gate.explicitOwnsLive
   const nextGate: AutoFireGateState = {
     explicit: explicitGate.next,
     semantic: semanticGate.next,
     lastFireAtMs: gate.lastFireAtMs,
+    explicitOwnsLive,
   }
 
   // Spec-allowed optimization: don't refire whatever's already on
@@ -634,15 +654,25 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
       // v0.7.120/v0.7.128 path below (a same-pipeline near-miss is
       // noise, not corroboration — must stay blocked).
       if (liveSource && candSource !== liveSource) {
-        // v0.7.135 — Symmetric 0.58 floor in BOTH directions. The
-        // operator re-reported the same bug in the reverse pipeline:
-        // a 100% EXPLICIT live verse (Auto Verse Match) was blocking
-        // a 58% SEMANTIC detection (Bible Reference Quoted) from
-        // going live. v0.7.133 only opened EXPLICIT-cand-vs-SEMANTIC-
-        // live; we now mirror it. Both constants intentionally
-        // resolve to 0.58 — kept as separate exports so the two
-        // directions can be retuned independently without another
-        // refactor if the operator changes their mind.
+        // v0.7.150 — EXPLICIT ALWAYS WINS OVER SEMANTIC.
+        // Operator's literal directive: "anytime Auto Verse Match is
+        // 100% detected it doesn't allow any verse … in the Bible
+        // Reference Quoted to auto go live … always display Bible
+        // Reference Quoted column detected over Auto Verse Match".
+        // An EXPLICIT candidate (Bible Reference Quoted) against a
+        // SEMANTIC live verse (Auto Verse Match) is unconditionally
+        // allowed through the read-lock — the EXPLICIT_AUTO_LIVE_MIN
+        // (0.58) column floor is the only gate. Explicit detection
+        // is the pastor literally speaking the address ("John three
+        // sixteen"); semantic is inference from paraphrased prose.
+        // The pastor's spoken reference is ground truth and must
+        // always preempt inference, even when inference is at 100%.
+        if (candSource === 'explicit' && liveSource === 'semantic') {
+          return true
+        }
+        // Reverse direction (SEMANTIC candidate vs EXPLICIT live)
+        // keeps the v0.7.135 0.58 floor — protects an operator-loaded
+        // chapter (explicit @ 1.0) from a casual paraphrase hit.
         const min =
           candSource === 'explicit'
             ? CROSS_PIPELINE_CORROBORATION_MIN
@@ -662,13 +692,27 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
     if (!passesReadLock(semanticFire, 'semantic')) semanticFire = null
   }
 
+  // v0.7.150 — Explicit-Owns-Live FREEZE on the semantic pipeline.
+  // Once an explicit (Bible Reference Quoted) verse has taken the
+  // projector, semantic auto-fire is suppressed for as long as a
+  // live verse is showing. Semantic detections still surface in the
+  // Auto Verse Match column for operator visibility; only the
+  // auto-fire-to-live pathway is gated. The freeze releases
+  // automatically the instant `currentLiveId` becomes null (handled
+  // above where `explicitOwnsLive` resets to false).
+  if (nextGate.explicitOwnsLive && currentLiveId) {
+    semanticFire = null
+  }
+
   // Independence + tiebreak: explicit wins when both fire same frame.
   if (explicitFire) {
     return {
       fire: true,
       verse: explicitFire,
       source: 'explicit',
-      nextStability: { ...nextGate, lastFireAtMs: now },
+      // v0.7.150 — Latch the explicit-owns-live flag. Stays set for
+      // every subsequent frame until `currentLiveId` clears.
+      nextStability: { ...nextGate, lastFireAtMs: now, explicitOwnsLive: true },
     }
   }
   if (semanticFire) {
@@ -676,6 +720,13 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
       fire: true,
       verse: semanticFire,
       source: 'semantic',
+      // Semantic firing means no explicit was eligible this frame —
+      // the latch stays at whatever the previous frame had (false in
+      // a fresh / cleared state, or unchanged if the operator's
+      // somehow restored a semantic top while explicit was owning;
+      // that branch is impossible because we just nulled semanticFire
+      // when explicitOwnsLive was true, but we keep the carry-through
+      // behaviour for clarity).
       nextStability: { ...nextGate, lastFireAtMs: now },
     }
   }
