@@ -31,6 +31,7 @@ import {
 import { createPaymentCode, getFile } from '@/lib/licensing/storage'
 import { notifySms, notifyEmail } from '@/lib/licensing/notifications'
 import { pingError } from '@/lib/licensing/telemetry-client'
+import { cloudMirrorPayment } from '@/lib/licensing/cloud-sync'
 
 // v0.7.14 — Tiny helper: forward a payment-code dispatch failure to
 // /api/telemetry/error so the admin Records dashboard sees it. Never
@@ -71,6 +72,17 @@ export async function POST(req: NextRequest) {
     email,
     whatsapp,
   })
+
+  // v0.7.145 — Mirror this payment up to the cloud admin ledger so
+  // the central "Recent Payments" panel sees it. Fire-and-forget;
+  // failures here MUST NOT affect the customer-facing response.
+  // No-op when running on the cloud itself or when
+  // SCRIPTURELIVE_CLOUD_BASE is empty.
+  try {
+    cloudMirrorPayment(rec, getFile().installId)
+  } catch (e) {
+    console.error('[payment-code] cloud mirror enqueue failed:', e)
+  }
 
   // Build the customer-facing response NOW so we can return
   // immediately. Notifications are deferred to setImmediate below.
