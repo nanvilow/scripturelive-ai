@@ -935,3 +935,9 @@ id = "W6cQ0bRGbaSz2WCECT5Z-"
 uri = "file://exports/ScriptureLive-AI-v0.7.151-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.151 — source (narrow latch + AVM-detect-again release)"
+
+[[outputs]]
+id = "fVuLe9EiTfXFpUUY6knFw"
+uri = "file://artifacts/imported-app/exports/ScriptureLive-AI-v0.7.152-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.152 — BRQ→AVM direction CORRECTED (source zip)"

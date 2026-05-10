@@ -464,44 +464,55 @@ export interface AutoFireGateState {
   explicit: StabilityState
   semantic: StabilityState
   lastFireAtMs: number
-  // v0.7.151 — Explicit-Owns-Live latch (revised release condition).
-  // The latch ARMS only when an EXPLICIT (Bible Reference Quoted)
-  // verse fires AND the previously-live verse was a SEMANTIC (Auto
-  // Verse Match) detection. While the latch is on, semantic auto-fire
-  // is suppressed so the explicit verse stays on the projector and
-  // the audio-buffer-lagged repeat detections of the just-preempted
-  // semantic verse can't knock it off.
+  // v0.7.152 — Semantic-Owns-Live latch. CRITICAL CORRECTION of
+  // v0.7.150/v0.7.151 which had the column→source mapping inverted
+  // and protected the WRONG side. The actual mapping (verified at
+  // logos-shell.tsx L2331-2334) is:
+  //
+  //   COL 1 "Auto Verse Match"      = source 'explicit'  (regex /
+  //                                    Reference Engine v2 — pastor
+  //                                    literally said the address)
+  //   COL 2 "Bible Reference Quoted" = source 'semantic'  (preacher
+  //                                    phrase / paraphrase engine)
+  //
+  // Operator's verbatim spec ("always display Bible Reference Quoted
+  // column detected over Auto Verse Match") therefore translates to:
+  // SEMANTIC must always preempt EXPLICIT, and the latch must freeze
+  // the EXPLICIT (AVM) column once SEMANTIC (BRQ) has taken the
+  // projector — exactly the opposite direction from v0.7.150/v0.7.151.
+  //
+  // The latch ARMS only when a SEMANTIC (BRQ) verse fires AND the
+  // previously-live verse was an EXPLICIT (AVM) detection. While the
+  // latch is on, explicit auto-fire is suppressed so the BRQ verse
+  // stays on the projector and the audio-buffer-lagged repeat
+  // address-detections of the just-preempted AVM verse can't knock
+  // it off.
   //
   // The latch RELEASES when EITHER:
   //   (a) `currentLiveId` becomes null (STOP LIVE / CLEAR / BLACK), OR
-  //   (b) the AVM column shows a NEW verse different from the one we
-  //       froze (`semanticTop.id !== frozenSemanticId`). This is the
-  //       operator's "freeze that column until it detect Auto Verse
-  //       Match again" — when the pastor moves on and AVM picks up a
-  //       different verse, AVM is allowed to fire again.
+  //   (b) the AVM column shows a NEW explicit verse different from
+  //       the one we froze (`explicitTop.id !== frozenExplicitId`).
+  //       Operator spec: "until it detect Auto Verse Match again"
+  //       — when the pastor moves on and AVM picks up a different
+  //       address, AVM is allowed to fire again.
   //
-  // v0.7.150 only had release (a). That was wrong — it kept AVM
-  // frozen forever even after the pastor had clearly moved on.
-  // v0.7.151 adds release (b) and tightens the arming condition so
-  // the latch is never armed when no semantic was live to begin with.
-  //
-  // Semantic detections of the FROZEN verse keep populating the AVM
+  // Explicit detections of the FROZEN verse keep populating the AVM
   // column for operator visibility (no UI suppression) — only the
   // auto-fire-to-live pathway is gated.
-  explicitOwnsLive: boolean
-  // The semantic verse id that was preempted by the explicit fire.
+  semanticOwnsLive: boolean
+  // The explicit verse id that was preempted by the semantic fire.
   // Null when no latch is armed. Used to detect "AVM detect again"
-  // — when `semanticTop.id` differs from this id, the pastor has
+  // — when `explicitTop.id` differs from this id, the pastor has
   // moved on and the latch releases.
-  frozenSemanticId: string | null
+  frozenExplicitId: string | null
 }
 
 export const initialAutoFireGate: AutoFireGateState = {
   explicit: initialStabilityState,
   semantic: initialStabilityState,
   lastFireAtMs: 0,
-  explicitOwnsLive: false,
-  frozenSemanticId: null,
+  semanticOwnsLive: false,
+  frozenExplicitId: null,
 }
 
 // Backwards-compat alias — older callers (and the existing
@@ -595,31 +606,32 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
 
   const explicitGate = evaluateStability(gate.explicit, explicitTop, { minFrames })
   const semanticGate = evaluateStability(gate.semantic, semanticTop, { minFrames })
-  // v0.7.151 — Explicit-Owns-Live latch reset.
+  // v0.7.152 — Semantic-Owns-Live latch reset (corrected direction).
   //   (a) STOP LIVE / CLEAR / BLACK clears live → reset both fields.
-  //   (b) AVM column shows a verse different from the frozen one →
-  //       pastor has moved on, release the latch ("until it detect
-  //       Auto Verse Match again" per operator spec).
-  let explicitOwnsLive = gate.explicitOwnsLive
-  let frozenSemanticId = gate.frozenSemanticId
+  //   (b) AVM column shows an EXPLICIT verse different from the
+  //       frozen one → pastor has moved on (literally said a NEW
+  //       address), release the latch ("until it detect Auto Verse
+  //       Match again" per operator spec).
+  let semanticOwnsLive = gate.semanticOwnsLive
+  let frozenExplicitId = gate.frozenExplicitId
   if (currentLiveId == null) {
-    explicitOwnsLive = false
-    frozenSemanticId = null
+    semanticOwnsLive = false
+    frozenExplicitId = null
   } else if (
-    explicitOwnsLive &&
-    frozenSemanticId != null &&
-    semanticTop != null &&
-    semanticTop.id !== frozenSemanticId
+    semanticOwnsLive &&
+    frozenExplicitId != null &&
+    explicitTop != null &&
+    explicitTop.id !== frozenExplicitId
   ) {
-    explicitOwnsLive = false
-    frozenSemanticId = null
+    semanticOwnsLive = false
+    frozenExplicitId = null
   }
   const nextGate: AutoFireGateState = {
     explicit: explicitGate.next,
     semantic: semanticGate.next,
     lastFireAtMs: gate.lastFireAtMs,
-    explicitOwnsLive,
-    frozenSemanticId,
+    semanticOwnsLive,
+    frozenExplicitId,
   }
 
   // Spec-allowed optimization: don't refire whatever's already on
@@ -687,30 +699,29 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
       // v0.7.120/v0.7.128 path below (a same-pipeline near-miss is
       // noise, not corroboration — must stay blocked).
       if (liveSource && candSource !== liveSource) {
-        // v0.7.150 — EXPLICIT ALWAYS WINS OVER SEMANTIC.
-        // Operator's literal directive: "anytime Auto Verse Match is
-        // 100% detected it doesn't allow any verse … in the Bible
-        // Reference Quoted to auto go live … always display Bible
-        // Reference Quoted column detected over Auto Verse Match".
-        // An EXPLICIT candidate (Bible Reference Quoted) against a
-        // SEMANTIC live verse (Auto Verse Match) is unconditionally
-        // allowed through the read-lock — the EXPLICIT_AUTO_LIVE_MIN
-        // (0.58) column floor is the only gate. Explicit detection
-        // is the pastor literally speaking the address ("John three
-        // sixteen"); semantic is inference from paraphrased prose.
-        // The pastor's spoken reference is ground truth and must
-        // always preempt inference, even when inference is at 100%.
-        if (candSource === 'explicit' && liveSource === 'semantic') {
+        // v0.7.152 — SEMANTIC ALWAYS WINS OVER EXPLICIT (corrected
+        // direction — v0.7.150/v0.7.151 had the column→source
+        // mapping inverted). Operator's literal directive: "always
+        // display Bible Reference Quoted column detected over Auto
+        // Verse Match". Code mapping: BRQ = source 'semantic',
+        // AVM = source 'explicit'. So a SEMANTIC candidate (BRQ —
+        // preacher phrase / paraphrase) against an EXPLICIT live
+        // verse (AVM — regex address) is unconditionally allowed
+        // through the read-lock — the SEMANTIC_AUTO_LIVE_MIN (0.50)
+        // column floor is the only gate. The paraphrase engine
+        // firing means the pastor has actively moved on to quote a
+        // verse; AVM regex hits often latch onto stale lookup-loaded
+        // chapters or repeat audio-buffer detections of an address
+        // the pastor said minutes ago, so the BRQ signal must
+        // preempt unconditionally even when AVM is at 100%.
+        if (candSource === 'semantic' && liveSource === 'explicit') {
           return true
         }
-        // Reverse direction (SEMANTIC candidate vs EXPLICIT live)
-        // keeps the v0.7.135 0.58 floor — protects an operator-loaded
-        // chapter (explicit @ 1.0) from a casual paraphrase hit.
-        const min =
-          candSource === 'explicit'
-            ? CROSS_PIPELINE_CORROBORATION_MIN
-            : CROSS_PIPELINE_SEMANTIC_VS_EXPLICIT_MIN
-        return candConf >= min
+        // Reverse direction (EXPLICIT candidate vs SEMANTIC live)
+        // keeps the v0.7.135 0.58 floor — protects a confidently-
+        // detected paraphrase from a low-confidence regex address
+        // mishear.
+        return candConf >= CROSS_PIPELINE_CORROBORATION_MIN
       }
       // v0.7.120 — HIGH-CONF lock blocks all cross-ref auto swaps.
       // v0.7.128 — UNLESS the new candidate is also high-conf
@@ -725,58 +736,61 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
     if (!passesReadLock(semanticFire, 'semantic')) semanticFire = null
   }
 
-  // v0.7.151 — Explicit-Owns-Live FREEZE on the semantic pipeline.
-  // Once an explicit (Bible Reference Quoted) verse has taken the
-  // projector AFTER preempting a semantic (Auto Verse Match) live
-  // verse, semantic auto-fire is suppressed for as long as the AVM
+  // v0.7.152 — Semantic-Owns-Live FREEZE on the explicit pipeline.
+  // Once a semantic (Bible Reference Quoted) verse has taken the
+  // projector AFTER preempting an explicit (Auto Verse Match) live
+  // verse, explicit auto-fire is suppressed for as long as the AVM
   // column keeps showing the same preempted verse. Releases per the
   // arming/reset logic above.
-  if (nextGate.explicitOwnsLive && currentLiveId) {
-    semanticFire = null
+  if (nextGate.semanticOwnsLive && currentLiveId) {
+    explicitFire = null
   }
 
-  // Independence + tiebreak: explicit wins when both fire same frame.
-  if (explicitFire) {
-    // v0.7.151 — Arm the latch ONLY if the previously-live verse was
-    // a semantic (AVM) detection. Look up the prior live verse in
-    // the detected list; if it has source='semantic' we know AVM was
+  // v0.7.152 — Tiebreak inverted from v0.7.151: SEMANTIC wins when
+  // both fire same frame. Operator spec: "always display Bible
+  // Reference Quoted [semantic] column detected over Auto Verse
+  // Match [explicit]".
+  if (semanticFire) {
+    // Arm the latch ONLY if the previously-live verse was an
+    // EXPLICIT (AVM) detection. Look up the prior live verse in the
+    // detected list; if it has source='explicit' we know AVM was
     // showing it and we want to freeze AVM until it picks up a NEW
-    // verse. Re-firing explicit when an explicit was already live
+    // address. Re-firing semantic when a semantic was already live
     // (or no live) does NOT arm the latch — but if the latch was
-    // already armed from a prior semantic→explicit transition, it's
+    // already armed from a prior explicit→semantic transition, it's
     // preserved (carried in nextGate).
     const priorLive = currentLiveId
       ? detected.find((v) => v.id === currentLiveId) ?? null
       : null
     const priorLiveSource = priorLive ? sourceOf(priorLive) : null
-    const armLatch = priorLiveSource === 'semantic'
-    return {
-      fire: true,
-      verse: explicitFire,
-      source: 'explicit',
-      nextStability: armLatch
-        ? {
-            ...nextGate,
-            lastFireAtMs: now,
-            explicitOwnsLive: true,
-            frozenSemanticId: currentLiveId,
-          }
-        : { ...nextGate, lastFireAtMs: now },
-    }
-  }
-  if (semanticFire) {
+    const armLatch = priorLiveSource === 'explicit'
     return {
       fire: true,
       verse: semanticFire,
       source: 'semantic',
-      // Semantic firing means the latch was either never armed or
-      // just released (otherwise semanticFire would have been
+      nextStability: armLatch
+        ? {
+            ...nextGate,
+            lastFireAtMs: now,
+            semanticOwnsLive: true,
+            frozenExplicitId: currentLiveId,
+          }
+        : { ...nextGate, lastFireAtMs: now },
+    }
+  }
+  if (explicitFire) {
+    return {
+      fire: true,
+      verse: explicitFire,
+      source: 'explicit',
+      // Explicit firing means the latch was either never armed or
+      // just released (otherwise explicitFire would have been
       // nulled above). Always clear the latch fields for safety.
       nextStability: {
         ...nextGate,
         lastFireAtMs: now,
-        explicitOwnsLive: false,
-        frozenSemanticId: null,
+        semanticOwnsLive: false,
+        frozenExplicitId: null,
       },
     }
   }
