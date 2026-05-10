@@ -592,34 +592,128 @@ const RAW_CATALOGUE: ReadonlyArray<{ phrase: string; reference: string }> = [
   // famous opening got eaten by the conjunction-stripper. All hand-
   // curated → dispatched as semantic 0.95 EXACT / 0.85 FUZZY (covered
   // by v0.7.119 high-conf lock above), so they auto-fire AND stick.
-  // ── v0.7.147 — Matthew 4:19 "fishers of men" (operator request) ──
-  // Operator screenshot: preacher said "Come with me. I will make you
-  // fishers of men." (paraphrase of Matthew 4:19 "Follow me, and I
-  // will make you fishers of men.") — landed in Scripture Feed
-  // History but NEVER appeared in BIBLE REFERENCE QUOTED column and
-  // never auto-fired. Root cause: zero hand-curated entries for
-  // Matthew 4:19; the auto-derived 5-7-word slice path tagged it
-  // 'suggestion' (conf 0.42) and the AI cosine path either landed in
-  // the 0.50-0.54 dead band (dropped by L1935 noise floor at 0.55) or
-  // briefly painted then aged out. Hand-curated EXACT here = conf
-  // 0.95, source 'semantic' → auto-fires AND sticks under the
-  // v0.7.120 high-conf read-lock. Phrase variants cover the most
-  // common pulpit paraphrases ("come" vs "follow", "i will make"
-  // dropped, just the punchline "fishers of men", etc.).
-  { phrase: 'fishers of men', reference: 'Matthew 4:19' },
-  { phrase: 'i will make you fishers of men', reference: 'Matthew 4:19' },
-  { phrase: 'make you fishers of men', reference: 'Matthew 4:19' },
-  { phrase: 'follow me and i will make you fishers of men', reference: 'Matthew 4:19' },
+  // ── v0.7.148 — Matthew 4:19 EXHAUSTIVE coverage (operator request) ──
+  // Follow-up to v0.7.147: operator wants this app's Matthew 4:19
+  // detection to be the BEST in the worship-tech market — beat
+  // ProPresenter / EasyWorship / Faithlife Proclaim. Approach: cover
+  // every translation's verbatim wording (KJV/NIV/ESV/NLT/MSG/NKJV)
+  // PLUS every common pulpit paraphrase, narrative summary, and
+  // call-to-action sermon line that uniquely identifies the calling
+  // of Peter and Andrew at the Sea of Galilee. Per v0.7.117 dispatch
+  // table: hand-curated EXACT → conf 0.95, source 'semantic' →
+  // auto-fires + sticks under v0.7.120 high-conf read-lock.
+  //
+  // FALSE-POSITIVE GUARD: short generic Jesus-discipleship phrases
+  // like "follow me" / "come with me" / "come after me" / "come ye
+  // after me" are DELIBERATELY OMITTED — they collide with Matthew
+  // 16:24 / Luke 9:23 ("If any man will come after me…") and with
+  // Matthew 9:9 / John 1:43 / Luke 9:59 / John 21:19 (Jesus saying
+  // "Follow me" to OTHER disciples). v0.7.147 included "come after
+  // me" / "come ye after me" — REMOVED here per code-review flag.
+  // Every entry below contains "fishers" / "fish for men/people" /
+  // "left their nets" / "Peter and Andrew" or another distinctive
+  // Matt 4:19-only signature.
+
+  // Verbatim translation variants ─────────────────────────────────
+  { phrase: 'follow me and i will make you fishers of men', reference: 'Matthew 4:19' }, // KJV / NKJV
+  { phrase: 'follow me and i will make you fishers of people', reference: 'Matthew 4:19' }, // ESV (gender-neutral)
+  { phrase: 'follow me and i will make you fish for people', reference: 'Matthew 4:19' }, // NIV-style
+  { phrase: 'follow me and i will send you out to fish for people', reference: 'Matthew 4:19' }, // NIV alt
   { phrase: 'come follow me and i will make you fishers of men', reference: 'Matthew 4:19' },
+  { phrase: 'come and follow me and i will make you fishers of men', reference: 'Matthew 4:19' },
+  { phrase: "i'll show you how to fish for people", reference: 'Matthew 4:19' }, // MSG
+  { phrase: 'i will show you how to fish for people', reference: 'Matthew 4:19' },
+  { phrase: 'come with me i will make you fishers of men', reference: 'Matthew 4:19' }, // operator quote v0.7.147
   { phrase: 'come with me and i will make you fishers of men', reference: 'Matthew 4:19' },
-  { phrase: 'come with me i will make you fishers of men', reference: 'Matthew 4:19' },
-  { phrase: 'come ye after me', reference: 'Matthew 4:19' },
-  { phrase: 'come after me', reference: 'Matthew 4:19' },
-  { phrase: 'jesus called peter and andrew', reference: 'Matthew 4:19' },
-  { phrase: 'jesus called the first disciples', reference: 'Matthew 4:19' },
-  { phrase: 'calling of the first disciples', reference: 'Matthew 4:19' },
-  { phrase: 'jesus calls the disciples', reference: 'Matthew 4:19' },
+
+  // Punchline / keyword fragments ────────────────────────────────
+  { phrase: 'fishers of men', reference: 'Matthew 4:19' },
+  { phrase: 'fisher of men', reference: 'Matthew 4:19' },
+  { phrase: 'fishers of people', reference: 'Matthew 4:19' },
+  { phrase: 'become fishers of men', reference: 'Matthew 4:19' },
+  { phrase: 'become fishers of people', reference: 'Matthew 4:19' },
+  { phrase: 'make you fishers of men', reference: 'Matthew 4:19' },
+  { phrase: 'make you fishers of people', reference: 'Matthew 4:19' },
+  { phrase: 'make you fish for men', reference: 'Matthew 4:19' },
+  { phrase: 'make you fish for people', reference: 'Matthew 4:19' },
+  { phrase: 'i will make you fishers of men', reference: 'Matthew 4:19' },
+  { phrase: 'i will make you fishers of people', reference: 'Matthew 4:19' },
   { phrase: 'i will make you fishers', reference: 'Matthew 4:19' },
+  { phrase: 'i will make you fish for men', reference: 'Matthew 4:19' },
+  { phrase: 'i will make you fish for people', reference: 'Matthew 4:19' },
+
+  // Narrative summaries ──────────────────────────────────────────
+  { phrase: 'jesus called peter and andrew', reference: 'Matthew 4:19' },
+  { phrase: 'jesus called peter and andrew his brother', reference: 'Matthew 4:19' },
+  { phrase: 'jesus called the first disciples', reference: 'Matthew 4:19' },
+  { phrase: 'jesus called his first disciples', reference: 'Matthew 4:19' },
+  { phrase: 'jesus called the fishermen', reference: 'Matthew 4:19' },
+  { phrase: 'jesus calls the disciples', reference: 'Matthew 4:19' },
+  { phrase: 'jesus calls his first disciples', reference: 'Matthew 4:19' },
+  { phrase: 'calling of the first disciples', reference: 'Matthew 4:19' },
+  { phrase: 'calling of peter and andrew', reference: 'Matthew 4:19' },
+  { phrase: 'calling of the fishermen', reference: 'Matthew 4:19' },
+  { phrase: 'walking by the sea of galilee jesus saw two brothers', reference: 'Matthew 4:19' },
+  { phrase: 'he saw two brothers casting a net into the sea', reference: 'Matthew 4:19' },
+  { phrase: 'simon called peter and andrew his brother', reference: 'Matthew 4:19' },
+  { phrase: 'two brothers casting a net into the sea', reference: 'Matthew 4:19' },
+  { phrase: 'casting a net into the sea for they were fishermen', reference: 'Matthew 4:19' },
+  { phrase: 'and they straightway left their nets', reference: 'Matthew 4:20' },
+  { phrase: 'they left their nets and followed him', reference: 'Matthew 4:20' },
+  { phrase: 'they left their nets and followed jesus', reference: 'Matthew 4:20' },
+  { phrase: 'immediately they left their nets', reference: 'Matthew 4:20' },
+  { phrase: 'straightway they forsook their nets', reference: 'Matthew 4:20' },
+  { phrase: 'forsook their nets and followed him', reference: 'Matthew 4:20' },
+  { phrase: 'left their nets to follow jesus', reference: 'Matthew 4:20' },
+
+  // Sermon-callback paraphrases ──────────────────────────────────
+  { phrase: 'from fishermen to fishers of men', reference: 'Matthew 4:19' },
+  { phrase: 'from catching fish to catching men', reference: 'Matthew 4:19' },
+  { phrase: 'no longer catch fish but men', reference: 'Matthew 4:19' },
+  { phrase: 'jesus said follow me and i will make you fishers of men', reference: 'Matthew 4:19' },
+  { phrase: 'jesus said come follow me and i will make you fishers of men', reference: 'Matthew 4:19' },
+  { phrase: 'drop your nets and follow jesus', reference: 'Matthew 4:19' },
+  { phrase: 'leave your nets and follow jesus', reference: 'Matthew 4:19' },
+
+  // ── v0.7.148 — Psalm 124:7 "snare of the fowler" (operator request) ──
+  // Operator quote: "Our soul has escaped the snare of the enemy" —
+  // common pulpit paraphrase of Psalm 124:7 KJV "Our soul is escaped
+  // as a bird out of the snare of the fowlers: the snare is broken,
+  // and we are escaped." Variants below cover (a) verbatim KJV/NIV/
+  // ESV wording, (b) the popular "snare of the enemy"/"snare of the
+  // devil" preacher substitutions (operator's exact phrasing), (c)
+  // bird-imagery openings, (d) the closing punchline "the snare is
+  // broken and we are escaped". FALSE-POSITIVE GUARD: bare "out of
+  // the snare" is OMITTED — it appears in 2 Timothy 2:26 ("recover
+  // themselves out of the snare of the devil"). Every entry below
+  // contains "soul" + "escape" / "fowler" / "snare is broken" or
+  // another distinctive Psalm 124:7-only signature.
+  { phrase: 'our soul is escaped as a bird out of the snare of the fowlers', reference: 'Psalm 124:7' }, // KJV verbatim
+  { phrase: 'our soul is escaped as a bird', reference: 'Psalm 124:7' },
+  { phrase: 'our soul has escaped as a bird', reference: 'Psalm 124:7' },
+  { phrase: 'our soul has escaped like a bird', reference: 'Psalm 124:7' },
+  { phrase: 'we have escaped like a bird from the snare of the fowlers', reference: 'Psalm 124:7' }, // NIV
+  { phrase: 'we have escaped like a bird from the fowlers snare', reference: 'Psalm 124:7' },
+  { phrase: 'we have escaped as a bird from the snare of the fowlers', reference: 'Psalm 124:7' }, // ESV
+  { phrase: 'soul has escaped like a bird', reference: 'Psalm 124:7' },
+  { phrase: 'soul escaped as a bird', reference: 'Psalm 124:7' },
+  { phrase: 'our soul has escaped the snare of the enemy', reference: 'Psalm 124:7' }, // operator quote
+  { phrase: 'our soul is escaped from the snare of the enemy', reference: 'Psalm 124:7' },
+  { phrase: 'our soul has escaped the snare of the fowler', reference: 'Psalm 124:7' },
+  { phrase: 'our soul has escaped the snare of the fowlers', reference: 'Psalm 124:7' },
+  { phrase: 'our soul has escaped the snare', reference: 'Psalm 124:7' },
+  { phrase: 'soul has escaped the snare of the enemy', reference: 'Psalm 124:7' },
+  { phrase: 'escaped the snare of the fowler', reference: 'Psalm 124:7' },
+  { phrase: 'escaped the snare of the fowlers', reference: 'Psalm 124:7' },
+  { phrase: 'escaped from the snare of the fowler', reference: 'Psalm 124:7' },
+  { phrase: 'escaped from the snare of the fowlers', reference: 'Psalm 124:7' },
+  { phrase: 'snare of the fowler', reference: 'Psalm 124:7' },
+  { phrase: 'snare of the fowlers', reference: 'Psalm 124:7' },
+  { phrase: 'the snare is broken and we are escaped', reference: 'Psalm 124:7' },
+  { phrase: 'the snare is broken and we have escaped', reference: 'Psalm 124:7' },
+  { phrase: 'the snare has been broken and we have escaped', reference: 'Psalm 124:7' },
+  { phrase: 'the snare is broken', reference: 'Psalm 124:7' },
+  { phrase: 'broken the snare and we are escaped', reference: 'Psalm 124:7' },
 
   { phrase: 'silver and gold have i none', reference: 'Acts 3:6' },
   { phrase: 'silver and gold i have none', reference: 'Acts 3:6' },
