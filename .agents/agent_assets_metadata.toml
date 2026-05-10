@@ -905,3 +905,9 @@ id = "3eIlgP6NRnIjyge9fZNab"
 uri = "file://exports/ScriptureLive-AI-v0.7.146-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.146 — Source with bundled NDI runtime (run BUILD.bat on Windows)"
+
+[[outputs]]
+id = "ZSowj4R2A5hg8cpKjjyDZ"
+uri = "file://exports/ScriptureLive-AI-v0.7.147-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.147 — Matthew 4:19 paraphrase fix (run BUILD.bat on Windows)"

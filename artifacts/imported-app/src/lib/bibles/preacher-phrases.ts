@@ -592,6 +592,35 @@ const RAW_CATALOGUE: ReadonlyArray<{ phrase: string; reference: string }> = [
   // famous opening got eaten by the conjunction-stripper. All hand-
   // curated → dispatched as semantic 0.95 EXACT / 0.85 FUZZY (covered
   // by v0.7.119 high-conf lock above), so they auto-fire AND stick.
+  // ── v0.7.147 — Matthew 4:19 "fishers of men" (operator request) ──
+  // Operator screenshot: preacher said "Come with me. I will make you
+  // fishers of men." (paraphrase of Matthew 4:19 "Follow me, and I
+  // will make you fishers of men.") — landed in Scripture Feed
+  // History but NEVER appeared in BIBLE REFERENCE QUOTED column and
+  // never auto-fired. Root cause: zero hand-curated entries for
+  // Matthew 4:19; the auto-derived 5-7-word slice path tagged it
+  // 'suggestion' (conf 0.42) and the AI cosine path either landed in
+  // the 0.50-0.54 dead band (dropped by L1935 noise floor at 0.55) or
+  // briefly painted then aged out. Hand-curated EXACT here = conf
+  // 0.95, source 'semantic' → auto-fires AND sticks under the
+  // v0.7.120 high-conf read-lock. Phrase variants cover the most
+  // common pulpit paraphrases ("come" vs "follow", "i will make"
+  // dropped, just the punchline "fishers of men", etc.).
+  { phrase: 'fishers of men', reference: 'Matthew 4:19' },
+  { phrase: 'i will make you fishers of men', reference: 'Matthew 4:19' },
+  { phrase: 'make you fishers of men', reference: 'Matthew 4:19' },
+  { phrase: 'follow me and i will make you fishers of men', reference: 'Matthew 4:19' },
+  { phrase: 'come follow me and i will make you fishers of men', reference: 'Matthew 4:19' },
+  { phrase: 'come with me and i will make you fishers of men', reference: 'Matthew 4:19' },
+  { phrase: 'come with me i will make you fishers of men', reference: 'Matthew 4:19' },
+  { phrase: 'come ye after me', reference: 'Matthew 4:19' },
+  { phrase: 'come after me', reference: 'Matthew 4:19' },
+  { phrase: 'jesus called peter and andrew', reference: 'Matthew 4:19' },
+  { phrase: 'jesus called the first disciples', reference: 'Matthew 4:19' },
+  { phrase: 'calling of the first disciples', reference: 'Matthew 4:19' },
+  { phrase: 'jesus calls the disciples', reference: 'Matthew 4:19' },
+  { phrase: 'i will make you fishers', reference: 'Matthew 4:19' },
+
   { phrase: 'silver and gold have i none', reference: 'Acts 3:6' },
   { phrase: 'silver and gold i have none', reference: 'Acts 3:6' },
   { phrase: 'silver and gold have none', reference: 'Acts 3:6' },
