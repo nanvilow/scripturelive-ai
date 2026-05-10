@@ -911,3 +911,9 @@ id = "ZSowj4R2A5hg8cpKjjyDZ"
 uri = "file://exports/ScriptureLive-AI-v0.7.147-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.147 — Matthew 4:19 paraphrase fix (run BUILD.bat on Windows)"
+
+[[outputs]]
+id = "XfFSyfGlzoLJSDydJaK81"
+uri = "file://exports/ScriptureLive-AI-v0.7.148-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.148 — source (399-paraphrase corpus + Matt 4:19 + Psalm 124:7)"

@@ -1,0 +1,803 @@
+# 200 Bible Paraphrases for AI Voice Commands (Old & New Testaments)
+
+1. The Lord is my shepherd; I will never be abandoned. — Psalm 23:1
+
+2. Our soul has escaped the trap of the enemy. — Psalm 124:7
+
+3. God is our refuge when trouble rises. — Psalm 46:1
+
+4. The heavens declare the greatness of God. — Psalm 19:1
+
+5. Be still and recognize that He is God. — Psalm 46:10
+
+6. Your word lights the path before me. — Psalm 119:105
+
+7. The fear of the Lord is the beginning of wisdom. — Proverbs 9:10
+
+8. Trust in the Lord with your whole heart. — Proverbs 3:5
+
+9. He directs the steps of the righteous. — Proverbs 3:6
+
+10. A gentle answer calms anger. — Proverbs 15:1
+
+11. Pride comes before destruction. — Proverbs 16:18
+
+12. Better is wisdom than silver or gold. — Proverbs 16:16
+
+13. The righteous rise again after falling. — Proverbs 24:16
+
+14. Guard your heart above all else. — Proverbs 4:23
+
+15. Kind words bring healing to the soul. — Proverbs 16:24
+
+16. God created the world by His power. — Genesis 1:1
+
+17. Let there be light over every darkness. — Genesis 1:3
+
+18. Humanity was made in God’s image. — Genesis 1:27
+
+19. The Lord walked with Noah faithfully. — Genesis 6:9
+
+20. God established His covenant with Abraham. — Genesis 17:7
+
+21. The Lord provided a ram in the wilderness. — Genesis 22:13
+
+22. Joseph meant evil for none, but God turned it for good. — Genesis 50:20
+
+23. The Lord heard the cries of His people. — Exodus 3:7
+
+24. God delivered Israel with a mighty hand. — Exodus 14:14
+
+25. The Lord will fight for you in silence. — Exodus 14:14
+
+26. Honor your father and mother faithfully. — Exodus 20:12
+
+27. Worship only the Lord your God. — Exodus 20:3
+
+28. Remember the Sabbath and keep it holy. — Exodus 20:8
+
+29. Love your neighbor as yourself. — Leviticus 19:18
+
+30. The blessing of obedience brings peace. — Deuteronomy 28:2
+
+31. Choose life so you may live. — Deuteronomy 30:19
+
+32. Be strong and courageous before your enemies. — Joshua 1:9
+
+33. As for me and my house, we will serve the Lord. — Joshua 24:15
+
+34. The Lord raised judges to rescue His people. — Judges 2:16
+
+35. Ruth remained faithful through hardship. — Ruth 1:16
+
+36. The Lord looks at the heart, not appearance. — 1 Samuel 16:7
+
+37. David defeated giants through faith in God. — 1 Samuel 17:45
+
+38. The battle belongs to the Lord. — 1 Samuel 17:47
+
+39. God established David’s kingdom forever. — 2 Samuel 7:16
+
+40. The Lord answered Elijah with fire. — 1 Kings 18:38
+
+41. A still small voice spoke to Elijah. — 1 Kings 19:12
+
+42. The heavens cannot contain the glory of God. — 1 Kings 8:27
+
+43. Elisha prayed and blind eyes were opened. — 2 Kings 6:17
+
+44. The joy of the Lord is your strength. — Nehemiah 8:10
+
+45. Those who wait on the Lord gain new strength. — Isaiah 40:31
+
+46. Every valley shall be lifted up. — Isaiah 40:4
+
+47. By His wounds we are healed. — Isaiah 53:5
+
+48. Fear not, for God is with you. — Isaiah 41:10
+
+49. The Lord renews the weary soul. — Isaiah 40:29
+
+50. Nations will walk in the light of God. — Isaiah 60:3
+
+51. God’s mercies are new every morning. — Lamentations 3:23
+
+52. Call upon the Lord and He will answer. — Jeremiah 33:3
+
+53. God knows the plans He has for you. — Jeremiah 29:11
+
+54. The righteous live by faith. — Habakkuk 2:4
+
+55. Let justice roll like mighty waters. — Amos 5:24
+
+56. The Lord requires justice, mercy, and humility. — Micah 6:8
+
+57. Though the fig tree does not blossom, I will rejoice. — Habakkuk 3:17-18
+
+58. God restored Job after suffering. — Job 42:10
+
+59. The Lord gives and takes away wisely. — Job 1:21
+
+60. Blessed is the one who trusts in God. — Jeremiah 17:7
+
+61. The Lord is good to those who seek Him. — Lamentations 3:25
+
+62. God can raise dry bones to life. — Ezekiel 37:5
+
+63. A new heart and spirit come from God. — Ezekiel 36:26
+
+64. The Lord shut the mouths of lions. — Daniel 6:22
+
+65. God walks with His people through fire. — Daniel 3:25
+
+66. The Ancient of Days reigns forever. — Daniel 7:9
+
+67. Salvation belongs to the Lord alone. — Jonah 2:9
+
+68. Return to the Lord with all your heart. — Joel 2:12
+
+69. The sun of righteousness rises with healing. — Malachi 4:2
+
+70. The Lord remembers those who honor Him. — Malachi 3:16
+
+71. Blessed are the poor in spirit. — Matthew 5:3
+
+72. Blessed are the peacemakers among men. — Matthew 5:9
+
+73. Let your light shine before others. — Matthew 5:16
+
+74. Love your enemies and pray for them. — Matthew 5:44
+
+75. Seek first the kingdom of God. — Matthew 6:33
+
+76. Do not worry about tomorrow. — Matthew 6:34
+
+77. Ask and it will be given to you. — Matthew 7:7
+
+78. Build your life on solid rock. — Matthew 7:24
+
+79. With God all things are possible. — Matthew 19:26
+
+80. The Son of Man came to save the lost. — Luke 19:10
+
+81. Forgive and you will be forgiven. — Luke 6:37
+
+82. Love the Lord with all your heart. — Mark 12:30
+
+83. Love your neighbor as yourself. — Mark 12:31
+
+84. Faith can move mountains. — Matthew 17:20
+
+85. The harvest is plentiful but workers are few. — Matthew 9:37
+
+86. Follow Jesus without looking back. — Luke 9:62
+
+87. Whoever humbles himself will be exalted. — Luke 14:11
+
+88. Rejoice because your names are written in heaven. — Luke 10:20
+
+89. Jesus calmed the storm with His word. — Mark 4:39
+
+90. Talitha koum, arise in faith. — Mark 5:41
+
+91. The good shepherd lays down His life for the sheep. — John 10:11
+
+92. I am the way, the truth, and the life. — John 14:6
+
+93. Whoever believes in Christ will have eternal life. — John 3:16
+
+94. The light shines in darkness and darkness cannot overcome it. — John 1:5
+
+95. Abide in Christ and bear much fruit. — John 15:5
+
+96. Peace I leave with you always. — John 14:27
+
+97. The truth will set you free. — John 8:32
+
+98. Jesus wept with compassion. — John 11:35
+
+99. Blessed are those who believe without seeing. — John 20:29
+
+100. The Holy Spirit will teach you all things. — John 14:26
+
+101. You will receive power when the Spirit comes. — Acts 1:8
+
+102. Repent and be baptized in Jesus’ name. — Acts 2:38
+
+103. Silver and gold I do not have, but rise and walk. — Acts 3:6
+
+104. We must obey God rather than men. — Acts 5:29
+
+105. The gospel spread with great power. — Acts 6:7
+
+106. Lord, do not hold this sin against them. — Acts 7:60
+
+107. The Ethiopian rejoiced after believing. — Acts 8:39
+
+108. Saul became Paul through God’s grace. — Acts 9:15
+
+109. God shows no favoritism among people. — Acts 10:34
+
+110. Believe in the Lord Jesus and be saved. — Acts 16:31
+
+111. In Him we live and move and exist. — Acts 17:28
+
+112. Nothing can separate us from God’s love. — Romans 8:39
+
+113. All things work together for good. — Romans 8:28
+
+114. The wages of sin is death, but God gives eternal life. — Romans 6:23
+
+115. Faith comes by hearing God’s word. — Romans 10:17
+
+116. Present your body as a living sacrifice. — Romans 12:1
+
+117. Be transformed by renewing your mind. — Romans 12:2
+
+118. Overcome evil with good. — Romans 12:21
+
+119. Everyone has sinned and needs grace. — Romans 3:23
+
+120. There is no condemnation for those in Christ. — Romans 8:1
+
+121. God chose the weak things to shame the strong. — 1 Corinthians 1:27
+
+122. Love is patient and kind always. — 1 Corinthians 13:4
+
+123. Faith, hope, and love remain forever. — 1 Corinthians 13:13
+
+124. Your labor in the Lord is never wasted. — 1 Corinthians 15:58
+
+125. God makes a way through temptation. — 1 Corinthians 10:13
+
+126. The body is the temple of the Holy Spirit. — 1 Corinthians 6:19
+
+127. Walk by faith and not by sight. — 2 Corinthians 5:7
+
+128. God’s grace is sufficient for weakness. — 2 Corinthians 12:9
+
+129. Anyone in Christ becomes a new creation. — 2 Corinthians 5:17
+
+130. Sow generously and reap generously. — 2 Corinthians 9:6
+
+131. Carry one another’s burdens in love. — Galatians 6:2
+
+132. The fruit of the Spirit brings life. — Galatians 5:22-23
+
+133. Freedom comes through Christ alone. — Galatians 5:1
+
+134. Put on the full armor of God. — Ephesians 6:11
+
+135. Be strong in the Lord’s power. — Ephesians 6:10
+
+136. You are saved by grace through faith. — Ephesians 2:8
+
+137. God can do exceedingly above all we ask. — Ephesians 3:20
+
+138. Speak truth in love to one another. — Ephesians 4:15
+
+139. Rejoice in the Lord always. — Philippians 4:4
+
+140. Do not be anxious about anything. — Philippians 4:6
+
+141. God supplies every need according to His riches. — Philippians 4:19
+
+142. Christ humbled Himself unto death. — Philippians 2:8
+
+143. Press forward toward the heavenly prize. — Philippians 3:14
+
+144. Set your mind on things above. — Colossians 3:2
+
+145. Christ is before all things and above all. — Colossians 1:17
+
+146. Let the peace of Christ rule your heart. — Colossians 3:15
+
+147. Pray without ceasing every day. — 1 Thessalonians 5:17
+
+148. Give thanks in every circumstance. — 1 Thessalonians 5:18
+
+149. Test everything and hold onto good. — 1 Thessalonians 5:21
+
+150. God has not given us fear. — 2 Timothy 1:7
+
+151. Fight the good fight of faith. — 1 Timothy 6:12
+
+152. All Scripture is inspired by God. — 2 Timothy 3:16
+
+153. Endure hardship like a faithful soldier. — 2 Timothy 2:3
+
+154. There is one mediator between God and humanity. — 1 Timothy 2:5
+
+155. The Lord stands by His servants. — 2 Timothy 4:17
+
+156. God’s kindness leads people to repentance. — Romans 2:4
+
+157. The word of God is living and powerful. — Hebrews 4:12
+
+158. Faith is confidence in what we hope for. — Hebrews 11:1
+
+159. Without faith it is impossible to please God. — Hebrews 11:6
+
+160. Jesus Christ is the same forever. — Hebrews 13:8
+
+161. Run with endurance the race before you. — Hebrews 12:1
+
+162. Fix your eyes on Jesus always. — Hebrews 12:2
+
+163. Mercy triumphs over judgment. — James 2:13
+
+164. Be quick to listen and slow to speak. — James 1:19
+
+165. Faith without works is dead. — James 2:26
+
+166. Resist the devil and he will flee. — James 4:7
+
+167. Humble yourselves before the Lord. — James 4:10
+
+168. Every good gift comes from above. — James 1:17
+
+169. Cast your cares upon the Lord. — 1 Peter 5:7
+
+170. Be holy because God is holy. — 1 Peter 1:16
+
+171. Love covers a multitude of sins. — 1 Peter 4:8
+
+172. You are a chosen generation and royal priesthood. — 1 Peter 2:9
+
+173. Always be ready to give an answer for your hope. — 1 Peter 3:15
+
+174. God is light and contains no darkness. — 1 John 1:5
+
+175. Perfect love drives out fear. — 1 John 4:18
+
+176. If we confess our sins, God forgives faithfully. — 1 John 1:9
+
+177. Let us love not only in words but actions. — 1 John 3:18
+
+178. Greater is He within you than the world. — 1 John 4:4
+
+179. Walk in truth and love faithfully. — 2 John 1:6
+
+180. Keep yourselves in the love of God. — Jude 1:21
+
+181. The Lord is coming with many saints. — Jude 1:14
+
+182. Holy, holy, holy is the Lord Almighty. — Revelation 4:8
+
+183. Worthy is the Lamb who was slain. — Revelation 5:12
+
+184. God will wipe away every tear. — Revelation 21:4
+
+185. Be faithful until death and receive life. — Revelation 2:10
+
+186. I stand at the door and knock. — Revelation 3:20
+
+187. The Alpha and Omega reign forever. — Revelation 22:13
+
+188. Blessed are those who wash their robes. — Revelation 22:14
+
+189. The Spirit and the bride say come. — Revelation 22:17
+
+190. A river of life flows from God’s throne. — Revelation 22:1
+
+191. Heaven and earth will pass away, but God’s word remains. — Matthew 24:35
+
+192. Blessed are those who hunger for righteousness. — Matthew 5:6
+
+193. God opposes the proud but gives grace to the humble. — James 4:6
+
+194. Keep your eyes on eternal things. — 2 Corinthians 4:18
+
+195. The Lord is near to the brokenhearted. — Psalm 34:18
+
+196. Taste and see that the Lord is good. — Psalm 34:8
+
+197. Commit your way to the Lord. — Psalm 37:5
+
+198. Delight yourself in the Lord fully. — Psalm 37:4
+
+199. God crowns the humble with salvation. — Psalm 149:4
+
+200. Let everything that breathes praise the Lord. — Psalm 150:6
+
+201. Sing to the Lord a new song. — Psalm 96:1
+
+202. The Lord heals the brokenhearted gently. — Psalm 147:3
+
+203. His anger lasts briefly but His favor endures. — Psalm 30:5
+
+204. The name of the Lord is a strong tower. — Proverbs 18:10
+
+205. Wisdom protects those who embrace her. — Ecclesiastes 7:12
+
+206. Two are better than one in labor. — Ecclesiastes 4:9
+
+207. There is a season for every purpose. — Ecclesiastes 3:1
+
+208. Better a patient spirit than a proud one. — Ecclesiastes 7:8
+
+209. God makes everything beautiful in its time. — Ecclesiastes 3:11
+
+210. The righteous flourish like a palm tree. — Psalm 92:12
+
+211. God satisfies the thirsty soul. — Psalm 107:9
+
+212. His compassions never fail. — Lamentations 3:22
+
+213. The Lord watches over strangers and widows. — Psalm 146:9
+
+214. Blessed is the nation whose God is the Lord. — Psalm 33:12
+
+215. The Lord surrounds His people forever. — Psalm 125:2
+
+216. Children are a heritage from the Lord. — Psalm 127:3
+
+217. The Lord upholds all who fall. — Psalm 145:14
+
+218. God gives strength to His people. — Psalm 29:11
+
+219. The Lord is near to all who call. — Psalm 145:18
+
+220. Your faithfulness reaches to the clouds. — Psalm 36:5
+
+221. The Lord preserves the faithful. — Psalm 31:23
+
+222. Blessed are those whose sins are forgiven. — Psalm 32:1
+
+223. God is enthroned on the praises of Israel. — Psalm 22:3
+
+224. The Lord redeems the lives of His servants. — Psalm 34:22
+
+225. Better one day in God’s courts than thousands elsewhere. — Psalm 84:10
+
+226. The earth is filled with God’s steadfast love. — Psalm 33:5
+
+227. God remembers His covenant forever. — Psalm 105:8
+
+228. The Lord trains my hands for battle. — Psalm 144:1
+
+229. The entrance of God’s word brings light. — Psalm 119:130
+
+230. I hide Your word in my heart. — Psalm 119:11
+
+231. The law of the Lord revives the soul. — Psalm 19:7
+
+232. God crowns the year with abundance. — Psalm 65:11
+
+233. The Lord is compassionate and gracious. — Psalm 103:8
+
+234. Bless the Lord and forget not His benefits. — Psalm 103:2
+
+235. He forgives all your sins completely. — Psalm 103:3
+
+236. God renews your youth like the eagle’s. — Psalm 103:5
+
+237. The Lord establishes peace at your borders. — Psalm 147:14
+
+238. The righteous will never be shaken. — Psalm 112:6
+
+239. The Lord gives freedom to prisoners. — Psalm 146:7
+
+240. God watches over the humble carefully. — Psalm 138:6
+
+241. Better to trust God than princes. — Psalm 118:9
+
+242. This is the day the Lord has made. — Psalm 118:24
+
+243. The Lord disciplines those He loves. — Proverbs 3:12
+
+244. A cheerful heart is good medicine. — Proverbs 17:22
+
+245. Iron sharpens iron among friends. — Proverbs 27:17
+
+246. The wise store up knowledge. — Proverbs 10:14
+
+247. A faithful friend loves at all times. — Proverbs 17:17
+
+248. Better little with righteousness than riches with trouble. — Proverbs 16:8
+
+249. Many plans exist, but God’s purpose prevails. — Proverbs 19:21
+
+250. Hope deferred makes the heart sick. — Proverbs 13:12
+
+251. The blessing of the Lord brings wealth. — Proverbs 10:22
+
+252. The righteous care for the needy. — Proverbs 29:7
+
+253. Words fitly spoken are like gold. — Proverbs 25:11
+
+254. The prudent avoid danger wisely. — Proverbs 22:3
+
+255. Commit your work to the Lord. — Proverbs 16:3
+
+256. Better a dry crust with peace. — Proverbs 17:1
+
+257. The wise inherit honor. — Proverbs 3:35
+
+258. God weighs the motives of the heart. — Proverbs 21:2
+
+259. The horse is prepared for battle, but victory belongs to God. — Proverbs 21:31
+
+260. Where there is no guidance, people fall. — Proverbs 11:14
+
+261. Better open rebuke than hidden love. — Proverbs 27:5
+
+262. The righteous speak words of wisdom. — Proverbs 10:31
+
+263. A faithful witness saves lives. — Proverbs 14:25
+
+264. Better to be humble than share plunder with pride. — Proverbs 16:19
+
+265. The fear of man lays a snare. — Proverbs 29:25
+
+266. Pleasant words are sweet to the soul. — Proverbs 16:24
+
+267. Lazy hands bring poverty. — Proverbs 10:4
+
+268. Wisdom is supreme, therefore get wisdom. — Proverbs 4:7
+
+269. Better patience than mighty strength. — Proverbs 16:32
+
+270. God defends the cause of the poor. — Proverbs 22:22-23
+
+271. The Lord tests both righteous and wicked. — Psalm 11:5
+
+272. God is my light and salvation. — Psalm 27:1
+
+273. Wait for the Lord with courage. — Psalm 27:14
+
+274. The Lord is my chosen portion. — Psalm 16:5
+
+275. In God’s presence there is fullness of joy. — Psalm 16:11
+
+276. The Lord hears when I call. — Psalm 4:3
+
+277. God blesses the righteous with favor. — Psalm 5:12
+
+278. The Lord reigns forever and ever. — Psalm 10:16
+
+279. The heavens proclaim His righteousness. — Psalm 97:6
+
+280. God judges the world with fairness. — Psalm 98:9
+
+281. The Lord gathers the outcasts of Israel. — Psalm 147:2
+
+282. Great is our Lord and mighty in power. — Psalm 147:5
+
+283. The Lord delights in those who fear Him. — Psalm 147:11
+
+284. God gives snow like wool. — Psalm 147:16
+
+285. Let the redeemed of the Lord speak. — Psalm 107:2
+
+286. God turns deserts into pools of water. — Psalm 107:35
+
+287. The Lord raises the needy from affliction. — Psalm 107:41
+
+288. The righteous see and rejoice. — Psalm 107:42
+
+289. God leads the humble in justice. — Psalm 25:9
+
+290. The secret of the Lord belongs to those who fear Him. — Psalm 25:14
+
+291. The Lord redeems Israel from trouble. — Psalm 25:22
+
+292. God keeps in perfect peace those who trust Him. — Isaiah 26:3
+
+293. Those who hope in the Lord soar like eagles. — Isaiah 40:31
+
+294. The grass withers but God’s word stands forever. — Isaiah 40:8
+
+295. God calls each star by name. — Isaiah 40:26
+
+296. The Lord carries lambs close to His heart. — Isaiah 40:11
+
+297. No weapon formed against you will prosper. — Isaiah 54:17
+
+298. Come, all who thirst, to the waters. — Isaiah 55:1
+
+299. God’s thoughts are higher than ours. — Isaiah 55:9
+
+300. His word will not return empty. — Isaiah 55:11
+
+301. Arise and shine for your light has come. — Isaiah 60:1
+
+302. The Spirit of the Lord brings liberty. — Isaiah 61:1
+
+303. God clothes His people with salvation. — Isaiah 61:10
+
+304. The Lord creates new heavens and earth. — Isaiah 65:17
+
+305. Before they call, God will answer. — Isaiah 65:24
+
+306. Blessed is the man who trusts the Lord. — Jeremiah 17:7
+
+307. The heart is deceitful above all things. — Jeremiah 17:9
+
+308. God is the potter and we are clay. — Jeremiah 18:6
+
+309. The Lord searches the heart and mind. — Jeremiah 17:10
+
+310. God restores the years consumed by destruction. — Joel 2:25
+
+311. Whoever calls on the Lord will be saved. — Joel 2:32
+
+312. The Lord roars from Zion powerfully. — Amos 1:2
+
+313. Seek the Lord and live. — Amos 5:6
+
+314. The Lord is slow to anger and great in power. — Nahum 1:3
+
+315. The righteous trust in the name of the Lord. — Zephaniah 3:12
+
+316. God rejoices over His people with singing. — Zephaniah 3:17
+
+317. Not by might nor power but by God’s Spirit. — Zechariah 4:6
+
+318. The Lord will be king over all the earth. — Zechariah 14:9
+
+319. Return to Me and I will return to you. — Zechariah 1:3
+
+320. The Lord opens heaven’s windows of blessing. — Malachi 3:10
+
+321. God turns hearts back to one another. — Malachi 4:6
+
+322. Blessed are the merciful. — Matthew 5:7
+
+323. Blessed are the pure in heart. — Matthew 5:8
+
+324. Blessed are those persecuted for righteousness. — Matthew 5:10
+
+325. You are the salt of the earth. — Matthew 5:13
+
+326. Store treasures in heaven above. — Matthew 6:20
+
+327. No one can serve two masters. — Matthew 6:24
+
+328. Judge not lest you be judged. — Matthew 7:1
+
+329. Enter through the narrow gate. — Matthew 7:13
+
+330. A tree is known by its fruit. — Matthew 7:17
+
+331. The first shall become last. — Matthew 20:16
+
+332. Watch and pray to resist temptation. — Matthew 26:41
+
+333. Go and make disciples of all nations. — Matthew 28:19
+
+334. Jesus taught with authority. — Mark 1:22
+
+335. Whoever loses life for Christ will save it. — Mark 8:35
+
+336. All things are possible to the believer. — Mark 9:23
+
+337. Serve others instead of seeking greatness. — Mark 10:43
+
+338. Heaven and earth may pass away, but Christ’s words remain. — Mark 13:31
+
+339. Stay awake because you do not know the hour. — Mark 13:33
+
+340. Nothing is impossible with God. — Luke 1:37
+
+341. Glory to God in the highest heaven. — Luke 2:14
+
+342. Jesus grew in wisdom and favor. — Luke 2:52
+
+343. Love those who hate you. — Luke 6:27
+
+344. Give and it will return abundantly. — Luke 6:38
+
+345. No servant can serve two masters. — Luke 16:13
+
+346. Whoever exalts himself will be humbled. — Luke 18:14
+
+347. Zacchaeus welcomed Jesus joyfully. — Luke 19:6
+
+348. Father, forgive them for they know not what they do. — Luke 23:34
+
+349. Why seek the living among the dead? — Luke 24:5
+
+350. In the beginning was the Word. — John 1:1
+
+351. The Word became flesh among us. — John 1:14
+
+352. Worship God in spirit and truth. — John 4:24
+
+353. My food is to do God’s will. — John 4:34
+
+354. Whoever hears Christ has eternal life. — John 5:24
+
+355. Jesus is the bread of life. — John 6:35
+
+356. Rivers of living water flow from believers. — John 7:38
+
+357. Neither do I condemn you. — John 8:11
+
+358. Jesus is the light of the world. — John 8:12
+
+359. The thief comes to steal, kill, and destroy. — John 10:10
+
+360. I and the Father are one. — John 10:30
+
+361. I am the resurrection and the life. — John 11:25
+
+362. Unless a seed dies, it remains alone. — John 12:24
+
+363. A new commandment I give you: love one another. — John 13:34
+
+364. Greater love has no one than this. — John 15:13
+
+365. Take heart because Christ overcame the world. — John 16:33
+
+366. Sanctify them through Your truth. — John 17:17
+
+367. Receive the Holy Spirit. — John 20:22
+
+368. Feed My sheep faithfully. — John 21:17
+
+369. Times of refreshing come from the Lord. — Acts 3:19
+
+370. There is salvation in no other name. — Acts 4:12
+
+371. The place shook as believers prayed boldly. — Acts 4:31
+
+372. It is more blessed to give than receive. — Acts 20:35
+
+373. The kingdom of God is righteousness and peace. — Romans 14:17
+
+374. Whoever calls on the Lord shall be saved. — Romans 10:13
+
+375. Love fulfills the law completely. — Romans 13:10
+
+376. Rejoice with those who rejoice. — Romans 12:15
+
+377. Bless those who persecute you. — Romans 12:14
+
+378. The gifts and calling of God are irrevocable. — Romans 11:29
+
+379. Christ died for us while we were sinners. — Romans 5:8
+
+380. We have peace with God through Christ. — Romans 5:1
+
+381. Sin shall not rule over you. — Romans 6:14
+
+382. The Spirit helps us in weakness. — Romans 8:26
+
+383. Creation waits eagerly for redemption. — Romans 8:19
+
+384. If God is for us, who can stand against us? — Romans 8:31
+
+385. The kingdom of God is not talk but power. — 1 Corinthians 4:20
+
+386. Christ our Passover has been sacrificed. — 1 Corinthians 5:7
+
+387. Bad company corrupts good character. — 1 Corinthians 15:33
+
+388. Death has been swallowed up in victory. — 1 Corinthians 15:54
+
+389. Thanks be to God who gives victory. — 1 Corinthians 15:57
+
+390. God loves a cheerful giver. — 2 Corinthians 9:7
+
+391. Where the Spirit of the Lord is, there is freedom. — 2 Corinthians 3:17
+
+392. We walk by faith and not sight. — 2 Corinthians 5:7
+
+393. Christ became poor so we could become rich spiritually. — 2 Corinthians 8:9
+
+394. God comforts us in every trouble. — 2 Corinthians 1:4
+
+395. A little yeast spreads through the dough. — Galatians 5:9
+
+396. Do not grow weary in doing good. — Galatians 6:9
+
+397. Christ lives within me. — Galatians 2:20
+
+398. Stand firm in the freedom Christ gives. — Galatians 5:1
+
+399. One Lord, one faith, one baptism. — Ephesians 4:5
+
+400. Be kind and compassionate to one another. — Ephesians 4:32
+
+This collection now contains 400 unique Bible paraphrases with non-duplicated verse references for AI voice command usage.
