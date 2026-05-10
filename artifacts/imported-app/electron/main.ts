@@ -457,11 +457,48 @@ function getUserUploadsDir(): string {
 // ──────────────────────────────────────────────────────────────────────
 let splashWindow: BrowserWindow | null = null
 
+// v0.7.149 — Resolve the logo PNG once at boot. Tries the packaged
+// standalone-public path (prod), then the source public/ path (dev),
+// then the build-resources/icon.png shipped with electron-builder.
+// Returns a data: URL ready to drop into `<img src=…>` in the splash
+// HTML. If every path fails (corrupt install) we fall back to the
+// inline orange-book SVG below so the splash still renders.
+function loadLogoDataUrl(): string {
+  const candidates = [
+    path.join(process.resourcesPath || '', 'app', '.next', 'standalone', 'artifacts', 'imported-app', 'public', 'icon-512.png'),
+    path.join(__dirname, '..', 'public', 'icon-512.png'),
+    path.join(__dirname, '..', '..', 'public', 'icon-512.png'),
+    path.join(__dirname, '..', 'build-resources', 'icon.png'),
+    path.join(__dirname, '..', '..', 'build-resources', 'icon.png'),
+  ]
+  for (const p of candidates) {
+    try {
+      if (p && fs.existsSync(p)) {
+        const b64 = fs.readFileSync(p).toString('base64')
+        return `data:image/png;base64,${b64}`
+      }
+    } catch { /* try next */ }
+  }
+  return ''
+}
+
 function buildSplashHtml(version: string): string {
-  // Inline-only HTML so we never rely on extraResources / a packaged
-  // file. Single-file dark dialog: brand mark, animated ring, status
-  // text, version footer. The body is replaced by main-process IPC
+  // v0.7.149 — Splash now uses the operator's actual app logo
+  // (public/icon-512.png) instead of an inline SVG glyph, for a more
+  // professional look matching the installed Windows shortcut icon.
+  // Falls back to the inline SVG mark only if the PNG can't be read.
+  // Single-file dark dialog: brand mark, animated ring, status text,
+  // version footer. The body is replaced by main-process IPC
   // (executeJavaScript -> window.__setStatus) at each boot phase.
+  const logoDataUrl = loadLogoDataUrl()
+  const markHtml = logoDataUrl
+    ? `<img class="logo" src="${logoDataUrl}" alt="ScriptureLive AI" />`
+    : `<div class="mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+        </svg>
+      </div>`
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -497,6 +534,13 @@ function buildSplashHtml(version: string): string {
     box-shadow: 0 8px 24px -8px rgba(245, 158, 11, .55), inset 0 1px 0 rgba(255,255,255,.18);
   }
   .mark svg { width: 30px; height: 30px; color: #1a1a1a; }
+  .logo {
+    width: 64px; height: 64px;
+    border-radius: 16px;
+    object-fit: contain;
+    box-shadow: 0 10px 28px -10px rgba(245, 158, 11, .55);
+    -webkit-user-drag: none;
+  }
   .title {
     font-size: 18px; font-weight: 600; letter-spacing: .2px;
     color: #fafafa;
@@ -533,12 +577,7 @@ function buildSplashHtml(version: string): string {
 <body>
   <div class="wrap">
     <div class="brand">
-      <div class="mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
-          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
-        </svg>
-      </div>
+      ${markHtml}
       <div>
         <div class="title">ScriptureLive AI</div>
         <div class="subtitle">Worship Console</div>
@@ -801,7 +840,14 @@ function installCrashMask(
 // operator wasn't sure their click had landed (recurring complaint
 // in the field). 4.5 s is the operator's spec ("4 to 5 sec").
 let splashOpenedAt = 0
-const SPLASH_MIN_DWELL_MS = 4500
+// v0.7.149 — Operator request: splash should disappear IMMEDIATELY
+// when the main window is ready ("immediately app launch, take it
+// off"). The 4.5 s minimum dwell from v0.7.91 was masking the
+// transition with an unnecessary delay; with the main window now
+// fully painted before closeSplash() fires there's no flicker risk
+// to mitigate. Setting to 0 means closeSplash() runs synchronously
+// the moment did-finish-load on the main window resolves.
+const SPLASH_MIN_DWELL_MS = 0
 
 function showSplash(): void {
   if (splashWindow && !splashWindow.isDestroyed()) return
@@ -814,11 +860,27 @@ function showSplash(): void {
       transparent: false,
       resizable: false,
       movable: true,
-      minimizable: false,
+      // v0.7.149 — Splash is now MINIMIZABLE so the operator can shove
+      // it out of the way if boot is genuinely slow and they need to
+      // do something else on the PC. Pairs with the alwaysOnTop=false
+      // change below — both serve the operator's "don't intrude over
+      // my other apps" request.
+      minimizable: true,
       maximizable: false,
       fullscreenable: false,
-      alwaysOnTop: true,
-      skipTaskbar: true,
+      // v0.7.149 — Operator request: previously alwaysOnTop=true meant
+      // the splash floated over Word / Chrome / Spotify / etc. while
+      // the operator was doing something else, which felt rude on
+      // slower machines. Off by default — splash sits in the normal
+      // window stack and yields focus to whatever the operator is
+      // doing. They can still bring it back via the taskbar (see
+      // skipTaskbar=false below).
+      alwaysOnTop: false,
+      // v0.7.149 — Show in the taskbar so a minimized splash has a
+      // clickable entry to restore from. Was true (hidden) in v0.7.79
+      // because the splash always-on-top'd anyway. Now that it can
+      // be minimized the taskbar entry is the primary way back.
+      skipTaskbar: false,
       center: true,
       show: false,
       backgroundColor: '#0a0a0a',
@@ -1144,6 +1206,28 @@ async function createMainWindow(url: string, opts: { show?: boolean } = {}) {
     () => { void maybeShowTrayHint() },
   )
   mainWindow.on('closed', () => { mainWindow = null })
+  // v0.7.149 — Mirror the main window's minimize/restore state onto
+  // the splash so that if boot is slow and the operator minimizes
+  // the main app to do something else on their PC, the splash also
+  // hides (rather than floating around as a stray "ScriptureLive AI"
+  // dialog the operator has to chase down separately). Restoring the
+  // main window brings the splash back too — until closeSplash()
+  // tears it down at did-finish-load.
+  mainWindow.on('minimize', () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      try { splashWindow.minimize() } catch { /* ignore */ }
+    }
+  })
+  mainWindow.on('restore', () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      try { splashWindow.restore(); splashWindow.show() } catch { /* ignore */ }
+    }
+  })
+  mainWindow.on('hide', () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      try { splashWindow.hide() } catch { /* ignore */ }
+    }
+  })
   await mainWindow.loadURL(url)
 }
 
