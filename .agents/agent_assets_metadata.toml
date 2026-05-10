@@ -929,3 +929,9 @@ id = "JxKTjGYHStw9Lr6dgrAnH"
 uri = "file://exports/ScriptureLive-AI-v0.7.150-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.150 — source (explicit always wins + freeze latch)"
+
+[[outputs]]
+id = "W6cQ0bRGbaSz2WCECT5Z-"
+uri = "file://exports/ScriptureLive-AI-v0.7.151-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.151 — source (narrow latch + AVM-detect-again release)"
