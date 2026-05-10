@@ -615,60 +615,136 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     if (r.fire) expect(r.verse.id).toBe('NewLow')
   })
 
-  it('v0.7.150 EXPLICIT-OWNS-LIVE FREEZE: a high-conf semantic verbatim quote is FROZEN OUT by an explicit lookup lock (operator spec — explicit always wins, semantic frozen until live cleared)', () => {
-    // SUPERSEDES v0.7.128. Operator's v0.7.150 directive flips the
-    // v0.7.128 behaviour: once an EXPLICIT verse owns live, the
-    // SEMANTIC pipeline is FROZEN from auto-fire — even a verbatim
-    // hand-curated preacher-phrase EXACT (semantic @ 0.95) cannot
-    // hijack the projector. Operator's literal words: "always display
-    // Bible Reference Quoted column detected over Auto Verse Match …
-    // be freezed without interferening with the Reference Quoted
-    // column detection". The freeze releases when STOP LIVE / CLEAR /
-    // BLACK fires (currentLiveId becomes null) — covered by the
-    // freeze-release test below.
+  it('v0.7.151 EXPLICIT-OWNS-LIVE FREEZE: after EXPLICIT preempts SEMANTIC-live, repeat detections of the SAME preempted SEMANTIC verse are frozen out (audio-buffer-lag protection)', () => {
+    // Operator scenario from the v0.7.151 screenshot: AVM had
+    // Habakkuk 2:2 latched at 100% and live. Pastor speaks
+    // "Proverbs 27:17"; BRQ detects Prov 27:17 at 85% and preempts.
+    // For the next several seconds AVM keeps re-detecting Habakkuk
+    // 2:2 at 100% (the audio buffer still has the paraphrase the
+    // pastor JUST stopped reading). That repeat detection must NOT
+    // be allowed to knock Prov 27:17 off live — that was the
+    // operator's complaint. The latch arms ONLY because the prior
+    // live was a semantic verse (Hab.2.2). Pure-explicit-fires-
+    // first scenarios do NOT arm the latch (covered by the
+    // restored v0.7.128 / v0.7.135 tests below).
     let g = fresh()
+    // Frame 1: AVM detects Hab.2.2 at 1.00, fires to live (semantic).
     let r = shouldFireAutoLiveStable(
-      [{ ...v('Deut.2.1', 1.0, 1000, 'explicit'), reference: 'Deuteronomy 2:1' }],
+      [{ ...v('Hab.2.2', 1.0, 1000, 'semantic'), reference: 'Habakkuk 2:2' }],
       null,
       g,
       { nowMs: 1000 },
     )
     expect(r.fire).toBe(true)
     g = r.nextStability
-    expect(g.explicitOwnsLive).toBe(true)
-    // 2 s later: preacher quotes Psalm 121:2 verbatim (semantic 0.95).
-    // SHOULD NOT fire — explicit owns live, semantic is frozen.
+    expect(g.explicitOwnsLive).toBe(false)
+    // Frame 2: Pastor speaks "Proverbs 27:17". BRQ detects Prov.27.17
+    // at 0.85. AVM still showing Hab.2.2. Explicit preempts.
     r = shouldFireAutoLiveStable(
       [
-        { ...v('Deut.2.1', 1.0, 1000, 'explicit'),  reference: 'Deuteronomy 2:1' },
-        { ...v('Psa.121.2', 0.95, 3000, 'semantic'), reference: 'Psalm 121:2' },
+        { ...v('Hab.2.2',    1.0,  1000, 'semantic'), reference: 'Habakkuk 2:2' },
+        { ...v('Prov.27.17', 0.85, 3000, 'explicit'), reference: 'Proverbs 27:17' },
       ],
-      'Deut.2.1',
+      'Hab.2.2',
       g,
       { nowMs: 3000 },
     )
+    expect(r.fire).toBe(true)
+    if (r.fire) {
+      expect(r.verse.id).toBe('Prov.27.17')
+      expect(r.source).toBe('explicit')
+    }
+    g = r.nextStability
+    expect(g.explicitOwnsLive).toBe(true)
+    expect(g.frozenSemanticId).toBe('Hab.2.2')
+    // Frame 3: AVM still showing Hab.2.2 at 1.00 (audio buffer lag).
+    // MUST stay frozen — Prov.27.17 stays on the projector.
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Hab.2.2',    1.0,  1000, 'semantic'), reference: 'Habakkuk 2:2' },
+        { ...v('Prov.27.17', 0.85, 3000, 'explicit'), reference: 'Proverbs 27:17' },
+      ],
+      'Prov.27.17',
+      g,
+      { nowMs: 5000 },
+    )
     expect(r.fire).toBe(false)
+    expect(r.nextStability.explicitOwnsLive).toBe(true)
+    expect(r.nextStability.frozenSemanticId).toBe('Hab.2.2')
   })
 
-  it('v0.7.150 EXPLICIT-OWNS-LIVE FREEZE RELEASE: STOP LIVE / CLEAR (currentLiveId=null) clears the latch and the next semantic detection auto-fires again', () => {
-    // Companion to the freeze test above. The freeze must be a
-    // soft-lock that cleanly releases the moment the operator hits
-    // STOP LIVE / CLEAR / BLACK (which flips currentLiveId to null).
+  it('v0.7.151 EXPLICIT-OWNS-LIVE FREEZE RELEASE on NEW AVM detection: when AVM column shows a verse DIFFERENT from the frozen one, the latch releases and the new SEMANTIC detection is allowed to fire ("until it detect Auto Verse Match again")', () => {
+    // Operator's exact release condition: "freeze that column until
+    // it detect Auto Verse Match again". When the pastor moves on
+    // to a new passage and AVM picks up a different verse, the
+    // freeze releases and AVM can take over the projector again.
     let g = fresh()
-    // Frame 1: explicit goes live → latches explicitOwnsLive=true.
+    // Frame 1: AVM Hab.2.2 fires.
     let r = shouldFireAutoLiveStable(
-      [{ ...v('Deut.2.1', 1.0, 1000, 'explicit'), reference: 'Deuteronomy 2:1' }],
+      [{ ...v('Hab.2.2', 1.0, 1000, 'semantic'), reference: 'Habakkuk 2:2' }],
       null,
       g,
       { nowMs: 1000 },
     )
-    expect(r.fire).toBe(true)
+    g = r.nextStability
+    // Frame 2: BRQ Prov.27.17 preempts. Latch arms with frozenSemanticId=Hab.2.2.
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Hab.2.2',    1.0,  1000, 'semantic'), reference: 'Habakkuk 2:2' },
+        { ...v('Prov.27.17', 0.85, 3000, 'explicit'), reference: 'Proverbs 27:17' },
+      ],
+      'Hab.2.2',
+      g,
+      { nowMs: 3000 },
+    )
     g = r.nextStability
     expect(g.explicitOwnsLive).toBe(true)
-    // Frame 2: operator presses STOP LIVE → currentLiveId becomes
-    // null. Next call MUST reset the latch.
+    expect(g.frozenSemanticId).toBe('Hab.2.2')
+    // Frame 3: Pastor moves on. AVM now shows Psa.23.1 (a NEW verse,
+    // different from Hab.2.2). Latch releases — Psa.23.1 fires.
     r = shouldFireAutoLiveStable(
-      [{ ...v('Psa.121.2', 0.95, 3000, 'semantic'), reference: 'Psalm 121:2' }],
+      [
+        { ...v('Prov.27.17', 0.85, 3000, 'explicit'), reference: 'Proverbs 27:17' },
+        { ...v('Psa.23.1',   0.95, 8000, 'semantic'), reference: 'Psalm 23:1' },
+      ],
+      'Prov.27.17',
+      g,
+      { nowMs: 10000 },
+    )
+    expect(r.fire).toBe(true)
+    if (r.fire) {
+      expect(r.verse.id).toBe('Psa.23.1')
+      expect(r.source).toBe('semantic')
+    }
+    expect(r.nextStability.explicitOwnsLive).toBe(false)
+    expect(r.nextStability.frozenSemanticId).toBe(null)
+  })
+
+  it('v0.7.151 EXPLICIT-OWNS-LIVE FREEZE RELEASE on STOP LIVE: clearing the projector (currentLiveId=null) releases the latch and the next semantic detection auto-fires again', () => {
+    let g = fresh()
+    // Frame 1: AVM Hab.2.2 fires.
+    let r = shouldFireAutoLiveStable(
+      [{ ...v('Hab.2.2', 1.0, 1000, 'semantic'), reference: 'Habakkuk 2:2' }],
+      null,
+      g,
+      { nowMs: 1000 },
+    )
+    g = r.nextStability
+    // Frame 2: BRQ Prov.27.17 preempts → latch armed.
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Hab.2.2',    1.0,  1000, 'semantic'), reference: 'Habakkuk 2:2' },
+        { ...v('Prov.27.17', 0.85, 3000, 'explicit'), reference: 'Proverbs 27:17' },
+      ],
+      'Hab.2.2',
+      g,
+      { nowMs: 3000 },
+    )
+    g = r.nextStability
+    expect(g.explicitOwnsLive).toBe(true)
+    // Frame 3: operator presses STOP LIVE → currentLiveId becomes null.
+    r = shouldFireAutoLiveStable(
+      [{ ...v('Psa.121.2', 0.95, 8000, 'semantic'), reference: 'Psalm 121:2' }],
       null,
       g,
       { nowMs: 10000 },
@@ -679,6 +755,42 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
       expect(r.source).toBe('semantic')
     }
     expect(r.nextStability.explicitOwnsLive).toBe(false)
+    expect(r.nextStability.frozenSemanticId).toBe(null)
+  })
+
+  it('v0.7.128 HIGH-CONF VS HIGH-CONF (RESTORED post-v0.7.151): a high-conf semantic verbatim quote DOES break a high-conf explicit lookup lock when no semantic was previously live (latch never armed)', () => {
+    // RESTORED to original v0.7.128 fire=true assertion. v0.7.150
+    // briefly flipped this to fire=false but v0.7.151 narrowed the
+    // freeze-latch arming so it ONLY engages on the
+    // semantic-live → explicit-preempt transition. In this scenario
+    // explicit fires fresh (no prior semantic live), so the latch
+    // is never armed and the original v0.7.128 cross-pipeline
+    // escape (semantic 0.95 ≥ CROSS_PIPELINE_SEMANTIC_VS_EXPLICIT_MIN
+    // 0.58) lets the verbatim Psalm quote take live.
+    let g = fresh()
+    let r = shouldFireAutoLiveStable(
+      [{ ...v('Deut.2.1', 1.0, 1000, 'explicit'), reference: 'Deuteronomy 2:1' }],
+      null,
+      g,
+      { nowMs: 1000 },
+    )
+    expect(r.fire).toBe(true)
+    g = r.nextStability
+    expect(g.explicitOwnsLive).toBe(false)
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Deut.2.1', 1.0, 1000, 'explicit'),  reference: 'Deuteronomy 2:1' },
+        { ...v('Psa.121.2', 0.95, 3000, 'semantic'), reference: 'Psalm 121:2' },
+      ],
+      'Deut.2.1',
+      g,
+      { nowMs: 3000 },
+    )
+    expect(r.fire).toBe(true)
+    if (r.fire) {
+      expect(r.verse.id).toBe('Psa.121.2')
+      expect(r.source).toBe('semantic')
+    }
   })
 
   it('v0.7.128 HIGH-CONF VS LOW-CONF SAME-PIPELINE: a low-conf same-pipeline candidate STILL cannot hijack a high-conf live verse (v0.7.120 protection intact)', () => {
@@ -817,15 +929,11 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     }
   })
 
-  it('v0.7.150 SUPERSEDES v0.7.135: a 0.58 SEMANTIC paraphrase is FROZEN OUT by a 1.00 EXPLICIT live verse (explicit-owns-live latch)', () => {
-    // REVERSES v0.7.135. The v0.7.135 symmetric floor allowed a 0.58
-    // semantic to break a 1.00 explicit lock — operator subsequently
-    // changed their mind and asked for the OPPOSITE protection: once
-    // an explicit verse takes live, the semantic pipeline is frozen
-    // entirely. The 0.58 cross-pipeline floor is preserved as a
-    // boundary exit (see CROSS_PIPELINE_SEMANTIC_VS_EXPLICIT_MIN
-    // docstring) but the explicit-owns-live latch makes it
-    // unreachable while a live verse is showing — by design.
+  it('v0.7.135 SYMMETRIC (RESTORED post-v0.7.151): a 0.58 SEMANTIC paraphrase NOW breaks a 1.00 EXPLICIT live verse when the explicit fired fresh (no prior semantic live → latch never armed, v0.7.135 floor still applies)', () => {
+    // RESTORED to original v0.7.135 fire=true assertion. v0.7.150
+    // briefly flipped this to fire=false; v0.7.151 narrowed latch
+    // arming so this scenario doesn't engage the freeze, and the
+    // v0.7.135 0.58 cross-pipeline floor is back in effect.
     let g = fresh()
     let r = shouldFireAutoLiveStable(
       [{ ...v('Loaded.Chap', 1.0, 1000, 'explicit'), reference: 'Deut 2:1' }],
@@ -835,22 +943,24 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     )
     expect(r.fire).toBe(true)
     g = r.nextStability
-    expect(g.explicitOwnsLive).toBe(true)
+    expect(g.explicitOwnsLive).toBe(false)
     r = shouldFireAutoLiveStable(
       [
-        { ...v('Loaded.Chap',     1.0,  1000, 'explicit'), reference: 'Deut 2:1' },
-        // Cross-pipeline semantic at 0.58 — would have fired under
-        // v0.7.135. Frozen out under v0.7.150.
-        { ...v('Para.Quote',      0.58, 3000, 'semantic'), reference: 'Acts 16:25' },
+        { ...v('Loaded.Chap', 1.0,  1000, 'explicit'), reference: 'Deut 2:1' },
+        { ...v('Para.Quote',  0.58, 3000, 'semantic'), reference: 'Acts 16:25' },
       ],
       'Loaded.Chap',
       g,
       { nowMs: 3000 },
     )
-    expect(r.fire).toBe(false)
+    expect(r.fire).toBe(true)
+    if (r.fire) {
+      expect(r.verse.id).toBe('Para.Quote')
+      expect(r.source).toBe('semantic')
+    }
   })
 
-  it('v0.7.150 EXPLICIT PREEMPTION: a 0.60 EXPLICIT candidate IMMEDIATELY overrides a 1.00 SEMANTIC live verse (no cross-pipeline floor — explicit always wins)', () => {
+  it('v0.7.151 EXPLICIT PREEMPTION: a 0.60 EXPLICIT candidate IMMEDIATELY overrides a 1.00 SEMANTIC live verse (no cross-pipeline floor — explicit always wins) and ARMS the explicit-owns-live latch', () => {
     // Operator's primary v0.7.150 ask: "anytime Auto Verse Match is
     // 100% detected, it doesn't allow any verse … in the Bible
     // Reference Quoted to auto go live". Under v0.7.150 the

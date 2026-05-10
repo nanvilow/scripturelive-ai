@@ -464,20 +464,36 @@ export interface AutoFireGateState {
   explicit: StabilityState
   semantic: StabilityState
   lastFireAtMs: number
-  // v0.7.150 — Explicit-Owns-Live latch.
-  // Once an EXPLICIT (Bible Reference Quoted) verse fires to live, the
-  // semantic (Auto Verse Match) pipeline is FROZEN from auto-firing
-  // for as long as a live verse is shown. Operator's literal ask:
-  // "be freezed without interferening with the Reference Quoted column
-  // detection, until a quotation is made by the pastor then you
-  // unfreeze it [and] display the quotation". Explicit fires still
-  // win over each other (the new explicit replaces the old). Semantic
-  // detections continue to populate the Auto Verse Match column for
-  // operator visibility — only the auto-FIRE-to-live pathway is
-  // suppressed. The latch resets the moment `currentLiveId` becomes
-  // null (operator pressed STOP LIVE / CLEAR / BLACK), so the next
-  // semantic detection is free to claim the projector again.
+  // v0.7.151 — Explicit-Owns-Live latch (revised release condition).
+  // The latch ARMS only when an EXPLICIT (Bible Reference Quoted)
+  // verse fires AND the previously-live verse was a SEMANTIC (Auto
+  // Verse Match) detection. While the latch is on, semantic auto-fire
+  // is suppressed so the explicit verse stays on the projector and
+  // the audio-buffer-lagged repeat detections of the just-preempted
+  // semantic verse can't knock it off.
+  //
+  // The latch RELEASES when EITHER:
+  //   (a) `currentLiveId` becomes null (STOP LIVE / CLEAR / BLACK), OR
+  //   (b) the AVM column shows a NEW verse different from the one we
+  //       froze (`semanticTop.id !== frozenSemanticId`). This is the
+  //       operator's "freeze that column until it detect Auto Verse
+  //       Match again" — when the pastor moves on and AVM picks up a
+  //       different verse, AVM is allowed to fire again.
+  //
+  // v0.7.150 only had release (a). That was wrong — it kept AVM
+  // frozen forever even after the pastor had clearly moved on.
+  // v0.7.151 adds release (b) and tightens the arming condition so
+  // the latch is never armed when no semantic was live to begin with.
+  //
+  // Semantic detections of the FROZEN verse keep populating the AVM
+  // column for operator visibility (no UI suppression) — only the
+  // auto-fire-to-live pathway is gated.
   explicitOwnsLive: boolean
+  // The semantic verse id that was preempted by the explicit fire.
+  // Null when no latch is armed. Used to detect "AVM detect again"
+  // — when `semanticTop.id` differs from this id, the pastor has
+  // moved on and the latch releases.
+  frozenSemanticId: string | null
 }
 
 export const initialAutoFireGate: AutoFireGateState = {
@@ -485,6 +501,7 @@ export const initialAutoFireGate: AutoFireGateState = {
   semantic: initialStabilityState,
   lastFireAtMs: 0,
   explicitOwnsLive: false,
+  frozenSemanticId: null,
 }
 
 // Backwards-compat alias — older callers (and the existing
@@ -578,15 +595,31 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
 
   const explicitGate = evaluateStability(gate.explicit, explicitTop, { minFrames })
   const semanticGate = evaluateStability(gate.semantic, semanticTop, { minFrames })
-  // v0.7.150 — Explicit-Owns-Live latch RESETS when nothing is live
-  // (operator pressed STOP LIVE / CLEAR / BLACK, or the projector
-  // cleared itself). Carries the previous frame's value otherwise.
-  const explicitOwnsLive = currentLiveId == null ? false : gate.explicitOwnsLive
+  // v0.7.151 — Explicit-Owns-Live latch reset.
+  //   (a) STOP LIVE / CLEAR / BLACK clears live → reset both fields.
+  //   (b) AVM column shows a verse different from the frozen one →
+  //       pastor has moved on, release the latch ("until it detect
+  //       Auto Verse Match again" per operator spec).
+  let explicitOwnsLive = gate.explicitOwnsLive
+  let frozenSemanticId = gate.frozenSemanticId
+  if (currentLiveId == null) {
+    explicitOwnsLive = false
+    frozenSemanticId = null
+  } else if (
+    explicitOwnsLive &&
+    frozenSemanticId != null &&
+    semanticTop != null &&
+    semanticTop.id !== frozenSemanticId
+  ) {
+    explicitOwnsLive = false
+    frozenSemanticId = null
+  }
   const nextGate: AutoFireGateState = {
     explicit: explicitGate.next,
     semantic: semanticGate.next,
     lastFireAtMs: gate.lastFireAtMs,
     explicitOwnsLive,
+    frozenSemanticId,
   }
 
   // Spec-allowed optimization: don't refire whatever's already on
@@ -692,27 +725,43 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
     if (!passesReadLock(semanticFire, 'semantic')) semanticFire = null
   }
 
-  // v0.7.150 — Explicit-Owns-Live FREEZE on the semantic pipeline.
+  // v0.7.151 — Explicit-Owns-Live FREEZE on the semantic pipeline.
   // Once an explicit (Bible Reference Quoted) verse has taken the
-  // projector, semantic auto-fire is suppressed for as long as a
-  // live verse is showing. Semantic detections still surface in the
-  // Auto Verse Match column for operator visibility; only the
-  // auto-fire-to-live pathway is gated. The freeze releases
-  // automatically the instant `currentLiveId` becomes null (handled
-  // above where `explicitOwnsLive` resets to false).
+  // projector AFTER preempting a semantic (Auto Verse Match) live
+  // verse, semantic auto-fire is suppressed for as long as the AVM
+  // column keeps showing the same preempted verse. Releases per the
+  // arming/reset logic above.
   if (nextGate.explicitOwnsLive && currentLiveId) {
     semanticFire = null
   }
 
   // Independence + tiebreak: explicit wins when both fire same frame.
   if (explicitFire) {
+    // v0.7.151 — Arm the latch ONLY if the previously-live verse was
+    // a semantic (AVM) detection. Look up the prior live verse in
+    // the detected list; if it has source='semantic' we know AVM was
+    // showing it and we want to freeze AVM until it picks up a NEW
+    // verse. Re-firing explicit when an explicit was already live
+    // (or no live) does NOT arm the latch — but if the latch was
+    // already armed from a prior semantic→explicit transition, it's
+    // preserved (carried in nextGate).
+    const priorLive = currentLiveId
+      ? detected.find((v) => v.id === currentLiveId) ?? null
+      : null
+    const priorLiveSource = priorLive ? sourceOf(priorLive) : null
+    const armLatch = priorLiveSource === 'semantic'
     return {
       fire: true,
       verse: explicitFire,
       source: 'explicit',
-      // v0.7.150 — Latch the explicit-owns-live flag. Stays set for
-      // every subsequent frame until `currentLiveId` clears.
-      nextStability: { ...nextGate, lastFireAtMs: now, explicitOwnsLive: true },
+      nextStability: armLatch
+        ? {
+            ...nextGate,
+            lastFireAtMs: now,
+            explicitOwnsLive: true,
+            frozenSemanticId: currentLiveId,
+          }
+        : { ...nextGate, lastFireAtMs: now },
     }
   }
   if (semanticFire) {
@@ -720,14 +769,15 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
       fire: true,
       verse: semanticFire,
       source: 'semantic',
-      // Semantic firing means no explicit was eligible this frame —
-      // the latch stays at whatever the previous frame had (false in
-      // a fresh / cleared state, or unchanged if the operator's
-      // somehow restored a semantic top while explicit was owning;
-      // that branch is impossible because we just nulled semanticFire
-      // when explicitOwnsLive was true, but we keep the carry-through
-      // behaviour for clarity).
-      nextStability: { ...nextGate, lastFireAtMs: now },
+      // Semantic firing means the latch was either never armed or
+      // just released (otherwise semanticFire would have been
+      // nulled above). Always clear the latch fields for safety.
+      nextStability: {
+        ...nextGate,
+        lastFireAtMs: now,
+        explicitOwnsLive: false,
+        frozenSemanticId: null,
+      },
     }
   }
   return { fire: false, nextStability: nextGate }
