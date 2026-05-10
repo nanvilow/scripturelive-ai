@@ -20,11 +20,12 @@
 // later. Failures are still recorded in the audit log.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { activateCode, peekActivationSource } from '@/lib/licensing/storage'
+import { activateCode, peekActivationSource, mergeActivationFromCloud, getFile } from '@/lib/licensing/storage'
 import { findPlan } from '@/lib/licensing/plans'
 import { isMasterCode } from '@/lib/licensing/codes'
 import { notifyEmail, whatsappLink } from '@/lib/licensing/notifications'
 import { captureGeoFromRequest } from '@/lib/licensing/geoip'
+import { cloudClaimActivation } from '@/lib/licensing/cloud-sync'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -98,9 +99,61 @@ async function activateImpl(req: NextRequest) {
   // record at activation time, not 3 seconds later).
   const geoCtx = await captureGeoFromRequest(req).catch(() => ({}))
 
+  // v0.7.145 — Cross-machine activation. activateCode() ONLY knows
+  // about codes that exist in THIS install's local ledger. Admin
+  // codes minted on a different PC (admin's PC, or the cloud admin
+  // dashboard) are unknown locally → "not recognised" error.
+  //
+  // Recovery: when activateCode throws, we ask the cloud whether IT
+  // knows the code. Cloud atomically claims it for this installId,
+  // returns the row, we mirror it into the local ledger, then re-run
+  // activateCode locally. Subsequent activations of the same code on
+  // this install hit the local row directly (no cloud round-trip).
+  //
+  // Master codes (SL-MASTER-…) are exempt from the cloud round-trip
+  // because they're machine-baked at build time, not minted by admin.
   let result
   try { result = activateCode(code, geoCtx) }
-  catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 }) }
+  catch (e) {
+    const localErr = e instanceof Error ? e.message : String(e)
+    const looksUnknown = /not recognis|not found|unknown|invalid/i.test(localErr)
+    if (!looksUnknown || isMasterCode(code)) {
+      return NextResponse.json({ error: localErr }, { status: 400 })
+    }
+    // Try cloud lookup. cloudClaimActivation is a no-op (returns null)
+    // when called from the cloud itself or when SCRIPTURELIVE_CLOUD_BASE
+    // is empty — so this branch is only meaningful on customer installs.
+    let installId = ''
+    try { installId = getFile().installId } catch { /* fresh install — should not happen post-getFile init */ }
+    if (!installId) {
+      return NextResponse.json({ error: localErr }, { status: 400 })
+    }
+    let cloudRow
+    try {
+      cloudRow = await cloudClaimActivation(code, installId)
+    } catch (cloudErr) {
+      // Network failure → return original local error (don't confuse
+      // the customer with two stacked failures).
+      console.error('[license/activate] cloud claim threw:', cloudErr)
+      return NextResponse.json({ error: localErr }, { status: 400 })
+    }
+    if (!cloudRow) {
+      return NextResponse.json(
+        { error: 'Activation code not recognised. If admin generated it on another PC, ensure your computer has internet — we sync codes from the central server. Otherwise check the code and try again.' },
+        { status: 400 },
+      )
+    }
+    mergeActivationFromCloud(cloudRow)
+    // Retry locally now that the row exists. If THIS still fails we
+    // surface the real error from activateCode.
+    try { result = activateCode(code, geoCtx) }
+    catch (retryErr) {
+      return NextResponse.json(
+        { error: retryErr instanceof Error ? retryErr.message : String(retryErr) },
+        { status: 400 },
+      )
+    }
+  }
 
   const { status, activated } = result
   const plan = findPlan(activated.planCode)

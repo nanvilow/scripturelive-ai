@@ -1,3 +1,9 @@
+## v0.7.137
+
+-   **Ghanaian Twerɛ Kronkron (Asante Twi) + Ewe Bibles — Online + Offline (v0.7.137)** — see replit.md history for full text.
+
+---
+
 ## v0.7.141
 -   **Hide "DG" Engine Badge from Live Transcription Card (v0.7.141)**: Operator screenshot https://imgur.com/a/elWJh5G pointed out the small `• DG` pill rendering next to the LIVE TRANSCRIPTION header. That pill is the engine-picker `<DropdownMenu>` trigger in `src/components/layout/logos-shell.tsx` (Card `badge={…}` slot at L449). Since v0.7.19 consolidated to Deepgram-only (the only two picker options "Auto" and "Deepgram" both route to the same engine), the badge is purely vestigial UI noise that confused operators. **Fix**: wrapped the entire `<DropdownMenu>` in `<div hidden aria-hidden="true">` so it's removed from the visual tree but the DOM / state wiring stays intact. We deliberately did NOT delete the picker or the `engineLabel` / `engineDotColor` / `engineTitle` derived values — `preferredEngine` and `setPreferredEngine` are still consumed by the speech-provider chain and removing them risks an avoidable cascade. Flipping `hidden` → `''` re-surfaces the picker instantly if we ever re-introduce a second engine. No behavioural change beyond visibility — engine selection is unchanged (still Deepgram).
 

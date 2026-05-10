@@ -1829,6 +1829,128 @@ export function __testReset(): void {
   if (fs.existsSync(p)) fs.unlinkSync(p)
 }
 
+// ─── v0.7.145 — Cross-machine cloud sync helpers ─────────────────────
+//
+// See src/lib/licensing/cloud-sync.ts for the renderer-callable
+// helpers that POST to the cloud. The two functions below are the
+// SERVER-side counterparts that run ON the cloud deployment to
+// service incoming customer requests.
+//
+// All three of these are no-ops on a customer install (the customer
+// install never receives /api/license/cloud/* requests because the
+// cloud-sync helper short-circuits on customer machines), but we
+// export them unconditionally so the same codebase ships to both.
+
+/**
+ * v0.7.145 — Atomically claim an admin-issued activation code on
+ * behalf of a remote customer install. Called by the cloud-side
+ * /api/license/cloud/claim-activation route.
+ *
+ * Returns:
+ *   • the row, marked isUsed=true and stamped with claimedByInstall
+ *   • null if the code doesn't exist
+ *   • throws if the code is already claimed by a DIFFERENT install
+ *     (so the customer sees an actionable error instead of silently
+ *     getting an unusable mirror)
+ */
+export interface CloudClaimResult {
+  ok: true
+  activation: ActivationCodeRecord
+}
+export function claimActivationForCustomer(
+  rawCode: string,
+  installId: string,
+): CloudClaimResult | null {
+  const code = rawCode.trim().toUpperCase()
+  if (!code || !installId) return null
+  const f = load()
+  const row = f.activationCodes.find((a) => a.code === code)
+  if (!row) return null
+  // Soft-deleted / cancelled rows can't be claimed.
+  if (row.softDeletedAt || row.cancelledAt) return null
+  // Already claimed: idempotent if same install, error if different.
+  // We piggyback on lastSeenLocation as a structured marker
+  // ("CLOUD-CLAIMED:<installId>") so we don't need to extend the
+  // ActivationCodeRecord schema for this single use case.
+  const claimedBy = (row.lastSeenLocation ?? '').startsWith('CLOUD-CLAIMED:')
+    ? row.lastSeenLocation!.slice('CLOUD-CLAIMED:'.length)
+    : null
+  if (claimedBy && claimedBy !== installId) {
+    throw new Error(`Code already claimed by a different install (${claimedBy.slice(0, 8)}…). Ask admin to issue a new code.`)
+  }
+  // Master codes are reusable by design — never lock them.
+  if (!row.isMaster) {
+    if (row.isUsed && claimedBy !== installId) {
+      throw new Error('Code has already been used to activate a subscription on another PC.')
+    }
+    row.isUsed = true
+    row.usedAt = row.usedAt ?? new Date().toISOString()
+  }
+  row.lastSeenAt = new Date().toISOString()
+  row.lastSeenLocation = `CLOUD-CLAIMED:${installId}`
+  persist(f)
+  return { ok: true, activation: { ...row } }
+}
+
+/**
+ * v0.7.145 — Append a customer-side payment-code record to the cloud
+ * ledger so the admin dashboard's "Recent Payments" sees it. Idempotent
+ * by ref; an existing ref is left untouched. Called by the cloud-side
+ * /api/license/cloud/mirror-payment route.
+ */
+export function mergePaymentFromCustomer(
+  rec: PaymentCodeRecord,
+  installId: string,
+): { ok: true; merged: boolean } {
+  if (!rec || !rec.ref) return { ok: true, merged: false }
+  const f = load()
+  if (f.paymentCodes.some((p) => p.ref === rec.ref)) {
+    return { ok: true, merged: false }
+  }
+  // We don't trust customer-supplied status flips beyond the initial
+  // WAITING_PAYMENT — cloud admin still confirms via the dashboard.
+  f.paymentCodes.push({
+    ...rec,
+    status: 'WAITING_PAYMENT',
+    // Stash the originating install in the email field's mirror
+    // location? No — keep email/whatsapp pristine for the admin UI.
+    // Track install via a structured prefix in paymentRef? No —
+    // use an unused field on the record. We use a SIDECAR note in
+    // the existing email field is too risky. Instead we just append.
+  })
+  persist(f)
+  // eslint-disable-next-line no-console
+  console.log(`[cloud-sync] merged payment ref ${rec.ref} from install ${installId.slice(0, 8)}…`)
+  return { ok: true, merged: true }
+}
+
+/**
+ * v0.7.145 — Append a cloud-claimed activation row to the local
+ * customer ledger so the existing local activateCode() finds it on
+ * the very next call. Idempotent by code; if the local ledger
+ * already has a row for this code we leave it alone (don't reset
+ * isUsed back to false on a re-claim).
+ */
+export function mergeActivationFromCloud(rec: ActivationCodeRecord): boolean {
+  if (!rec || !rec.code) return false
+  const f = load()
+  if (f.activationCodes.some((a) => a.code === rec.code)) return false
+  // Mirror as un-used locally so the local activateCode() path runs
+  // its full bookkeeping (isUsed flip, subscriptionExpiresAt mint,
+  // notifications, etc.) on first activation.
+  f.activationCodes.push({
+    ...rec,
+    isUsed: false,
+    usedAt: undefined,
+    subscriptionExpiresAt: undefined,
+    lastSeenAt: undefined,
+    lastSeenIp: undefined,
+    lastSeenLocation: undefined,
+  })
+  persist(f)
+  return true
+}
+
 // v0.7.32 — Single source of truth for the LLM-classifier on/off
 // decision. The flag is "ON unless explicitly set to false", so a
 // fresh install (no config file or no field) gets the LLM fallback
