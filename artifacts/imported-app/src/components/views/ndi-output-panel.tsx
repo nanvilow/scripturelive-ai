@@ -22,14 +22,19 @@ import { useState, useEffect, useRef } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Wifi, WifiOff, Radio, AlertTriangle, MonitorPlay } from 'lucide-react'
+import { Wifi, WifiOff, Radio, MonitorPlay } from 'lucide-react'
 import { useNdi } from '@/lib/use-electron'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/lib/store'
 
 export function NdiOutputPanel() {
-  const { desktop, status, available, unavailableReason } = useNdi()
+  // v0.7.146 — `unavailableReason` is no longer destructured because the amber
+  // "NDI runtime not detected" card that displayed it has been removed (the
+  // DLL is now bundled, so the card never fired in practice). `available` is
+  // still consumed below to compute `ndiOk`, which keeps the Start button
+  // disabled in the pathological case of a corrupted bundled DLL.
+  const { desktop, status, available } = useNdi()
   const [busy, setBusy] = useState(false)
   const [sourceName, setSourceName] = useState('ScriptureLive AI')
 
@@ -308,9 +313,7 @@ export function NdiOutputPanel() {
               <CardDescription className="text-xs">
                 {isRunning
                   ? `Live on the LAN as "${status?.source || sourceName}"`
-                  : ndiOk
-                  ? 'Tap the button to start broadcasting'
-                  : 'NDI runtime not detected'}
+                  : 'Tap the button to start broadcasting'}
               </CardDescription>
             </div>
           </div>
@@ -323,45 +326,18 @@ export function NdiOutputPanel() {
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5">
           {/* ── LEFT COLUMN — controls (always visible) ─────────────── */}
           <div className="space-y-4">
-            {!ndiOk && (
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-3">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-                  <div className="text-xs text-amber-300/90 leading-relaxed">
-                    <strong>NDI runtime not detected.</strong>{' '}
-                    {unavailableReason ? <span className="opacity-80">({unavailableReason})</span> : null}
-                    <br />
-                    NDI Tools is a free runtime from NewTek/Vizrt that vMix, Wirecast, and OBS use to see this app on the network. We can&apos;t bundle it (NewTek licensing) so it&apos;s a one-time install.
-                  </div>
-                </div>
-                {/* v0.7.145 — Big actionable buttons. The text-link
-                    approach was too easy to miss in the wall of
-                    amber. Operators screenshotted https://imgur.com/a/4F1q1JH
-                    asking why the button doesn't start anything —
-                    now we tell them what to click and what happens
-                    next without needing to read the paragraph. */}
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <Button
-                    asChild
-                    variant="default"
-                    size="sm"
-                    className="bg-amber-600 hover:bg-amber-700 text-white"
-                  >
-                    <a href="https://ndi.video/tools/" target="_blank" rel="noopener noreferrer">
-                      Download NDI Tools (Free)
-                    </a>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => window.location.reload()}
-                    className="border-amber-500/40 text-amber-200 hover:bg-amber-500/10"
-                  >
-                    Re-check after install
-                  </Button>
-                </div>
-              </div>
-            )}
+            {/* v0.7.146 — The amber "NDI runtime not detected" card
+                that lived here in v0.7.145 is GONE. The NDI runtime
+                DLL now ships INSIDE the installer (extraResources in
+                electron-builder.yml + bundled-first DLL search in
+                electron/ndi-service.ts findNdiDll), so ndiOk is
+                effectively always true on every customer PC — same
+                behaviour as Wirecast / vMix / OBS / Resolume. The
+                only way ndiOk is false post-v0.7.146 is a corrupted
+                install or a 32-bit OS (which we don't support);
+                in that pathological case the Stop/Start button
+                below is still disabled via `disabled={busy || !ndiOk}`,
+                which is a quieter and accurate failure mode. */}
 
             {/* The one button. */}
             <Button

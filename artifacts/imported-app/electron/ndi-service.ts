@@ -61,15 +61,37 @@ function findNdiDll(): string | null {
   const envOverride = process.env.NDI_DLL_PATH
   if (envOverride && fs.existsSync(envOverride)) return envOverride
 
-  // 2. Standard NDI install locations (NDI Tools sets these env vars)
   const dllName = 'Processing.NDI.Lib.x64.dll'
   const candidates: string[] = []
 
+  // 2. v0.7.146 — BUNDLED DLL (the "just works" path).
+  // electron-builder ships build-resources/ndi/Processing.NDI.Lib.x64.dll
+  // as extraResources to `<resources>/ndi/`, which is process.resourcesPath
+  // in packaged builds. This is what makes NDI work on every customer PC
+  // worldwide WITHOUT a separate NDI Tools install — same approach
+  // vMix / Wirecast / OBS Studio / Resolume use under the NDI SDK
+  // redistribution license (the SDK explicitly allows the runtime DLL
+  // to ship inside an integrated application).
+  // We check this FIRST so even if the customer happens to also have
+  // NDI Tools installed, we pin to OUR known-good copy.
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, 'ndi', dllName))
+  }
+  // Dev-mode fallback (electron . from artifacts/imported-app) — load
+  // straight out of the source build-resources/ndi/ folder. __dirname
+  // when running compiled main.cjs in dist-electron/ resolves to that
+  // dist-electron path, so we walk up to the artifact root.
+  candidates.push(
+    path.join(__dirname, '..', 'build-resources', 'ndi', dllName),
+    path.join(__dirname, '..', '..', 'build-resources', 'ndi', dllName),
+  )
+
+  // 3. Standard NDI install locations (kept as a safety net so a
+  //    corrupted/missing bundled DLL still finds a system copy).
   for (const v of ['NDI_RUNTIME_DIR_V6', 'NDI_RUNTIME_DIR_V5', 'NDI_RUNTIME_DIR_V4']) {
     const dir = process.env[v]
     if (dir) candidates.push(path.join(dir, dllName))
   }
-  // Common install paths if env vars are missing
   candidates.push(
     'C:\\Program Files\\NDI\\NDI 6 Tools\\Runtime\\' + dllName,
     'C:\\Program Files\\NDI\\NDI 5 Tools\\Runtime\\' + dllName,

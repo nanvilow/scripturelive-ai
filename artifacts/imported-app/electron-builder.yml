@@ -116,6 +116,19 @@ extraResources:
     filter: ["**/*"]
   - from: db/custom.db
     to: app-db/custom.db
+  # v0.7.146 — Bundled NDI runtime. Ships Processing.NDI.Lib.x64.dll
+  # next to the .exe so NDI "just works" on every customer PC without
+  # a separate NDI Tools install (operator complaint: "make it work
+  # like Wirecast and vMix"). The NDI SDK license explicitly permits
+  # redistribution of the runtime DLL inside integrated applications —
+  # vMix, Wirecast, OBS Studio, Resolume, and Streamlabs all do this.
+  # Lands at process.resourcesPath/ndi/Processing.NDI.Lib.x64.dll
+  # which is the FIRST path electron/ndi-service.ts findNdiDll()
+  # checks (before any system NDI Tools install), so we pin to a
+  # known-good copy even on PCs that already have NDI installed.
+  - from: build-resources/ndi
+    to: ndi
+    filter: ["Processing.NDI.Lib.x64.dll"]
 # A small hook that runs after electron-builder finishes signing each platform
 # package. For macOS it submits the .app to Apple's notarytool when notarization
 # credentials are present in the environment. For all other platforms (and when
