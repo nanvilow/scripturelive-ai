@@ -917,3 +917,9 @@ id = "XfFSyfGlzoLJSDydJaK81"
 uri = "file://exports/ScriptureLive-AI-v0.7.148-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.148 — source (399-paraphrase corpus + Matt 4:19 + Psalm 124:7)"
+
+[[outputs]]
+id = "lmcCRkIMGkJEuKGuR-Iw9"
+uri = "file://exports/ScriptureLive-AI-v0.7.149-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.149 — source (boot splash polish)"
