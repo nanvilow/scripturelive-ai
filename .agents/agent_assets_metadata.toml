@@ -947,3 +947,9 @@ id = "M-ltwlkKXpX0Tmq7tq7_A"
 uri = "file://screenshots/obs-browser-source-card.jpg"
 type = "image"
 title = "OBS Browser Source URL card (v0.7.153 preview)"
+
+[[outputs]]
+id = "xjMe246ud1f_tGcORf9eo"
+uri = "file://artifacts/imported-app/exports/ScriptureLive-AI-v0.7.155-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.155 — source zip"
