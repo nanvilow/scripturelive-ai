@@ -40,10 +40,39 @@ export function OutputPreview({
   mode = 'auto',
   label,
   sample,
+  slideOverride,
+  mirrorLive = false,
+  hideModeBadge = false,
+  className,
+  aspectOverride,
 }: {
   mode?: 'auto' | 'full' | 'lower-third'
   label?: string
   sample?: { reference: string; text: string }
+  /**
+   * v0.7.158 — When set, the iframe renders THIS slide instead of
+   * what's currently live. Used by the Main Preview pane in
+   * `logos-shell.tsx` so the operator's queued slide flows through
+   * the same renderer as the projector. Honours every settings axis
+   * (font, lower-third position/height, background, etc.) because
+   * the rest of the payload is built from the same `buildOutputPayload`
+   * helper the broadcaster uses.
+   */
+  slideOverride?: Slide | null
+  /**
+   * v0.7.158 — When true, the iframe is treated as a faithful mirror
+   * of the projector / NDI feed. The payload flows through unmodified
+   * (so `blanked` and `showStartupLogo` come from real state instead
+   * of being forced off). Used by the Live Display pane so what the
+   * operator sees is byte-identical to what the congregation sees.
+   */
+  mirrorLive?: boolean
+  /** Hide the small "Lower Third / Full Screen / Auto" corner badge. */
+  hideModeBadge?: boolean
+  /** Custom wrapper className (used by Live Display to fill the column). */
+  className?: string
+  /** Force a specific aspect ratio instead of reading from displayRatio. */
+  aspectOverride?: string
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const readyRef = useRef(false)
@@ -57,7 +86,8 @@ export function OutputPreview({
   // margin in the preview card.
   const displayRatio = useAppStore((s) => s.settings.displayRatio)
   const aspect =
-    displayRatio === '4:3' ? '4 / 3' : displayRatio === '21:9' ? '21 / 9' : '16 / 9'
+    aspectOverride ??
+    (displayRatio === '4:3' ? '4 / 3' : displayRatio === '21:9' ? '21 / 9' : '16 / 9')
 
   // ?preview=1 + ?fullScreen=1 / ?lowerThird=1 honoured by the route
   // at parse time (URLSearchParams block near the top of the inline
@@ -85,6 +115,35 @@ export function OutputPreview({
   const buildPreviewPayload = (): OutputPayload => {
     const s = useAppStore.getState()
     const payload = buildOutputPayload(s)
+    // v0.7.158 — slideOverride lets the caller (Main Preview pane)
+    // splice their own slide (e.g. the queued previewSlide) into the
+    // payload while still inheriting every other field (settings,
+    // displayMode, audio, etc.) from the live store.
+    if (slideOverride) {
+      const settingsBlock = (payload as { settings: OutputPayload['settings'] }).settings
+      const audio = (payload as { audio: OutputPayload['audio'] }).audio
+      return {
+        type: 'slide' as const,
+        slide: slideOverride,
+        nextSlide: null,
+        slideIndex: 0,
+        slideTotal: 1,
+        sermonNotes: undefined,
+        countdownEndAt: null,
+        isLive: false,
+        showStartupLogo: false,
+        displayMode: payload.displayMode,
+        settings: settingsBlock,
+        blanked: false,
+        audio,
+      } as OutputPayload
+    }
+    // v0.7.158 — mirrorLive=true: pass through unchanged so the Live
+    // Display pane is byte-identical to the projector (respects
+    // blanked transport button + startup-logo from real state).
+    if (mirrorLive) {
+      return payload
+    }
     if (payload.type === 'slide' && payload.slide) {
       // Live content — render exactly what the projector renders.
       // Force blanked off so the preview never goes dark even if the
@@ -201,7 +260,7 @@ export function OutputPreview({
     })
     return () => unsubscribe()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sampleRef, sampleText, mode])
+  }, [sampleRef, sampleText, mode, slideOverride?.id, mirrorLive])
 
   const onIframeLoad = () => {
     // Defensive: if the handshake message was already sent before
@@ -225,7 +284,10 @@ export function OutputPreview({
         </div>
       )}
       <div
-        className="relative w-full bg-black overflow-hidden rounded-md ring-1 ring-border"
+        className={
+          className ??
+          'relative w-full bg-black overflow-hidden rounded-md ring-1 ring-border'
+        }
         style={{ aspectRatio: aspect }}
       >
         <iframe
@@ -235,15 +297,17 @@ export function OutputPreview({
           onLoad={onIframeLoad}
           className="absolute inset-0 w-full h-full block border-0 pointer-events-none"
         />
-        <div className="absolute top-1 right-1 z-10 pointer-events-none">
-          <span className="text-[8px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded bg-black/60 text-white/80 border border-white/10">
-            {mode === 'lower-third'
-              ? 'Lower Third'
-              : mode === 'full'
-                ? 'Full Screen'
-                : 'Auto'}
-          </span>
-        </div>
+        {!hideModeBadge && (
+          <div className="absolute top-1 right-1 z-10 pointer-events-none">
+            <span className="text-[8px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded bg-black/60 text-white/80 border border-white/10">
+              {mode === 'lower-third'
+                ? 'Lower Third'
+                : mode === 'full'
+                  ? 'Full Screen'
+                  : 'Auto'}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )
