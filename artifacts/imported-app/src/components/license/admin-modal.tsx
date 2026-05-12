@@ -31,7 +31,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useLicense } from './license-provider'
-import { ShieldCheck, Copy, Mail, Phone, RefreshCw, KeyRound, AlertTriangle, CheckCircle2, Loader2, Settings as SettingsIcon, Save, Sparkles, UserPlus, Trash2, ListChecks, MapPin, Clock, Ban, CalendarPlus, Undo2, Trash, CheckSquare, X } from 'lucide-react'
+import { ShieldCheck, Copy, Mail, Phone, RefreshCw, KeyRound, AlertTriangle, CheckCircle2, Loader2, Settings as SettingsIcon, Save, Sparkles, UserPlus, Trash2, ListChecks, MapPin, Clock, Ban, CalendarPlus, Undo2, Trash, CheckSquare, X, Globe } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -87,6 +87,10 @@ interface AdminConfigResp {
     /** v0.7.29 — Phase 2 v0.8.0 — opt-in LLM voice classifier. */
     enableLlmClassifier?: boolean
     llmClassifierConfidenceFloor?: number
+    /** v0.7.153 — Cross-device admin sync credential (the cloud
+     *  install's masterCode). Per-PC; shown back to the operator so
+     *  they can confirm what's saved without re-pasting. */
+    cloudAdminCode?: string
     updatedAt?: string
   }
   defaults: {
@@ -337,6 +341,20 @@ export function AdminModal() {
   // secrets so an over-the-shoulder glance can't read them).
   const [fOpenAIKey, setFOpenAIKey] = useState('')
   const [fDeepgramKey, setFDeepgramKey] = useState('')
+  // v0.7.157 — Cross-device admin sync credential (operator-pastes
+  // the cloud install's masterCode here). Round-tripped on reload
+  // unlike the key fields above, because there's no security risk —
+  // it's already visible on the cloud's own admin panel and the
+  // operator needs to be able to verify what's saved.
+  const [fCloudAdminCode, setFCloudAdminCode] = useState('')
+  const [cloudSyncTesting, setCloudSyncTesting] = useState(false)
+  const [cloudSyncResult, setCloudSyncResult] = useState<{
+    ok: boolean
+    stage: 'disabled' | 'unreachable' | 'unauthorized' | 'connected'
+    detail: string
+    cloudBase?: string
+    pulledCounts?: { paymentCodes: number; activationCodes: number; notifications: number }
+  } | null>(null)
   const [keyStatus, setKeyStatus] = useState<{ openai: boolean; deepgram: boolean }>({
     openai: false,
     deepgram: false,
@@ -969,6 +987,11 @@ export function AdminModal() {
       else if (fOpenAIKey.trim() !== '') body.adminOpenAIKey = fOpenAIKey.trim()
       if (fDeepgramKey.trim().toUpperCase() === 'CLEAR') body.adminDeepgramKey = null
       else if (fDeepgramKey.trim() !== '') body.adminDeepgramKey = fDeepgramKey.trim()
+      // v0.7.157 — Cross-device admin sync credential. Always sent
+      // (round-trip semantics): empty string ⇒ null (sync disabled),
+      // non-empty ⇒ saved verbatim. The route's clean() already
+      // null-coerces empty strings.
+      body.cloudAdminCode = fCloudAdminCode.trim() === '' ? null : fCloudAdminCode.trim()
 
       // v0.7.29 — Always send the LLM classifier toggle (it's a
       // boolean — no "leave alone" semantics). The floor is null
@@ -1004,6 +1027,8 @@ export function AdminModal() {
       })
       setFOpenAIKey('')
       setFDeepgramKey('')
+      // v0.7.157 — Reflect canonical persisted cloud admin code.
+      setFCloudAdminCode(j.config.cloudAdminCode ?? '')
       // v0.7.29 — Refresh from canonical server response so the
       // checkbox + floor reflect what's actually persisted (e.g. the
       // server may have clamped the floor to 1..100).
@@ -2288,6 +2313,120 @@ export function AdminModal() {
                       <p className="text-[10px] text-muted-foreground">Default {cfg.defaults.trialMinutes} min. Range 1–1440. Applies to new installs; existing trial windows keep their original end-time.</p>
                     </div>
                   </div>
+                </section>
+
+                {/* v0.7.157 — Cross-Device Admin Sync (Cloud Sync). The
+                    user kept asking "why don't admin actions on my phone
+                    show up on my desktop?" — the answer was that the
+                    cloud-sync helpers added in v0.7.153 silently no-op
+                    when cloudAdminCode is unset, and there was NO UI to
+                    set it. This card exposes the field plus a Test
+                    Connection button that pings the cloud and reports a
+                    structured status (disabled / unreachable /
+                    unauthorized / connected) the operator can act on. */}
+                <section className="rounded-lg border border-border bg-card/40 p-3.5 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Cross-Device Admin Sync</div>
+                    {cloudSyncResult && (
+                      <span
+                        className={
+                          'text-[10px] px-1.5 py-0.5 rounded border font-mono ' +
+                          (cloudSyncResult.stage === 'connected'
+                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                            : cloudSyncResult.stage === 'unauthorized'
+                              ? 'bg-rose-500/15 text-rose-300 border-rose-500/40'
+                              : cloudSyncResult.stage === 'unreachable'
+                                ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                                : 'bg-zinc-500/15 text-zinc-300 border-zinc-500/40')
+                        }
+                      >
+                        {cloudSyncResult.stage}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground leading-snug">
+                    Paste the masterCode of the cloud install
+                    (<span className="font-mono">https://scripturelive.replit.app/?admin</span> →
+                    Overview → Master code) so admin actions taken on
+                    your phone (or any other device pointed at the cloud)
+                    appear in this desktop&apos;s admin panel, and vice
+                    versa. Without this, every install&apos;s admin view
+                    is local-only.
+                  </p>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Cloud admin code (cloud&apos;s masterCode)</label>
+                    <Input
+                      type="text"
+                      placeholder="(blank = cross-device sync disabled)"
+                      value={fCloudAdminCode}
+                      onChange={(e) => { setFCloudAdminCode(e.target.value); setCloudSyncResult(null) }}
+                      className="bg-background border-border text-foreground font-mono"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={cloudSyncTesting}
+                      onClick={async () => {
+                        setCloudSyncTesting(true)
+                        setCloudSyncResult(null)
+                        try {
+                          // Save first so the route reads the LATEST
+                          // pasted code (not whatever was on disk
+                          // before the operator typed).
+                          await fetch('/api/license/admin/config', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              cloudAdminCode: fCloudAdminCode.trim() === '' ? null : fCloudAdminCode.trim(),
+                            }),
+                          })
+                          const r = await fetch('/api/license/admin/cloud-sync-test', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: '{}',
+                          })
+                          const j = (await r.json().catch(() => null)) as typeof cloudSyncResult
+                          if (!j) {
+                            toast.error('Test failed (no response)')
+                            return
+                          }
+                          setCloudSyncResult(j)
+                          if (j.ok) toast.success('Cloud sync connected')
+                          else toast.error(`Cloud sync ${j.stage}`)
+                        } catch (e) {
+                          toast.error(e instanceof Error ? e.message : 'Test failed')
+                        } finally {
+                          setCloudSyncTesting(false)
+                        }
+                      }}
+                      className="h-8 text-[11px] gap-1.5"
+                    >
+                      {cloudSyncTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Globe className="h-3.5 w-3.5" />}
+                      Test connection
+                    </Button>
+                  </div>
+                  {cloudSyncResult && (
+                    <div
+                      className={
+                        'rounded-md border p-2.5 text-[11px] leading-snug ' +
+                        (cloudSyncResult.ok
+                          ? 'border-emerald-500/30 bg-emerald-500/5 text-emerald-200'
+                          : 'border-amber-500/30 bg-amber-500/5 text-amber-200')
+                      }
+                    >
+                      {cloudSyncResult.detail}
+                      {cloudSyncResult.pulledCounts && (
+                        <div className="mt-1.5 font-mono text-[10px] opacity-80">
+                          Cloud snapshot: {cloudSyncResult.pulledCounts.paymentCodes} payment-codes · {cloudSyncResult.pulledCounts.activationCodes} activation-codes · {cloudSyncResult.pulledCounts.notifications} notifications
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </section>
 
                 <section className="rounded-lg border border-border bg-card/40 p-3.5 space-y-3">

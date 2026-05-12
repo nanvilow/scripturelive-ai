@@ -22,11 +22,12 @@ import { useState, useEffect, useRef } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Wifi, WifiOff, Radio, MonitorPlay } from 'lucide-react'
-import { useNdi } from '@/lib/use-electron'
+import { Wifi, WifiOff, Radio, MonitorPlay, Copy, Check, Globe, Monitor } from 'lucide-react'
+import { useNdi, useDesktop } from '@/lib/use-electron'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/lib/store'
+import QRCode from 'qrcode'
 
 export function NdiOutputPanel() {
   // v0.7.146 — `unavailableReason` is no longer destructured because the amber
@@ -37,6 +38,84 @@ export function NdiOutputPanel() {
   const { desktop, status, available } = useNdi()
   const [busy, setBusy] = useState(false)
   const [sourceName, setSourceName] = useState('ScriptureLive AI')
+
+  // v0.7.153 — OBS Browser Source URL card state. Fetched once on
+  // mount via the new app:get-server-info IPC. The card renders the
+  // localhost URL (always safe — same-PC OBS) plus a row per
+  // discovered LAN IPv4 (cross-PC OBS via Browser Source — the
+  // zero-plugin alternative to NDI). QR data URL is generated for
+  // the FIRST LAN URL so a phone or second PC can scan it.
+  const desktopBridge = useDesktop()
+  const [serverInfo, setServerInfo] = useState<{
+    port: number
+    localUrl: string
+    lanIps: string[]
+  } | null>(null)
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null)
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (!desktopBridge?.getServerInfo) return
+    let cancelled = false
+    desktopBridge.getServerInfo().then((info) => {
+      if (!cancelled) setServerInfo(info)
+    }).catch(() => { /* leave null — card just falls back to copy-only */ })
+    return () => { cancelled = true }
+  }, [desktopBridge])
+  // Build the OBS Browser Source URLs. We always send `?transparent=1`
+  // so OBS receives a clean alpha matte (verse text only, no card
+  // backdrop) — the operator can layer it over their service program
+  // bus the same way they would an NDI feed.
+  const buildObsUrl = (host: string, port: number) =>
+    `http://${host}:${port}/api/output/congregation?transparent=1`
+  // v0.7.157 — Browser-side fallback so the card NEVER disappears.
+  // Pre-v0.7.157 the OBS Browser Source URL card was conditionally
+  // rendered only when the Electron IPC `app:get-server-info` had
+  // populated `serverInfo`. In the web build (no IPC bridge), in
+  // dev when the renderer mounts before the IPC is ready, OR when
+  // the bundled server bound port=0, the entire card silently
+  // disappeared and operators reported "the OBS card is missing".
+  // Now we ALWAYS render the card. When real Electron server info
+  // is present we use it (preferred — gives the operator a stable
+  // 127.0.0.1:<port> URL plus per-LAN-IP rows). Otherwise we fall
+  // back to whatever the renderer can see in window.location, which
+  // is correct for web-build users and for Electron renderers that
+  // happened to load before IPC settled.
+  const browserFallbackUrl =
+    typeof window !== 'undefined' && window.location?.origin
+      ? `${window.location.origin}/api/output/congregation?transparent=1`
+      : null
+  const localObsUrl = serverInfo && serverInfo.port > 0
+    ? buildObsUrl('127.0.0.1', serverInfo.port)
+    : browserFallbackUrl
+  const lanObsUrls = serverInfo && serverInfo.port > 0
+    ? serverInfo.lanIps.map((ip) => ({ ip, url: buildObsUrl(ip, serverInfo.port) }))
+    : []
+  const usingBrowserFallback =
+    !(serverInfo && serverInfo.port > 0) && !!browserFallbackUrl
+  // Generate QR for the first LAN URL (most useful — phone can scan
+  // it to verify OBS-on-second-PC reachability before wiring it up).
+  // Loopback URL gets no QR (a phone scanning 127.0.0.1 would hit
+  // ITSELF, which is never what the operator wants).
+  useEffect(() => {
+    const target = lanObsUrls[0]?.url
+    if (!target) { setQrDataUrl(null); return }
+    let cancelled = false
+    QRCode.toDataURL(target, { width: 180, margin: 1, color: { dark: '#0f172a', light: '#ffffff' } })
+      .then((url) => { if (!cancelled) setQrDataUrl(url) })
+      .catch(() => { if (!cancelled) setQrDataUrl(null) })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lanObsUrls[0]?.url])
+  const handleCopyUrl = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopiedUrl(url)
+      toast.success('URL copied — paste it into OBS Browser Source')
+      setTimeout(() => setCopiedUrl((c) => (c === url ? null : c)), 2000)
+    } catch {
+      toast.error('Could not copy. Select the URL and press Ctrl+C.')
+    }
+  }
 
   const ndiDisplayMode = useAppStore((s) => s.settings.ndiDisplayMode)
   const updateSettings = useAppStore((s) => s.updateSettings)
@@ -391,6 +470,135 @@ export function NdiOutputPanel() {
               Wirecast audio source, OBS audio bus) — that&apos;s what keeps
               audio sync rock solid in a live service.
             </div>
+
+            {/* v0.7.153 — OBS Browser Source URL card.
+                Zero-plugin alternative to NDI for OBS users:
+                instead of installing the DistroAV / obs-ndi plugin
+                + NDI Runtime, an operator can drop one URL into OBS's
+                built-in Browser Source and get the verse-only feed
+                with full transparency. The localhost URL works for
+                same-PC OBS (the most common Nigeria-customer setup).
+                LAN URLs work for OBS on a second PC on the same Wi-Fi
+                — Next.js is now bound to 0.0.0.0 (see startNextServer
+                in electron/main.ts). */}
+            {/* v0.7.157 — Card now ALWAYS renders. See browserFallbackUrl
+                comment above buildObsUrl for the rationale. */}
+            <div className="rounded-md border border-sky-500/30 bg-sky-500/5 p-3 space-y-2.5">
+                <div className="flex items-start gap-2">
+                  <Globe className="h-4 w-4 text-sky-300 shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] font-semibold text-foreground">
+                      OBS Browser Source URL
+                    </div>
+                    <p className="text-[10px] text-muted-foreground leading-snug">
+                      Use this if your OBS doesn&apos;t have the NDI plugin.
+                      In OBS click <strong>+</strong> → <strong>Browser</strong>
+                      , paste a URL below, set width <strong>1920</strong> and
+                      height <strong>1080</strong>, click <strong>OK</strong>.
+                      You&apos;ll see only the Bible verse — no app interface.
+                    </p>
+                    {usingBrowserFallback && (
+                      <p className="text-[10px] text-amber-300/90 leading-snug pt-1">
+                        Showing the URL of the page you&apos;re viewing right
+                        now (fallback). For LAN URLs to a second PC, run the
+                        Windows desktop app — it auto-detects every LAN IP on
+                        this machine and lists one Browser Source URL per
+                        interface.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {localObsUrl && (
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      <Monitor className="h-3 w-3" />
+                      Same PC as ScriptureLive AI
+                    </div>
+                    <div className="flex items-stretch gap-1.5">
+                      <input
+                        readOnly
+                        value={localObsUrl}
+                        onFocus={(e) => e.currentTarget.select()}
+                        className="flex-1 min-w-0 h-8 rounded-md border border-border bg-background px-2 text-[11px] font-mono"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleCopyUrl(localObsUrl)}
+                        className="h-8 shrink-0 px-2 gap-1.5 text-[11px]"
+                      >
+                        {copiedUrl === localObsUrl
+                          ? <><Check className="h-3.5 w-3.5 text-emerald-400" /> Copied</>
+                          : <><Copy className="h-3.5 w-3.5" /> Copy</>
+                        }
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {lanObsUrls.length === 0 && !usingBrowserFallback && (
+                  <p className="text-[10px] text-amber-300/90 leading-snug">
+                    No LAN IPv4 interfaces detected on this PC. The localhost
+                    URL above still works for OBS on the SAME PC. To stream
+                    to OBS on another PC, connect this PC to a Wi-Fi or wired
+                    network and reopen this panel.
+                  </p>
+                )}
+                {lanObsUrls.length > 0 && (
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center gap-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      <Wifi className="h-3 w-3" />
+                      OBS on another PC (same Wi-Fi)
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
+                      <div className="space-y-1.5 min-w-0">
+                        {lanObsUrls.map(({ ip, url }) => (
+                          <div key={ip} className="flex items-stretch gap-1.5">
+                            <input
+                              readOnly
+                              value={url}
+                              onFocus={(e) => e.currentTarget.select()}
+                              className="flex-1 min-w-0 h-8 rounded-md border border-border bg-background px-2 text-[11px] font-mono"
+                            />
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleCopyUrl(url)}
+                              className="h-8 shrink-0 px-2 gap-1.5 text-[11px]"
+                              title={`LAN IP ${ip}`}
+                            >
+                              {copiedUrl === url
+                                ? <><Check className="h-3.5 w-3.5 text-emerald-400" /> Copied</>
+                                : <><Copy className="h-3.5 w-3.5" /> Copy</>
+                              }
+                            </Button>
+                          </div>
+                        ))}
+                        <p className="text-[10px] text-muted-foreground leading-snug pt-0.5">
+                          If OBS doesn&apos;t load these from another PC, allow
+                          ScriptureLive AI through Windows Firewall (Private
+                          network) on this machine.
+                        </p>
+                      </div>
+                      {qrDataUrl && (
+                        <div className="flex flex-col items-center gap-1 shrink-0">
+                          <img
+                            src={qrDataUrl}
+                            alt="QR code for the OBS Browser Source LAN URL"
+                            className="h-[120px] w-[120px] rounded border border-border bg-white"
+                          />
+                          <span className="text-[9px] text-muted-foreground uppercase tracking-wider">
+                            Scan to verify
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
 
             {/* Source name */}
             <div className="rounded-md border border-border bg-muted/10 p-3 space-y-1.5">
