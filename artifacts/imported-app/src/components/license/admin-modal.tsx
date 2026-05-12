@@ -354,6 +354,23 @@ export function AdminModal() {
     detail: string
     cloudBase?: string
     pulledCounts?: { paymentCodes: number; activationCodes: number; notifications: number }
+    stats?: {
+      activationsActive: number
+      activationsNeverUsed: number
+      activationsUsed: number
+      activationsExpired: number
+      activationsCancelled: number
+      activationsDeleted: number
+      activationsMaster: number
+      paymentsPaid: number
+      paymentsWaiting: number
+      paymentsConsumed: number
+      paymentsExpired: number
+      revenueGhs: number
+      uniqueCustomers: number
+      notificationsLast24h: number
+      notificationsLast7d: number
+    }
   } | null>(null)
   const [keyStatus, setKeyStatus] = useState<{ openai: boolean; deepgram: boolean }>({
     openai: false,
@@ -1114,7 +1131,7 @@ export function AdminModal() {
               >
                 <Globe className="inline h-3 w-3 mr-1 -mt-0.5" />
                 {cloudSyncResult.stage === 'connected'
-                  ? `Cross-device sync: connected${cloudSyncResult.pulledCounts ? ` (${cloudSyncResult.pulledCounts.paymentCodes + cloudSyncResult.pulledCounts.activationCodes + cloudSyncResult.pulledCounts.notifications} cloud records)` : ''}`
+                  ? `Cross-device sync: connected${cloudSyncResult.stats ? ` · ${cloudSyncResult.stats.activationsActive} active · ${cloudSyncResult.stats.uniqueCustomers} customers · GHS ${cloudSyncResult.stats.revenueGhs.toLocaleString()}` : cloudSyncResult.pulledCounts ? ` (${cloudSyncResult.pulledCounts.paymentCodes + cloudSyncResult.pulledCounts.activationCodes + cloudSyncResult.pulledCounts.notifications} cloud records)` : ''}`
                   : cloudSyncResult.stage === 'unauthorized'
                     ? 'Cross-device sync: wrong key — set up'
                     : cloudSyncResult.stage === 'unreachable'
@@ -2517,6 +2534,39 @@ export function AdminModal() {
                       {cloudSyncResult.pulledCounts && (
                         <div className="mt-1.5 font-mono text-[10px] opacity-80">
                           Cloud snapshot: {cloudSyncResult.pulledCounts.paymentCodes} payment-codes · {cloudSyncResult.pulledCounts.activationCodes} activation-codes · {cloudSyncResult.pulledCounts.notifications} notifications
+                        </div>
+                      )}
+                      {cloudSyncResult.stats && (
+                        <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {[
+                            { label: 'Active subscriptions', value: cloudSyncResult.stats.activationsActive, accent: 'text-emerald-300' },
+                            { label: 'Unique customers', value: cloudSyncResult.stats.uniqueCustomers, accent: 'text-emerald-300' },
+                            { label: 'Total revenue (GHS)', value: cloudSyncResult.stats.revenueGhs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), accent: 'text-emerald-300' },
+                            { label: 'Never used', value: cloudSyncResult.stats.activationsNeverUsed, accent: 'text-zinc-300' },
+                            { label: 'Used (no expiry)', value: cloudSyncResult.stats.activationsUsed, accent: 'text-zinc-300' },
+                            { label: 'Expired', value: cloudSyncResult.stats.activationsExpired, accent: 'text-amber-300' },
+                            { label: 'Cancelled', value: cloudSyncResult.stats.activationsCancelled, accent: 'text-rose-300' },
+                            { label: 'Deleted (in bin)', value: cloudSyncResult.stats.activationsDeleted, accent: 'text-rose-300' },
+                            { label: 'Master codes', value: cloudSyncResult.stats.activationsMaster, accent: 'text-violet-300' },
+                            { label: 'Payments paid', value: cloudSyncResult.stats.paymentsPaid, accent: 'text-emerald-300' },
+                            { label: 'Payments waiting', value: cloudSyncResult.stats.paymentsWaiting, accent: 'text-amber-300' },
+                            { label: 'Payments consumed', value: cloudSyncResult.stats.paymentsConsumed, accent: 'text-emerald-300' },
+                            { label: 'Payments expired', value: cloudSyncResult.stats.paymentsExpired, accent: 'text-zinc-300' },
+                            { label: 'Notifications · 24h', value: cloudSyncResult.stats.notificationsLast24h, accent: 'text-sky-300' },
+                            { label: 'Notifications · 7d', value: cloudSyncResult.stats.notificationsLast7d, accent: 'text-sky-300' },
+                          ].map((m) => (
+                            <div
+                              key={m.label}
+                              className="rounded border border-border/40 bg-background/40 px-2 py-1.5"
+                            >
+                              <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
+                                {m.label}
+                              </div>
+                              <div className={'mt-0.5 font-mono text-[12px] font-semibold ' + m.accent}>
+                                {m.value}
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>

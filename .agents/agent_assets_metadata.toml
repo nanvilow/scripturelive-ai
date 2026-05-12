@@ -989,3 +989,9 @@ id = "3iz5EKelRA2IhCbK4Jzm0"
 uri = "file://exports/ScriptureLive-AI-v0.7.161-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.161 — Auto-Sync Out-Of-The-Box"
+
+[[outputs]]
+id = "22gJdva8ohmTngFXLqB2q"
+uri = "file://exports/ScriptureLive-AI-v0.7.162-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.162 — Cloud Sync Real Global Stats"
