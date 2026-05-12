@@ -101,6 +101,15 @@ export interface ActivationCodeRecord {
    *  after that window passes the row is purged. Operator can Restore
    *  at any time before the purge. */
   softDeletedAt?: string
+  /** v0.7.153 — Restore timestamp. Set by restoreActivationByCode
+   *  whenever an operator brings a soft-deleted row back. Without
+   *  this field the cross-device merge can't tell "remote restored
+   *  AFTER local soft-deleted" from "remote never knew about the
+   *  soft-delete" — laterIso(local.softDeletedAt, undefined) just
+   *  preserves local. With it, the merge picks
+   *  max(softDeletedAt, softDeleteRestoredAt) per side and the side
+   *  with the strictly-later timestamp wins. */
+  softDeleteRestoredAt?: string
 
   // ─── v0.7.11 — Transferable activation (move-to-another-PC) ──────
   // Pastebin item #6 followup: the v0.5.48 "Deactivate on this PC"
@@ -207,6 +216,17 @@ export interface RuntimeConfig {
    *  Operators reporting too many false-positive commands can raise
    *  this; operators reporting missed commands can lower it. */
   llmClassifierConfidenceFloor?: number
+  /** v0.7.153 — Cross-device admin sync credential. Operator pastes
+   *  the cloud install's `masterCode` here once (visible on the
+   *  cloud's Admin → Overview tab) to pair this desktop install
+   *  with the cloud's shared admin ledger. When set (or when the
+   *  SCRIPTURELIVE_CLOUD_ADMIN_CODE env var is set), every admin
+   *  read pulls the cloud snapshot first and every admin write
+   *  pushes the local snapshot back, so admin actions on the phone
+   *  and on the desktop converge on the same record store.
+   *  Strictly per-PC — never synced to the cloud (would create a
+   *  trust loop). */
+  cloudAdminCode?: string
   /** Last time the owner saved this config (ISO) — for audit display */
   updatedAt?: string
 }
@@ -267,6 +287,19 @@ export interface LicenseFile {
    *  itself stays intact — re-activating later resets the lockdown
    *  but does not refund trial time the user already burned. */
   lockdownAfterDeactivation?: boolean
+
+  // ─── v0.7.153 — Hard-delete tombstones ───────────────────────────
+  // Pure union-by-key cross-device merge would resurrect any record
+  // hard-deleted on one device the moment a stale snapshot from
+  // another device merges back in. We instead append a tombstone
+  // (key + deletedAt) on every hard delete and keep it for the cap
+  // period. The cross-device merger checks each incoming record
+  // against local tombstones BEFORE adding it, AND merges incoming
+  // tombstones into the local set so a delete propagates to every
+  // device. Each array is capped at 1000 most-recent.
+  deletedPaymentRefs?: { ref: string; deletedAt: string }[]
+  deletedActivationCodes?: { code: string; deletedAt: string }[]
+  deletedNotificationIds?: { id: string; deletedAt: string }[]
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -397,6 +430,36 @@ function migrateStaleConfigNumbers(config: RuntimeConfig | undefined): RuntimeCo
   return next
 }
 
+// v0.7.153 — Sanitise + cap a tombstone array read off disk. Drops
+// entries missing the primary key or deletedAt, dedupes on the key
+// (latest deletedAt wins), then keeps the most-recent N up to the
+// process-wide cap. Defensive against hand-edited license.json.
+function hydrateTombstones<K extends 'ref' | 'code' | 'id'>(
+  raw: unknown,
+  key: K,
+): ({ deletedAt: string } & Record<K, string>)[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const map = new Map<string, { deletedAt: string } & Record<K, string>>()
+  for (const t of raw) {
+    if (!t || typeof t !== 'object') continue
+    const rec = t as Record<string, unknown>
+    const k = rec[key]
+    const deletedAt = rec.deletedAt
+    if (typeof k !== 'string' || !k) continue
+    if (typeof deletedAt !== 'string' || !deletedAt) continue
+    const cur = map.get(k)
+    if (!cur || Date.parse(deletedAt) > Date.parse(cur.deletedAt)) {
+      map.set(k, { [key]: k, deletedAt } as { deletedAt: string } & Record<K, string>)
+    }
+  }
+  let arr = Array.from(map.values())
+  if (arr.length > 1000) {
+    arr.sort((a, b) => a.deletedAt.localeCompare(b.deletedAt))
+    arr = arr.slice(-1000)
+  }
+  return arr.length > 0 ? arr : undefined
+}
+
 function load(): LicenseFile {
   if (cache) return cache
   ensureDir()
@@ -439,6 +502,14 @@ function load(): LicenseFile {
       // is the whole point. Default falsy for fresh installs.
       everActivated: parsed.everActivated === true ? true : undefined,
       lockdownAfterDeactivation: parsed.lockdownAfterDeactivation === true ? true : undefined,
+      // v0.7.153 — Hydrate hard-delete tombstones from disk so a
+      // restart can't drop them and let stale snapshots resurrect
+      // previously-deleted records. Each array is sanitised to drop
+      // malformed entries (defensive against hand-edited license.json)
+      // and capped to the most-recent 1000 immediately on load.
+      deletedPaymentRefs: hydrateTombstones(parsed.deletedPaymentRefs, 'ref'),
+      deletedActivationCodes: hydrateTombstones(parsed.deletedActivationCodes, 'code'),
+      deletedNotificationIds: hydrateTombstones(parsed.deletedNotificationIds, 'id'),
     }
     // v0.7.19 — Trial bump migration. If the persisted trial budget is
     // smaller than the current TRIAL_DURATION_MS, AND the user has not
@@ -552,6 +623,70 @@ function persist(file: LicenseFile) {
   cache = file
   const data = JSON.stringify(file, null, 2)
   enqueuePersist(p, data)
+  // v0.7.153 — Schedule a debounced fan-out to the cloud admin ledger
+  // so cross-device admin records stay in sync. The push is fire-and-
+  // forget and short-circuits when the cloud sync credential is not
+  // configured OR when we're running ON the cloud (REPLIT_DEPLOYMENT_ID
+  // set — the cloud IS the source of truth, no point pushing to itself).
+  scheduleCloudAdminPush(file)
+}
+
+// ─── v0.7.153 — Debounced cloud admin push ──────────────────────────
+//
+// Every persist() schedules a push 1.5s after the LAST persist() call,
+// so a burst of admin writes (e.g. confirm-payment which mutates two
+// rows in two persists) collapses into a single network call. The
+// dynamic import avoids a static cycle between storage.ts and
+// cloud-sync.ts.
+
+const CLOUD_PUSH_DEBOUNCE_MS = 1500
+let cloudPushTimer: NodeJS.Timeout | null = null
+
+function scheduleCloudAdminPush(_file: LicenseFile): void {
+  if (process.env.REPLIT_DEPLOYMENT_ID) return // cloud — no self-push
+  // applyAdminLedgerSnapshot() sets this before persisting an inbound
+  // cloud snapshot — we just received it, no point pushing it back.
+  if (_suppressNextPush) {
+    _suppressNextPush = false
+    return
+  }
+  if (cloudPushTimer) clearTimeout(cloudPushTimer)
+  cloudPushTimer = setTimeout(() => {
+    cloudPushTimer = null
+    void runCloudAdminPush()
+  }, CLOUD_PUSH_DEBOUNCE_MS)
+  // Allow the process to exit even if a push is pending — these are
+  // background syncs, not critical foreground work.
+  if (typeof cloudPushTimer.unref === 'function') cloudPushTimer.unref()
+}
+
+async function runCloudAdminPush(): Promise<void> {
+  try {
+    const f = cache ?? load()
+    const snapshot = extractAdminLedgerSnapshot(f)
+    const { cloudPushAdminLedger } = await import('./cloud-sync')
+    cloudPushAdminLedger({
+      installId: f.installId,
+      config: f.config ?? null,
+      snapshot,
+    })
+  } catch (e) {
+    // Never let a sync error escape — the in-memory cache + on-disk
+    // file remain authoritative for this install.
+    // eslint-disable-next-line no-console
+    console.error('[licensing] cloud admin push failed:', e)
+  }
+}
+
+/** Test-only: drain any pending debounced cloud push so an integration
+ *  test can deterministically assert post-write sync. NOT exposed via
+ *  the public surface; only imported by *.test.ts files. */
+export async function __flushCloudAdminPushForTests(): Promise<void> {
+  if (cloudPushTimer) {
+    clearTimeout(cloudPushTimer)
+    cloudPushTimer = null
+  }
+  await runCloudAdminPush()
 }
 
 // v0.7.96 — Single-flight async writer with latest-data wins.
@@ -1402,6 +1537,11 @@ export function restoreActivationByCode(code: string): boolean {
   const a = f.activationCodes.find((r) => r.code === code)
   if (!a || !a.softDeletedAt) return false
   delete a.softDeletedAt
+  // v0.7.153 — Stamp the restore so a stale remote `softDeletedAt`
+  // arriving via cloud merge doesn't silently re-bin the row. The
+  // merger picks max(softDeletedAt, softDeleteRestoredAt) per side
+  // and the strictly-later timestamp wins.
+  a.softDeleteRestoredAt = new Date().toISOString()
   persist(f)
   return true
 }
@@ -1629,6 +1769,7 @@ export function deletePaymentByRef(ref: string): boolean {
   const before = f.paymentCodes.length
   f.paymentCodes = f.paymentCodes.filter((p) => p.ref !== ref)
   if (f.paymentCodes.length === before) return false
+  appendPaymentTombstone(f, ref)
   persist(f)
   return true
 }
@@ -1638,6 +1779,7 @@ export function deleteActivationByCode(code: string): boolean {
   const before = f.activationCodes.length
   f.activationCodes = f.activationCodes.filter((a) => a.code !== code)
   if (f.activationCodes.length === before) return false
+  appendActivationTombstone(f, code)
   persist(f)
   return true
 }
@@ -1655,6 +1797,7 @@ export function deleteNotificationById(id: string): boolean {
   const before = f.notifications.length
   f.notifications = f.notifications.filter((n) => n.id !== id)
   if (f.notifications.length === before) return false
+  appendNotificationTombstone(f, id)
   persist(f)
   return true
 }
@@ -1712,7 +1855,10 @@ export function deletePaymentsByRefs(refs: string[]): number {
   const before = f.paymentCodes.length
   f.paymentCodes = f.paymentCodes.filter((p) => !set.has(p.ref))
   const removed = before - f.paymentCodes.length
-  if (removed > 0) persist(f)
+  if (removed > 0) {
+    for (const ref of set) appendPaymentTombstone(f, ref)
+    persist(f)
+  }
   return removed
 }
 
@@ -1723,7 +1869,10 @@ export function deleteActivationsByCodes(codes: string[]): number {
   const before = f.activationCodes.length
   f.activationCodes = f.activationCodes.filter((a) => !set.has(a.code))
   const removed = before - f.activationCodes.length
-  if (removed > 0) persist(f)
+  if (removed > 0) {
+    for (const code of set) appendActivationTombstone(f, code)
+    persist(f)
+  }
   return removed
 }
 
@@ -1734,7 +1883,10 @@ export function deleteNotificationsByIds(ids: string[]): number {
   const before = f.notifications.length
   f.notifications = f.notifications.filter((n) => !set.has(n.id))
   const removed = before - f.notifications.length
-  if (removed > 0) persist(f)
+  if (removed > 0) {
+    for (const id of set) appendNotificationTombstone(f, id)
+    persist(f)
+  }
   return removed
 }
 
@@ -1949,6 +2101,336 @@ export function mergeActivationFromCloud(rec: ActivationCodeRecord): boolean {
   })
   persist(f)
   return true
+}
+
+// ─── v0.7.153 — Cross-device admin ledger snapshot helpers ──────────
+
+import type { AdminLedgerSnapshot } from './cloud-sync'
+
+const TOMBSTONE_CAP = 1000
+
+function appendPaymentTombstone(f: LicenseFile, ref: string): void {
+  if (!ref) return
+  const arr = (f.deletedPaymentRefs ??= [])
+  arr.push({ ref, deletedAt: new Date().toISOString() })
+  if (arr.length > TOMBSTONE_CAP) f.deletedPaymentRefs = arr.slice(-TOMBSTONE_CAP)
+}
+
+function appendActivationTombstone(f: LicenseFile, code: string): void {
+  if (!code) return
+  const arr = (f.deletedActivationCodes ??= [])
+  arr.push({ code, deletedAt: new Date().toISOString() })
+  if (arr.length > TOMBSTONE_CAP) f.deletedActivationCodes = arr.slice(-TOMBSTONE_CAP)
+}
+
+function appendNotificationTombstone(f: LicenseFile, id: string): void {
+  if (!id) return
+  const arr = (f.deletedNotificationIds ??= [])
+  arr.push({ id, deletedAt: new Date().toISOString() })
+  if (arr.length > TOMBSTONE_CAP) f.deletedNotificationIds = arr.slice(-TOMBSTONE_CAP)
+}
+
+/** Per-PC config keys that must NEVER leak across the cloud sync —
+ *  they describe the local installation, not the shared admin store. */
+const LOCAL_ONLY_CONFIG_KEYS: ReadonlySet<keyof RuntimeConfig> = new Set([
+  'cloudAdminCode',
+  'adminPassword',
+  'adminOpenAIKey',
+  'adminDeepgramKey',
+])
+
+/** Extract the slice of the local ledger that is shared with the
+ *  cross-device admin store. Strips per-PC subscription state, master
+ *  code, install id, trial counters, telemetry flags, etc. */
+export function extractAdminLedgerSnapshot(file?: LicenseFile): AdminLedgerSnapshot {
+  const f = file ?? load()
+  const cfg = f.config
+  let scrubbedConfig: Partial<RuntimeConfig> | undefined
+  if (cfg) {
+    scrubbedConfig = {}
+    for (const [k, v] of Object.entries(cfg)) {
+      if (LOCAL_ONLY_CONFIG_KEYS.has(k as keyof RuntimeConfig)) continue
+      ;(scrubbedConfig as Record<string, unknown>)[k] = v
+    }
+  }
+  return {
+    paymentCodes: f.paymentCodes.map((p) => ({ ...p })),
+    activationCodes: f.activationCodes.map((a) => ({ ...a })),
+    notifications: f.notifications.map((n) => ({ ...n })),
+    config: scrubbedConfig,
+    deletedPaymentRefs: (f.deletedPaymentRefs ?? []).map((t) => ({ ...t })),
+    deletedActivationCodes: (f.deletedActivationCodes ?? []).map((t) => ({ ...t })),
+    deletedNotificationIds: (f.deletedNotificationIds ?? []).map((t) => ({ ...t })),
+  }
+}
+
+/** Latest-write-wins helper: pick whichever of two ISO timestamps is
+ *  later, falling back to a defined value when only one is present. */
+function laterIso(a?: string, b?: string): string | undefined {
+  if (!a) return b
+  if (!b) return a
+  return Date.parse(a) >= Date.parse(b) ? a : b
+}
+
+/** Merge an incoming admin snapshot into the local ledger. Returns
+ *  the count of records actually changed (added or mutated). Designed
+ *  so a periodic pull from cloud is idempotent — re-applying the same
+ *  snapshot returns 0.
+ *
+ *  Merge rules:
+ *   • paymentCodes — union by `ref`. New refs are appended. Existing
+ *     refs gain the LATER `paidAt` and the LATER `status` upgrade
+ *     (CONSUMED > PAID > WAITING_PAYMENT > EXPIRED order). The first
+ *     non-empty `activationCode` wins (codes never get re-issued).
+ *   • activationCodes — union by `code`. New codes appended. Existing
+ *     codes pick up the LATER `lastSeenAt`/`lastSeenIp`/
+ *     `lastSeenLocation`, the LATER `cancelledAt`, the LATER
+ *     `softDeletedAt` (or `undefined` when remote restored it after
+ *     local was newer), and the higher `transferCount`.
+ *   • notifications — union by `id` (UUID). New ids appended; existing
+ *     ids left unchanged. Capped at 500 most-recent by ts after merge.
+ *   • config — shallow merge, REMOTE wins on collision (cloud is the
+ *     source of truth for shared admin settings). LOCAL_ONLY keys
+ *     are never touched.
+ */
+export function applyAdminLedgerSnapshot(snap: AdminLedgerSnapshot): number {
+  const f = load()
+  let changed = 0
+
+  // ── tombstones (merge BEFORE record union) ─────────────────────
+  // Build local tombstone maps keyed by primary key → latest
+  // deletedAt seen for that key. Each incoming record is rejected
+  // when a local tombstone exists for its key. Incoming tombstones
+  // are merged into the local set AND used to drop any local row
+  // they cover (so a delete on phone propagates to desktop).
+  const paymentTombs = mergeTombstones<'ref'>(
+    f.deletedPaymentRefs ?? [],
+    snap.deletedPaymentRefs ?? [],
+    'ref',
+  )
+  const activationTombs = mergeTombstones<'code'>(
+    f.deletedActivationCodes ?? [],
+    snap.deletedActivationCodes ?? [],
+    'code',
+  )
+  const notificationTombs = mergeTombstones<'id'>(
+    f.deletedNotificationIds ?? [],
+    snap.deletedNotificationIds ?? [],
+    'id',
+  )
+  if (paymentTombs.added > 0) {
+    f.deletedPaymentRefs = paymentTombs.merged
+    const ids = new Set(paymentTombs.merged.map((t) => t.ref))
+    const before = f.paymentCodes.length
+    f.paymentCodes = f.paymentCodes.filter((p) => !ids.has(p.ref))
+    changed += paymentTombs.added + (before - f.paymentCodes.length)
+  }
+  if (activationTombs.added > 0) {
+    f.deletedActivationCodes = activationTombs.merged
+    const ids = new Set(activationTombs.merged.map((t) => t.code))
+    const before = f.activationCodes.length
+    f.activationCodes = f.activationCodes.filter((a) => !ids.has(a.code))
+    changed += activationTombs.added + (before - f.activationCodes.length)
+  }
+  if (notificationTombs.added > 0) {
+    f.deletedNotificationIds = notificationTombs.merged
+    const ids = new Set(notificationTombs.merged.map((t) => t.id))
+    const before = f.notifications.length
+    f.notifications = f.notifications.filter((n) => !ids.has(n.id))
+    changed += notificationTombs.added + (before - f.notifications.length)
+  }
+  const paymentTombSet = new Set((f.deletedPaymentRefs ?? []).map((t) => t.ref))
+  const activationTombSet = new Set((f.deletedActivationCodes ?? []).map((t) => t.code))
+  const notificationTombSet = new Set((f.deletedNotificationIds ?? []).map((t) => t.id))
+
+  // ── paymentCodes ───────────────────────────────────────────────
+  const paymentByRef = new Map(f.paymentCodes.map((p) => [p.ref, p]))
+  const STATUS_RANK: Record<PaymentStatus, number> = {
+    EXPIRED: 0,
+    WAITING_PAYMENT: 1,
+    PAID: 2,
+    CONSUMED: 3,
+  }
+  for (const inc of snap.paymentCodes ?? []) {
+    if (!inc?.ref) continue
+    if (paymentTombSet.has(inc.ref)) continue // hard-deleted; no resurrection
+    const cur = paymentByRef.get(inc.ref)
+    if (!cur) {
+      f.paymentCodes.push({ ...inc })
+      paymentByRef.set(inc.ref, inc)
+      changed += 1
+      continue
+    }
+    let mutated = false
+    // Higher status wins (CONSUMED > PAID > WAITING_PAYMENT > EXPIRED).
+    if (STATUS_RANK[inc.status] > STATUS_RANK[cur.status]) {
+      cur.status = inc.status
+      mutated = true
+    }
+    const newPaid = laterIso(cur.paidAt, inc.paidAt)
+    if (newPaid !== cur.paidAt) { cur.paidAt = newPaid; mutated = true }
+    if (!cur.activationCode && inc.activationCode) {
+      cur.activationCode = inc.activationCode
+      mutated = true
+    }
+    if (mutated) changed += 1
+  }
+
+  // ── activationCodes ────────────────────────────────────────────
+  const actByCode = new Map(f.activationCodes.map((a) => [a.code, a]))
+  for (const inc of snap.activationCodes ?? []) {
+    if (!inc?.code) continue
+    if (activationTombSet.has(inc.code)) continue // hard-deleted; no resurrection
+    const cur = actByCode.get(inc.code)
+    if (!cur) {
+      // New code from cloud: mirror as un-claimed locally so the
+      // local activateCode() runs full bookkeeping if the user pastes
+      // it into THIS install. Same shape as mergeActivationFromCloud.
+      f.activationCodes.push({
+        ...inc,
+        isUsed: false,
+        usedAt: undefined,
+        subscriptionExpiresAt: undefined,
+      })
+      actByCode.set(inc.code, inc)
+      changed += 1
+      continue
+    }
+    let mutated = false
+    const newSeen = laterIso(cur.lastSeenAt, inc.lastSeenAt)
+    if (newSeen !== cur.lastSeenAt) { cur.lastSeenAt = newSeen; mutated = true }
+    if (inc.lastSeenIp && cur.lastSeenIp !== inc.lastSeenIp && newSeen === inc.lastSeenAt) {
+      cur.lastSeenIp = inc.lastSeenIp; mutated = true
+    }
+    if (inc.lastSeenLocation && cur.lastSeenLocation !== inc.lastSeenLocation && newSeen === inc.lastSeenAt) {
+      cur.lastSeenLocation = inc.lastSeenLocation; mutated = true
+    }
+    const newCancel = laterIso(cur.cancelledAt, inc.cancelledAt)
+    if (newCancel !== cur.cancelledAt) { cur.cancelledAt = newCancel; mutated = true }
+    if (inc.cancelReason && !cur.cancelReason) { cur.cancelReason = inc.cancelReason; mutated = true }
+    // Soft-delete tri-state: take the later of {softDeletedAt,
+    // softDeleteRestoredAt} per side, then resolve. Whichever side
+    // has the strictly-later "last action" timestamp dictates the
+    // current bin status. Without this, a stale incoming
+    // `softDeletedAt` would silently re-bin a locally-restored row.
+    const incSoft = laterIso(cur.softDeletedAt, inc.softDeletedAt)
+    if (incSoft !== cur.softDeletedAt) { cur.softDeletedAt = incSoft; mutated = true }
+    const incRestored = laterIso(cur.softDeleteRestoredAt, inc.softDeleteRestoredAt)
+    if (incRestored !== cur.softDeleteRestoredAt) {
+      cur.softDeleteRestoredAt = incRestored
+      mutated = true
+    }
+    if (cur.softDeletedAt && cur.softDeleteRestoredAt) {
+      if (Date.parse(cur.softDeleteRestoredAt) >= Date.parse(cur.softDeletedAt)) {
+        // Restore wins → clear bin status.
+        delete cur.softDeletedAt
+      }
+    }
+    const incXfer = inc.transferCount ?? 0
+    const curXfer = cur.transferCount ?? 0
+    if (incXfer > curXfer) { cur.transferCount = incXfer; mutated = true }
+    if (mutated) changed += 1
+  }
+
+  // ── notifications ──────────────────────────────────────────────
+  const noteIds = new Set(f.notifications.map((n) => n.id))
+  for (const inc of snap.notifications ?? []) {
+    if (!inc?.id || noteIds.has(inc.id)) continue
+    if (notificationTombSet.has(inc.id)) continue // hard-deleted; no resurrection
+    f.notifications.push({ ...inc })
+    noteIds.add(inc.id)
+    changed += 1
+  }
+  if (f.notifications.length > 500) {
+    f.notifications.sort((a, b) => (a.ts ?? '').localeCompare(b.ts ?? ''))
+    f.notifications = f.notifications.slice(-500)
+  }
+
+  // ── config (shared subset, wall-clock LWW via updatedAt) ───────
+  // Architect (v0.7.153 review) flagged that "remote always wins"
+  // amounts to arrival-order LWW: a stale offline desktop pushing
+  // hours later silently overwrites newer cloud settings. We now
+  // gate the merge on a strict updatedAt comparison — incoming
+  // config is applied only when its updatedAt is STRICTLY newer
+  // than the local one (or when local has none yet). LOCAL_ONLY
+  // keys are still preserved.
+  if (snap.config) {
+    const localCfg = f.config
+    const incUpdated = snap.config.updatedAt
+    const localUpdated = localCfg?.updatedAt
+    const incNewer = incUpdated
+      ? !localUpdated || Date.parse(incUpdated) > Date.parse(localUpdated)
+      : false
+    if (incNewer || !localCfg) {
+      const next: RuntimeConfig = { ...(localCfg ?? {}) }
+      let cfgMutated = false
+      for (const [k, v] of Object.entries(snap.config)) {
+        if (LOCAL_ONLY_CONFIG_KEYS.has(k as keyof RuntimeConfig)) continue
+        if (v === undefined) continue
+        const prior = (next as Record<string, unknown>)[k]
+        if (JSON.stringify(prior) !== JSON.stringify(v)) {
+          ;(next as Record<string, unknown>)[k] = v
+          cfgMutated = true
+        }
+      }
+      if (cfgMutated) {
+        // Preserve the incoming wall-clock — that's the timestamp
+        // the next merge round will compare against, and overwriting
+        // it with `now()` would convert true LWW back into arrival-
+        // order LWW.
+        if (incUpdated) next.updatedAt = incUpdated
+        f.config = next
+        changed += 1
+      }
+    }
+  }
+
+  if (changed > 0) {
+    // Persist to disk but suppress the cloud push that persist() would
+    // schedule — we just RECEIVED a cloud snapshot; pushing it back
+    // would be a wasteful (though harmless) round-trip.
+    suppressNextCloudPush()
+    persist(f)
+  }
+  return changed
+}
+
+let _suppressNextPush = false
+function suppressNextCloudPush(): void { _suppressNextPush = true }
+
+/** Merge two tombstone arrays keyed by `K`. Latest deletedAt per
+ *  key wins; result is bounded to TOMBSTONE_CAP most-recent.
+ *  Returns the merged array AND the count of keys that are new to
+ *  local (so the caller knows how many records to evict + counts
+ *  toward `changed`). */
+function mergeTombstones<K extends 'ref' | 'code' | 'id'>(
+  localArr: ReadonlyArray<{ deletedAt: string } & Record<K, string>>,
+  incomingArr: ReadonlyArray<{ deletedAt: string } & Record<K, string>>,
+  key: K,
+): { merged: ({ deletedAt: string } & Record<K, string>)[]; added: number } {
+  const map = new Map<string, { deletedAt: string } & Record<K, string>>()
+  let added = 0
+  for (const t of localArr) {
+    if (!t || !t[key]) continue
+    map.set(t[key], { ...t })
+  }
+  for (const t of incomingArr) {
+    if (!t || !t[key]) continue
+    const k = t[key]
+    const cur = map.get(k)
+    if (!cur) {
+      map.set(k, { ...t })
+      added += 1
+    } else if (Date.parse(t.deletedAt) > Date.parse(cur.deletedAt)) {
+      map.set(k, { ...t })
+    }
+  }
+  let merged = Array.from(map.values())
+  if (merged.length > TOMBSTONE_CAP) {
+    merged.sort((a, b) => a.deletedAt.localeCompare(b.deletedAt))
+    merged = merged.slice(-TOMBSTONE_CAP)
+  }
+  return { merged, added }
 }
 
 // v0.7.32 — Single source of truth for the LLM-classifier on/off

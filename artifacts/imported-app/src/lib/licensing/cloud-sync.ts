@@ -25,7 +25,55 @@
 //
 // Failures NEVER throw — callers treat null / false as "skip".
 
-import type { ActivationCodeRecord, PaymentCodeRecord } from './storage'
+import type {
+  ActivationCodeRecord,
+  PaymentCodeRecord,
+  NotificationRecord,
+  RuntimeConfig,
+} from './storage'
+
+// v0.7.153 — Cross-device admin-panel sync.
+//
+// Every install (the cloud at scripturelive.replit.app + every
+// desktop install) holds its own ~/.scripturelive/license.json.
+// Pre-v0.7.153 admin actions on one install were invisible on every
+// other — the operator could confirm a payment on their phone and
+// see no record of it on the desktop ten minutes later, and vice
+// versa. The single cloud ledger is now treated as the canonical
+// admin record store: every admin write fans out a snapshot push
+// from the writing install, and every admin read pulls the latest
+// snapshot from the cloud and merges it into the local cache before
+// answering.
+//
+// Auth: the cloud's own `masterCode` is the shared secret. Each
+// desktop install pairs to the cloud once by saving that string as
+// `cloudAdminCode` in its RuntimeConfig (or via the
+// SCRIPTURELIVE_CLOUD_ADMIN_CODE env var). Without it the helpers
+// below no-op. The cloud refuses any request whose supplied code
+// does not match its own masterCode (constant-time compare).
+//
+// Snapshot shape is intentionally narrow: only the rows the admin
+// dashboard actually displays. Active-subscription state, master
+// code, install id, trial counters, etc. stay strictly local —
+// they describe the THIS-DEVICE installation, not the cross-device
+// admin record store.
+
+export interface AdminLedgerSnapshot {
+  paymentCodes: PaymentCodeRecord[]
+  activationCodes: ActivationCodeRecord[]
+  notifications: NotificationRecord[]
+  /** Subset of RuntimeConfig that operators expect to see synced
+   *  across devices (prices, contact numbers, trial duration, …).
+   *  Per-PC fields like `cloudAdminCode` and the local
+   *  `adminPassword` are deliberately stripped before push. */
+  config?: Partial<RuntimeConfig>
+  /** Tombstone arrays so cross-device merge cannot resurrect
+   *  hard-deleted records. Each entry is { primary-key, deletedAt }.
+   *  See storage.ts `applyAdminLedgerSnapshot` for the merge rule. */
+  deletedPaymentRefs?: { ref: string; deletedAt: string }[]
+  deletedActivationCodes?: { code: string; deletedAt: string }[]
+  deletedNotificationIds?: { id: string; deletedAt: string }[]
+}
 
 const DEFAULT_CLOUD_BASE = 'https://scripturelive.replit.app'
 
@@ -41,6 +89,18 @@ function cloudBase(): string | null {
   // env var — process.env.REPLIT_DEPLOYMENT_ID is undefined there.
   if (process.env.REPLIT_DEPLOYMENT_ID) return null
   return base
+}
+
+/** Resolve the shared admin-sync credential. Operator-set value in
+ *  RuntimeConfig wins; env var override exists so test rigs and
+ *  emergency relockdown don't need a UI. Returns null when sync is
+ *  unconfigured — every admin-sync helper short-circuits on null. */
+function adminSyncCode(localConfig?: { cloudAdminCode?: string } | null): string | null {
+  const cfg = localConfig?.cloudAdminCode?.trim()
+  if (cfg) return cfg
+  const env = process.env.SCRIPTURELIVE_CLOUD_ADMIN_CODE?.trim()
+  if (env) return env
+  return null
 }
 
 /**
@@ -97,4 +157,105 @@ export function cloudMirrorPayment(rec: PaymentCodeRecord, installId: string): v
       console.error('[cloud-sync] mirror-payment failed:', e)
     })
   })
+}
+
+// ─── v0.7.153 — Admin-ledger pull / push ────────────────────────────
+
+/** Pull the cloud's full admin snapshot. Returns null when the cloud
+ *  is unreachable, the credential is missing/wrong, or we're running
+ *  ON the cloud (self-loop). Caller treats null as "no remote
+ *  changes available right now — keep using local cache". */
+export async function cloudPullAdminLedger(opts: {
+  installId: string
+  config?: { cloudAdminCode?: string } | null
+  timeoutMs?: number
+}): Promise<AdminLedgerSnapshot | null> {
+  const base = cloudBase()
+  if (!base) return null
+  const code = adminSyncCode(opts.config)
+  if (!code) return null
+  try {
+    const r = await fetch(`${base}/api/license/cloud/admin-snapshot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cloudAdminCode: code, installId: opts.installId }),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 5000),
+    })
+    if (!r.ok) return null
+    const j = (await r.json()) as { ok?: boolean; snapshot?: AdminLedgerSnapshot }
+    if (!j?.ok || !j.snapshot) return null
+    return j.snapshot
+  } catch {
+    return null
+  }
+}
+
+/** Fire-and-forget push of the local admin snapshot to the cloud.
+ *  No return value — failures are logged and swallowed. The cloud
+ *  side merges by primary key; redundant pushes are cheap and
+ *  idempotent. */
+export function cloudPushAdminLedger(opts: {
+  installId: string
+  config?: { cloudAdminCode?: string } | null
+  snapshot: AdminLedgerSnapshot
+}): void {
+  const base = cloudBase()
+  if (!base) return
+  const code = adminSyncCode(opts.config)
+  if (!code) return
+  setImmediate(() => {
+    void fetch(`${base}/api/license/cloud/admin-merge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cloudAdminCode: code,
+        installId: opts.installId,
+        snapshot: opts.snapshot,
+      }),
+      signal: AbortSignal.timeout(8000),
+    }).catch((e) => {
+      // eslint-disable-next-line no-console
+      console.error('[cloud-sync] admin-merge failed:', e)
+    })
+  })
+}
+
+/** Awaitable variant used by the cloud-merge route handler when it
+ *  needs to know the merged result (e.g. to echo it back). Same
+ *  contract as cloudPullAdminLedger but POSTs the snapshot. */
+export async function cloudPushAdminLedgerAwait(opts: {
+  installId: string
+  config?: { cloudAdminCode?: string } | null
+  snapshot: AdminLedgerSnapshot
+  timeoutMs?: number
+}): Promise<AdminLedgerSnapshot | null> {
+  const base = cloudBase()
+  if (!base) return null
+  const code = adminSyncCode(opts.config)
+  if (!code) return null
+  try {
+    const r = await fetch(`${base}/api/license/cloud/admin-merge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cloudAdminCode: code,
+        installId: opts.installId,
+        snapshot: opts.snapshot,
+      }),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 5000),
+    })
+    if (!r.ok) return null
+    const j = (await r.json()) as { ok?: boolean; snapshot?: AdminLedgerSnapshot }
+    if (!j?.ok || !j.snapshot) return null
+    return j.snapshot
+  } catch {
+    return null
+  }
+}
+
+/** True iff this process is the cloud-deployed instance — used by
+ *  storage.ts to skip the auto-push debounce loop on the cloud (it
+ *  IS the source of truth, no need to push back to itself). */
+export function isCloudInstance(): boolean {
+  return !!process.env.REPLIT_DEPLOYMENT_ID
 }
