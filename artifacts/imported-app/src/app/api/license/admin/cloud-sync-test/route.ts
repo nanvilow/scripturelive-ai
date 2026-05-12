@@ -22,6 +22,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/licensing/admin-auth'
 import { getConfig, getFile } from '@/lib/licensing/storage'
 import { isCloudInstance } from '@/lib/licensing/cloud-sync'
+import { getCloudAdminCode } from '@/lib/baked-credentials'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -61,12 +62,14 @@ export async function POST(req: NextRequest) {
   }
 
   const cfg = getConfig() ?? {}
-  const code = (cfg.cloudAdminCode ?? process.env.SCRIPTURELIVE_CLOUD_ADMIN_CODE ?? '').trim()
+  // v0.7.161 — Resolution chain: per-PC RuntimeConfig override →
+  // process.env → build-baked masterCode (auto-sync OOTB).
+  const code = (cfg.cloudAdminCode ?? process.env.SCRIPTURELIVE_CLOUD_ADMIN_CODE ?? getCloudAdminCode() ?? '').trim()
   if (!code) {
     return NextResponse.json({
       ok: false,
       stage: 'disabled',
-      detail: 'No cloud admin code is configured on this device. Open https://scripturelive.replit.app/?admin in a browser, copy the masterCode under "Master code", and paste it into the Cloud Sync field below — then press Test connection again.',
+      detail: 'No cloud admin code is configured on this device and no value was baked into the build. Open https://scripturelive.replit.app/?admin in a browser, copy the masterCode under "Master code", and paste it into the Cloud Sync field below — then press Test connection again.',
       cloudBase: base,
     })
   }

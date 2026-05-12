@@ -983,3 +983,9 @@ id = "SorKbEtfEZZjGTmBRjlYB"
 uri = "file://exports/ScriptureLive-AI-v0.7.160-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.160 — Cross-Device Admin Sync Visible"
+
+[[outputs]]
+id = "3iz5EKelRA2IhCbK4Jzm0"
+uri = "file://exports/ScriptureLive-AI-v0.7.161-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.161 — Auto-Sync Out-Of-The-Box"

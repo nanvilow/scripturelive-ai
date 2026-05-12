@@ -100,6 +100,17 @@ function adminSyncCode(localConfig?: { cloudAdminCode?: string } | null): string
   if (cfg) return cfg
   const env = process.env.SCRIPTURELIVE_CLOUD_ADMIN_CODE?.trim()
   if (env) return env
+  // v0.7.161 — Build-baked masterCode fallback. Lets every desktop
+  // install auto-sync admin records with the cloud out-of-the-box,
+  // with no per-PC operator setup. Per-PC license overrides + env
+  // vars still win (so an operator can repoint a single PC at a
+  // different cloud install if needed).
+  try {
+    // Lazy require to avoid circular import on initial module load.
+    const { getCloudAdminCode } = require('@/lib/baked-credentials') as { getCloudAdminCode: () => string }
+    const baked = getCloudAdminCode()?.trim()
+    if (baked) return baked
+  } catch { /* baked file missing — fall through */ }
   return null
 }
 
