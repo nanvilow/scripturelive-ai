@@ -865,13 +865,20 @@ function PreviewCard() {
             // / background / display-mode setting flows through the
             // identical pipeline. There is no parallel React mockup
             // left to drift from the projector output.
-            <div className="w-full h-full flex items-center justify-center">
+            // v0.7.159 — wrap in StableStage so column-resize drags
+            // don't reflow the iframe's vw/cqw-based typography on
+            // every tick (architect concern C). StableStage freezes
+            // the inner stage at a fixed pixel viewport and CSS-
+            // scales it down — the iframe inside computes layout
+            // against the same dimensions every frame.
+            <StableStage isLive={false}>
               <OutputPreview
                 slideOverride={previewSlide}
                 hideModeBadge
-                className="relative w-full bg-black overflow-hidden ring-1 ring-border"
+                className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
+                aspectOverride="16 / 9"
               />
-            </div>
+            </StableStage>
           ) : (
             <div className="text-center text-[11px] text-muted-foreground">
               <BookOpen className="h-8 w-8 mx-auto opacity-30 mb-2" />

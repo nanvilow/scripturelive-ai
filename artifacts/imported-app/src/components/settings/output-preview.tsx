@@ -260,7 +260,11 @@ export function OutputPreview({
     })
     return () => unsubscribe()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sampleRef, sampleText, mode, slideOverride?.id, mirrorLive])
+    // v0.7.159 — depend on the JSON-serialized slide so content edits
+    // (operator changes the title / body text on the queued slide
+    // without changing its id) trigger an immediate re-post. Slides
+    // are tiny objects so the stringify cost is negligible.
+  }, [sampleRef, sampleText, mode, slideOverride ? JSON.stringify(slideOverride) : null, mirrorLive])
 
   const onIframeLoad = () => {
     // Defensive: if the handshake message was already sent before
