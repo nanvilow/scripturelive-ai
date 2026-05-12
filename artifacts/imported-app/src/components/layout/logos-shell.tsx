@@ -15,10 +15,9 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useAppStore } from '@/lib/store'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { SlideThumb } from '@/components/presenter/slide-renderer'
 import { StableStage } from '@/components/presenter/stable-stage'
-import { getFontStack } from '@/lib/fonts'
-import { cn, isVideoBackground } from '@/lib/utils'
+import { OutputPreview } from '@/components/settings/output-preview'
+import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import {
   Mic,
@@ -703,154 +702,22 @@ function LiveTranscriptionCard() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// DISPLAY STAGE — operator-side mirror of the secondary screen
+// DISPLAY STAGE — REMOVED in v0.7.158
 // ──────────────────────────────────────────────────────────────────────
-// Renders a single slide the way the congregation route would render
-// it given the current Display Mode setting. Used by both the Preview
-// and Live panes so any change to Settings → Display Mode (Full vs
-// Lower Third / Lower Third on Black) reflects on the operator's
-// staging frames in real time, matching what the projector / NDI feed
-// shows. Typography (font family, font size bucket, text scale, text
-// shadow, alignment) and lower-third geometry (position + height
-// bucket) all flow from the same `settings` object the broadcaster
-// transmits, so all three surfaces stay perfectly in sync.
-function DisplayStage({
-  slide,
-  themeKey,
-  settings,
-  isLive,
-}: {
-  slide: Slide
-  themeKey?: string
-  settings: ReturnType<typeof useAppStore.getState>['settings']
-  isLive?: boolean
-}) {
-  const dm = settings.displayMode || 'full'
-  const isLT = dm === 'lower-third' || dm === 'lower-third-black'
-  if (!isLT) {
-    return (
-      <SlideThumb
-        slide={slide}
-        themeKey={themeKey || settings.congregationScreenTheme}
-        size="lg"
-        settings={settings}
-        isLive={isLive}
-      />
-    )
-  }
-  const isBlackBackdrop = dm === 'lower-third-black'
-  const ltPos = settings.lowerThirdPosition === 'top' ? 'top' : 'bottom'
-  const ltHeightMap = { sm: 22, md: 33, lg: 45 } as const
-  const ltHeightPct =
-    ltHeightMap[settings.lowerThirdHeight as keyof typeof ltHeightMap] ?? 33
-  const refLine =
-    settings.showReferenceOnOutput !== false && slide.title
-      ? `${slide.title}${slide.subtitle ? ' — ' + slide.subtitle : ''}`
-      : ''
-  const bodyLines: string[] =
-    slide.type === 'title'
-      ? [slide.title || '', slide.subtitle || ''].filter(Boolean)
-      : slide.content && slide.content.length
-        ? [slide.content.join(' ').replace(/\s+/g, ' ').trim()]
-        : slide.title
-          ? [slide.title]
-          : []
-  const FS_MULT = { sm: 0.85, md: 1, lg: 1.25, xl: 1.5 } as const
-  const rawScale = typeof settings.textScale === 'number' ? settings.textScale : 1
-  const scale =
-    Math.min(2, Math.max(0.5, rawScale)) *
-    (FS_MULT[settings.fontSize as keyof typeof FS_MULT] || 1)
-  const fontStack = getFontStack(settings.fontFamily)
-  const wantsShadow = settings.textShadow !== false
-  const shadowCss = wantsShadow ? '0 2px 12px rgba(0,0,0,0.4)' : 'none'
-  const ta = settings.textAlign ?? 'center'
-  const totalChars = bodyLines.join(' ').length
-  const bandRaw =
-    totalChars > 320 ? 5 : totalChars > 180 ? 7 : totalChars > 90 ? 9 : 11
-  const band = bandRaw * scale
-  const bodyMin = Math.max(7, 9 * scale)
-  const bodyMax = Math.max(14, 30 * scale)
-  const refMin = Math.max(6, 7 * scale)
-  const refMax = Math.max(11, 20 * scale)
-  return (
-    <div className="relative w-full aspect-video bg-black overflow-hidden ring-1 ring-border">
-      {!isBlackBackdrop && settings.customBackground && (
-        isVideoBackground(settings.customBackground) ? (
-          <video
-            src={settings.customBackground}
-            autoPlay
-            loop
-            muted
-            playsInline
-            className="absolute inset-0 w-full h-full object-cover opacity-40"
-          />
-        ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={settings.customBackground}
-            alt=""
-            className="absolute inset-0 w-full h-full object-cover opacity-40"
-          />
-        )
-      )}
-      <div
-        className="absolute left-0 right-0 flex items-center justify-center"
-        style={{
-          [ltPos]: '6%',
-          height: `${ltHeightPct}%`,
-          padding: '0 6%',
-          containerType: 'size',
-        }}
-      >
-        <div
-          className="w-full h-full max-w-[68rem] mx-auto rounded-md flex flex-col justify-center text-white"
-          style={{
-            background: 'rgba(0,0,0,0.85)',
-            backdropFilter: 'blur(8px)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            padding: '3% 5%',
-            gap: '1cqh',
-            overflow: 'hidden',
-            fontFamily: fontStack,
-            textAlign: ta,
-            alignItems:
-              ta === 'left' ? 'flex-start' : ta === 'right' ? 'flex-end' : 'center',
-          }}
-        >
-          {refLine && (
-            <div
-              className="opacity-70 font-medium leading-tight"
-              style={{
-                fontSize: `clamp(${refMin}px, min(${2 * scale}cqw, ${4 * scale}cqh), ${refMax}px)`,
-                textShadow: shadowCss,
-              }}
-            >
-              {refLine}
-            </div>
-          )}
-          {bodyLines.map((line, i) => (
-            <div
-              key={i}
-              className="font-semibold leading-snug w-full"
-              style={{
-                fontSize: `clamp(${bodyMin}px, min(${band * 0.55}cqw, ${band}cqh), ${bodyMax}px)`,
-                textShadow: shadowCss,
-              }}
-            >
-              {line}
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="absolute top-1 left-1 z-10">
-        <Badge className="text-[8px] px-1 py-0 font-bold uppercase tracking-wider border-0 bg-sky-600 text-white">
-          {isBlackBackdrop ? 'L/3 · Black · ' : 'Lower Third · '}
-          {ltPos}
-        </Badge>
-      </div>
-    </div>
-  )
-}
+// ──────────────────────────────────────────────────────────────────────
+// DISPLAY STAGE — REMOVED in v0.7.158
+// ──────────────────────────────────────────────────────────────────────
+// The hand-rolled React mirror of the congregation renderer was the
+// last surface in the app that did NOT consume the canonical
+// /api/output/congregation route. Operators kept reporting drift
+// between Settings PREVIEW (iframe) and the Main Preview / Live
+// Display panes (DisplayStage). Both panes now use <OutputPreview>
+// directly — same iframe, same payload, byte-identical output across
+// Settings preview, Main Preview, Live Display, NDI Live Preview,
+// Browser Source URL, and the Second Screen. Any future render-
+// affecting field added to buildOutputPayload() is honoured on all
+// six surfaces automatically with no parallel React mockup to update.
+
 
 // ──────────────────────────────────────────────────────────────────────
 // PREVIEW
@@ -989,24 +856,27 @@ function PreviewCard() {
         </div>
         <div className="flex-1 min-w-0 flex items-center justify-center">
           {previewSlide ? (
-            // v0.5.51 — wrap the rendered slide in a StableStage so
-            // the bible text stays still (and keeps every alignment)
-            // while the operator drags the column splitter between
-            // Preview and the panels next to it. Inside StableStage
-            // the stage is always 1920×1080 and only a GPU transform
-            // is animated on resize — text never reflows mid-drag.
-            <StableStage>
-              {/* The Preview pane mirrors the Live pane's display-mode
-                  composite so flipping Settings → Display Mode between
-                  Full Screen and Lower Third reflects on Preview
-                  immediately — not just after a slide is sent live.
-                  Operators kept asking "did it apply?" when they could
-                  see it on the secondary screen but not in the
-                  staging pane next to it. */}
-              <DisplayStage
-                slide={previewSlide}
-                themeKey={previewSlide.background || settings.congregationScreenTheme}
-                settings={settings}
+            // v0.7.158 — single-renderer architecture. The Preview
+            // pane now embeds the SAME `/api/output/congregation`
+            // iframe as Settings PREVIEW, NDI Live Preview, the
+            // browser-source URL and the secondary screen. The queued
+            // `previewSlide` is spliced into the broadcaster payload
+            // via `slideOverride`, so every typography / lower-third
+            // / background / display-mode setting flows through the
+            // identical pipeline. There is no parallel React mockup
+            // left to drift from the projector output.
+            // v0.7.159 — wrap in StableStage so column-resize drags
+            // don't reflow the iframe's vw/cqw-based typography on
+            // every tick (architect concern C). StableStage freezes
+            // the inner stage at a fixed pixel viewport and CSS-
+            // scales it down — the iframe inside computes layout
+            // against the same dimensions every frame.
+            <StableStage isLive={false}>
+              <OutputPreview
+                slideOverride={previewSlide}
+                hideModeBadge
+                className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
+                aspectOverride="16 / 9"
               />
             </StableStage>
           ) : (
@@ -1586,29 +1456,14 @@ function LiveDisplayCard({
     >
       <div className="flex-1 min-h-0 flex items-stretch p-2 gap-2 relative">
         <div className="flex-1 min-w-0 flex items-center justify-center relative">
-        {/* Startup splash. While the operator hasn't put anything on
-            air yet (fresh session) we render a transparent branded
-            text mark — pure white "Scripture AI" with the WassMedia
-            attribution underneath — so both the operator's Live
-            Display and the congregation TV match. Disappears on the
-            first cue. Style is intentionally text-only with NO logo
-            background, per the Live Display spec. */}
-        {showStartupLogo && !hidden && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center pointer-events-none bg-transparent text-white">
-            <div
-              className="font-semibold tracking-tight opacity-40"
-              style={{ fontSize: 'clamp(1rem, 5cqi, 3rem)', lineHeight: 1.1 }}
-            >
-              Scripture AI
-            </div>
-            <div
-              className="mt-2 opacity-30"
-              style={{ fontSize: 'clamp(0.55rem, 1.6cqi, 0.95rem)' }}
-            >
-              Powered By WassMedia (+233246798526)
-            </div>
-          </div>
-        )}
+        {/* v0.7.158 — Startup splash overlay REMOVED. The congregation
+            route renders the identical "Scripture AI / Powered By
+            WassMedia" splash itself when `showStartupLogo` is true in
+            the payload (see /api/output/congregation/route.ts line
+            ~159 + ~600). With the Live Display now embedding that
+            same iframe via `<OutputPreview mirrorLive>`, it appears
+            on its own — keeping a parallel React copy here would
+            double-render the text. */}
         {/* Always render the themed background, even when no scripture
             is on air. This gives the operator a constant "what the
             congregation will see" preview instead of a black void, and
@@ -1623,217 +1478,28 @@ function LiveDisplayCard({
             NDI feed) will actually show — same position, same size,
             same styling — and updates in real time as the operator
             tweaks lower-third position / height in Settings. */}
-        {!hidden && (() => {
-          const dm = settings.displayMode || 'full'
-          const isLT = dm === 'lower-third' || dm === 'lower-third-black'
-          const ltPos = settings.lowerThirdPosition === 'top' ? 'top' : 'bottom'
-          // lowerThirdHeight is an enum ('sm' | 'md' | 'lg') in the
-          // store — map it to the same percentage values the
-          // congregation renderer uses so the preview, the secondary
-          // screen and the NDI feed show identical bar heights.
-          const ltHeightMap = { sm: 22, md: 33, lg: 45 } as const
-          const ltHeightPct = ltHeightMap[settings.lowerThirdHeight] ?? 33
-          const isBlackBackdrop = dm === 'lower-third-black'
-          const slide =
-            liveSlide ?? {
-              id: 'lv-bg',
-              type: 'blank' as const,
-              title: '',
-              subtitle: '',
-              content: [],
-              background: settings.congregationScreenTheme,
-            }
-          if (!isLT) {
-            return (
-              // v0.5.51 — StableStage replaces the previous bare
-              // transform-scale wrapper. The user-supplied SIZE
-              // slider value (`actualSize`) is now multiplied on top
-              // of the auto-fit-to-column scale, so the slider still
-              // works exactly as before AND the bible text stays
-              // perfectly still while the operator drags the column
-              // splitter (no font-size jitter, no word-wrap shifts,
-              // no alignment drift mid-drag). The on-air red ring is
-              // moved to StableStage's outer (device-pixel sized) so
-              // it stays a crisp 2px border on narrow columns rather
-              // than getting scaled to sub-pixel thickness with the
-              // slide.
-              <StableStage scale={actualSize} isLive={!!liveSlide}>
-                <SlideThumb
-                  slide={slide}
-                  themeKey={liveSlide?.background || settings.congregationScreenTheme}
-                  isLive={!!liveSlide}
-                  size="lg"
-                  settings={settings}
-                />
-              </StableStage>
-            )
-          }
-          // Build the verse reference + body the same way the
-          // congregation renderer does so the preview matches the
-          // secondary screen and NDI feed exactly.
-          const refLine =
-            settings.showReferenceOnOutput !== false && slide.title
-              ? `${slide.title}${slide.subtitle ? ' — ' + slide.subtitle : ''}`
-              : ''
-          // Render verse / lyric content as a single paragraph so all
-          // words sit on the same baseline. Title slides keep title +
-          // subtitle as two distinct lines because they're a real
-          // hierarchy, not a wrapped paragraph.
-          const bodyLines: string[] =
-            slide.type === 'title'
-              ? [slide.title || '', slide.subtitle || ''].filter(Boolean)
-              : slide.content && slide.content.length
-                ? [slide.content.join(' ').replace(/\s+/g, ' ').trim()]
-                : slide.title
-                  ? [slide.title]
-                  : []
-          return (
-            // v0.5.51 — same StableStage wrap as the full-screen
-            // branch above, applied to the lower-third composite
-            // path. Without this, dragging the column splitter
-            // re-evaluated `cqw`/`cqh` inside the LT bar every
-            // frame and the bible text inside the bar would jiggle
-            // and re-wrap as the column width changed. Now the LT
-            // bar lives inside a 1920×1080 reference stage that is
-            // simply scaled by transform — text is frozen. The
-            // small "Lower Third · bottom" reference badge is
-            // hoisted out via the `overlay` prop so it stays
-            // readable at the column's real pixel size instead of
-            // shrinking with the rest of the stage.
-            <StableStage
-              scale={actualSize}
-              isLive={!!liveSlide}
-              overlay={
-                <div className="absolute top-1 left-1 z-10">
-                  <Badge className="text-[8px] px-1 py-0 font-bold uppercase tracking-wider border-0 bg-sky-600 text-white">
-                    {isBlackBackdrop ? 'L/3 · Black · ' : 'Lower Third · '}
-                    {ltPos}
-                  </Badge>
-                </div>
-              }
-            >
-              <div className="relative w-full aspect-video bg-black overflow-hidden ring-1 ring-border">
-                {/* lower-third uses the themed/custom background as
-                    backdrop; lower-third-black uses pure black so the
-                    bar reads like a broadcast caption (matches the
-                    congregation renderer). */}
-                {!isBlackBackdrop && settings.customBackground && (
-                  isVideoBackground(settings.customBackground) ? (
-                    <video
-                      src={settings.customBackground}
-                      autoPlay
-                      loop
-                      muted
-                      playsInline
-                      className="absolute inset-0 w-full h-full object-cover opacity-40"
-                    />
-                  ) : (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={settings.customBackground}
-                      alt=""
-                      className="absolute inset-0 w-full h-full object-cover opacity-40"
-                    />
-                  )
-                )}
-                {/* The bar itself. Using safe-area padding (≈6% horiz)
-                    and a translucent dark panel exactly like the .lt-box
-                    in the congregation route. Font sizes use container
-                    query units (cqw) so text scales with the preview
-                    width and never overflows on small operator panes
-                    or huge external displays. */}
-                {/* Bar wrapper. Lift the bar 6% off the chosen edge
-                    so it doesn't hug the bezel (operators reported the
-                    previous build sat too low on TVs). Container query
-                    on the bar wrapper itself so cqw/cqh scale to the
-                    bar — not the whole stage — keeping text inside the
-                    panel on every output size. */}
-                {(() => {
-                  // Mirror the congregation route's typography pipeline so
-                  // the operator's Lower-Third PREVIEW honours every
-                  // Settings → Typography control (font family, font size
-                  // bucket, text scale, text shadow, alignment) — not just
-                  // alignment as it used to. Without this the preview
-                  // looked completely different from the secondary screen
-                  // / NDI feed even though the bar geometry matched.
-                  const FS_MULT = { sm: 0.85, md: 1, lg: 1.25, xl: 1.5 } as const
-                  const rawScale = typeof settings.textScale === 'number' ? settings.textScale : 1
-                  const scale =
-                    Math.min(2, Math.max(0.5, rawScale)) *
-                    (FS_MULT[settings.fontSize as keyof typeof FS_MULT] || 1)
-                  const fontStack = getFontStack(settings.fontFamily)
-                  const wantsShadow = settings.textShadow !== false
-                  const shadowCss = wantsShadow ? '0 2px 12px rgba(0,0,0,0.4)' : 'none'
-                  const ta = settings.textAlign ?? 'center'
-                  const totalChars = bodyLines.join(' ').length
-                  const bandRaw =
-                    totalChars > 320 ? 5 : totalChars > 180 ? 7 : totalChars > 90 ? 9 : 11
-                  const band = bandRaw * scale
-                  const bodyMin = Math.max(7, 9 * scale)
-                  const bodyMax = Math.max(14, 30 * scale)
-                  const refMin = Math.max(6, 7 * scale)
-                  const refMax = Math.max(11, 20 * scale)
-                  return (
-                    <div
-                      className="absolute left-0 right-0 flex items-center justify-center"
-                      style={{
-                        [ltPos]: '6%',
-                        height: `${ltHeightPct}%`,
-                        padding: '0 6%',
-                        containerType: 'size',
-                      }}
-                    >
-                      <div
-                        className="w-full h-full max-w-[68rem] mx-auto rounded-md flex flex-col justify-center text-white"
-                        style={{
-                          background: 'rgba(0,0,0,0.85)',
-                          backdropFilter: 'blur(8px)',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                          padding: '3% 5%',
-                          gap: '1cqh',
-                          overflow: 'hidden',
-                          fontFamily: fontStack,
-                          textAlign: ta,
-                          alignItems:
-                            ta === 'left' ? 'flex-start' : ta === 'right' ? 'flex-end' : 'center',
-                        }}
-                      >
-                        {refLine && (
-                          <div
-                            className="opacity-70 font-medium leading-tight"
-                            style={{
-                              fontSize: `clamp(${refMin}px, min(${2 * scale}cqw, ${4 * scale}cqh), ${refMax}px)`,
-                              textShadow: shadowCss,
-                            }}
-                          >
-                            {refLine}
-                          </div>
-                        )}
-                        {bodyLines.map((line, i) => (
-                          <div
-                            key={i}
-                            className="font-semibold leading-snug w-full"
-                            style={{
-                              fontSize: `clamp(${bodyMin}px, min(${band * 0.55}cqw, ${band}cqh), ${bodyMax}px)`,
-                              textShadow: shadowCss,
-                            }}
-                          >
-                            {line}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )
-                })()}
-                {/* v0.5.51 — the Lower-Third reference badge that
-                    used to live here was hoisted into StableStage's
-                    `overlay` slot above so it renders OUTSIDE the
-                    GPU-scaled inner stage and stays readable at any
-                    column width. */}
-              </div>
-            </StableStage>
-          )
-        })()}
+        {!hidden && (
+          // v0.7.158 — single-renderer architecture. The Live Display
+          // pane is now an iframe of `/api/output/congregation`, the
+          // SAME route that drives the secondary screen, NDI capture
+          // and browser-source URL. `mirrorLive` makes the iframe a
+          // faithful mirror of what the projector sees (respects
+          // `blanked`, renders the startup splash from real state).
+          // The `actualSize` SIZE slider wraps the iframe in a CSS
+          // transform so the operator's stage-zoom still works.
+          // Every render-affecting Settings axis (typography, lower-
+          // third position/height, background, etc.) flows through
+          // `buildOutputPayload()` automatically — there is no
+          // parallel React mockup left to drift.
+          <StableStage scale={actualSize} isLive={!!liveSlide}>
+            <OutputPreview
+              mirrorLive
+              hideModeBadge
+              aspectOverride="16 / 9"
+              className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
+            />
+          </StableStage>
+        )}
         {hidden && (
           <div className="text-center text-[11px] text-muted-foreground">
             <CircleSlash className="h-8 w-8 mx-auto opacity-30 mb-2" />

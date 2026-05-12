@@ -965,3 +965,15 @@ id = "Bcd-hKjwrYzyzdwhDa8B3"
 uri = "file://exports/ScriptureLive-AI-v0.7.157-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.157 (final — includes architect-flagged fixes)"
+
+[[outputs]]
+id = "D8EFM-IALu5yZyZCUtuL1"
+uri = "file://exports/ScriptureLive-AI-v0.7.158-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.158 — Source ZIP (single-renderer refactor)"
+
+[[outputs]]
+id = "aQLH1OdoCieAVj5Nuybb8"
+uri = "file://exports/ScriptureLive-AI-v0.7.159-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.159 — Source ZIP (NDI preview bg + StableStage + content-hash)"
