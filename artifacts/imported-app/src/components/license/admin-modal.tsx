@@ -612,6 +612,34 @@ export function AdminModal() {
     return () => clearInterval(id)
   }, [open, authed, reload])
 
+  // v0.7.160 — Auto-probe cross-device sync the moment the admin
+  // modal opens (and re-probe every 30 s while it stays open) so
+  // the header status badge always reflects current connectivity
+  // without the operator having to dig into Settings → Test
+  // connection. The /admin/list reload above ALREADY pulls any
+  // cloud changes into the local cache on the very next tick — the
+  // probe is purely for status visibility (so the user can SEE
+  // that sync is working, instead of staring at stale data and
+  // assuming it isn't).
+  const probeCloudSync = useCallback(async () => {
+    try {
+      const r = await fetch('/api/license/admin/cloud-sync-test', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+      const j = (await r.json().catch(() => null)) as typeof cloudSyncResult
+      if (j) setCloudSyncResult(j)
+    } catch { /* ignore — never block the panel */ }
+  }, [])
+  useEffect(() => {
+    if (!open || !authed) return
+    void probeCloudSync()
+    const id = setInterval(() => { void probeCloudSync() }, 30_000)
+    return () => clearInterval(id)
+  }, [open, authed, probeCloudSync])
+
   // v0.7.0 — Codes tab loader. Polls every 5 s while the tab is open
   // so heartbeat-driven location/lastSeen updates appear in real time.
   const reloadCodes = useCallback(async () => {
@@ -1056,9 +1084,61 @@ export function AdminModal() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="sm:max-w-[820px] max-h-[90vh] overflow-y-auto bg-background border-border text-foreground">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
             <ShieldCheck className="h-4 w-4 text-emerald-400" />
-            ScriptureLive AI — Admin Panel
+            <span>ScriptureLive AI — Admin Panel</span>
+            {/* v0.7.160 — Cross-device sync status badge in the modal
+                header. Always visible (across every tab), so the
+                operator instantly knows whether actions taken on
+                another device (phone admin pointing at the cloud,
+                another desktop install) will appear here. Click to
+                jump to the Settings tab where the credential field
+                lives. The "Sync now" button forces an immediate
+                pull-and-refresh so the operator can prove sync is
+                working without waiting for the 5 s poll. */}
+            {authed && cloudSyncResult && (
+              <button
+                type="button"
+                onClick={() => setTab('settings')}
+                title={cloudSyncResult.detail}
+                className={
+                  'ml-auto text-[10px] px-2 py-0.5 rounded-full border font-mono whitespace-nowrap transition hover:opacity-80 ' +
+                  (cloudSyncResult.stage === 'connected'
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                    : cloudSyncResult.stage === 'unauthorized'
+                      ? 'bg-rose-500/15 text-rose-300 border-rose-500/40'
+                      : cloudSyncResult.stage === 'unreachable'
+                        ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                        : 'bg-zinc-500/15 text-zinc-300 border-zinc-500/40')
+                }
+              >
+                <Globe className="inline h-3 w-3 mr-1 -mt-0.5" />
+                {cloudSyncResult.stage === 'connected'
+                  ? `Cross-device sync: connected${cloudSyncResult.pulledCounts ? ` (${cloudSyncResult.pulledCounts.paymentCodes + cloudSyncResult.pulledCounts.activationCodes + cloudSyncResult.pulledCounts.notifications} cloud records)` : ''}`
+                  : cloudSyncResult.stage === 'unauthorized'
+                    ? 'Cross-device sync: wrong key — set up'
+                    : cloudSyncResult.stage === 'unreachable'
+                      ? 'Cross-device sync: cloud unreachable'
+                      : 'Cross-device sync: not set up — click here'}
+              </button>
+            )}
+            {authed && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={loading}
+                onClick={async () => {
+                  await Promise.all([reload(), probeCloudSync()])
+                  toast.success('Synced with cloud')
+                }}
+                className="h-7 px-2 text-[10px] gap-1"
+                title="Pull the latest snapshot from the cloud and refresh every tab"
+              >
+                {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Globe className="h-3 w-3" />}
+                Sync now
+              </Button>
+            )}
           </DialogTitle>
           <DialogDescription className="text-muted-foreground text-xs">
             Owner-only. Confirm MoMo payments, generate activation codes, monitor subscription state.

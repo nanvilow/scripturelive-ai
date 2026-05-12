@@ -9,8 +9,9 @@
 //        so changes apply without a process restart.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getConfig, saveConfig, type RuntimeConfig } from '@/lib/licensing/storage'
+import { getConfig, saveConfig, getFile, applyAdminLedgerSnapshot, type RuntimeConfig } from '@/lib/licensing/storage'
 import { requireAdmin, revokeAllSessions, buildClearCookie } from '@/lib/licensing/admin-auth'
+import { cloudPullAdminLedger } from '@/lib/licensing/cloud-sync'
 import {
   PLANS,
   MOMO_RECIPIENT,
@@ -46,6 +47,24 @@ function defaults(): Defaults {
 export async function GET(req: NextRequest) {
   const guard = requireAdmin(req)
   if (guard) return guard
+  // v0.7.160 — Cross-device admin sync also pulls config (prices,
+  // momo recipient, trial duration, notification targets, etc.) so
+  // an operator who tweaks pricing on the cloud / phone admin sees
+  // the updated values on their desktop the next time the Settings
+  // tab opens. Same 4 s ceiling + swallow-failures pattern as
+  // /admin/list. Per-PC fields like cloudAdminCode + adminPassword
+  // are stripped on the cloud side so they can't overwrite local.
+  try {
+    const local = getFile()
+    const snap = await cloudPullAdminLedger({
+      installId: local.installId,
+      config: local.config ?? null,
+      timeoutMs: 4000,
+    })
+    if (snap) applyAdminLedgerSnapshot(snap)
+  } catch {
+    /* sync failures must never block the admin panel — local cache wins */
+  }
   const config = getConfig() ?? {}
   return NextResponse.json(
     { config, defaults: defaults() },
