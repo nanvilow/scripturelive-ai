@@ -931,6 +931,10 @@ export function AdminModal() {
       })
       setFOpenAIKey('')
       setFDeepgramKey('')
+      // v0.7.157 — Round-trip the saved cloud admin code on load so
+      // the operator can SEE whether it's set without re-entering.
+      setFCloudAdminCode(j.config.cloudAdminCode ?? '')
+      setCloudSyncResult(null)
       // v0.7.29 — Hydrate LLM classifier opt-in fields. Both default
       // to the "off / no override" state if the config never set them.
       // v0.7.32 — Default-ON semantics: treat undefined as ON.
@@ -2377,16 +2381,26 @@ export function AdminModal() {
                         try {
                           // Save first so the route reads the LATEST
                           // pasted code (not whatever was on disk
-                          // before the operator typed).
-                          await fetch('/api/license/admin/config', {
+                          // before the operator typed). Validate the
+                          // save response so a 401/network/500 doesn't
+                          // silently let the test run against the OLD
+                          // persisted code (would yield misleading
+                          // unauthorized/connected verdicts).
+                          const saveRes = await fetch('/api/license/admin/config', {
                             method: 'POST',
+                            credentials: 'same-origin',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
                               cloudAdminCode: fCloudAdminCode.trim() === '' ? null : fCloudAdminCode.trim(),
                             }),
                           })
+                          if (!saveRes.ok) {
+                            toast.error(`Could not save cloud admin code (HTTP ${saveRes.status}). Test aborted — try again after fixing the admin session.`)
+                            return
+                          }
                           const r = await fetch('/api/license/admin/cloud-sync-test', {
                             method: 'POST',
+                            credentials: 'same-origin',
                             headers: { 'Content-Type': 'application/json' },
                             body: '{}',
                           })
