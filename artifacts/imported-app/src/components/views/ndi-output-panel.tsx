@@ -67,12 +67,31 @@ export function NdiOutputPanel() {
   // bus the same way they would an NDI feed.
   const buildObsUrl = (host: string, port: number) =>
     `http://${host}:${port}/api/output/congregation?transparent=1`
+  // v0.7.157 — Browser-side fallback so the card NEVER disappears.
+  // Pre-v0.7.157 the OBS Browser Source URL card was conditionally
+  // rendered only when the Electron IPC `app:get-server-info` had
+  // populated `serverInfo`. In the web build (no IPC bridge), in
+  // dev when the renderer mounts before the IPC is ready, OR when
+  // the bundled server bound port=0, the entire card silently
+  // disappeared and operators reported "the OBS card is missing".
+  // Now we ALWAYS render the card. When real Electron server info
+  // is present we use it (preferred — gives the operator a stable
+  // 127.0.0.1:<port> URL plus per-LAN-IP rows). Otherwise we fall
+  // back to whatever the renderer can see in window.location, which
+  // is correct for web-build users and for Electron renderers that
+  // happened to load before IPC settled.
+  const browserFallbackUrl =
+    typeof window !== 'undefined' && window.location?.origin
+      ? `${window.location.origin}/api/output/congregation?transparent=1`
+      : null
   const localObsUrl = serverInfo && serverInfo.port > 0
     ? buildObsUrl('127.0.0.1', serverInfo.port)
-    : null
+    : browserFallbackUrl
   const lanObsUrls = serverInfo && serverInfo.port > 0
     ? serverInfo.lanIps.map((ip) => ({ ip, url: buildObsUrl(ip, serverInfo.port) }))
     : []
+  const usingBrowserFallback =
+    !(serverInfo && serverInfo.port > 0) && !!browserFallbackUrl
   // Generate QR for the first LAN URL (most useful — phone can scan
   // it to verify OBS-on-second-PC reachability before wiring it up).
   // Loopback URL gets no QR (a phone scanning 127.0.0.1 would hit
@@ -462,8 +481,9 @@ export function NdiOutputPanel() {
                 LAN URLs work for OBS on a second PC on the same Wi-Fi
                 — Next.js is now bound to 0.0.0.0 (see startNextServer
                 in electron/main.ts). */}
-            {(localObsUrl || lanObsUrls.length > 0) && (
-              <div className="rounded-md border border-sky-500/30 bg-sky-500/5 p-3 space-y-2.5">
+            {/* v0.7.157 — Card now ALWAYS renders. See browserFallbackUrl
+                comment above buildObsUrl for the rationale. */}
+            <div className="rounded-md border border-sky-500/30 bg-sky-500/5 p-3 space-y-2.5">
                 <div className="flex items-start gap-2">
                   <Globe className="h-4 w-4 text-sky-300 shrink-0 mt-0.5" />
                   <div className="min-w-0 flex-1">
@@ -477,6 +497,15 @@ export function NdiOutputPanel() {
                       height <strong>1080</strong>, click <strong>OK</strong>.
                       You&apos;ll see only the Bible verse — no app interface.
                     </p>
+                    {usingBrowserFallback && (
+                      <p className="text-[10px] text-amber-300/90 leading-snug pt-1">
+                        Showing the URL of the page you&apos;re viewing right
+                        now (fallback). For LAN URLs to a second PC, run the
+                        Windows desktop app — it auto-detects every LAN IP on
+                        this machine and lists one Browser Source URL per
+                        interface.
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -509,6 +538,14 @@ export function NdiOutputPanel() {
                   </div>
                 )}
 
+                {lanObsUrls.length === 0 && !usingBrowserFallback && (
+                  <p className="text-[10px] text-amber-300/90 leading-snug">
+                    No LAN IPv4 interfaces detected on this PC. The localhost
+                    URL above still works for OBS on the SAME PC. To stream
+                    to OBS on another PC, connect this PC to a Wi-Fi or wired
+                    network and reopen this panel.
+                  </p>
+                )}
                 {lanObsUrls.length > 0 && (
                   <div className="space-y-1.5 pt-1">
                     <div className="flex items-center gap-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
@@ -562,7 +599,6 @@ export function NdiOutputPanel() {
                   </div>
                 )}
               </div>
-            )}
 
             {/* Source name */}
             <div className="rounded-md border border-border bg-muted/10 p-3 space-y-1.5">
