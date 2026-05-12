@@ -377,12 +377,12 @@ export function BibleLookupCompact() {
         const sel = suggestions[highlight]
         setSearchQuery(sel.reference)
         setShowSuggest(false)
-        // Treat picking a suggestion as the operator's "first Enter":
-        // load the chapter and stage the focused verse to PREVIEW.
-        const res = await lookupAndStage(sel.reference, false)
-        if (res) {
-          lastEnterRef.current = { query: sel.reference, at: Date.now() }
-        }
+        // Operator request (May 2026): a single Enter on the bottom
+        // search bar must push the verse straight to the Live Display
+        // — no preview-first, no two-press pattern. Picking a
+        // suggestion follows the same rule.
+        await lookupAndStage(sel.reference, true)
+        lastEnterRef.current = { query: sel.reference, at: Date.now() }
         return
       }
     }
@@ -390,24 +390,24 @@ export function BibleLookupCompact() {
       e.preventDefault()
       const q = searchQuery.trim()
       if (!q) return
+      // Operator request (May 2026): single Enter = LIVE.
+      // Previously the first press staged a preview and a second
+      // press within 1.5 s was required to push to the projector;
+      // operators wanted the keyboard to behave like a one-shot
+      // "go live" so the congregation sees the verse immediately.
+      // If the chapter is already loaded for this exact query (i.e.
+      // a real "second press"), skip the network round-trip and
+      // just re-fire the focused verse to live.
       const last = lastEnterRef.current
-      const isSecondPress =
-        last.query === q && Date.now() - last.at < 1500 && chapter !== null
-      if (isSecondPress) {
-        // Second Enter on the same query → push the focused verse
-        // straight to the Live Display.
+      const sameQueryAlreadyLoaded =
+        last.query === q && chapter !== null
+      if (sameQueryAlreadyLoaded) {
         const verseNum = activeVerse ?? chapter!.verses[0].verse
         stageVerse(chapter!, verseNum, true)
-        // Reset so a third Enter doesn't keep retriggering.
-        lastEnterRef.current = { query: '', at: 0 }
       } else {
-        // First Enter (or first after a long pause) → look up the
-        // chapter and stage the focused verse in PREVIEW only.
-        const res = await lookupAndStage(q, false)
-        if (res) {
-          lastEnterRef.current = { query: q, at: Date.now() }
-        }
+        await lookupAndStage(q, true)
       }
+      lastEnterRef.current = { query: q, at: Date.now() }
     }
   }
 
