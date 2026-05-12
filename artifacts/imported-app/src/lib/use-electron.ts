@@ -44,6 +44,14 @@ export type ScriptureLiveDesktop = {
     ndiAvailable: boolean
     ndiUnavailableReason?: string
   }>
+  // v0.7.153 — port + LAN IPs for the OBS Browser Source URL card.
+  // Optional so renderer code paths against an older bundled preload
+  // don't crash; gate every call with `?.` and fall back gracefully.
+  getServerInfo?: () => Promise<{
+    port: number
+    localUrl: string
+    lanIps: string[]
+  }>
   updater: {
     getState: () => Promise<UpdateState>
     check: () => Promise<UpdateState>

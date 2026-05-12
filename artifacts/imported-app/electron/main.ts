@@ -978,7 +978,21 @@ async function startNextServer(): Promise<string> {
     env: {
       ...process.env,
       PORT: String(port),
-      HOSTNAME: '127.0.0.1',
+      // v0.7.153 — Bind the bundled Next.js server to ALL interfaces
+      // (0.0.0.0) instead of loopback only. This is what powers the
+      // new "OBS Browser Source URL" card in the NDI Output panel:
+      // operators can paste the LAN URL (http://<pc-ip>:<port>/api/output/congregation?transparent=1)
+      // into OBS on a SECOND PC's Browser Source and receive the
+      // verse-only feed with full transparency, ZERO plugin install
+      // (no DistroAV, no NDI Tools required on the receiver). This is
+      // the zero-install alternative to NDI for cross-PC OBS users.
+      // Pre-v0.7.153 the server was bound to 127.0.0.1 which made the
+      // LAN URL unreachable from any other machine on the church Wi-Fi.
+      // Security note: the local server has no auth on its routes; it
+      // is intended for trusted church LANs (the same trust model NDI
+      // operates under — NDI also has zero auth and broadcasts to any
+      // listener on the subnet via mDNS).
+      HOSTNAME: '0.0.0.0',
       NODE_ENV: 'production',
       DATABASE_URL: `file:${dbPath}`,
       SCRIPTURELIVE_UPLOADS_DIR: uploadsDir,
@@ -2104,6 +2118,40 @@ function setupIpc() {
     ndiAvailable: ndi.isAvailable(),
     ndiUnavailableReason: ndi.unavailableReason(),
   }))
+
+  // v0.7.153 — Expose the bundled Next.js server's bound port + the
+  // PC's reachable LAN IPv4 addresses so the renderer can build URLs
+  // for the "OBS Browser Source" card in the NDI Output panel.
+  // appBaseUrl is the loopback URL (http://127.0.0.1:<port>) we use
+  // internally; the LAN URLs swap the host for each non-internal IPv4
+  // interface so an operator running OBS on a different PC on the
+  // same Wi-Fi can paste one of them straight into Browser Source.
+  // Returns an empty `lanIps` array on machines with no LAN
+  // interfaces (rare, but possible on a fully offline laptop).
+  ipcMain.handle('app:get-server-info', () => {
+    let port = 0
+    try {
+      if (appBaseUrl) port = Number(new URL(appBaseUrl).port) || 0
+    } catch { /* ignore */ }
+    const lanIps: string[] = []
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const os = require('node:os') as typeof import('node:os')
+      const ifaces = os.networkInterfaces()
+      for (const name of Object.keys(ifaces)) {
+        for (const info of ifaces[name] || []) {
+          if (info.family === 'IPv4' && !info.internal) {
+            lanIps.push(info.address)
+          }
+        }
+      }
+    } catch { /* ignore — return empty list */ }
+    return {
+      port,
+      localUrl: appBaseUrl || '',
+      lanIps,
+    }
+  })
 
   // ── Quit on close (Settings → Startup card) ───────────────────────
   // Lets the operator opt OUT of the new hide-to-tray behavior.
