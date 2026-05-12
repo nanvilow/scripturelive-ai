@@ -307,6 +307,44 @@ function slideFingerprint(s){
     s.displayMode||'',
   ].join('|');
 }
+// v0.7.155 — Detect whether the operator's customBackground URL points
+// at a video file (mp4/webm/mov/mkv/avi/m4v/ogv) or data:video/* URI.
+// Mirrors isVideoBackground() in src/lib/utils.ts; duplicated here
+// because this script is injected into the standalone congregation
+// page and cannot import from the app bundle.
+function isVideoBg(u){
+  if(!u) return false;
+  var s=String(u).toLowerCase();
+  if(s.indexOf('data:video/')===0) return true;
+  return /\.(mp4|webm|mov|mkv|avi|m4v|ogv)(?:$|[?#])/.test(s);
+}
+// v0.7.155 — Escape a string for safe interpolation inside an HTML
+// double-quoted attribute. Pre-v0.7.155 the customBackground URL was
+// concatenated raw into innerHTML attribute strings; a value
+// containing a double-quote (or angle bracket) could break out of
+// the src attribute and inject arbitrary markup. /api/output
+// state-push is unauthenticated on the local network, so this is the
+// correct surface to harden. We also reject anything that does not
+// look like a safe scheme/path (allow http(s), data:image/*,
+// data:video/*, and root-relative URLs; strip everything else --
+// most importantly javascript: URIs).
+function escAttr(v){
+  return String(v==null?'':v)
+    .replace(/&/g,'&amp;')
+    .replace(/"/g,'&quot;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/'/g,'&#39;');
+}
+function safeBgUrl(u){
+  if(!u) return '';
+  var s=String(u);
+  if(/^https?:\/\//i.test(s)) return s;
+  if(/^data:(image|video)\//i.test(s)) return s;
+  if(s.charAt(0)==='/') return s;
+  return '';
+}
+
 // Subset of settings that actually change what render() draws. Used
 // in the render-key so the captured page only rebuilds DOM when one
 // of these changes — not when an unrelated setting (OpenAI key,
@@ -655,7 +693,8 @@ function render(s){
     // Render themed background only — never a black void
     var tkE=(st.congregationScreenTheme||'minimal');
     var tcE=themes[tkE]||'theme-minimal';
-    var bgE=st.customBackground?'<img class="bg-image" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>':'';
+    var safeBgE=safeBgUrl(st.customBackground);
+    var bgE=safeBgE?(isVideoBg(safeBgE)?'<video class="bg-image" src="'+escAttr(safeBgE)+'" autoplay loop muted playsinline crossorigin="anonymous" onerror="this.style.display=\\'none\\'"></video><div class="bg-overlay"></div>':'<img class="bg-image" src="'+escAttr(safeBgE)+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>'):'';
     $('output').innerHTML='<div class="'+tcE+'" style="width:100%;height:100%;position:relative;">'+bgE+'</div>';
     $('output').classList.remove('hidden');
     return;
@@ -689,7 +728,8 @@ function render(s){
       : 0);
   var bibleExtra=(T_COLOR?'color:'+T_COLOR+';':'')+(T_LH?'line-height:'+T_LH+';':'');
   var sh=T_SH_BOOL?'text-shadow:0 2px 12px rgba(0,0,0,.4);':'';
-  var bg=st.customBackground?'<img class="bg-image" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>':'';
+  var safeBg=safeBgUrl(st.customBackground);
+  var bg=safeBg?(isVideoBg(safeBg)?'<video class="bg-image" src="'+escAttr(safeBg)+'" autoplay loop muted playsinline crossorigin="anonymous" onerror="this.style.display=\\'none\\'"></video><div class="bg-overlay"></div>':'<img class="bg-image" src="'+escAttr(safeBg)+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>'):'';
   // Reference typography (Bug #5): the operator now has independent
   // controls for the reference label. Each field falls back to the
   // body equivalent when unset so persisted settings keep working.
@@ -965,7 +1005,8 @@ function render(s){
     // it reads like a broadcast caption regardless of theme.
     var boxThemeClass=(dm==='lower-third-black')?'':tc;
     var boxStyleExtra=(dm==='lower-third-black')?'background:#000;':'';
-    var ltInnerBg=(dm==='lower-third-black')?'':(st.customBackground?'<img class="lt-bg" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="lt-bg-overlay"></div>':'');
+    var safeLtBg=safeBgUrl(st.customBackground);
+    var ltInnerBg=(dm==='lower-third-black')?'':(safeLtBg?(isVideoBg(safeLtBg)?'<video class="lt-bg" src="'+escAttr(safeLtBg)+'" autoplay loop muted playsinline crossorigin="anonymous" onerror="this.style.display=\\'none\\'"></video><div class="lt-bg-overlay"></div>':'<img class="lt-bg" src="'+escAttr(safeLtBg)+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="lt-bg-overlay"></div>'):'');
     // v0.6.3 — Transparent NDI lower-third matte. When the operator
     // flips ndiLowerThirdTransparent ON the rounded card drops its
     // gradient + drop shadow so vMix/OBS receive a clean alpha matte

@@ -44,7 +44,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn, isVideoBackground } from '@/lib/utils'
 import { toast } from 'sonner'
 
 // ════════════════════════════════════════════════════════════════════════
@@ -1238,12 +1238,12 @@ export function MediaLibraryCompact() {
   }
 
   const useAsBackground = (m: MediaItem) => {
-    if (m.kind !== 'image') {
-      toast.info('Only images can be used as a background right now')
-      return
-    }
+    // v0.7.155 — Both images AND videos can be used as backgrounds
+    // now. The legacy "only images" guard was removed; render sites
+    // (slide renderer, logos shell, congregation route) all use
+    // isVideoBackground() to pick <video> vs <img> at draw time.
     updateSettings({ customBackground: m.dataUrl })
-    toast.success('Background updated')
+    toast.success(`${m.kind === 'video' ? 'Video' : 'Image'} background applied`)
   }
 
   return (
@@ -1272,16 +1272,30 @@ export function MediaLibraryCompact() {
         </p>
         {settings.customBackground && (
           <div className="flex items-center gap-1.5 rounded border border-border bg-card/40 p-1">
-            <Image
-              src={settings.customBackground}
-              alt="Current bg"
-              width={32}
-              height={20}
-              className="rounded object-cover"
-              style={{ height: 'auto' }}
-              unoptimized
-            />
-            <span className="text-[9px] text-muted-foreground flex-1 truncate">Current background</span>
+            {isVideoBackground(settings.customBackground) ? (
+              <video
+                src={settings.customBackground}
+                autoPlay
+                loop
+                muted
+                playsInline
+                className="rounded object-cover"
+                style={{ width: 32, height: 20 }}
+              />
+            ) : (
+              <Image
+                src={settings.customBackground}
+                alt="Current bg"
+                width={32}
+                height={20}
+                className="rounded object-cover"
+                style={{ height: 'auto' }}
+                unoptimized
+              />
+            )}
+            <span className="text-[9px] text-muted-foreground flex-1 truncate">
+              {isVideoBackground(settings.customBackground) ? 'Video background' : 'Current background'}
+            </span>
             <button
               onClick={() => updateSettings({ customBackground: null })}
               className="text-[10px] text-muted-foreground hover:text-red-400"

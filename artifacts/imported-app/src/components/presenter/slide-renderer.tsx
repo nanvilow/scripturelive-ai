@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
-import { cn } from '@/lib/utils'
+import { cn, isVideoBackground } from '@/lib/utils'
 import type { Slide, AppSettings } from '@/lib/store'
 import { useAppStore } from '@/lib/store'
 import { getFontStack, resolveReferenceTypography } from '@/lib/fonts'
@@ -469,11 +469,22 @@ export function SlideThumb({
       <div className={cn('absolute inset-0 bg-gradient-to-br', theme.bg)}>
         {settings.customBackground && (
           <>
-            <img
-              src={settings.customBackground}
-              alt=""
-              className="absolute inset-0 w-full h-full object-cover opacity-40"
-            />
+            {isVideoBackground(settings.customBackground) ? (
+              <video
+                src={settings.customBackground}
+                autoPlay
+                loop
+                muted
+                playsInline
+                className="absolute inset-0 w-full h-full object-cover opacity-40"
+              />
+            ) : (
+              <img
+                src={settings.customBackground}
+                alt=""
+                className="absolute inset-0 w-full h-full object-cover opacity-40"
+              />
+            )}
             <div className="absolute inset-0 bg-black/40" />
           </>
         )}
