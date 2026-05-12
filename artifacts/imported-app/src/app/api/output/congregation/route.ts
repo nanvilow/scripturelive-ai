@@ -316,7 +316,7 @@ function isVideoBg(u){
   if(!u) return false;
   var s=String(u).toLowerCase();
   if(s.indexOf('data:video/')===0) return true;
-  return /\.(mp4|webm|mov|mkv|avi|m4v|ogv)(?:$|[?#])/.test(s);
+  return /\\.(mp4|webm|mov|mkv|avi|m4v|ogv)(?:$|[?#])/.test(s);
 }
 // v0.7.155 — Escape a string for safe interpolation inside an HTML
 // double-quoted attribute. Pre-v0.7.155 the customBackground URL was
@@ -339,8 +339,8 @@ function escAttr(v){
 function safeBgUrl(u){
   if(!u) return '';
   var s=String(u);
-  if(/^https?:\/\//i.test(s)) return s;
-  if(/^data:(image|video)\//i.test(s)) return s;
+  if(/^https?:\\/\\//i.test(s)) return s;
+  if(/^data:(image|video)\\//i.test(s)) return s;
   if(s.charAt(0)==='/') return s;
   return '';
 }
