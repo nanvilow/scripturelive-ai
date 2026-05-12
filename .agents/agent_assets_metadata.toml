@@ -995,3 +995,9 @@ id = "22gJdva8ohmTngFXLqB2q"
 uri = "file://exports/ScriptureLive-AI-v0.7.162-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.162 — Cloud Sync Real Global Stats"
+
+[[outputs]]
+id = "difmJw2jttz729ByUG7f8"
+uri = "file://exports/ScriptureLive-AI-v0.7.163-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.163 — source (run BUILD.bat on Windows)"

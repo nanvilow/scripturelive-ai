@@ -2,9 +2,9 @@
 //
 // Originally Twi-only (v0.7.77, slug `tw-wakna`). v0.7.137 generalises
 // the same chapter-fetch + cache plumbing across multiple Ghanaian
-// translations sourced from the same dataset:
+// translations sourced from the same dataset. v0.7.163 dropped the
+// Akuapem TWI key per operator request — only Asante Twi + Ewe ship:
 //
-//   TWI         → tw-wakna  (Akuapem Twi, Biblica Open 2020)
 //   TWIASANTE   → tw-wasna  (Asante Twi  / "Twerɛ Kronkron", Biblica Open 2020)
 //   EWE         → ee-oal    (Ewe         / "Agbenya La",      Biblica Open 2020)
 //
@@ -32,7 +32,12 @@ import type { BibleChapter } from '@/lib/bible-api'
 // `GET /repos/wldeh/bible-api/contents/bibles/tw-wakna/books`.
 // Genesis–Deuteronomy use Mose (Moses) ordinal naming, which is the
 // standard Akuapem Bible convention.
-const TWI_AKUAPEM_BOOK_SLUG: Record<string, string> = {
+// v0.7.163 — kept only as a reference / future-restore aid. The TWI
+// key has been removed from WLDEH_TRANSLATIONS so this map is no
+// longer wired to a runtime fetcher; leaving it here costs nothing
+// at bundle time and lets us re-add the Akuapem translation later
+// without re-typing 66 book slugs.
+const _TWI_AKUAPEM_BOOK_SLUG_RETIRED: Record<string, string> = {
   // Pentateuch
   Genesis: '1mose', Exodus: '2mose', Leviticus: '3mose',
   Numbers: '4mose', Deuteronomy: '5mose',
@@ -144,10 +149,9 @@ const EWE_BOOK_SLUG: Record<string, string> = {
   Jude: 'yuda', Revelation: 'nyaɖeɖefia',
 }
 
-export type WldehKey = 'TWI' | 'TWIASANTE' | 'EWE'
+export type WldehKey = 'TWIASANTE' | 'EWE'
 
 export const WLDEH_TRANSLATIONS: Record<WldehKey, { cdnSlug: string; bookSlugs: Record<string, string> }> = {
-  TWI:       { cdnSlug: 'tw-wakna', bookSlugs: TWI_AKUAPEM_BOOK_SLUG },
   TWIASANTE: { cdnSlug: 'tw-wasna', bookSlugs: TWI_ASANTE_BOOK_SLUG },
   EWE:       { cdnSlug: 'ee-oal',   bookSlugs: EWE_BOOK_SLUG },
 }
@@ -171,7 +175,7 @@ type WldehChapterResponse = {
 const chapterCache = new Map<string, Array<{ verse: number; text: string }>>()
 
 function isWldehKey(s: string): s is WldehKey {
-  return s === 'TWI' || s === 'TWIASANTE' || s === 'EWE'
+  return s === 'TWIASANTE' || s === 'EWE'
 }
 
 async function fetchWldehChapterRaw(
@@ -246,17 +250,9 @@ export function isWldehBookSupported(book: string, translation: string): boolean
   return book in WLDEH_TRANSLATIONS[translation].bookSlugs
 }
 
-// ── Backward-compat shims (TWI = Akuapem) for pre-v0.7.137 callers ──
-export const TWI_BOOK_SLUG = TWI_AKUAPEM_BOOK_SLUG
-export function fetchTwiVerse(
-  parsed: { book: string; chapter: number; verseStart: number; verseEnd?: number },
-  reference: string,
-): Promise<BibleVerse | null> {
-  return fetchWldehVerse(parsed, reference, 'TWI')
-}
-export function fetchTwiChapter(book: string, chapter: number): Promise<BibleChapter | null> {
-  return fetchWldehChapter(book, chapter, 'TWI')
-}
-export function isTwiBookSupported(book: string): boolean {
-  return isWldehBookSupported(book, 'TWI')
-}
+// v0.7.163 — Backward-compat TWI shims removed alongside the TWI key.
+// Every caller that imported fetchTwiVerse / fetchTwiChapter /
+// isTwiBookSupported / TWI_BOOK_SLUG had already migrated to the
+// generalised fetchWldehVerse / fetchWldehChapter / isWldehBookSupported
+// helpers in v0.7.137; the shims were the only remaining link to the
+// retired Akuapem dataset, so they're gone now.

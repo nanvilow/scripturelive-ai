@@ -30,7 +30,7 @@ fs.mkdirSync(OUT_DIR, { recursive: true })
 // v0.7.137 — Ghanaian translations bundled alongside the English
 // trio so the Windows build runs offline. Sourced from
 // wldeh/bible-api (different shape from bolls — see bundleWldeh below).
-for (const t of ['kjv', 'niv', 'esv', 'twi', 'twiasante', 'ewe']) {
+for (const t of ['kjv', 'niv', 'esv', 'twiasante', 'ewe']) {
   const f = path.join(OUT_DIR, `${t}.json`)
   if (!fs.existsSync(f)) {
     fs.writeFileSync(f, '{}')
@@ -41,38 +41,10 @@ for (const t of ['kjv', 'niv', 'esv', 'twi', 'twiasante', 'ewe']) {
 // v0.7.137 — wldeh/bible-api per-translation config. Mirrors
 // WLDEH_TRANSLATIONS in src/lib/bibles/twi-bible.ts but lives here
 // to keep this script free of the @/ alias.
+// v0.7.163 — TWI (Akuapem, tw-wakna) entry removed to mirror the
+// runtime registry change in src/lib/bibles/twi-bible.ts. Only Asante
+// Twi + Ewe ship now per operator request.
 const WLDEH = {
-  twi: {
-    cdnSlug: 'tw-wakna',
-    bookSlugs: {
-      Genesis: '1mose', Exodus: '2mose', Leviticus: '3mose', Numbers: '4mose', Deuteronomy: '5mose',
-      Joshua: 'yosua', Judges: 'atemmufo', Ruth: 'rut',
-      '1 Samuel': '1samuel', '2 Samuel': '2samuel',
-      '1 Kings': '1ahemfo', '2 Kings': '2ahemfo',
-      '1 Chronicles': '1beresosɛm', '2 Chronicles': '2beresosɛm',
-      Ezra: 'ɛsra', Nehemiah: 'nehemia', Esther: 'ɛster',
-      Job: 'hiob', Psalms: 'nnwom', Proverbs: 'mmebusɛm',
-      Ecclesiastes: 'ɔsɛnkafo', 'Song of Solomon': 'nnwommudwom',
-      Isaiah: 'yesaia', Jeremiah: 'yeremia', Lamentations: 'kwadwom',
-      Ezekiel: 'hesekiel', Daniel: 'daniel',
-      Hosea: 'hosea', Joel: 'yoɛl', Amos: 'amos', Obadiah: 'obadia',
-      Jonah: 'yona', Micah: 'mika', Nahum: 'nahum', Habakkuk: 'habakuk',
-      Zephaniah: 'sefania', Haggai: 'hagai', Zechariah: 'sakaria', Malachi: 'malaki',
-      Matthew: 'mateo', Mark: 'marko', Luke: 'luka', John: 'yohane',
-      Acts: 'asomafo',
-      Romans: 'romafo',
-      '1 Corinthians': '1korintofo', '2 Corinthians': '2korintofo',
-      Galatians: 'galatifo', Ephesians: 'efesofo',
-      Philippians: 'filipifo', Colossians: 'kolosefo',
-      '1 Thessalonians': '1tesalonikafo', '2 Thessalonians': '2tesalonikafo',
-      '1 Timothy': '1timoteo', '2 Timothy': '2timoteo',
-      Titus: 'tito', Philemon: 'filemon',
-      Hebrews: 'hebrifo', James: 'yakobo',
-      '1 Peter': '1petro', '2 Peter': '2petro',
-      '1 John': '1yohane', '2 John': '2yohane', '3 John': '3yohane',
-      Jude: 'yuda', Revelation: 'adiyisɛm',
-    },
-  },
   twiasante: {
     cdnSlug: 'tw-wasna',
     bookSlugs: {
@@ -376,15 +348,42 @@ async function fetchWldehChapter(translation, book, chapter) {
   if (!cfg) return {}
   const slug = cfg.bookSlugs[book]
   if (!slug) return {}
-  const url = `https://cdn.jsdelivr.net/gh/wldeh/bible-api/bibles/${cfg.cdnSlug}/books/${encodeURIComponent(slug)}/chapters/${chapter}.json`
+  // v0.7.163 — Use raw.githubusercontent.com instead of jsdelivr.net.
+  // jsdelivr was timing out / serving slow from CI networks (5+ s per
+  // chapter); raw.githubusercontent.com responds in ~250 ms, turning a
+  // 6-hour bundle into a ~5-minute one. Runtime fetcher in
+  // src/lib/bibles/twi-bible.ts still uses jsdelivr (cached at the edge
+  // for live-service hot paths) — only the offline-bundle phase
+  // switches to the raw mirror.
+  const url = `https://raw.githubusercontent.com/wldeh/bible-api/master/bibles/${cfg.cdnSlug}/books/${encodeURIComponent(slug)}/chapters/${chapter}.json`
+  // v0.7.163 — Authenticated raw.githubusercontent.com fetch when
+  // GH_PAT (or GITHUB_TOKEN) is present in the env. Anonymous hits
+  // are throttled to 60/hr per IP which makes a 3567-chapter bundle
+  // (3 wldeh translations × 1189 chapters) impossible on CI; an
+  // authenticated session raises the ceiling to 5000/hr, fitting
+  // the full bundle into ~5 minutes wall-clock.
+  const ghHeaders = { Accept: 'application/json' }
+  const ghToken = process.env.GH_PAT || process.env.GITHUB_TOKEN
+  if (ghToken) ghHeaders.Authorization = `Bearer ${ghToken}`
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      const r = await fetch(url, { headers: { Accept: 'application/json' } })
+      const r = await fetch(url, { headers: ghHeaders })
       if (!r.ok) {
         // 404 = chapter doesn't exist in this translation (some
         // small books have variable chapter counts upstream). Don't
         // retry — just return empty so the bundle stays consistent.
         if (r.status === 404) return {}
+        // 403 = secondary rate limit / abuse detection. Honour the
+        // x-ratelimit-reset header by sleeping until then (capped
+        // at 60 s so we don't deadlock the bundle for an hour).
+        if (r.status === 403) {
+          const reset = parseInt(r.headers.get('x-ratelimit-reset') || '0', 10)
+          const now = Math.floor(Date.now() / 1000)
+          const waitSec = Math.min(60, Math.max(2, reset - now))
+          console.warn(`  rate-limited ${book} ${chapter} (${translation}/${cfg.cdnSlug}); sleeping ${waitSec}s`)
+          await new Promise((res) => setTimeout(res, waitSec * 1000))
+          continue
+        }
         throw new Error(`HTTP ${r.status}`)
       }
       const data = await r.json()
@@ -408,44 +407,72 @@ async function fetchWldehChapter(translation, book, chapter) {
 
 async function bundleTranslation(translation) {
   const outFile = path.join(OUT_DIR, `${translation.toLowerCase()}.json`)
-  if (fs.existsSync(outFile) && !process.env.FORCE) {
-    // Skip only if file is non-trivially populated. Empty `{}` stub
-    // (~2 bytes) should be redownloaded so the operator's first
-    // explicit `node bundle-bibles.mjs twi` actually writes data.
-    const sz = fs.statSync(outFile).size
-    if (sz > 1024) {
-      console.log(`[skip] ${translation} (${outFile} exists, ${sz} B; set FORCE=1 to redownload)`)
-      return
-    }
+  // v0.7.163 — Incremental, resumable bundling. Load whatever's
+  // already in the file (could be a partial bundle from a previous
+  // run that got SIGKILLed by the CI watchdog) and only fetch books
+  // that aren't fully populated yet. Save after every book so the
+  // next invocation can pick up where this one left off without
+  // refetching anything. FORCE=1 wipes the existing file first so
+  // operators can force a clean redownload after an upstream change.
+  if (process.env.FORCE && fs.existsSync(outFile)) {
+    fs.writeFileSync(outFile, '{}')
   }
-  const isWldeh = translation in WLDEH
-  console.log(`[start] downloading ${translation.toUpperCase()} from ${isWldeh ? `wldeh/bible-api (${WLDEH[translation].cdnSlug})` : 'bolls.life'}`)
-  const result = {}
-  const concurrency = 12
-  const queue = []
+  let result = {}
+  if (fs.existsSync(outFile)) {
+    try { result = JSON.parse(fs.readFileSync(outFile, 'utf8')) || {} } catch { result = {} }
+  }
+  // Decide if the existing bundle is already complete (every expected
+  // book/chapter has at least one verse). Skip in that case so daily
+  // CI runs are no-ops.
+  let missingChapters = 0
   for (const book of BOOK_ORDER) {
     const chCount = STRUCTURE[book].length
-    for (let c = 1; c <= chCount; c++) queue.push({ book, chapter: c })
-  }
-  let done = 0
-  const total = queue.length
-  let cursor = 0
-  async function worker() {
-    while (true) {
-      const job = queue[cursor++]
-      if (!job) return
-      const ch = isWldeh
-        ? await fetchWldehChapter(translation, job.book, job.chapter)
-        : await fetchChapter(translation, job.book, job.chapter)
-      if (!result[job.book]) result[job.book] = {}
-      result[job.book][job.chapter] = ch
-      done++
-      if (done % 50 === 0) {
-        process.stdout.write(`  ${translation} ${done}/${total} chapters\n`)
-      }
+    for (let c = 1; c <= chCount; c++) {
+      const got = result[book]?.[c]
+      if (!got || Object.keys(got).length === 0) missingChapters++
     }
   }
-  await Promise.all(Array.from({ length: concurrency }, () => worker()))
+  if (missingChapters === 0 && Object.keys(result).length === BOOK_ORDER.length && !process.env.FORCE) {
+    console.log(`[skip] ${translation} already complete (${BOOK_ORDER.length} books)`)
+    return
+  }
+  const isWldeh = translation in WLDEH
+  console.log(`[start] downloading ${translation.toUpperCase()} from ${isWldeh ? `wldeh/bible-api (${WLDEH[translation].cdnSlug})` : 'bolls.life'} — ${missingChapters} chapters still missing`)
+  const concurrency = 12
+  let done = 0
+  let totalDoneSinceSave = 0
+  for (const book of BOOK_ORDER) {
+    const chCount = STRUCTURE[book].length
+    if (!result[book]) result[book] = {}
+    const queue = []
+    for (let c = 1; c <= chCount; c++) {
+      const have = result[book][c]
+      if (!have || Object.keys(have).length === 0) queue.push(c)
+    }
+    if (queue.length === 0) continue
+    let cursor = 0
+    async function worker() {
+      while (true) {
+        const ch = queue[cursor++]
+        if (ch === undefined) return
+        const verses = isWldeh
+          ? await fetchWldehChapter(translation, book, ch)
+          : await fetchChapter(translation, book, ch)
+        result[book][ch] = verses
+        done++
+        totalDoneSinceSave++
+        if (done % 50 === 0) {
+          process.stdout.write(`  ${translation} ${done} new chapters fetched (${book} ${ch})\n`)
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: concurrency }, () => worker()))
+    // Persist after every book so a SIGKILL can't undo this book's work.
+    if (totalDoneSinceSave > 0) {
+      fs.writeFileSync(outFile, JSON.stringify(result))
+      totalDoneSinceSave = 0
+    }
+  }
   fs.writeFileSync(outFile, JSON.stringify(result))
   const bytes = fs.statSync(outFile).size
   console.log(`[ok]   ${translation} → ${outFile} (${(bytes / 1024 / 1024).toFixed(2)} MB)`)

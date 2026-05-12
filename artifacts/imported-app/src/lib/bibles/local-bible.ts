@@ -55,9 +55,8 @@ function loadTranslation(t: BibleTranslation): TranslationMap | null {
       // v0.7.137 — Ghanaian translations bundled offline so the
       // Electron desktop build keeps working without an internet
       // connection during a live service. wldeh/bible-api source.
-      case 'twi':
-        mod = require('@/data/bibles/twi.json')
-        break
+      // v0.7.163 — TWI (Akuapem) case removed; only TWIASANTE + EWE
+      // ship now per operator request.
       case 'twiasante':
         mod = require('@/data/bibles/twiasante.json')
         break
