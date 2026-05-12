@@ -100,24 +100,118 @@ export async function POST(req: NextRequest) {
         cloudBase: base,
       })
     }
+    // v0.7.162 — Compute rich, accurate global usage stats from the
+    // pulled cloud snapshot so the admin panel can show meaningful
+    // numbers (active subscriptions, revenue, customer count, etc.)
+    // not just raw record counts. Mirrors computeCodeStatus() from
+    // storage.ts so the buckets match what the Records tab shows.
+    type RawPay = {
+      ref?: string; status?: string; amountGhs?: number; planCode?: string;
+      email?: string; whatsapp?: string; createdAt?: string;
+    }
+    type RawAct = {
+      code?: string; isUsed?: boolean; isMaster?: boolean;
+      cancelledAt?: string; softDeletedAt?: string;
+      subscriptionExpiresAt?: string; generatedAt?: string;
+      generatedFor?: { email?: string; whatsapp?: string };
+      buyerPhone?: string;
+    }
+    type RawNotif = { ts?: string; channel?: string; status?: string }
     const j = (await r.json().catch(() => ({}))) as {
       ok?: boolean
       snapshot?: {
-        paymentCodes?: unknown[]
-        activationCodes?: unknown[]
-        notifications?: unknown[]
+        paymentCodes?: RawPay[]
+        activationCodes?: RawAct[]
+        notifications?: RawNotif[]
       }
     }
     const s = j?.snapshot ?? {}
+    const pays: RawPay[] = Array.isArray(s.paymentCodes) ? s.paymentCodes : []
+    const acts: RawAct[] = Array.isArray(s.activationCodes) ? s.activationCodes : []
+    const notifs: RawNotif[] = Array.isArray(s.notifications) ? s.notifications : []
+    const now = Date.now()
+
+    // Activation buckets — match storage.computeCodeStatus precedence:
+    // deleted > cancelled > master > never-used > active/expired/used
+    let actActive = 0, actNeverUsed = 0, actUsed = 0, actExpired = 0
+    let actCancelled = 0, actDeleted = 0, actMaster = 0
+    for (const a of acts) {
+      if (a.softDeletedAt) { actDeleted++; continue }
+      if (a.cancelledAt) { actCancelled++; continue }
+      if (a.isMaster) { actMaster++; continue }
+      if (!a.isUsed) { actNeverUsed++; continue }
+      if (a.subscriptionExpiresAt) {
+        const exp = Date.parse(a.subscriptionExpiresAt)
+        if (Number.isFinite(exp)) {
+          if (exp > now) actActive++; else actExpired++
+          continue
+        }
+      }
+      actUsed++
+    }
+
+    // Payment buckets + total revenue (only paid/consumed count toward revenue).
+    let payPaid = 0, payWaiting = 0, payConsumed = 0, payExpiredP = 0, revenue = 0
+    for (const p of pays) {
+      const st = String(p.status ?? '').toUpperCase()
+      const amt = Number(p.amountGhs) || 0
+      if (st === 'PAID') { payPaid++; revenue += amt; continue }
+      if (st === 'CONSUMED') { payConsumed++; revenue += amt; continue }
+      if (st === 'WAITING_PAYMENT') { payWaiting++; continue }
+      if (st === 'EXPIRED') { payExpiredP++; continue }
+    }
+
+    // Unique customer count across both record types — dedup by
+    // email lower-case OR by phone (whichever the record carries).
+    const customerKeys = new Set<string>()
+    for (const p of pays) {
+      if (p.email) customerKeys.add('e:' + p.email.trim().toLowerCase())
+      else if (p.whatsapp) customerKeys.add('p:' + p.whatsapp.trim())
+    }
+    for (const a of acts) {
+      const e = a.generatedFor?.email
+      const w = a.generatedFor?.whatsapp ?? a.buyerPhone
+      if (e) customerKeys.add('e:' + e.trim().toLowerCase())
+      else if (w) customerKeys.add('p:' + String(w).trim())
+    }
+
+    // Notification recency.
+    const day = 24 * 60 * 60 * 1000
+    let notif24 = 0, notif7 = 0
+    for (const n of notifs) {
+      const t = Date.parse(n.ts ?? '')
+      if (!Number.isFinite(t)) continue
+      const ageMs = now - t
+      if (ageMs <= day) notif24++
+      if (ageMs <= 7 * day) notif7++
+    }
+
     return NextResponse.json({
       ok: true,
       stage: 'connected',
-      detail: `Connected to ${base}. Phone-side admin actions will now appear here, and desktop-side actions will appear on phone. Reopen the admin panel to see merged data.`,
+      detail: `Connected to ${base}. Showing the ${base.replace(/^https?:\/\//, '')} install's full admin ledger — every code, payment, and notification across all devices is now mirrored to this PC. Reopen the admin panel tabs to see merged data.`,
       cloudBase: base,
       pulledCounts: {
-        paymentCodes: Array.isArray(s.paymentCodes) ? s.paymentCodes.length : 0,
-        activationCodes: Array.isArray(s.activationCodes) ? s.activationCodes.length : 0,
-        notifications: Array.isArray(s.notifications) ? s.notifications.length : 0,
+        paymentCodes: pays.length,
+        activationCodes: acts.length,
+        notifications: notifs.length,
+      },
+      stats: {
+        activationsActive: actActive,
+        activationsNeverUsed: actNeverUsed,
+        activationsUsed: actUsed,
+        activationsExpired: actExpired,
+        activationsCancelled: actCancelled,
+        activationsDeleted: actDeleted,
+        activationsMaster: actMaster,
+        paymentsPaid: payPaid,
+        paymentsWaiting: payWaiting,
+        paymentsConsumed: payConsumed,
+        paymentsExpired: payExpiredP,
+        revenueGhs: Math.round(revenue * 100) / 100,
+        uniqueCustomers: customerKeys.size,
+        notificationsLast24h: notif24,
+        notificationsLast7d: notif7,
       },
     })
   } catch (e) {
