@@ -52,6 +52,22 @@ function loadTranslation(t: BibleTranslation): TranslationMap | null {
       case 'esv':
         mod = require('@/data/bibles/esv.json')
         break
+      // v0.7.164 — NKJV/NLT/AMP added per operator request: "somewhere
+      // in between" between bundling everything and only the safe
+      // public-domain set. Same copyright stance as the existing
+      // NIV/ESV bundling decision (v0.5.52). Sourced from bolls.life
+      // by scripts/bundle-bibles.mjs alongside the existing English
+      // trio. Each case follows the same require/stub pattern so the
+      // build succeeds even when the operator skipped the download.
+      case 'nkjv':
+        mod = require('@/data/bibles/nkjv.json')
+        break
+      case 'nlt':
+        mod = require('@/data/bibles/nlt.json')
+        break
+      case 'amp':
+        mod = require('@/data/bibles/amp.json')
+        break
       // v0.7.137 — Ghanaian translations bundled offline so the
       // Electron desktop build keeps working without an internet
       // connection during a live service. wldeh/bible-api source.

@@ -14,7 +14,14 @@ const BOOK_ORDER = Object.keys(STRUCTURE).filter((k) => !k.startsWith('_'))
 // v0.5.52 — operator decision is to bundle KJV + NIV + ESV, so the
 // default when no args are given is all three (not just KJV). Pass
 // explicit args to override (e.g. `node scripts/bundle-bibles.mjs kjv`).
-const TRANSLATIONS = (process.argv.slice(2).length ? process.argv.slice(2) : ['kjv', 'niv', 'esv'])
+// v0.7.137 — Asante Twi + Ewe added (wldeh path).
+// v0.7.164 — NKJV + NLT + AMP added (bolls path) per operator request:
+// "somewhere in between" between bundling everything and only the
+// safe public-domain set. NKJV is the main pulpit Bible most preachers
+// in Ghana use, NLT is the everyday-language pew Bible, AMP is the
+// study Bible preachers reach for to expand a verse mid-sermon. Same
+// copyright stance as the existing NIV/ESV bundling decision.
+const TRANSLATIONS = (process.argv.slice(2).length ? process.argv.slice(2) : ['kjv', 'niv', 'esv', 'nkjv', 'nlt', 'amp', 'twiasante', 'ewe'])
   .map((t) => t.toLowerCase())
 
 const OUT_DIR = path.join(repoRoot, 'src/data/bibles')
@@ -30,7 +37,7 @@ fs.mkdirSync(OUT_DIR, { recursive: true })
 // v0.7.137 — Ghanaian translations bundled alongside the English
 // trio so the Windows build runs offline. Sourced from
 // wldeh/bible-api (different shape from bolls — see bundleWldeh below).
-for (const t of ['kjv', 'niv', 'esv', 'twiasante', 'ewe']) {
+for (const t of ['kjv', 'niv', 'esv', 'nkjv', 'nlt', 'amp', 'twiasante', 'ewe']) {
   const f = path.join(OUT_DIR, `${t}.json`)
   if (!fs.existsSync(f)) {
     fs.writeFileSync(f, '{}')
@@ -316,9 +323,23 @@ function isEditorialHeading(head, rest) {
 async function fetchChapter(translation, book, chapter) {
   const id = bookId(book)
   const url = `https://bolls.life/get-text/${translation.toUpperCase()}/${id}/${chapter}/`
-  for (let attempt = 0; attempt < 4; attempt++) {
+  // v0.7.164 — bolls.life enforces an undocumented per-IP rate-limit
+  // (~5 req/s) that triggers HTTP 429 in bursts. Earlier 4-attempt
+  // exponential schedule (0.5/1/2/4 s) was too short — by attempt 4
+  // the burst was still in progress and the chapter was abandoned.
+  // Bumped to 8 attempts with a longer base + 429-aware sleep that
+  // honours `Retry-After` when present so we wait the actual cool-off
+  // instead of guessing.
+  for (let attempt = 0; attempt < 8; attempt++) {
     try {
       const r = await fetch(url, { headers: { Accept: 'application/json' } })
+      if (r.status === 429) {
+        const retryAfter = parseInt(r.headers.get('retry-after') || '0', 10)
+        const wait = Math.max(retryAfter * 1000, 1500 * Math.pow(2, Math.min(attempt, 5)))
+        console.warn(`  429 ${book} ${chapter} (${translation}) attempt ${attempt + 1}; sleep ${wait}ms`)
+        await new Promise((r) => setTimeout(r, wait))
+        continue
+      }
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const data = await r.json()
       if (!Array.isArray(data)) throw new Error('not array')
@@ -331,7 +352,7 @@ async function fetchChapter(translation, book, chapter) {
       }
       return out
     } catch (e) {
-      const wait = 500 * Math.pow(2, attempt)
+      const wait = 800 * Math.pow(2, Math.min(attempt, 5))
       console.warn(`  retry ${book} ${chapter} (${translation}) attempt ${attempt + 1}: ${e.message}; sleep ${wait}ms`)
       await new Promise((r) => setTimeout(r, wait))
     }
@@ -438,7 +459,13 @@ async function bundleTranslation(translation) {
   }
   const isWldeh = translation in WLDEH
   console.log(`[start] downloading ${translation.toUpperCase()} from ${isWldeh ? `wldeh/bible-api (${WLDEH[translation].cdnSlug})` : 'bolls.life'} — ${missingChapters} chapters still missing`)
-  const concurrency = 12
+  // v0.7.164 — Per-source concurrency. wldeh/raw.github happily takes
+  // 12 parallel streams with auth (5000 req/hr ceiling). bolls.life
+  // 429s past ~3 concurrent (no published ceiling, observed empirically
+  // — concurrency 12 produced a 429 storm that wiped the NKJV run).
+  // Pin bolls to 3 — slower (~6-8 min/translation vs ~2-3) but
+  // actually completes.
+  const concurrency = isWldeh ? 12 : 3
   let done = 0
   let totalDoneSinceSave = 0
   for (const book of BOOK_ORDER) {
