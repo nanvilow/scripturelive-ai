@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/badge'
 import { SlideThumb } from '@/components/presenter/slide-renderer'
 import { StableStage } from '@/components/presenter/stable-stage'
 import { getFontStack } from '@/lib/fonts'
-import { cn } from '@/lib/utils'
+import { cn, isVideoBackground } from '@/lib/utils'
 import { toast } from 'sonner'
 import {
   Mic,
@@ -775,12 +775,23 @@ function DisplayStage({
   return (
     <div className="relative w-full aspect-video bg-black overflow-hidden ring-1 ring-border">
       {!isBlackBackdrop && settings.customBackground && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={settings.customBackground}
-          alt=""
-          className="absolute inset-0 w-full h-full object-cover opacity-40"
-        />
+        isVideoBackground(settings.customBackground) ? (
+          <video
+            src={settings.customBackground}
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="absolute inset-0 w-full h-full object-cover opacity-40"
+          />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={settings.customBackground}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover opacity-40"
+          />
+        )
       )}
       <div
         className="absolute left-0 right-0 flex items-center justify-center"
@@ -1707,11 +1718,23 @@ function LiveDisplayCard({
                     bar reads like a broadcast caption (matches the
                     congregation renderer). */}
                 {!isBlackBackdrop && settings.customBackground && (
-                  <img
-                    src={settings.customBackground}
-                    alt=""
-                    className="absolute inset-0 w-full h-full object-cover opacity-40"
-                  />
+                  isVideoBackground(settings.customBackground) ? (
+                    <video
+                      src={settings.customBackground}
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      className="absolute inset-0 w-full h-full object-cover opacity-40"
+                    />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={settings.customBackground}
+                      alt=""
+                      className="absolute inset-0 w-full h-full object-cover opacity-40"
+                    />
+                  )
                 )}
                 {/* The bar itself. Using safe-area padding (≈6% horiz)
                     and a translucent dark panel exactly like the .lt-box

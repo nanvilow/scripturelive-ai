@@ -44,7 +44,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn, isVideoBackground } from '@/lib/utils'
 import { toast } from 'sonner'
 
 // ════════════════════════════════════════════════════════════════════════
@@ -377,12 +377,12 @@ export function BibleLookupCompact() {
         const sel = suggestions[highlight]
         setSearchQuery(sel.reference)
         setShowSuggest(false)
-        // Treat picking a suggestion as the operator's "first Enter":
-        // load the chapter and stage the focused verse to PREVIEW.
-        const res = await lookupAndStage(sel.reference, false)
-        if (res) {
-          lastEnterRef.current = { query: sel.reference, at: Date.now() }
-        }
+        // Operator request (May 2026): a single Enter on the bottom
+        // search bar must push the verse straight to the Live Display
+        // — no preview-first, no two-press pattern. Picking a
+        // suggestion follows the same rule.
+        await lookupAndStage(sel.reference, true)
+        lastEnterRef.current = { query: sel.reference, at: Date.now() }
         return
       }
     }
@@ -390,24 +390,24 @@ export function BibleLookupCompact() {
       e.preventDefault()
       const q = searchQuery.trim()
       if (!q) return
+      // Operator request (May 2026): single Enter = LIVE.
+      // Previously the first press staged a preview and a second
+      // press within 1.5 s was required to push to the projector;
+      // operators wanted the keyboard to behave like a one-shot
+      // "go live" so the congregation sees the verse immediately.
+      // If the chapter is already loaded for this exact query (i.e.
+      // a real "second press"), skip the network round-trip and
+      // just re-fire the focused verse to live.
       const last = lastEnterRef.current
-      const isSecondPress =
-        last.query === q && Date.now() - last.at < 1500 && chapter !== null
-      if (isSecondPress) {
-        // Second Enter on the same query → push the focused verse
-        // straight to the Live Display.
+      const sameQueryAlreadyLoaded =
+        last.query === q && chapter !== null
+      if (sameQueryAlreadyLoaded) {
         const verseNum = activeVerse ?? chapter!.verses[0].verse
         stageVerse(chapter!, verseNum, true)
-        // Reset so a third Enter doesn't keep retriggering.
-        lastEnterRef.current = { query: '', at: 0 }
       } else {
-        // First Enter (or first after a long pause) → look up the
-        // chapter and stage the focused verse in PREVIEW only.
-        const res = await lookupAndStage(q, false)
-        if (res) {
-          lastEnterRef.current = { query: q, at: Date.now() }
-        }
+        await lookupAndStage(q, true)
       }
+      lastEnterRef.current = { query: q, at: Date.now() }
     }
   }
 
@@ -1238,12 +1238,12 @@ export function MediaLibraryCompact() {
   }
 
   const useAsBackground = (m: MediaItem) => {
-    if (m.kind !== 'image') {
-      toast.info('Only images can be used as a background right now')
-      return
-    }
+    // v0.7.155 — Both images AND videos can be used as backgrounds
+    // now. The legacy "only images" guard was removed; render sites
+    // (slide renderer, logos shell, congregation route) all use
+    // isVideoBackground() to pick <video> vs <img> at draw time.
     updateSettings({ customBackground: m.dataUrl })
-    toast.success('Background updated')
+    toast.success(`${m.kind === 'video' ? 'Video' : 'Image'} background applied`)
   }
 
   return (
@@ -1272,16 +1272,30 @@ export function MediaLibraryCompact() {
         </p>
         {settings.customBackground && (
           <div className="flex items-center gap-1.5 rounded border border-border bg-card/40 p-1">
-            <Image
-              src={settings.customBackground}
-              alt="Current bg"
-              width={32}
-              height={20}
-              className="rounded object-cover"
-              style={{ height: 'auto' }}
-              unoptimized
-            />
-            <span className="text-[9px] text-muted-foreground flex-1 truncate">Current background</span>
+            {isVideoBackground(settings.customBackground) ? (
+              <video
+                src={settings.customBackground}
+                autoPlay
+                loop
+                muted
+                playsInline
+                className="rounded object-cover"
+                style={{ width: 32, height: 20 }}
+              />
+            ) : (
+              <Image
+                src={settings.customBackground}
+                alt="Current bg"
+                width={32}
+                height={20}
+                className="rounded object-cover"
+                style={{ height: 'auto' }}
+                unoptimized
+              />
+            )}
+            <span className="text-[9px] text-muted-foreground flex-1 truncate">
+              {isVideoBackground(settings.customBackground) ? 'Video background' : 'Current background'}
+            </span>
             <button
               onClick={() => updateSettings({ customBackground: null })}
               className="text-[10px] text-muted-foreground hover:text-red-400"

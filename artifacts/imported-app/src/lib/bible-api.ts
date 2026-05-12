@@ -3,29 +3,95 @@ import type { BibleTranslation, BibleVerse } from './store'
 // ──────────────────────────────────────────────
 // Book aliases and names
 // ──────────────────────────────────────────────
+// v0.7.154 — Comprehensive 3-letter alias coverage for ALL 66 books.
+// Operators only type the first 3 letters of a book + chapter (+ verse)
+// in the bottom search bar — e.g. "joh 3 16", "est 7 8", "mat 5 9".
+// Every book below has at least one 3-letter alias; numbered books also
+// accept the no-space form ("1sa", "2co", "3jn") and the spaced form
+// ("1 sa", "2 co", "3 jn").
+//
+// Collision policy (deliberate):
+//   jud → Jude       (Judges uses jdg)
+//   php → Philippians (Philemon uses phm)
+//   jon → Jonah       (Jonah is one chapter, no number book conflict)
 const BOOK_ALIASES: Record<string, string> = {
-  gen: 'Genesis', ex: 'Exodus', exo: 'Exodus', lev: 'Leviticus',
-  num: 'Numbers', deut: 'Deuteronomy', jos: 'Joshua', judg: 'Judges',
-  ruth: 'Ruth', '1 sam': '1 Samuel', '2 sam': '2 Samuel',
-  '1 ki': '1 Kings', '2 ki': '2 Kings', '1 chron': '1 Chronicles',
-  '2 chron': '2 Chronicles', ezra: 'Ezra', neh: 'Nehemiah',
-  esth: 'Esther', job: 'Job', ps: 'Psalms', psalm: 'Psalms',
-  prov: 'Proverbs', eccl: 'Ecclesiastes', song: 'Song of Solomon',
-  isa: 'Isaiah', jer: 'Jeremiah', lam: 'Lamentations',
-  eze: 'Ezekiel', dan: 'Daniel', hos: 'Hosea', joel: 'Joel',
-  amos: 'Amos', obad: 'Obadiah', jonah: 'Jonah', mic: 'Micah',
-  nah: 'Nahum', hab: 'Habakkuk', zeph: 'Zephaniah', hag: 'Haggai',
-  zech: 'Zechariah', mal: 'Malachi', matt: 'Matthew', mt: 'Matthew',
-  mark: 'Mark', mk: 'Mark', lk: 'Luke', luke: 'Luke',
-  jn: 'John', john: 'John', acts: 'Acts', rom: 'Romans',
-  '1 cor': '1 Corinthians', '2 cor': '2 Corinthians',
-  gal: 'Galatians', eph: 'Ephesians', phil: 'Philippians',
-  col: 'Colossians', '1 thess': '1 Thessalonians',
-  '2 thess': '2 Thessalonians', '1 tim': '1 Timothy',
-  '2 tim': '2 Timothy', tit: 'Titus', phlm: 'Philemon',
-  heb: 'Hebrews', jas: 'James', '1 pet': '1 Peter',
-  '2 pet': '2 Peter', '1 john': '1 John', '2 john': '2 John',
-  '3 john': '3 John', jude: 'Jude', rev: 'Revelation',
+  // ─── Old Testament ──────────────────────────────────────────────
+  gen: 'Genesis', ge: 'Genesis',
+  ex: 'Exodus', exo: 'Exodus', exod: 'Exodus',
+  lev: 'Leviticus', lv: 'Leviticus',
+  num: 'Numbers', nu: 'Numbers', nm: 'Numbers',
+  deu: 'Deuteronomy', deut: 'Deuteronomy', dt: 'Deuteronomy',
+  jos: 'Joshua', josh: 'Joshua',
+  jdg: 'Judges', judg: 'Judges',
+  rut: 'Ruth', ruth: 'Ruth',
+  '1 sa': '1 Samuel', '1sa': '1 Samuel', '1 sam': '1 Samuel', '1sam': '1 Samuel',
+  '2 sa': '2 Samuel', '2sa': '2 Samuel', '2 sam': '2 Samuel', '2sam': '2 Samuel',
+  '1 ki': '1 Kings', '1ki': '1 Kings', '1 kgs': '1 Kings', '1kgs': '1 Kings',
+  '2 ki': '2 Kings', '2ki': '2 Kings', '2 kgs': '2 Kings', '2kgs': '2 Kings',
+  '1 ch': '1 Chronicles', '1ch': '1 Chronicles', '1 chr': '1 Chronicles', '1chr': '1 Chronicles',
+  '1 chron': '1 Chronicles', '1chron': '1 Chronicles',
+  '2 ch': '2 Chronicles', '2ch': '2 Chronicles', '2 chr': '2 Chronicles', '2chr': '2 Chronicles',
+  '2 chron': '2 Chronicles', '2chron': '2 Chronicles',
+  ezr: 'Ezra', ezra: 'Ezra',
+  neh: 'Nehemiah',
+  est: 'Esther', esth: 'Esther',
+  job: 'Job',
+  psa: 'Psalms', ps: 'Psalms', psalm: 'Psalms', pss: 'Psalms',
+  pro: 'Proverbs', prov: 'Proverbs', prv: 'Proverbs',
+  ecc: 'Ecclesiastes', eccl: 'Ecclesiastes',
+  sng: 'Song of Solomon', sos: 'Song of Solomon', song: 'Song of Solomon',
+  isa: 'Isaiah',
+  jer: 'Jeremiah',
+  lam: 'Lamentations',
+  ezk: 'Ezekiel', eze: 'Ezekiel', ezek: 'Ezekiel',
+  dan: 'Daniel', dn: 'Daniel',
+  hos: 'Hosea',
+  jol: 'Joel', joel: 'Joel',
+  amo: 'Amos', amos: 'Amos',
+  oba: 'Obadiah', obad: 'Obadiah',
+  jon: 'Jonah', jonah: 'Jonah',
+  mic: 'Micah',
+  nah: 'Nahum',
+  hab: 'Habakkuk',
+  zep: 'Zephaniah', zeph: 'Zephaniah',
+  hag: 'Haggai',
+  zec: 'Zechariah', zech: 'Zechariah',
+  mal: 'Malachi',
+  // ─── New Testament ──────────────────────────────────────────────
+  mat: 'Matthew', matt: 'Matthew', mt: 'Matthew',
+  mar: 'Mark', mrk: 'Mark', mark: 'Mark', mk: 'Mark',
+  luk: 'Luke', luke: 'Luke', lk: 'Luke',
+  joh: 'John', jhn: 'John', john: 'John', jn: 'John',
+  act: 'Acts', acts: 'Acts',
+  rom: 'Romans',
+  '1 co': '1 Corinthians', '1co': '1 Corinthians', '1 cor': '1 Corinthians', '1cor': '1 Corinthians',
+  '2 co': '2 Corinthians', '2co': '2 Corinthians', '2 cor': '2 Corinthians', '2cor': '2 Corinthians',
+  gal: 'Galatians',
+  eph: 'Ephesians',
+  php: 'Philippians', phi: 'Philippians', phil: 'Philippians',
+  col: 'Colossians',
+  '1 th': '1 Thessalonians', '1th': '1 Thessalonians',
+  '1 thes': '1 Thessalonians', '1thes': '1 Thessalonians',
+  '1 thess': '1 Thessalonians', '1thess': '1 Thessalonians',
+  '2 th': '2 Thessalonians', '2th': '2 Thessalonians',
+  '2 thes': '2 Thessalonians', '2thes': '2 Thessalonians',
+  '2 thess': '2 Thessalonians', '2thess': '2 Thessalonians',
+  '1 ti': '1 Timothy', '1ti': '1 Timothy', '1 tim': '1 Timothy', '1tim': '1 Timothy',
+  '2 ti': '2 Timothy', '2ti': '2 Timothy', '2 tim': '2 Timothy', '2tim': '2 Timothy',
+  tit: 'Titus',
+  phm: 'Philemon', phlm: 'Philemon', phile: 'Philemon',
+  heb: 'Hebrews',
+  jas: 'James', jam: 'James',
+  '1 pe': '1 Peter', '1pe': '1 Peter', '1 pet': '1 Peter', '1pet': '1 Peter',
+  '2 pe': '2 Peter', '2pe': '2 Peter', '2 pet': '2 Peter', '2pet': '2 Peter',
+  '1 jn': '1 John', '1jn': '1 John', '1 jo': '1 John', '1jo': '1 John',
+  '1 john': '1 John', '1john': '1 John',
+  '2 jn': '2 John', '2jn': '2 John', '2 jo': '2 John', '2jo': '2 John',
+  '2 john': '2 John', '2john': '2 John',
+  '3 jn': '3 John', '3jn': '3 John', '3 jo': '3 John', '3jo': '3 John',
+  '3 john': '3 John', '3john': '3 John',
+  jud: 'Jude', jude: 'Jude',
+  rev: 'Revelation',
 }
 
 const BOOK_NAMES = Object.values(BOOK_ALIASES)
@@ -207,7 +273,17 @@ export const TRANSLATION_MAP: Record<string, string> = {
 // ──────────────────────────────────────────────
 const BOOK_NAMES_PATTERN = 'Genesis|Exodus|Leviticus|Numbers|Deuteronomy|Joshua|Judges|Ruth|1\\s*Samuel|2\\s*Samuel|1\\s*Kings|2\\s*Kings|1\\s*Chronicles|2\\s*Chronicles|Ezra|Nehemiah|Esther|Job|Psalms?|Proverbs|Ecclesiastes|Song\\s*of\\s*Solomon|Isaiah|Jeremiah|Lamentations|Ezekiel|Daniel|Hosea|Joel|Amos|Obadiah|Jonah|Micah|Nahum|Habakkuk|Zephaniah|Haggai|Zechariah|Malachi|Matthew|Mark|Luke|John|Acts|Romans|1\\s*Corinthians|2\\s*Corinthians|Galatians|Ephesians|Philippians|Colossians|1\\s*Thessalonians|2\\s*Thessalonians|1\\s*Timothy|2\\s*Timothy|Titus|Philemon|Hebrews|James|1\\s*Peter|2\\s*Peter|1\\s*John|2\\s*John|3\\s*John|Jude|Revelation'
 
-const BOOK_ABBR_PATTERN = 'Gen|Exo?|Lev|Num|Deut|Josh?|Judg|Ruth|1?\\s*Sam|2?\\s*Sam|1?\\s*Ki|2?\\s*Ki|1?\\s*Chron|2?\\s*Chron|Ezra?|Neh|Esth|Job|Ps|Prov|Eccl|Song|Isa|Jer|Lam|Eze|Dan|Hos|Joel|Amos|Obad|Jonah|Mic|Nah|Hab|Zeph|Hag|Zech|Mal|Matt?|Mark?|LK?|Jn|John|Acts?|Rom|1?\\s*Cor|2?\\s*Cor|Gal|Eph|Phil|Col|1?\\s*Thess|2?\\s*Thess|1?\\s*Tim|2?\\s*Tim|Tit|Phlm|Heb|Jas|1?\\s*Pet|2?\\s*Pet|1?\\s*Jn|2?\\s*Jn|3?\\s*Jn|Jude|Rev'
+// v0.7.154 — Auto-derived from BOOK_ALIASES so every alias added above
+// is automatically available to the regex-based detectors. Keys with a
+// space (e.g. "1 sam") have the space relaxed to `\s*` so both "1sam"
+// and "1 sam" match. Sorted by length DESC so longer aliases are tried
+// before shorter prefixes (so "Esth" wins over "Est" when both appear
+// in the same alternation).
+const BOOK_ABBR_PATTERN = Object.keys(BOOK_ALIASES)
+  .slice()
+  .sort((a, b) => b.length - a.length)
+  .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s*'))
+  .join('|')
 
 // v0.5.32 — STRICT verse number: requires the colon-form
 // "chapter:verse" so plain "John 3" (without context) NEVER matches.
@@ -278,11 +354,15 @@ function formatReference(book: string, chapter: number, verseStart: number, vers
 // Speech transcript detection still uses the strict VERSE_PATTERNS
 // above — those are intentionally stricter so conversational chatter
 // like "John had 3 apples" never commits as a Bible reference.
+// v0.7.154 — Verse separator accepts BOTH the colon ("joh 3:16") AND
+// whitespace ("joh 3 16") so operators can type either form. Range
+// dash still requires "-" / "–" so "joh 3 16 18" (would be ambiguous)
+// is NOT silently parsed as a range — only "joh 3 16-18" is.
 const LOOKUP_PATTERNS = [
-  // Full book name + chapter (+ optional :verse(-range))
-  new RegExp(`^([1-3]?\\s*(?:${BOOK_NAMES_PATTERN}))\\s+(\\d{1,3})(?::(\\d{1,3})(?:\\s*[-\\u2013]\\s*(\\d{1,3}))?)?\\s*$`, 'i'),
-  // Abbreviated book name + chapter (+ optional :verse(-range))
-  new RegExp(`^(${BOOK_ABBR_PATTERN})\\s+(\\d{1,3})(?::(\\d{1,3})(?:\\s*[-\\u2013]\\s*(\\d{1,3}))?)?\\s*$`, 'i'),
+  // Full book name + chapter (+ optional separator + verse(-range))
+  new RegExp(`^([1-3]?\\s*(?:${BOOK_NAMES_PATTERN}))\\s+(\\d{1,3})(?:(?:\\s*:\\s*|\\s+)(\\d{1,3})(?:\\s*[-\\u2013]\\s*(\\d{1,3}))?)?\\s*$`, 'i'),
+  // Abbreviated book name + chapter (+ optional separator + verse(-range))
+  new RegExp(`^(${BOOK_ABBR_PATTERN})\\s+(\\d{1,3})(?:(?:\\s*:\\s*|\\s+)(\\d{1,3})(?:\\s*[-\\u2013]\\s*(\\d{1,3}))?)?\\s*$`, 'i'),
 ]
 
 export function parseVerseReference(input: string): {

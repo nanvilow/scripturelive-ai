@@ -83,7 +83,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { toast } from 'sonner'
-import { cn } from '@/lib/utils'
+import { cn, isVideoBackground } from '@/lib/utils'
 import { NdiOutputPanel } from './ndi-output-panel'
 import { StartupCard } from './startup-card'
 import { OutputPreview } from '@/components/settings/output-preview'
@@ -1506,11 +1506,22 @@ export function SettingsView() {
                   other controls. Capped to a compact 240px thumbnail so
                   it behaves like a confirmation chip rather than a banner. */}
               <div className="relative rounded-lg overflow-hidden border border-border aspect-video bg-muted max-w-[240px]">
-                <img
-                  src={settings.customBackground}
-                  alt="Custom background"
-                  className="w-full h-full object-cover"
-                />
+                {isVideoBackground(settings.customBackground) ? (
+                  <video
+                    src={settings.customBackground}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <img
+                    src={settings.customBackground}
+                    alt="Custom background"
+                    className="w-full h-full object-cover"
+                  />
+                )}
                 <Button
                   variant="destructive"
                   size="icon"
@@ -1521,7 +1532,9 @@ export function SettingsView() {
                 </Button>
               </div>
               <div className="flex items-center gap-2">
-                <Badge variant="secondary" className="text-xs">Active</Badge>
+                <Badge variant="secondary" className="text-xs">
+                  {isVideoBackground(settings.customBackground) ? 'Video · Active' : 'Active'}
+                </Badge>
                 <span className="text-xs text-muted-foreground truncate">{settings.customBackground}</span>
               </div>
             </div>
@@ -1536,7 +1549,7 @@ export function SettingsView() {
                 <>
                   <Upload className="h-8 w-8 text-muted-foreground mb-2" />
                   <p className="text-sm font-medium text-foreground">Click to upload background</p>
-                  <p className="text-xs text-muted-foreground mt-1">PNG, JPEG, or WebP (max 10MB)</p>
+                  <p className="text-xs text-muted-foreground mt-1">Image (PNG, JPEG, WebP) or Video (MP4, WebM, MOV) — up to 3 GB</p>
                 </>
               )}
             </div>
@@ -1545,7 +1558,7 @@ export function SettingsView() {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/png,image/jpeg,image/webp"
+            accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,video/x-matroska"
             onChange={handleUploadBackground}
             className="hidden"
           />

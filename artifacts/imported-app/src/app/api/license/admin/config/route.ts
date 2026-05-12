@@ -67,6 +67,9 @@ interface SavePayload {
   /** v0.7.29 — Phase 2 v0.8.0 — LLM voice classifier opt-in. */
   enableLlmClassifier?: boolean | null
   llmClassifierConfidenceFloor?: number | null
+  /** v0.7.153 — Cross-device admin sync credential (the cloud
+   *  install's masterCode). Per-PC; never leaves this device. */
+  cloudAdminCode?: string | null
 }
 
 function clean(v: unknown): unknown {
@@ -104,6 +107,11 @@ export async function POST(req: NextRequest) {
   }
   if ('adminOpenAIKey' in body) patch.adminOpenAIKey = clean(body.adminOpenAIKey)
   if ('adminDeepgramKey' in body) patch.adminDeepgramKey = clean(body.adminDeepgramKey)
+  // v0.7.153 — Cross-device admin sync credential. Operator pastes
+  // the cloud install's masterCode here (visible on the cloud's Admin
+  // → Overview tab). Strictly per-PC; the storage layer's snapshot
+  // extractor strips this from any cloud push.
+  if ('cloudAdminCode' in body) patch.cloudAdminCode = clean(body.cloudAdminCode)
 
   // v0.7.29 — LLM voice classifier opt-in. Boolean: explicit null
   // clears the override; explicit boolean overrides; missing key is
