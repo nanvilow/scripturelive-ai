@@ -93,5 +93,16 @@ build-resources/*
 !build-resources/icon.ico
 !build-resources/icon.png
 !build-resources/entitlements.mac.plist
+# v0.7.175 — installer artwork + NSIS hook + license + bundled NDI runtime
+# MUST be tracked in git or the GitHub Actions Windows installer step
+# fails with `cannot find specified resource "build-resources/installerHeader.bmp"`.
+# Discovered v0.7.173 build red on CI (signtool/electron-builder NSIS phase).
+!build-resources/installerHeader.bmp
+!build-resources/installerSidebar.bmp
+!build-resources/uninstallerSidebar.bmp
+!build-resources/installer.nsh
+!build-resources/license.txt
+!build-resources/ndi/
+!build-resources/ndi/**
 db/
 
