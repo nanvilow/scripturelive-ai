@@ -78,7 +78,22 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    ~95vw on every surface (preview iframe + secondary screen + NDI
    capture, since they share this renderer). Pixel-WYSIWYG is
    preserved because the same defaults apply everywhere. */
-.lower-third{position:absolute;left:0;right:0;display:flex;align-items:center;justify-content:center;padding:0 2.5%;container-type:size}
+/* v0.7.173 — align-items: stretch (was: center). Operator complaint:
+   the lower-third frame on the in-app Live Display, secondary screen
+   and OBS browser source was visibly shrinking to hug the verse text
+   instead of staying frozen at the height bucket (sm/md/lg =
+   22/33/45 percent of the 16:9 frame). Root cause: align-items:center
+   on this flex parent let the .lt-box child collapse to its intrinsic
+   content height in some layout passes (Chromium recomputes percent
+   heights against the cross-axis, and height:100% on a centred flex
+   child can resolve to auto when the parent main-axis sizing is in
+   flight). Switching to stretch forces the .lt-box to fill the parent
+   bucket height on every surface — pixel-identical to the Lower Third
+   Settings preview, which already happened to render correctly because
+   its tighter aspect made the centred-vs-stretched difference invisible.
+   The .lt-box already carries justify-content:center so the verse text
+   continues to centre inside the (now properly stretched) frame. */
+.lower-third{position:absolute;left:0;right:0;display:flex;align-items:stretch;justify-content:center;padding:0 2.5%;container-type:size}
 .lower-third.bottom{bottom:6%}.lower-third.top{top:6%}
 /* Lower-third is now a rounded "card" that holds the verses. The
    upper area outside it stays transparent (#000) so any background
