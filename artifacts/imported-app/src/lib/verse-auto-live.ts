@@ -587,7 +587,7 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
     minFrames?: number
     holdMs?: number
     nowMs?: number
-    // v0.7.117 — Override the read-lock window (8 s default). Tests
+    // v0.7.117 — Override the read-lock window (4 s default as of v0.7.169). Tests
     // can pass 0 to disable.
     stickyMs?: number
     // v0.7.117 — Override the confidence delta required to break the

@@ -131,7 +131,7 @@ export interface LlmClassifierOptions {
   signal?: AbortSignal
   /** Response confidence floor; lower returns null. Default 70. */
   confidenceFloor?: number
-  /** Max wall-clock the dispatcher will tolerate. Default 1500 ms. */
+  /** Max wall-clock the dispatcher will tolerate. Default 1200 ms (v0.7.169). */
   timeoutMs?: number
 }
 
