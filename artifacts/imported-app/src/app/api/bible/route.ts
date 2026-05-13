@@ -8,7 +8,7 @@ import {
   isPoisonedVerseText,
   TRANSLATION_MAP,
 } from '@/lib/bible-api'
-import { lookupVerse, lookupRange, isTranslationBundled } from '@/lib/bibles/local-bible'
+import { lookupVerse, lookupRange, lookupChapter, isTranslationBundled } from '@/lib/bibles/local-bible'
 import type { BibleTranslation } from '@/lib/store'
 import { db } from '@/lib/db'
 
@@ -89,6 +89,35 @@ export async function GET(request: NextRequest) {
     const chapNum = parseInt(chapter, 10)
     if (!chapNum || chapNum < 1) {
       return NextResponse.json({ error: 'Invalid chapter' }, { status: 400 })
+    }
+    // v0.7.172 — Bundled-Bible chapter fast-path. Mirrors the
+    // single-verse fast-path above. Without this, an operator running
+    // offline (or behind a flaky church Wi-Fi) would type "Romans 8"
+    // into the Chapter Navigator with TWIASANTE selected, the route
+    // would skip straight past the cache check (empty on first run),
+    // fall through to `fetchBibleChapterFromAPI`, hit a network error,
+    // and return 404 → the UI showed "Chapter not found" even though
+    // the entire Asante Twi Bible was bundled inside the installer.
+    // Fix: try the bundled JSON first; if the chapter address is
+    // present, serve it directly with `source:'bundled'`. KJV / NIV /
+    // ESV / NKJV / NLT / AMP / TWIASANTE / EWE all work offline now.
+    // NOTE: must lowercase the translation key — `loadTranslation()`
+    // (the function `lookupChapter` ultimately calls) has a switch on
+    // `'kjv' | 'niv' | 'twiasante' | …` (lowercase), matching the
+    // literal `.json` filenames in `src/data/bibles/`. The route
+    // receives `'TWIASANTE'` (uppercase, the canonical key in
+    // `TRANSLATIONS_INFO`), so without the toLowerCase() here every
+    // lookup would silently miss and fall through to the network.
+    // The single-verse fast-path `lookupBundledVerse()` already does
+    // the same normalisation — see its first line.
+    const bundledChapter = lookupChapter(book, chapNum, translation.toLowerCase() as BibleTranslation)
+    if (bundledChapter) {
+      return NextResponse.json({
+        book, chapter: chapNum, translation,
+        verses: bundledChapter,
+        cached: true,
+        source: 'bundled',
+      })
     }
     // Offline cache hit?  /api/bible/translations populates this so
     // chapters fetched once (or downloaded in bulk) work without internet.

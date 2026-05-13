@@ -441,14 +441,14 @@ const TRANSLATION_ALIASES: Record<string, string> = {
   // LiveTranslationSync. "Akan" is included as the language family
   // alias preachers also use interchangeably; "Akuapem" is the
   // specific dialect of the underlying tw-wakna dataset.
-  'twi': 'TWI',
-  'twi version': 'TWI',
-  'twi bible': 'TWI',
-  'twi translation': 'TWI',
-  'akuapem': 'TWI',
-  'akuapem twi': 'TWI',
-  'akan': 'TWI',
-  'akan bible': 'TWI',
+  'twi': 'TWIASANTE',
+  'twi version': 'TWIASANTE',
+  'twi bible': 'TWIASANTE',
+  'twi translation': 'TWIASANTE',
+  'akuapem': 'TWIASANTE',
+  'akuapem twi': 'TWIASANTE',
+  'akan': 'TWIASANTE',
+  'akan bible': 'TWIASANTE',
   // v0.7.91 — Common mishearings of "Twi" by English-trained ASR
   // engines. Deepgram and Whisper trained primarily on American English
   // consistently transcribe the Akan word "Twi" (/tɕᶣi/, roughly
@@ -459,31 +459,31 @@ const TRANSLATION_ALIASES: Record<string, string> = {
   // intent never matched. Adding the phonetic neighbors with the
   // "version/bible/translation" suffix means we only fire on the
   // intent-loaded form (no false positives on a literal "tree").
-  'tree version': 'TWI',
-  'tree bible': 'TWI',
-  'tree translation': 'TWI',
-  'tweet version': 'TWI',
-  'tweet bible': 'TWI',
-  'twee version': 'TWI',
-  'twee bible': 'TWI',
-  'tweed version': 'TWI',
-  'tweed bible': 'TWI',
-  'chwee': 'TWI',
-  'chwee version': 'TWI',
-  'chwee bible': 'TWI',
-  'choi version': 'TWI',
-  'qui version': 'TWI',
-  'key version': 'TWI',
-  'she version': 'TWI',
-  'twi v': 'TWI',
-  'tw version': 'TWI',
-  'ghanaian version': 'TWI',
-  'ghana version': 'TWI',
-  'ghana bible': 'TWI',
-  'local version': 'TWI',
-  'local language': 'TWI',
-  'mother tongue': 'TWI',
-  'mother tongue version': 'TWI',
+  'tree version': 'TWIASANTE',
+  'tree bible': 'TWIASANTE',
+  'tree translation': 'TWIASANTE',
+  'tweet version': 'TWIASANTE',
+  'tweet bible': 'TWIASANTE',
+  'twee version': 'TWIASANTE',
+  'twee bible': 'TWIASANTE',
+  'tweed version': 'TWIASANTE',
+  'tweed bible': 'TWIASANTE',
+  'chwee': 'TWIASANTE',
+  'chwee version': 'TWIASANTE',
+  'chwee bible': 'TWIASANTE',
+  'choi version': 'TWIASANTE',
+  'qui version': 'TWIASANTE',
+  'key version': 'TWIASANTE',
+  'she version': 'TWIASANTE',
+  'twi v': 'TWIASANTE',
+  'tw version': 'TWIASANTE',
+  'ghanaian version': 'TWIASANTE',
+  'ghana version': 'TWIASANTE',
+  'ghana bible': 'TWIASANTE',
+  'local version': 'TWIASANTE',
+  'local language': 'TWIASANTE',
+  'mother tongue': 'TWIASANTE',
+  'mother tongue version': 'TWIASANTE',
   // v0.7.137 — Twerɛ Kronkron (Asante Twi via wldeh `tw-wasna`).
   'twere kronkron': 'TWIASANTE',
   'twere kronkron version': 'TWIASANTE',
@@ -501,6 +501,32 @@ const TRANSLATION_ALIASES: Record<string, string> = {
   'ashanti twi': 'TWIASANTE',
   'ashanti version': 'TWIASANTE',
   'ashanti bible': 'TWIASANTE',
+  // v0.7.163 — Operator-requested literal trigger phrases. Ghana
+  // operators sometimes count Bibles by ordinal ("the 3rd version")
+  // and want the phrase "give me 3 version" / "give me three version"
+  // / "give me 3rd version" / "third version" to swap straight to
+  // Twi Asante (Twerɛ Kronkron). Listed under multiple spellings
+  // because Deepgram and Whisper transcribe ordinals inconsistently
+  // ("3 version", "third version", "three version", "3rd version"
+  // all surface in real captures depending on the speaker's accent).
+  // We deliberately keep the trigger to the "<digit-or-word> version"
+  // shape so a literal mention of the number 3 in casual speech
+  // ("three of them came forward") never accidentally swaps the
+  // translation. The lead-in "give me " is added by callers; the
+  // alias matcher walks longest-first so these never lose to the
+  // bare "twi" alias.
+  '3 version': 'TWIASANTE',
+  '3rd version': 'TWIASANTE',
+  'three version': 'TWIASANTE',
+  'third version': 'TWIASANTE',
+  '3 bible': 'TWIASANTE',
+  '3rd bible': 'TWIASANTE',
+  'three bible': 'TWIASANTE',
+  'third bible': 'TWIASANTE',
+  'version 3': 'TWIASANTE',
+  'version three': 'TWIASANTE',
+  'bible 3': 'TWIASANTE',
+  'bible three': 'TWIASANTE',
   // v0.7.137 — Ewe (Agbenya La via wldeh `ee-oal`).
   'ewe': 'EWE',
   'ewe version': 'EWE',

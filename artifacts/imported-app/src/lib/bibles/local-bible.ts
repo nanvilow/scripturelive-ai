@@ -225,3 +225,37 @@ export function lookupRange(
   if (!lines.length) return null
   return { lines, text: lines.join('\n') }
 }
+
+/** v0.7.172 — Look up a whole chapter from the bundled JSON. Returns
+ *  the verse list in the shape the `/api/bible?book=&chapter=` route
+ *  emits (`{ verse, text }[]`). Returns null when the translation
+ *  isn't bundled OR the chapter address isn't in the data. Used by
+ *  the Chapter Navigator path so TWIASANTE / EWE / KJV / NIV / ESV /
+ *  NKJV / NLT / AMP chapters work offline (the prior code only
+ *  short-circuited single-verse lookups, leaving chapter mode going
+ *  straight to the network and failing offline with "Chapter not
+ *  found"). */
+export function lookupChapter(
+  book: string,
+  chapter: number,
+  translation: BibleTranslation,
+): Array<{ verse: number; text: string }> | null {
+  const data = loadTranslation(translation)
+  if (!data) return null
+  const b = data[book]
+  if (!b) return null
+  const c = b[String(chapter)]
+  if (!c) return null
+  const out: Array<{ verse: number; text: string }> = []
+  for (const k of Object.keys(c)) {
+    const n = Number(k)
+    if (!Number.isFinite(n) || n < 1) continue
+    const text = c[k]
+    if (typeof text === 'string' && text.trim()) {
+      out.push({ verse: n, text: text.trim() })
+    }
+  }
+  if (!out.length) return null
+  out.sort((a, b) => a.verse - b.verse)
+  return out
+}

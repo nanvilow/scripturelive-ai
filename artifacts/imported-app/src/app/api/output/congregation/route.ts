@@ -399,6 +399,21 @@ function settingsRenderKey(st){
     ndRfPos: st.ndiRefPosition,
     ndRfTs: st.ndiRefScale,
     ndTr: st.ndiTranslation,
+    /* v0.7.167 -- Lower-third typography pile (parallel to ndi-star
+       above). Honoured server-side only when USE_LT_OVERRIDES=true
+       (non-NDI && dm starts with lower-third), but included in the
+       key for every surface so any LT-only edit triggers an
+       immediate repaint on the preview/live/secondary/OBS without
+       waiting on an unrelated field to change. Without these the
+       render bails on key===lastRenderKey and the operator's slider
+       drag does nothing until the next slide swap. */
+    ltFf: st.lowerThirdFontFamily,
+    ltFs: st.lowerThirdFontSize,
+    ltSh: st.lowerThirdTextShadow,
+    ltTs: st.lowerThirdTextScale,
+    ltTa: st.lowerThirdTextAlign,
+    ltBc: st.lowerThirdBibleColor,
+    ltBlh: st.lowerThirdBibleLineHeight,
     // v0.6.4 — operator's NDI lower-third size multiplier. Re-render
     // the captured NDI window when the operator drags the slider so
     // vMix/OBS see the new bar height + text scale on the next tick.
@@ -693,7 +708,22 @@ function render(s){
   // projector, hymn slides, etc.) IS_NDI still gates the overrides
   // on the NDI surface alone, so the projector keeps its branded
   // typography unchanged.
-  var USE_NDI_OVERRIDES = IS_NDI || dm === 'lower-third';
+  /* v0.7.167 -- Carved lower-third typography off the NDI overrides.
+     Before this version, the v0.7.166 USE_NDI_OVERRIDES predicate
+     ORed in dm === lower-third so every lower-third surface (in-app
+     preview, live display, secondary screen, OBS Browser Source URL)
+     inherited the NDI broadcast typography. Operators wanted the
+     in-app lower-third independently controllable from the broadcast
+     lower-third. Now NDI keeps its own ndi-star override pile
+     (broadcast feed only), and the four non-NDI lower-third surfaces
+     read a parallel lowerThird-star pile that the operator controls
+     from Settings -> Display and Output -> Lower Third Typography.
+     Full-screen mode reads neither (body settings only).
+     GUARD-RAIL (replaces v0.7.166 GR-C): any new lower-third-like
+     display mode must propagate via dm.indexOf("lower-third")===0
+     -- that pattern catches lower-third AND lower-third-black. */
+  var USE_NDI_OVERRIDES = IS_NDI;
+  var USE_LT_OVERRIDES = !IS_NDI && dm && dm.indexOf('lower-third')===0;
   // v0.5.57 — NDI surface gets its own aspect ratio when set.
   // 'auto' or undefined → fall back to displayRatio (Live Display).
   var AR=(IS_NDI && st.ndiAspectRatio && st.ndiAspectRatio!=='auto')
@@ -726,25 +756,41 @@ function render(s){
   // use it. Otherwise fall back to the Live Display setting. The
   // reference typography (rf*) keeps its existing fallback chain
   // (rf || body), but the "body" source is now NDI-aware via T_*.
-  var T_FF=(USE_NDI_OVERRIDES && st.ndiFontFamily) ? st.ndiFontFamily : st.fontFamily;
-  var T_FS=(USE_NDI_OVERRIDES && st.ndiFontSize) ? st.ndiFontSize : (st.fontSize||'lg');
-  var T_SH_BOOL=(USE_NDI_OVERRIDES && (typeof st.ndiTextShadow==='boolean')) ? st.ndiTextShadow : (st.textShadow!==false);
-  var T_TS=(USE_NDI_OVERRIDES && (typeof st.ndiTextScale==='number')) ? st.ndiTextScale : (typeof st.textScale==='number'?st.textScale:1);
-  var T_TA=(USE_NDI_OVERRIDES && st.ndiTextAlign) ? st.ndiTextAlign : (st.textAlign||'center');
+  // v0.7.167 — Each typography slot now resolves through a 3-tier
+  // chain: NDI override (broadcast feed only) → LT override (in-app
+  // lower-third surfaces only) → body setting (full-screen + base
+  // fallback). Exactly one of USE_NDI_OVERRIDES / USE_LT_OVERRIDES
+  // can be true at a time, and full-screen mode passes through to
+  // body unchanged.
+  var T_FF=(USE_NDI_OVERRIDES && st.ndiFontFamily) ? st.ndiFontFamily
+    : ((USE_LT_OVERRIDES && st.lowerThirdFontFamily) ? st.lowerThirdFontFamily : st.fontFamily);
+  var T_FS=(USE_NDI_OVERRIDES && st.ndiFontSize) ? st.ndiFontSize
+    : ((USE_LT_OVERRIDES && st.lowerThirdFontSize) ? st.lowerThirdFontSize : (st.fontSize||'lg'));
+  var T_SH_BOOL=(USE_NDI_OVERRIDES && (typeof st.ndiTextShadow==='boolean')) ? st.ndiTextShadow
+    : ((USE_LT_OVERRIDES && (typeof st.lowerThirdTextShadow==='boolean')) ? st.lowerThirdTextShadow : (st.textShadow!==false));
+  var T_TS=(USE_NDI_OVERRIDES && (typeof st.ndiTextScale==='number')) ? st.ndiTextScale
+    : ((USE_LT_OVERRIDES && (typeof st.lowerThirdTextScale==='number')) ? st.lowerThirdTextScale : (typeof st.textScale==='number'?st.textScale:1));
+  var T_TA=(USE_NDI_OVERRIDES && st.ndiTextAlign) ? st.ndiTextAlign
+    : ((USE_LT_OVERRIDES && st.lowerThirdTextAlign) ? st.lowerThirdTextAlign : (st.textAlign||'center'));
   // v0.5.57 — NDI-only bible body color + line-height. Both are
   // pure CSS overrides applied to the .slide-text node only when
   // IS_NDI is true; the secondary screen keeps the theme defaults.
-  var T_COLOR=(USE_NDI_OVERRIDES && st.ndiBibleColor) ? st.ndiBibleColor : '';
+  // v0.7.167 — LT surfaces get their own color/line-height overrides
+  // too, gated on USE_LT_OVERRIDES.
+  var T_COLOR=(USE_NDI_OVERRIDES && st.ndiBibleColor) ? st.ndiBibleColor
+    : ((USE_LT_OVERRIDES && st.lowerThirdBibleColor) ? st.lowerThirdBibleColor : '');
   // v0.6.9 — Bible line-height now has a Live Display source too.
-  // NDI override > Live Display setting > 0 (no override). Previously
-  // this only honoured the NDI value, so the new operator-facing
-  // bibleLineHeight slider in the Typography panel had no effect
-  // on the secondary screen.
+  // NDI override > LT override > Live Display setting > 0 (no
+  // override). Previously this only honoured the NDI value, so the
+  // new operator-facing bibleLineHeight slider in the Typography
+  // panel had no effect on the secondary screen.
   var T_LH=(USE_NDI_OVERRIDES && typeof st.ndiBibleLineHeight==='number')
     ? Math.min(2.5, Math.max(0.9, st.ndiBibleLineHeight))
-    : (typeof st.bibleLineHeight==='number'
-      ? Math.min(2.5, Math.max(0.9, st.bibleLineHeight))
-      : 0);
+    : ((USE_LT_OVERRIDES && typeof st.lowerThirdBibleLineHeight==='number')
+      ? Math.min(2.5, Math.max(0.9, st.lowerThirdBibleLineHeight))
+      : (typeof st.bibleLineHeight==='number'
+        ? Math.min(2.5, Math.max(0.9, st.bibleLineHeight))
+        : 0));
   var bibleExtra=(T_COLOR?'color:'+T_COLOR+';':'')+(T_LH?'line-height:'+T_LH+';':'');
   var sh=T_SH_BOOL?'text-shadow:0 2px 12px rgba(0,0,0,.4);':'';
   var safeBg=safeBgUrl(st.customBackground);

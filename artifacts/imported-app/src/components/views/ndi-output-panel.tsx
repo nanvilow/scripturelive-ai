@@ -1141,7 +1141,14 @@ function NdiPreviewSurface(props: NdiPreviewSurfaceProps): React.JSX.Element {
   const src = (() => {
     const p = new URLSearchParams()
     p.set('ndi', '1')
-    p.set('transparent', '1')
+    // v0.7.159 — DO NOT pass `transparent=1` here. The actual NDI capture
+    // (a hidden FrameCapture BrowserWindow elsewhere in the Electron main
+    // process) keeps `transparent=1` so OBS / vMix get a clean alpha
+    // matte. THIS surface is the operator's WYSIWYG preview pane: they
+    // want to see the user's configured background image / video behind
+    // the lower-third bar, not a transparent void that flashes white
+    // through to the parent card. Dropping the param tells the renderer
+    // to paint customBackground, exactly like Settings PREVIEW does.
     if (props.ndiDisplayMode === 'lower-third') {
       p.set('lowerThird', '1')
       if (props.lowerThirdPosition === 'top') p.set('position', 'top')

@@ -243,13 +243,13 @@ export const TRANSLATIONS_INFO: Record<string, { name: string; full: string; abb
   CSB: { name: 'CSB', full: 'Christian Standard Bible', abbreviation: 'CSB', source: 'bolls' },
   MSG: { name: 'MSG', full: 'The Message', abbreviation: 'MSG', source: 'bolls' },
   RSV: { name: 'RSV', full: 'Revised Standard Version', abbreviation: 'RSV', source: 'bolls' },
-  // v0.7.77 — Twi (Akuapem) Bible. Sourced from the public-domain
-  // wldeh/bible-api dataset (`tw-wakna`). Implementation lives in
-  // src/lib/bibles/twi-bible.ts; routing handled by the source ===
-  // 'wldeh' branch in fetchBibleVerseFromAPI / fetchBibleChapterFromAPI.
-  // Lets a preacher say "give me the Twi version" mid-service and have
-  // the live verse swap to its Akuapem Twi text in place.
-  TWI: { name: 'TWI', full: 'Twi (Akuapem) Bible', abbreviation: 'tw-wakna', source: 'wldeh' },
+  // v0.7.163 — TWI (Akuapem, tw-wakna) entry removed per operator
+  // request: "remove this TWI, so that only TWIASANTE will be on the
+  // app". The earlier v0.7.77 TWI offering plus v0.7.137 TWIASANTE
+  // confused operators into thinking there were two competing Twi
+  // Bibles; we now ship only Asante Twi (Twerɛ Kronkron) and route
+  // every Twi/Akan/Akuapem alias to it. The wldeh `tw-wakna` chapter
+  // fetcher is gone with the TWI key — see twi-bible.ts.
   // v0.7.137 — Twerɛ Kronkron (Asante Twi). Operator request:
   // "add Ghanaian Twere Kronkron version". "Twerɛ Kronkron" is the
   // generic Twi name for "Holy Scripture"; the only Asante Twi

@@ -79,6 +79,16 @@ const api = {
   isDesktop: true as const,
   getInfo: (): Promise<AppInfo> => ipcRenderer.invoke('app:info'),
   /**
+   * v0.7.153 — Returns the local Next.js server's bound port and the
+   * machine's reachable LAN IPv4 addresses. Powers the "OBS Browser
+   * Source URL" card in the NDI Output panel: the renderer builds
+   * `http://<localUrl-or-LAN-ip>:<port>/api/output/congregation?transparent=1`
+   * for operators to paste into OBS on the same PC OR a different
+   * PC on the same Wi-Fi (zero plugin install — no DistroAV needed).
+   */
+  getServerInfo: (): Promise<{ port: number; localUrl: string; lanIps: string[] }> =>
+    ipcRenderer.invoke('app:get-server-info'),
+  /**
    * v0.6.6 — Open the Windows "Apps & features" Settings page so the
    * operator can uninstall the previous ScriptureLive build before
    * installing a new one. The update dialog surfaces a button that

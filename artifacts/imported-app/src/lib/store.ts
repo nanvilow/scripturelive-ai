@@ -199,6 +199,31 @@ export interface AppSettings {
   ndiTextScale?: number
   ndiTextAlign?: 'left' | 'center' | 'right' | 'justify'
 
+  // ── Lower-Third-only typography overrides (v0.7.167) ───────────
+  // Mirror of the ndi* block above, but for the IN-APP lower-third
+  // surfaces ONLY: Settings → "PREVIEW (LOWER THIRD)" box, the
+  // operator's live display window when displayMode==='lower-third',
+  // the secondary screen / projector when displayMode==='lower-third',
+  // and the OBS Browser Source URL fallback at /api/output/congregation
+  // (when the route resolves dm==='lower-third' AND IS_NDI is false).
+  // The actual NDI capture surface keeps reading the ndi* fields
+  // above so vMix/OBS broadcast feeds are decoupled from the in-room
+  // lower-third look — operators can run the in-room lower-third in
+  // a big sans-serif chyron AND a separate broadcast lower-third in
+  // a smaller serif without one disturbing the other.
+  //
+  // Resolution chain in route.ts: IS_NDI → ndi* override → fall back
+  // to body. Non-NDI lower-third (preview/live/secondary/OBS) →
+  // lowerThird* override → fall back to body. Full-screen → body
+  // only (lower-third keys are NEVER read).
+  lowerThirdFontFamily?: string
+  lowerThirdFontSize?: 'sm' | 'md' | 'lg' | 'xl'
+  lowerThirdTextShadow?: boolean
+  lowerThirdTextScale?: number
+  lowerThirdTextAlign?: 'left' | 'center' | 'right' | 'justify'
+  lowerThirdBibleColor?: string
+  lowerThirdBibleLineHeight?: number
+
   // ── NDI-only display + reference overrides (v0.5.57) ───────────
   // The NDI feed used to share aspect-ratio + reference typography
   // with Live Display. Operators piping into vMix / OBS asked for
@@ -703,6 +728,17 @@ const defaultSettings: AppSettings = {
   ndiTextShadow: undefined,
   ndiTextScale: undefined,
   ndiTextAlign: undefined,
+  // v0.7.167 — Lower-third typography overrides default to undefined
+  // so a fresh install paints lower-third with the same body
+  // typography as full-screen. Operators opt-in via the new
+  // "Lower Third Typography" controls in Settings → Display & Output.
+  lowerThirdFontFamily: undefined,
+  lowerThirdFontSize: undefined,
+  lowerThirdTextShadow: undefined,
+  lowerThirdTextScale: undefined,
+  lowerThirdTextAlign: undefined,
+  lowerThirdBibleColor: undefined,
+  lowerThirdBibleLineHeight: undefined,
   // v0.5.57 — All undefined so existing operators see no behaviour
   // change until they explicitly opt-in via the NDI Settings panel.
   ndiAspectRatio: undefined,
@@ -1135,11 +1171,12 @@ export const useAppStore = create<AppState>()(
       // automatically, but every field they explicitly set survives.
       // This stops the "I upgraded and my trial reset / my fonts
       // changed / my mic gain went back to 1" complaints.
-      version: 3,
+      version: 4,
       migrate: (persistedState: unknown, version: number) => {
         const ps = (persistedState as {
-          settings?: Partial<AppSettings>
+          settings?: Partial<AppSettings> & { defaultTranslation?: string; ndiTranslation?: string }
           voiceControlEnabled?: boolean
+          selectedTranslation?: string
         } | undefined) ?? {}
         // v0.5.34 → v1: flip autoGoLiveOnDetection on for early adopters.
         if (version < 1) {
@@ -1182,6 +1219,40 @@ export const useAppStore = create<AppState>()(
           return {
             ...ps,
             voiceControlEnabled: true,
+          }
+        }
+        // v0.7.167 → v4: rewrite persisted Akuapem 'TWI' → 'TWIASANTE'.
+        // v0.7.163 dropped the Akuapem TWI key from TRANSLATIONS_INFO,
+        // but seats that ran v0.7.137–v0.7.162 still had 'TWI' baked
+        // into their persisted store under three keys:
+        //   - settings.defaultTranslation
+        //   - settings.ndiTranslation
+        //   - selectedTranslation
+        // After the upgrade those values become orphans: not in the
+        // dropdown options list, but still rendered as the SELECTED
+        // label and still sent to /api/bible as translation='TWI'.
+        // Result: operators saw "TWI" stuck in the header dropdown
+        // and on the verse badge, and the API silently fell through
+        // to whatever code path used to fetch Akuapem text. This
+        // migration is a one-time rewrite — anyone whose persisted
+        // value was ALREADY 'TWIASANTE' or any other key passes
+        // through untouched.
+        if (version < 4) {
+          const s = (ps.settings ?? {}) as Partial<AppSettings> & { defaultTranslation?: string; ndiTranslation?: string }
+          const fixedSettings: typeof s = { ...s }
+          if (s.defaultTranslation === ('TWI' as string)) {
+            fixedSettings.defaultTranslation = 'TWIASANTE' as BibleTranslation
+          }
+          if (s.ndiTranslation === ('TWI' as string)) {
+            fixedSettings.ndiTranslation = 'TWIASANTE' as BibleTranslation
+          }
+          const fixedSelected = (ps.selectedTranslation === ('TWI' as string))
+            ? ('TWIASANTE' as BibleTranslation)
+            : ps.selectedTranslation
+          return {
+            ...ps,
+            settings: fixedSettings,
+            selectedTranslation: fixedSelected,
           }
         }
         return ps
