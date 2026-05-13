@@ -137,14 +137,17 @@ export interface LlmClassifierOptions {
 
 const DEFAULT_MODEL = 'gpt-4o-mini'
 const DEFAULT_CONFIDENCE_FLOOR = 70
-// v0.7.93 — Lowered 1500 → 800 ms after operator reports the LLM
-// fallback was perceptibly delaying commands during live services.
-// gpt-4o-mini with response_format JSON typically returns in 250-
-// 600 ms; 800 ms keeps headroom for a slow round-trip while failing
-// fast on a true outlier. Anything slower than 800 ms is worse than
-// just falling back to "I didn't catch that" and letting the
-// operator repeat.
-const DEFAULT_TIMEOUT_MS = 800
+// v0.7.169 — Raised 800 → 1200 ms after operator reported the LLM
+// classifier "very slow in detecting and very slow in listening
+// accurately." The v0.7.93 800 ms cap was tuned for an OpenAI median
+// of 250-600 ms but in field use Ghana-region church Wi-Fi pushes the
+// p90 round-trip to 900-1100 ms; 800 ms was timing out roughly 1-in-3
+// classifications, dropping them to "I didn't catch that" silently
+// and giving the perception of a slow/inaccurate detector. 1200 ms
+// adds enough headroom to clear the slow-network p90 while still
+// failing fast on a true outage. If the operator reports the
+// opposite (commands feel laggy on fast wifi), drop back to 1000 ms.
+const DEFAULT_TIMEOUT_MS = 1200
 
 const SYSTEM_PROMPT = [
   'You are an intent classifier for a church livestream operator app.',
@@ -168,12 +171,12 @@ const SYSTEM_PROMPT = [
   '  - Set intent to null and confidence to 0 when the utterance is not a command (e.g. preaching, prayer, filler).',
   '  - confidence is your honest 0..100 estimate. If unsure, choose < 70 so the dispatcher can ask for clarification.',
   '  - Resolve deictic phrases ("next one", "back two") using the supplied context.',
-  '  - For change_translation, normalise to a short code: niv, kjv, esv, amp, msg, nkjv, nlt, nasb, twi.',
-  '    "twi" maps to the Twi (Akan) Bible — recognise utterances like "give me twi version", "switch to twi", "Asante Twi", "Akan Bible", "twi please", or any utterance containing the word "twi" / "akan" as the change_translation intent with args.translation = "twi".',
+  '  - For change_translation, normalise to a short code: niv, kjv, esv, amp, msg, nkjv, nlt, nasb, twiasante.',
+  '    "twiasante" maps to the Asante Twi (Twerɛ Kronkron) Bible — the only Ghanaian Twi we ship as of v0.7.163. Recognise utterances like "give me twi version", "switch to twi", "Asante Twi", "Akan Bible", "twi please", "Akuapem Twi" (legacy alias — the Akuapem fetcher is gone, route to twiasante), or any utterance containing "twi" / "akan" / "akuapem" as the change_translation intent with args.translation = "twiasante".',
   '    The Akan word "Twi" is pronounced "chwee" (/tɕᶣi/). English-trained ASR engines (Deepgram, Whisper) consistently mis-transcribe it.',
   '    Treat ALL of these mis-hearings as the SAME twi intent when followed by "version" / "bible" / "translation" OR after a lead-in verb like "give me" / "switch to" / "change to":',
   '      tree, tweet, twee, tweed, chwee, choi, qui, key, she, ghana, ghanaian, akuapem, asante, fante, local, mother tongue.',
-  '    Examples that MUST classify as change_translation with args.translation = "twi" at high confidence:',
+  '    Examples that MUST classify as change_translation with args.translation = "twiasante" at high confidence:',
   '      "give me the tree version", "switch to tweet bible", "chwee version please", "akan translation",',
   '      "the local language", "mother tongue version", "twi please", "akuapem bible".',
   '    Confidence on these should be ≥ 90 — operators in Ghana ask for this multiple times per service and a missed switch is a visible production error.',
