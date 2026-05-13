@@ -1,3 +1,47 @@
+## v0.7.174 — Bible-Book Homophone Normaliser (Ruth → "Root"/"Roach" Field Bug)
+
+Operator field-report after upgrading to v0.7.173: "i was saying Ruth chapter 6 verse 1 but see what came 'Roach top touch is best. Root. Root chapter 6 verses. Root chapter 6 verses.'"
+
+Even though `Ruth` is in the `BIBLE_KEYTERMS` list fed to Deepgram Nova-3 (`artifacts/api-server/src/lib/deepgram-keyterms.ts`) AND the renderer's direct WSS path (`use-deepgram-streaming.ts:420`) on every connection, Deepgram's keyterm boost is a SOFT bias — short single-syllable Bible book names ("Ruth", "Job", "Jude", "Acts") still come back as their nearest acoustic neighbours under noisy stage mics, Ghanaian English vowel shifts, or fast pulpit cadence. The streaming model isn't going to be re-trained from our side; the right place to fix this is one layer DOWNSTREAM in the verse parser, since EVERY mishear of a book name in a verse-reference context follows the same structural pattern: the wrong token sits immediately before "chapter", a digit, or a spoken number-word — a context window that is unique to verse references in English.
+
+### Fix — `BOOK_HOMOPHONES` table + `normalizeBookHomophones()` (`src/lib/bible-api.ts` ~line 545)
+
+10-row table of `[regex-pattern, correct-book-name]` pairs covering the highest-confidence mishears:
+
+- Ruth ← root / roots / roach / roof / route / rooth / ruse
+- Job ← joe / jobe
+- Jude ← dude / jewed
+- Amos ← ammos
+- Titus ← tightest
+- Habakkuk ← "had a cook" / "have a cook" (phrase-level)
+- Malachi ← malarkey
+- Joel ← jewel
+- Acts ← axe / ax
+- Hosea ← hoseah / hosier
+
+The rewrite ONLY fires when the mishear is followed (allowing punctuation) by `chapter`, a 1-3 digit number, or a number-word (`one`/`two`/.../`hundred`/ordinals). That guard means everyday English ("the root of the problem", "Mark the date", "axe the budget") is NEVER touched — the regex looks like:
+
+```
+\b(root|roots|roach|...)\b[\s,.:;!?]+(chapter\b|\d{1,3}\b|<num-word-stem>\b)
+```
+
+per pattern. Hooked into the existing `normalizeSpokenNumbers()` as the FIRST step (before the ordinal-prefix pass) so the downstream number-word collapser ("six" → "6") and every regex pattern (1)-(7) in `BOOK_NAMES_PATTERN` see the corrected book name. Both call sites (`bible-api.ts:632` extract pipeline, `bible-api.ts:1226` parser entry) automatically inherit the fix.
+
+### Files
+
+- `artifacts/imported-app/src/lib/bible-api.ts` (+~52 lines: BOOK_HOMOPHONES table + NUM_WORD_STEM constant + normalizeBookHomophones() + 1-line wire into normalizeSpokenNumbers)
+- `package.json` + `BUILD.bat` banner bumped to 0.7.174
+
+Tests: `tsc --noEmit` clean.
+
+### GUARD-RAILS
+
+- **(A)** Every BOOK_HOMOPHONES entry MUST require a verse-reference context follower (`chapter`, digit, or number-word) — NEVER add a bare `\b<word>\b → <book>` rule. The whole reason this fix is safe is the structural uniqueness of "<word> chapter <num>" / "<word> <num> <num>" in English. A bare rewrite would clobber sermon prose ("the root of all evil", "axe to grind", "tightest grip").
+- **(B)** When the operator reports a NEW mishear, add the pair to `BOOK_HOMOPHONES` — do NOT try to escalate Deepgram biasing (raising keyterm count past ~50 starts hurting recall on adjacent words; we're already at 80+). The downstream rewrite is cheaper, deterministic, and survives provider swaps (if we ever route some users through Whisper or browser STT, the homophone table still works).
+- **(C)** Deepgram's keyterm boost is necessary but NOT sufficient for short single-syllable Bible book names. The acoustic neighbour set (Ruth↔root↔roach, Jude↔dude, Amos↔famous, Job↔joe) is a known limitation of Nova-3's English acoustic model on noisy live stages. Future single-syllable additions to the canon (none expected, but e.g. if we add Greek/Hebrew names) MUST get a homophone audit before the first field deployment.
+
+---
+
 ## v0.7.173
 -   **Admin Slowness Cache + LT Frame Frozen on Every Surface + Baked Cloud Code Rotation (v0.7.173)**: Operator hit three issues in one cycle: (a) admin panel sluggish to open and tabs slow to switch, (b) cross-device sync header pill stuck on "wrong key" on every desktop install, (c) the lower-third frame on the in-app Live Display, secondary screen and OBS browser source was visibly shrinking to hug the verse text instead of staying frozen at the operator'''s height bucket — and the v0.7.172 lower-third plate background was bleeding into video feeds.
     - **Fix A — admin TTL cache (`src/lib/licensing/cloud-pull-cache.ts` NEW)**: every `/api/license/admin/list`, `/admin/codes`, `/admin/config` GET handler used to `await cloudPullAdminLedger()` with its own 4 s timeout, so opening the modal fired 3 sequential 4-second cloud round-trips and every tab switch repeated the work. New `cloudPullAdminLedgerCached()` wrapper holds a 30 s TTL per `installId`, coalesces concurrent callers behind a single in-flight promise, drops the per-call timeout to 2 s, and after 5 s serves a stale snapshot synchronously while a background revalidation runs — so the FIRST cold call costs ≤2 s, every subsequent call inside the next 30 s costs ~0 ms, and stale-while-revalidate keeps the UI responsive on weak Ghana Wi-Fi without ever blocking the response. All three GET handlers refactored to call the cached helper.
