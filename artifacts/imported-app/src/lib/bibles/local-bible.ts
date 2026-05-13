@@ -56,17 +56,33 @@ function isPopulated(d: unknown): d is TranslationMap {
 function fsFallback(t: BibleTranslation): TranslationMap | null {
   if (typeof window !== 'undefined') return null
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('node:fs') as typeof import('node:fs')
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const path = require('node:path') as typeof import('node:path')
+    // v0.7.171 — `require('node:fs')` and `require('node:path')` MUST
+    // be resolved through `eval('require')` rather than the static
+    // `require()` form. Reason: `local-bible.ts` is imported by the
+    // client component `live-translation-sync.tsx`, which means
+    // webpack's CLIENT pass for the production build follows it into
+    // the page bundle. Static `require('node:fs')` is statically
+    // detected by webpack 5 and crashes with `UnhandledSchemeError:
+    // Reading from "node:fs" is not handled by plugins (Unhandled
+    // scheme)` — this broke the GitHub Actions Windows installer
+    // build for v0.7.168/v0.7.169/v0.7.170 even though it ran fine in
+    // dev under Turbopack. `eval('require')` evaluates at runtime so
+    // the bundler never sees it on the client side; on the Node side
+    // it resolves normally.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, no-eval
+    const nodeRequire: NodeJS.Require = eval('require')
+    const fs = nodeRequire('node:fs') as typeof import('node:fs')
+    const path = nodeRequire('node:path') as typeof import('node:path')
     const fname = `${t}.json`
     const candidates = [
       path.join(process.cwd(), 'src', 'data', 'bibles', fname),
       // Standalone packaged path (process.cwd() === .next/standalone/artifacts/imported-app)
       path.join(process.cwd(), 'artifacts', 'imported-app', 'src', 'data', 'bibles', fname),
-      // Resolve-from-here as last resort
-      path.join(__dirname, '..', '..', 'data', 'bibles', fname),
+      // Resolve-from-here as last resort. `__dirname` only exists in
+      // CJS contexts; guard with typeof to keep ESM/edge happy.
+      ...(typeof __dirname !== 'undefined'
+        ? [path.join(__dirname, '..', '..', 'data', 'bibles', fname)]
+        : []),
     ]
     for (const p of candidates) {
       try {
