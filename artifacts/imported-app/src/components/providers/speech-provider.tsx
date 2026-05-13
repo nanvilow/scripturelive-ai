@@ -1878,7 +1878,14 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       // We dedupe per-reference inside this hook AND inside
       // addDetectedVerseCandidate (which skips already-present refs)
       // so the same suggestion can't pile up across chunks.
-      const SEMANTIC_THROTTLE_MS = 1500
+      // v0.7.169 — Lowered 1500 → 1000 ms after operator reported the
+      // AI detector felt slow. 1500 ms throttle meant up to a 1.5 s
+      // gap between consecutive semantic-match probes during a fast
+      // sermon, which left visible dead-air on the "Bible Reference
+      // Quoted" column. 1000 ms still rate-limits the OpenAI semantic
+      // endpoint (~1 req/sec/seat is comfortable headroom under the
+      // gpt-4o-mini ceiling) while doubling responsiveness perception.
+      const SEMANTIC_THROTTLE_MS = 1000
       if (
         allWords.length >= minWords &&
         keywords.length >= minKeywords &&

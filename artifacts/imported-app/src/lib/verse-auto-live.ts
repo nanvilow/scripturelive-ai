@@ -157,10 +157,18 @@ export const LIVE_HOLD_MS = 500
 //   3. Otherwise allow — a clearly-better detection (e.g. an explicit
 //      regex hit at 0.95 when current live is a semantic 0.65) WILL
 //      override even within the read-lock.
-// After the 8 s window the helper falls back to v0.7.116's normal
+// After the 4 s window the helper falls back to v0.7.116's normal
 // 500 ms dwell and the operator gets responsive cross-column swaps
-// for the next verse the preacher quotes.
-export const LIVE_STICKY_MS = 8000
+// for the next verse the preacher quotes. v0.7.169: lowered from
+// 8000 → 4000 after operator reported "AI detector very slow at
+// detecting and very slow at listening accurately." The previous 8 s
+// window was tuned to filter near-miss noise but in field use it
+// made the projector feel "stuck" for a full 8 s after every verse —
+// preachers move on faster than that. 4 s still filters out the
+// catalogue-near-miss flutter (which collapses within 1-2 s of the
+// initial detection) but unblocks responsive cross-column swaps for
+// rapid sermon flow.
+export const LIVE_STICKY_MS = 4000
 
 // Minimum confidence delta required for a new candidate to override
 // the live verse during the read-lock window. 0.10 is large enough
@@ -579,7 +587,7 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
     minFrames?: number
     holdMs?: number
     nowMs?: number
-    // v0.7.117 — Override the read-lock window (8 s default). Tests
+    // v0.7.117 — Override the read-lock window (4 s default as of v0.7.169). Tests
     // can pass 0 to disable.
     stickyMs?: number
     // v0.7.117 — Override the confidence delta required to break the

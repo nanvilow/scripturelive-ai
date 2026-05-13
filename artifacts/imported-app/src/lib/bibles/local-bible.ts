@@ -34,6 +34,57 @@ function isPopulated(d: unknown): d is TranslationMap {
   )
 }
 
+// v0.7.168 — Server-side filesystem fallback. In packaged Electron
+// (`output: 'standalone'` + electron-builder) the 4-MB-each bible JSONs
+// can be split out of the webpack chunk graph instead of inlined; when
+// that happens the `require('@/data/bibles/<key>.json')` below resolves
+// to an empty object at runtime and `isTranslationBundled` returns
+// false, dropping the operator to the online fetch path. Offline service
+// then breaks. We fix this in TWO complementary places:
+//   (1) next.config.ts adds `outputFileTracingIncludes` so the literal
+//       `src/data/bibles/*.json` files are guaranteed to be copied into
+//       `.next/standalone/artifacts/imported-app/src/data/bibles/`.
+//   (2) The fallback below tries to read the file directly via `fs`
+//       when the webpack require returned an empty stub. Three
+//       candidate paths cover dev (artifact root cwd), packaged
+//       Electron (standalone artifact cwd), and any unexpected
+//       working-directory drift.
+// The fallback is server-only (`typeof window === 'undefined'`); the
+// renderer keeps using the webpack-inlined chunk path which DOES work
+// reliably client-side because the JSON ends up in static chunks the
+// postbuild script copies wholesale.
+function fsFallback(t: BibleTranslation): TranslationMap | null {
+  if (typeof window !== 'undefined') return null
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('node:fs') as typeof import('node:fs')
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require('node:path') as typeof import('node:path')
+    const fname = `${t}.json`
+    const candidates = [
+      path.join(process.cwd(), 'src', 'data', 'bibles', fname),
+      // Standalone packaged path (process.cwd() === .next/standalone/artifacts/imported-app)
+      path.join(process.cwd(), 'artifacts', 'imported-app', 'src', 'data', 'bibles', fname),
+      // Resolve-from-here as last resort
+      path.join(__dirname, '..', '..', 'data', 'bibles', fname),
+    ]
+    for (const p of candidates) {
+      try {
+        if (fs.existsSync(p)) {
+          const txt = fs.readFileSync(p, 'utf8')
+          const parsed = JSON.parse(txt) as unknown
+          if (isPopulated(parsed)) return parsed
+        }
+      } catch {
+        /* try next candidate */
+      }
+    }
+  } catch {
+    /* fs/path unavailable (browser) — caller already short-circuited */
+  }
+  return null
+}
+
 function loadTranslation(t: BibleTranslation): TranslationMap | null {
   if (t in cache) return cache[t] ?? null
   try {
@@ -87,15 +138,22 @@ function loadTranslation(t: BibleTranslation): TranslationMap | null {
       raw && typeof raw === 'object' && 'default' in (raw as object)
         ? (raw as { default?: unknown }).default
         : raw
-    const resolved = isPopulated(unwrapped) ? unwrapped : null
+    let resolved = isPopulated(unwrapped) ? unwrapped : null
+    if (!resolved) {
+      // v0.7.168 — webpack returned an empty stub (or chunk-split the
+      // 4 MB JSON in a way that didn't inline). Try the server-side
+      // filesystem fallback before giving up.
+      resolved = fsFallback(t)
+    }
     cache[t] = resolved
     return resolved
   } catch {
-    // require() failure (stub missing in some pathological dev setup)
-    // → behave exactly like the empty-stub case so the speech path
-    // still works via the online fallback.
-    cache[t] = null
-    return null
+    // require() failure (stub missing in some pathological dev setup
+    // or bundler chunk-split). Try fs fallback once more before
+    // surrendering to the online path.
+    const resolved = fsFallback(t)
+    cache[t] = resolved
+    return resolved
   }
 }
 

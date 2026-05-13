@@ -1013,3 +1013,15 @@ id = "obimcDjSmhUmfdQ9QvlOK"
 uri = "file://exports/ScriptureLive-AI-v0.7.166-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.166 — Windows source"
+
+[[outputs]]
+id = "Q1o9Y-ofoRCx9IogfNYfD"
+uri = "file://exports/ScriptureLive-AI-v0.7.168-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.168 — Offline Bibles Fix"
+
+[[outputs]]
+id = "MtloutIOY0Nb6HsOWgn9Z"
+uri = "file://exports/ScriptureLive-AI-v0.7.169-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.169 — LLM + AI Detector Responsiveness"

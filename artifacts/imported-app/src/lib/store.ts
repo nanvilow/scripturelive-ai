@@ -1171,11 +1171,12 @@ export const useAppStore = create<AppState>()(
       // automatically, but every field they explicitly set survives.
       // This stops the "I upgraded and my trial reset / my fonts
       // changed / my mic gain went back to 1" complaints.
-      version: 3,
+      version: 4,
       migrate: (persistedState: unknown, version: number) => {
         const ps = (persistedState as {
-          settings?: Partial<AppSettings>
+          settings?: Partial<AppSettings> & { defaultTranslation?: string; ndiTranslation?: string }
           voiceControlEnabled?: boolean
+          selectedTranslation?: string
         } | undefined) ?? {}
         // v0.5.34 → v1: flip autoGoLiveOnDetection on for early adopters.
         if (version < 1) {
@@ -1218,6 +1219,40 @@ export const useAppStore = create<AppState>()(
           return {
             ...ps,
             voiceControlEnabled: true,
+          }
+        }
+        // v0.7.167 → v4: rewrite persisted Akuapem 'TWI' → 'TWIASANTE'.
+        // v0.7.163 dropped the Akuapem TWI key from TRANSLATIONS_INFO,
+        // but seats that ran v0.7.137–v0.7.162 still had 'TWI' baked
+        // into their persisted store under three keys:
+        //   - settings.defaultTranslation
+        //   - settings.ndiTranslation
+        //   - selectedTranslation
+        // After the upgrade those values become orphans: not in the
+        // dropdown options list, but still rendered as the SELECTED
+        // label and still sent to /api/bible as translation='TWI'.
+        // Result: operators saw "TWI" stuck in the header dropdown
+        // and on the verse badge, and the API silently fell through
+        // to whatever code path used to fetch Akuapem text. This
+        // migration is a one-time rewrite — anyone whose persisted
+        // value was ALREADY 'TWIASANTE' or any other key passes
+        // through untouched.
+        if (version < 4) {
+          const s = (ps.settings ?? {}) as Partial<AppSettings> & { defaultTranslation?: string; ndiTranslation?: string }
+          const fixedSettings: typeof s = { ...s }
+          if (s.defaultTranslation === ('TWI' as string)) {
+            fixedSettings.defaultTranslation = 'TWIASANTE' as BibleTranslation
+          }
+          if (s.ndiTranslation === ('TWI' as string)) {
+            fixedSettings.ndiTranslation = 'TWIASANTE' as BibleTranslation
+          }
+          const fixedSelected = (ps.selectedTranslation === ('TWI' as string))
+            ? ('TWIASANTE' as BibleTranslation)
+            : ps.selectedTranslation
+          return {
+            ...ps,
+            settings: fixedSettings,
+            selectedTranslation: fixedSelected,
           }
         }
         return ps
