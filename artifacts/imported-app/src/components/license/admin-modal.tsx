@@ -490,6 +490,13 @@ export function AdminModal() {
   const [actSelected, setActSelected] = useState<Set<string>>(new Set())
   const [codesSelectMode, setCodesSelectMode] = useState(false)
   const [codesSelected, setCodesSelected] = useState<Set<string>>(new Set())
+  // v0.7.172 — Notifications now get the same Select / Select-All /
+  // Bulk-Delete pattern as Recent Payments + Recent Activations. The
+  // operator's audit log was previously only deletable one row at a
+  // time, which became unusable once the log grew past a few dozen
+  // entries (an SMTP outage can queue hundreds in a single morning).
+  const [notifSelectMode, setNotifSelectMode] = useState(false)
+  const [notifSelected, setNotifSelected] = useState<Set<string>>(new Set())
   // Helper: toggle a single id in/out of a Set without mutating it.
   const toggleSet = (set: Set<string>, id: string): Set<string> => {
     const next = new Set(set)
@@ -504,6 +511,7 @@ export function AdminModal() {
       setPaySelectMode(false); setPaySelected(new Set())
       setActSelectMode(false); setActSelected(new Set())
       setCodesSelectMode(false); setCodesSelected(new Set())
+      setNotifSelectMode(false); setNotifSelected(new Set())
       setPending(null); setPendingValue(''); setPendingBusy(false)
     }
   }, [open])
@@ -817,6 +825,7 @@ export function AdminModal() {
       // Clear the corresponding selection set + reload data.
       if (kind === 'payment') { setPaySelected(new Set()); setPaySelectMode(false) }
       if (kind === 'activation') { setActSelected(new Set()); setActSelectMode(false); setCodesSelected(new Set()); setCodesSelectMode(false) }
+      if (kind === 'notification') { setNotifSelected(new Set()); setNotifSelectMode(false) }
       await reload()
       await reloadCodes()
       await refresh()
@@ -2261,17 +2270,99 @@ export function AdminModal() {
               </div>
             </section>
 
-            {/* ── Notification audit log ───────────────────────────────── */}
+            {/* ── Notification audit log ─────────────────────────────────
+                v0.7.172 — Brought into parity with Recent Payments /
+                Recent Activations: Select toggle in the header reveals
+                a checkbox in front of every row + a master Select-All
+                checkbox in a sticky-ish header strip. Bulk action bar
+                with "Delete (N)" appears whenever any row is ticked.
+                Bulk delete reuses the existing
+                /api/license/admin/bulk-delete endpoint with kind='notification'
+                so no backend change required. */}
             <section>
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Notifications ({data.notifications.length})</div>
+              <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Notifications ({data.notifications.length})</div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="sm" variant="ghost"
+                    className={cn('h-7 text-[10px]', notifSelectMode && 'bg-primary/10 text-primary')}
+                    onClick={() => {
+                      setNotifSelectMode((v) => !v)
+                      setNotifSelected(new Set())
+                    }}
+                    disabled={data.notifications.length === 0}
+                  >
+                    {notifSelectMode ? <X className="h-3 w-3 mr-1" /> : <CheckSquare className="h-3 w-3 mr-1" />}
+                    {notifSelectMode ? 'Cancel' : 'Select'}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={reload} disabled={loading}><RefreshCw className={cn('h-3 w-3', loading && 'animate-spin')} /></Button>
+                </div>
+              </div>
+              {/* Master select-all + count + delete bar — only visible
+                  while in select mode so we don't take up vertical
+                  space on the default view. */}
+              {notifSelectMode && data.notifications.length > 0 && (
+                <div className="mb-1.5 flex items-center gap-2 rounded border border-primary/40 bg-primary/5 px-2 py-1.5 text-[11px]">
+                  <Checkbox
+                    checked={notifSelected.size > 0 && notifSelected.size === data.notifications.length}
+                    onCheckedChange={(c) => {
+                      if (c) setNotifSelected(new Set(data.notifications.map((n) => n.id)))
+                      else setNotifSelected(new Set())
+                    }}
+                    aria-label="Select all notifications"
+                  />
+                  <span className="font-semibold">
+                    {notifSelected.size === 0
+                      ? 'Select all'
+                      : notifSelected.size === data.notifications.length
+                        ? `All ${notifSelected.size} selected`
+                        : `${notifSelected.size} of ${data.notifications.length} selected`}
+                  </span>
+                  <div className="flex-1" />
+                  <Button
+                    size="sm" variant="outline" className="h-7 text-[10px]"
+                    onClick={() => askConfirm({
+                      title: `Delete ALL ${data.notifications.length} notifications?`,
+                      description: 'Removes every notification row from the audit log. The underlying messages (already sent or queued) are unaffected.',
+                      confirmLabel: `Delete all ${data.notifications.length}`,
+                      destructive: true,
+                      onConfirm: () => bulkDelete('notification', data.notifications.map((n) => n.id)),
+                    })}
+                  ><Trash2 className="h-3 w-3 mr-1" />Delete all</Button>
+                  <Button
+                    size="sm" className="h-7 text-[10px] bg-rose-600 hover:bg-rose-500"
+                    disabled={notifSelected.size === 0}
+                    onClick={() => askConfirm({
+                      title: `Delete ${notifSelected.size} notification${notifSelected.size === 1 ? '' : 's'}?`,
+                      description: 'Removes the rows from the audit log only. The underlying messages (already sent or queued) are unaffected.',
+                      confirmLabel: `Delete ${notifSelected.size}`,
+                      destructive: true,
+                      onConfirm: () => bulkDelete('notification', Array.from(notifSelected)),
+                    })}
+                  ><Trash2 className="h-3 w-3 mr-1" />Delete ({notifSelected.size})</Button>
+                </div>
+              )}
               <div className="rounded-lg border border-border max-h-[200px] overflow-y-auto">
                 {data.notifications.length === 0 ? (
                   <div className="p-4 text-center text-[11px] text-muted-foreground">No notifications yet.</div>
                 ) : (
                   <ul className="divide-y divide-border">
                     {data.notifications.map((n) => (
-                      <li key={n.id} className="p-2.5 text-[11px]">
+                      <li
+                        key={n.id}
+                        className={cn(
+                          'p-2.5 text-[11px]',
+                          notifSelectMode && notifSelected.has(n.id) && 'bg-primary/5',
+                        )}
+                      >
                         <div className="flex items-center gap-2 mb-1">
+                          {notifSelectMode && (
+                            <Checkbox
+                              checked={notifSelected.has(n.id)}
+                              onCheckedChange={() => setNotifSelected((s) => toggleSet(s, n.id))}
+                              aria-label={`Select notification ${n.subject}`}
+                            />
+                          )}
                           {n.channel === 'email' ? <Mail className="h-3 w-3 text-sky-400" /> : <Phone className="h-3 w-3 text-emerald-400" />}
                           <span className="font-semibold">{n.subject}</span>
                           <Badge className={cn('text-[9px] ml-auto', n.status === 'sent' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : n.status === 'pending' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-rose-500/20 text-rose-300 border-rose-500/40')}>{n.status}</Badge>
