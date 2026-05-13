@@ -112,6 +112,8 @@ A Next.js application providing scripture-related services for web and desktop, 
 
 ## User preferences
 
+-   **Auto-trim `replit.md` without asking**: whenever the Recent (full detail) section grows past 3 entries, automatically demote the oldest full entry to a one-line guard-rail under "Older releases" and (if not already there) append the full text to `artifacts/imported-app/CHANGELOG.md`. Do this proactively as part of every release bump — never ask permission.
+
 -   After EVERY fix / version bump, build and present a fresh ZIP of `artifacts/imported-app/` so the user can download it and run `BUILD.bat` on their Windows PC. Naming convention: `exports/ScriptureLive-AI-v<version>-source.zip`. Exclude `node_modules`, `.next`, `dist-electron`, `dist-electron-ui`, `release`, `exports`, `uploads`, `upload`, `.turbo`, `.git`, `*.tsbuildinfo`, `build-log.txt`. Always use the `present_asset` tool to surface the zip — never assume the user will find it on their own.
 -   Bump the `BUILD.bat` banner version string to match the current `package.json` version on every release.
 -   Push to GitHub via REST API after each release: OWNER=`nanvilow`, REPO=`scripturelive-ai`, BRANCH=`main`, token from `GH_PAT` env. Tag every release `v<version>`.
