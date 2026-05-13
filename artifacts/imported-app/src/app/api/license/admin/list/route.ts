@@ -11,9 +11,9 @@
 // No mutation; safe to poll.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getFile, computeStatus, applyAdminLedgerSnapshot } from '@/lib/licensing/storage'
+import { getFile, computeStatus } from '@/lib/licensing/storage'
 import { requireAdmin } from '@/lib/licensing/admin-auth'
-import { cloudPullAdminLedger } from '@/lib/licensing/cloud-sync'
+import { cloudPullAdminLedgerCached } from '@/lib/licensing/cloud-pull-cache'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -43,22 +43,14 @@ export async function GET(req: NextRequest) {
   const guard = requireAdmin(req)
   if (guard) return guard
 
-  // v0.7.153 — Cross-device admin sync. Pull the cloud snapshot first
-  // (4 s ceiling so the panel never spins) and merge it into the local
-  // ledger so admin actions taken on the phone web app show up here on
-  // the very next refresh. No-op when cloudAdminCode is unset, when
-  // we're running ON the cloud, or when the cloud is unreachable.
-  try {
-    const local = getFile()
-    const snap = await cloudPullAdminLedger({
-      installId: local.installId,
-      config: local.config ?? null,
-      timeoutMs: 4000,
-    })
-    if (snap) applyAdminLedgerSnapshot(snap)
-  } catch {
-    /* sync failures must never block the admin panel — local cache wins */
-  }
+  // v0.7.153 — Cross-device admin sync. v0.7.173 — now goes through the
+  // shared cloud-pull-cache (30 s TTL, 2 s timeout, single in-flight
+  // promise). First open of the panel still awaits one cold-start pull
+  // (bounded to 2 s), but subsequent reads inside the TTL window return
+  // instantly with stale-while-revalidate semantics. Multiple admin
+  // GETs firing in parallel coalesce onto a single cloud round-trip
+  // instead of each paying their own.
+  try { await cloudPullAdminLedgerCached() } catch { /* never block */ }
 
   const f = getFile()
   const status = computeStatus()

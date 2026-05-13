@@ -16,9 +16,9 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/licensing/admin-auth'
-import { getFile, listAdminCodes, applyAdminLedgerSnapshot } from '@/lib/licensing/storage'
+import { getFile, listAdminCodes } from '@/lib/licensing/storage'
 import { fetchCodesLastSeen } from '@/lib/licensing/telemetry-client'
-import { cloudPullAdminLedger } from '@/lib/licensing/cloud-sync'
+import { cloudPullAdminLedgerCached } from '@/lib/licensing/cloud-pull-cache'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -31,17 +31,8 @@ export async function GET(req: NextRequest) {
 
   // v0.7.153 — Pull cross-device admin snapshot before listing so codes
   // generated on the phone web app appear here on the very next refresh.
-  try {
-    const local = getFile()
-    const snap = await cloudPullAdminLedger({
-      installId: local.installId,
-      config: local.config ?? null,
-      timeoutMs: 4000,
-    })
-    if (snap) applyAdminLedgerSnapshot(snap)
-  } catch {
-    /* sync failures must never block — local cache wins */
-  }
+  // v0.7.173 — TTL-cached + coalesced; see cloud-pull-cache.ts.
+  try { await cloudPullAdminLedgerCached() } catch { /* never block */ }
 
   const all = listAdminCodes({ includeDeleted: true })
 
