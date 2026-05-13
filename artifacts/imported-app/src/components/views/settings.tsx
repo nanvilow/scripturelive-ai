@@ -846,6 +846,251 @@ export function SettingsView() {
             </div>
           )}
 
+          {/* v0.7.167 — Lower Third Typography. Independent of both
+              the body (Full Screen) typography AND the NDI broadcast
+              typography. Whatever the operator picks here applies
+              uniformly to: Settings → Preview (Lower Third) box, the
+              live display window, the secondary screen / projector,
+              and the OBS Browser Source URL — the four "in-app
+              lower-third" surfaces. The actual NDI capture surface
+              keeps its own typography on the NDI Output panel.
+              "Mirror Full Screen" leaves the slot undefined so the
+              body settings show through (same as a fresh install). */}
+          {settings.displayMode.startsWith('lower-third') && (
+            <div className="space-y-3 rounded-md border border-border bg-muted/10 p-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-sm font-medium">Lower Third Typography</Label>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    Independent from Full Screen and NDI. Applies to the
+                    Preview, live display, secondary screen, and OBS
+                    Browser Source URL.
+                  </p>
+                </div>
+                {(settings.lowerThirdFontFamily !== undefined ||
+                  settings.lowerThirdFontSize !== undefined ||
+                  settings.lowerThirdTextShadow !== undefined ||
+                  settings.lowerThirdTextAlign !== undefined ||
+                  settings.lowerThirdTextScale !== undefined ||
+                  settings.lowerThirdBibleColor !== undefined ||
+                  settings.lowerThirdBibleLineHeight !== undefined) && (
+                  <button
+                    onClick={() =>
+                      updateSettings({
+                        lowerThirdFontFamily: undefined,
+                        lowerThirdFontSize: undefined,
+                        lowerThirdTextShadow: undefined,
+                        lowerThirdTextAlign: undefined,
+                        lowerThirdTextScale: undefined,
+                        lowerThirdBibleColor: undefined,
+                        lowerThirdBibleLineHeight: undefined,
+                      })
+                    }
+                    className="text-[10px] text-muted-foreground hover:text-foreground underline"
+                  >
+                    Reset all
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Font
+                  </label>
+                  <select
+                    value={settings.lowerThirdFontFamily ?? '__inherit__'}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      updateSettings({
+                        lowerThirdFontFamily: v === '__inherit__' ? undefined : v,
+                      })
+                    }}
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <option value="__inherit__">Mirror Full Screen ({settings.fontFamily})</option>
+                    <option value="sans">Sans-serif</option>
+                    <option value="serif">Serif</option>
+                    <option value="mono">Monospace</option>
+                    <option value="playfair">Playfair</option>
+                    <option value="merriweather">Merriweather</option>
+                    <option value="lora">Lora</option>
+                    <option value="inter">Inter</option>
+                    <option value="poppins">Poppins</option>
+                    <option value="roboto">Roboto</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Size
+                  </label>
+                  <select
+                    value={settings.lowerThirdFontSize ?? '__inherit__'}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      updateSettings({
+                        lowerThirdFontSize:
+                          v === '__inherit__'
+                            ? undefined
+                            : (v as 'sm' | 'md' | 'lg' | 'xl'),
+                      })
+                    }}
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <option value="__inherit__">Mirror Full Screen ({settings.fontSize})</option>
+                    <option value="sm">Small</option>
+                    <option value="md">Medium</option>
+                    <option value="lg">Large</option>
+                    <option value="xl">Extra Large</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Drop shadow
+                  </label>
+                  <select
+                    value={
+                      settings.lowerThirdTextShadow === undefined
+                        ? '__inherit__'
+                        : settings.lowerThirdTextShadow
+                          ? 'on'
+                          : 'off'
+                    }
+                    onChange={(e) => {
+                      const v = e.target.value
+                      updateSettings({
+                        lowerThirdTextShadow: v === '__inherit__' ? undefined : v === 'on',
+                      })
+                    }}
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <option value="__inherit__">
+                      Mirror Full Screen ({settings.textShadow ? 'On' : 'Off'})
+                    </option>
+                    <option value="on">On</option>
+                    <option value="off">Off</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Align
+                  </label>
+                  <select
+                    value={settings.lowerThirdTextAlign ?? '__inherit__'}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      updateSettings({
+                        lowerThirdTextAlign:
+                          v === '__inherit__'
+                            ? undefined
+                            : (v as 'left' | 'center' | 'right' | 'justify'),
+                      })
+                    }}
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <option value="__inherit__">Mirror Full Screen ({settings.textAlign})</option>
+                    <option value="left">Left</option>
+                    <option value="center">Center</option>
+                    <option value="right">Right</option>
+                    <option value="justify">Justify</option>
+                  </select>
+                </div>
+                <div className="space-y-1 col-span-2">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+                    <span>Bible color</span>
+                    {settings.lowerThirdBibleColor !== undefined && (
+                      <button
+                        onClick={() => updateSettings({ lowerThirdBibleColor: undefined })}
+                        className="text-[9px] text-muted-foreground hover:text-foreground underline"
+                      >
+                        clear
+                      </button>
+                    )}
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="color"
+                      value={settings.lowerThirdBibleColor ?? '#ffffff'}
+                      onChange={(e) =>
+                        updateSettings({ lowerThirdBibleColor: e.target.value })
+                      }
+                      className="h-8 w-10 rounded-md border border-border bg-background cursor-pointer"
+                    />
+                    <input
+                      type="text"
+                      value={settings.lowerThirdBibleColor ?? ''}
+                      placeholder="(mirror Full Screen)"
+                      onChange={(e) => {
+                        const v = e.target.value.trim()
+                        updateSettings({
+                          lowerThirdBibleColor: v.length === 0 ? undefined : v,
+                        })
+                      }}
+                      className="flex-1 h-8 rounded-md border border-border bg-background px-2 text-xs font-mono"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1 col-span-2">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+                    <span>
+                      Bible line-height (
+                      {settings.lowerThirdBibleLineHeight?.toFixed(2) ?? 'mirror Full Screen'})
+                    </span>
+                    {settings.lowerThirdBibleLineHeight !== undefined && (
+                      <button
+                        onClick={() =>
+                          updateSettings({ lowerThirdBibleLineHeight: undefined })
+                        }
+                        className="text-[9px] text-muted-foreground hover:text-foreground underline"
+                      >
+                        clear
+                      </button>
+                    )}
+                  </label>
+                  <input
+                    type="range"
+                    min="0.9"
+                    max="2.5"
+                    step="0.05"
+                    value={settings.lowerThirdBibleLineHeight ?? 1.4}
+                    onChange={(e) =>
+                      updateSettings({
+                        lowerThirdBibleLineHeight: parseFloat(e.target.value),
+                      })
+                    }
+                    className="w-full accent-primary"
+                  />
+                </div>
+                <div className="space-y-1 col-span-2">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+                    <span>
+                      Bible text scale (
+                      {settings.lowerThirdTextScale?.toFixed(2) ?? 'mirror Full Screen'})
+                    </span>
+                    {settings.lowerThirdTextScale !== undefined && (
+                      <button
+                        onClick={() => updateSettings({ lowerThirdTextScale: undefined })}
+                        className="text-[9px] text-muted-foreground hover:text-foreground underline"
+                      >
+                        clear
+                      </button>
+                    )}
+                  </label>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="2"
+                    step="0.05"
+                    value={settings.lowerThirdTextScale ?? 1}
+                    onChange={(e) =>
+                      updateSettings({ lowerThirdTextScale: parseFloat(e.target.value) })
+                    }
+                    className="w-full accent-primary"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
           <Separator />
 
           <div className="space-y-2">

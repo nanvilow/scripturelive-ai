@@ -52,6 +52,19 @@ export function buildOutputPayload(s: StoreState) {
     ndiTextShadow: sExt.ndiTextShadow,
     ndiTextAlign: sExt.ndiTextAlign,
     ndiTextScale: sExt.ndiTextScale,
+    // v0.7.167 — Lower-third-only typography. Carved off from the
+    // ndi* block so the in-app lower-third (preview, live display,
+    // secondary screen, OBS Browser Source URL) can be styled
+    // independently of the NDI broadcast feed. Read by route.ts
+    // when dm==='lower-third' AND IS_NDI is false. Always emit;
+    // undefined values fall through to body settings server-side.
+    lowerThirdFontFamily: sExt.lowerThirdFontFamily,
+    lowerThirdFontSize: sExt.lowerThirdFontSize,
+    lowerThirdTextShadow: sExt.lowerThirdTextShadow,
+    lowerThirdTextScale: sExt.lowerThirdTextScale,
+    lowerThirdTextAlign: sExt.lowerThirdTextAlign,
+    lowerThirdBibleColor: sExt.lowerThirdBibleColor,
+    lowerThirdBibleLineHeight: sExt.lowerThirdBibleLineHeight,
     ndiAspectRatio: sExt.ndiAspectRatio,
     ndiBibleColor: sExt.ndiBibleColor,
     ndiBibleLineHeight: sExt.ndiBibleLineHeight,

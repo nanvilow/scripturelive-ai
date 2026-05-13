@@ -199,6 +199,31 @@ export interface AppSettings {
   ndiTextScale?: number
   ndiTextAlign?: 'left' | 'center' | 'right' | 'justify'
 
+  // ── Lower-Third-only typography overrides (v0.7.167) ───────────
+  // Mirror of the ndi* block above, but for the IN-APP lower-third
+  // surfaces ONLY: Settings → "PREVIEW (LOWER THIRD)" box, the
+  // operator's live display window when displayMode==='lower-third',
+  // the secondary screen / projector when displayMode==='lower-third',
+  // and the OBS Browser Source URL fallback at /api/output/congregation
+  // (when the route resolves dm==='lower-third' AND IS_NDI is false).
+  // The actual NDI capture surface keeps reading the ndi* fields
+  // above so vMix/OBS broadcast feeds are decoupled from the in-room
+  // lower-third look — operators can run the in-room lower-third in
+  // a big sans-serif chyron AND a separate broadcast lower-third in
+  // a smaller serif without one disturbing the other.
+  //
+  // Resolution chain in route.ts: IS_NDI → ndi* override → fall back
+  // to body. Non-NDI lower-third (preview/live/secondary/OBS) →
+  // lowerThird* override → fall back to body. Full-screen → body
+  // only (lower-third keys are NEVER read).
+  lowerThirdFontFamily?: string
+  lowerThirdFontSize?: 'sm' | 'md' | 'lg' | 'xl'
+  lowerThirdTextShadow?: boolean
+  lowerThirdTextScale?: number
+  lowerThirdTextAlign?: 'left' | 'center' | 'right' | 'justify'
+  lowerThirdBibleColor?: string
+  lowerThirdBibleLineHeight?: number
+
   // ── NDI-only display + reference overrides (v0.5.57) ───────────
   // The NDI feed used to share aspect-ratio + reference typography
   // with Live Display. Operators piping into vMix / OBS asked for
@@ -703,6 +728,17 @@ const defaultSettings: AppSettings = {
   ndiTextShadow: undefined,
   ndiTextScale: undefined,
   ndiTextAlign: undefined,
+  // v0.7.167 — Lower-third typography overrides default to undefined
+  // so a fresh install paints lower-third with the same body
+  // typography as full-screen. Operators opt-in via the new
+  // "Lower Third Typography" controls in Settings → Display & Output.
+  lowerThirdFontFamily: undefined,
+  lowerThirdFontSize: undefined,
+  lowerThirdTextShadow: undefined,
+  lowerThirdTextScale: undefined,
+  lowerThirdTextAlign: undefined,
+  lowerThirdBibleColor: undefined,
+  lowerThirdBibleLineHeight: undefined,
   // v0.5.57 — All undefined so existing operators see no behaviour
   // change until they explicitly opt-in via the NDI Settings panel.
   ndiAspectRatio: undefined,
