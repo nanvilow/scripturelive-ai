@@ -1,0 +1,211 @@
+You are modifying and fixing an existing global desktop application with:
+
+* Live AI Detection
+* NDI support
+* Activation code system
+* Subscription/payment system
+* Admin dashboard
+* User dashboard
+
+The app must work reliably for users worldwide, including Nigeria, Ghana, and other countries.
+
+---
+
+1. NDI ERROR FIX (GLOBAL SUPPORT)
+
+A user in Nigeria installed the app and received an error immediately after clicking the NDI feature.
+
+This should not happen because NDI support is supposed to already be built into the app without requiring users to manually install additional files or dependencies.
+
+Tasks:
+
+* Investigate why the Nigerian user receives an NDI error
+* Ensure all required NDI runtime files and dependencies are bundled directly inside the app installer
+* Make NDI work automatically after installation
+* Prevent any extra downloads or setup steps for users
+* Add proper fallback handling if NDI initialization fails
+* Show a user-friendly error message instead of crashing
+
+The app must:
+
+* Detect NDI automatically
+* Initialize NDI silently
+* Work globally across different regions and internet providers
+* Support Windows PCs without additional manual configuration
+
+---
+
+2. ACTIVATION CODE SYSTEM FIX
+
+The Nigerian user receives an activation error for every code generated.
+
+However:
+
+* The same activation codes work correctly when tested by admin
+
+This means there is likely:
+
+* A server validation issue
+* A country/region restriction issue
+* A timezone mismatch
+* A database sync issue
+* Or a device validation problem
+
+Tasks:
+
+* Investigate why activation codes fail for international users
+* Ensure activation codes work globally
+* Synchronize activation validation between admin and user systems
+* Ensure activation requests reach the server correctly
+* Add detailed logging for failed activations
+* Prevent false “invalid code” errors
+
+Implement:
+
+* Real-time activation verification
+* Global activation compatibility
+* Secure code validation
+* Retry mechanism for unstable internet connections
+
+---
+
+3. PAYMENT SYSTEM FIX (IMPORTANT)
+
+When the Nigerian user attempts payment:
+
+* No payment record appears in the admin dashboard
+
+Tasks:
+
+* Investigate payment flow between frontend and backend
+* Ensure all international payment attempts are recorded
+* Ensure admin dashboard receives payment logs in real time
+* Add proper webhook/event handling
+* Add failed payment tracking
+* Store:
+
+  * user email
+  * country
+  * amount
+  * transaction reference
+  * payment status
+  * timestamp
+
+The payment system must:
+
+* Work internationally
+* Handle multiple currencies if needed
+* Support unstable internet connections
+* Retry failed requests automatically
+* Prevent silent failures
+
+---
+
+4. GLOBAL APP COMPATIBILITY
+
+Make the entire application work properly worldwide.
+
+Implement:
+
+* Region-safe API requests
+* Better server timeout handling
+* CDN optimization for international users
+* Automatic reconnection system
+* Better error handling for poor internet conditions
+
+Ensure:
+
+* Nigeria users
+* Ghana users
+* Other international users
+  all receive the same functionality and performance.
+
+---
+
+5. ADMIN ↔ USER SYNCHRONIZATION
+
+Ensure all communication between admin and users works correctly.
+
+Admin dashboard should instantly receive:
+
+* Activation attempts
+* Successful activations
+* Failed activations
+* Payment attempts
+* Successful payments
+* AI Detection usage
+* Subscription updates
+
+Users should instantly receive:
+
+* Activation confirmations
+* Payment confirmations
+* Error notifications
+* Subscription status updates
+
+Implement:
+
+* Real-time sync
+* WebSocket or live event updates if needed
+* Reliable database synchronization
+
+---
+
+6. DEBUGGING & LOGGING
+
+Add detailed logging for:
+
+* NDI initialization
+* Activation requests
+* Payment processing
+* AI Detection requests
+* API failures
+* Internet timeout issues
+
+Logs should help identify:
+
+* Country-specific failures
+* Server-side issues
+* Client-side issues
+* Database sync failures
+
+---
+
+7. PERFORMANCE & STABILITY
+
+Optimize:
+
+* App startup speed
+* Installation speed
+* AI Detection response speed
+* Live Transcription stability
+
+Prevent:
+
+* Freezing
+* Random disconnects
+* Activation delays
+* Missing admin records
+
+---
+
+8. FINAL REQUIREMENT
+
+Test the complete flow using:
+
+* Ghana user simulation
+* Nigeria user simulation
+* Slow internet simulation
+* Failed connection recovery
+
+Ensure everything works end-to-end globally between:
+
+* Desktop app
+* Admin dashboard
+* User accounts
+* Payment system
+* Activation system
+* AI Detection
+* NDI integration
+
+The app must operate reliably worldwide without requiring technical setup from users.

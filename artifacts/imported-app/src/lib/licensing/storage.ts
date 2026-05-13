@@ -373,7 +373,7 @@ let cache: LicenseFile | null = null
 // `/api/license/cloud/admin-snapshot` and `/admin-merge` compare
 // against `cloudAdminCode` submitted by every desktop install. Since
 // v0.7.161 every desktop install bakes
-// BAKED_CLOUD_ADMIN_CODE = "SL-MASTER-HETEVT56-HCKTTS74" so cross-
+// BAKED_CLOUD_ADMIN_CODE = "SL-MASTER-FSFWDV75-WHBMXF4G" (rotated v0.7.173) so cross-
 // device sync works out-of-the-box with NO operator setup.
 //
 // Problem (uncovered v0.7.172): the cloud was deployed BEFORE
@@ -386,7 +386,7 @@ let cache: LicenseFile | null = null
 //
 // Fix: any process can pin its `masterCode` to a known value via the
 // SCRIPTURELIVE_MASTER_CODE env var. On the cloud deployment we set
-// this secret to "SL-MASTER-HETEVT56-HCKTTS74" — the override is
+// this secret to "SL-MASTER-FSFWDV75-WHBMXF4G" (rotated v0.7.173) — the override is
 // applied in BOTH freshFile() (first ever boot) and load() (every
 // subsequent boot) so even an already-deployed cloud with a stale
 // random masterCode is silently re-pinned to the baked value on its

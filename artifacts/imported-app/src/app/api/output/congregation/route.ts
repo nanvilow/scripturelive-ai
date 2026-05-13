@@ -78,7 +78,22 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    ~95vw on every surface (preview iframe + secondary screen + NDI
    capture, since they share this renderer). Pixel-WYSIWYG is
    preserved because the same defaults apply everywhere. */
-.lower-third{position:absolute;left:0;right:0;display:flex;align-items:center;justify-content:center;padding:0 2.5%;container-type:size}
+/* v0.7.173 — align-items: stretch (was: center). Operator complaint:
+   the lower-third frame on the in-app Live Display, secondary screen
+   and OBS browser source was visibly shrinking to hug the verse text
+   instead of staying frozen at the height bucket (sm/md/lg =
+   22/33/45 percent of the 16:9 frame). Root cause: align-items:center
+   on this flex parent let the .lt-box child collapse to its intrinsic
+   content height in some layout passes (Chromium recomputes percent
+   heights against the cross-axis, and height:100% on a centred flex
+   child can resolve to auto when the parent main-axis sizing is in
+   flight). Switching to stretch forces the .lt-box to fill the parent
+   bucket height on every surface — pixel-identical to the Lower Third
+   Settings preview, which already happened to render correctly because
+   its tighter aspect made the centred-vs-stretched difference invisible.
+   The .lt-box already carries justify-content:center so the verse text
+   continues to centre inside the (now properly stretched) frame. */
+.lower-third{position:absolute;left:0;right:0;display:flex;align-items:stretch;justify-content:center;padding:0 2.5%;container-type:size}
 .lower-third.bottom{bottom:6%}.lower-third.top{top:6%}
 /* Lower-third is now a rounded "card" that holds the verses. The
    upper area outside it stays transparent (#000) so any background
@@ -86,19 +101,31 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    v0.7.15 — max-width cap removed (was 68rem). Width is now driven
    by the .lower-third side padding above, so the card scales from
    small previews up to full 1920px frames consistently. */
-.lt-box{position:relative;width:100%;padding:3% 5%;display:flex;flex-direction:column;justify-content:center;overflow:hidden;height:100%;box-sizing:border-box;border-radius:1.25rem;box-shadow:0 8px 28px rgba(0,0,0,.45);background:linear-gradient(135deg,#0a0a0a,#171717)}
+/* v0.7.173 — Operator request: the lower-third must be transparent
+   on EVERY output (in-app preview, secondary screen, NDI, OBS browser
+   source, congregation screen). Pre-v0.7.173 the lt-box shipped a
+   dark gradient plate + drop-shadow so the chyron looked like a
+   "lower-third card" — operators didn't want the solid background
+   bleeding into their video feed (the whole point of lower-third is
+   that it overlays a live camera, not that it ships its own black
+   plate). The .lt-box.transparent class (NDI-only flag, v0.6.3) is
+   now effectively the default for every surface; the legacy class
+   still works for backward-compat. Custom image backgrounds via
+   .lt-bg / .lt-bg-overlay continue to render normally — operators
+   can opt INTO a background by setting an LT bg image, instead of
+   being opted in to a black gradient. */
+.lt-box{position:relative;width:100%;padding:3% 5%;display:flex;flex-direction:column;justify-content:center;overflow:hidden;height:100%;box-sizing:border-box;border-radius:1.25rem;background:transparent}
 /* v0.7.15 — .ndi-full class kept as a no-op for backwards-compat
    with any persisted SSE state that still tries to add it. The base
    .lower-third + .lt-box now delivers the wide layout, so we no
    longer need a separate "full" variant. */
 .lower-third.ndi-full{}
 .lt-box.ndi-full{}
-.lt-box.theme-worship{background:linear-gradient(135deg,#1e0a3c,#1e1b4b)}
-.lt-box.theme-sermon{background:linear-gradient(135deg,#3c1a0a,#451a03)}
-.lt-box.theme-easter{background:linear-gradient(135deg,#0a3c2a,#042f2e)}
-.lt-box.theme-christmas{background:linear-gradient(135deg,#3c0a0a,#4c0519)}
-.lt-box.theme-praise{background:linear-gradient(135deg,#3c3a0a,#451a03)}
-.lt-box.theme-minimal{background:linear-gradient(135deg,#0a0a0a,#171717)}
+/* v0.7.173 — Theme gradients neutralised on the lower-third box.
+   Themes still apply to FULL-SCREEN mode (.slide-stage etc.); only
+   the lower-third chyron forces transparent. See main .lt-box rule
+   comment above for why. */
+.lt-box.theme-worship,.lt-box.theme-sermon,.lt-box.theme-easter,.lt-box.theme-christmas,.lt-box.theme-praise,.lt-box.theme-minimal{background:transparent}
 /* v0.6.3 — NDI lower-third transparent matte. When the operator flips
    "Transparent lower-third" on the NDI tab, the rounded card drops
    its gradient + drop-shadow so vMix / OBS receive a clean alpha

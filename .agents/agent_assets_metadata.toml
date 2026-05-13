@@ -527,3 +527,519 @@ id = "w9JcW91Gd2aWnqDmNjATX"
 uri = "file://attached_assets/social_flyers_v2/10_download.png"
 type = "image"
 title = "10 — Get It Now / Download (Vertical • TikTok/Reels/Stories)"
+
+[[outputs]]
+id = "LyW8s6Bm2gUIRTVTj3lxA"
+uri = "file://screenshots/v078_live_display_header.png"
+type = "image"
+title = "PROOF #1 — Live Display header now has Voice + Follow toggles (close-up)"
+
+[[outputs]]
+id = "W3OcVV6MuWpiEt9OvBMH2"
+uri = "file://screenshots/v078_live_display_full.png"
+type = "image"
+title = "PROOF #1 — Full app shell with Voice ON (amber) and Follow ON (emerald)"
+
+[[outputs]]
+id = "1U0Z2qBfupPHAGWKhazV-"
+uri = "file://.local/proof-v0.7.82/upload-proof.txt"
+type = "text"
+title = "v0.7.82 Upload Proof — Background + Media (200 OK, byte-identical round-trip)"
+
+[[outputs]]
+id = "9FkIq-6LmFSV4bG_PYaXk"
+uri = "file://.local/proof-v0.7.82/test-bg.png"
+type = "image"
+title = "Background image SENT — 520 bytes"
+
+[[outputs]]
+id = "dil1ab9wChXAUTG-Wg6i4"
+uri = "file://.local/proof-v0.7.82/got-bg.png"
+type = "image"
+title = "Background image FETCHED BACK — cmp identical ✓"
+
+[[outputs]]
+id = "HBTDLp6Ctjg4n1ASVTjpg"
+uri = "file://.local/proof-v0.7.82/test-media.mp4"
+type = "video"
+title = "Media video SENT — 64 KB"
+
+[[outputs]]
+id = "-TIHET-3x0SOZHKJMjDj1"
+uri = "file://.local/proof-v0.7.82/got-media.mp4"
+type = "video"
+title = "Media video FETCHED BACK — cmp identical ✓"
+
+[[outputs]]
+id = "0DDF0KQo3ZsMz1GxXteyN"
+uri = "file://.local/launch/launch-post-pack.md"
+type = "text"
+title = "Launch Post Pack — X / Facebook / WhatsApp / Pastor Email"
+
+[[outputs]]
+id = "yYS0PfXUmNe8zZQqcwcZS"
+uri = "file://.local/launch/directory-submission-pack.md"
+type = "text"
+title = "Directory Submission Pack — PH / AlternativeTo / SourceForge / +10 more"
+
+[[outputs]]
+id = "-AHz8vd8o09ZuS5e-K4E0"
+uri = "file://exports/ScriptureLive-AI-v0.7.93-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.93 — Voice/AI hotfix source"
+
+[[outputs]]
+id = "U18mws2lCvg5LvRxR5_8N"
+uri = "file://exports/ScriptureLive-AI-v0.7.94-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.94 — Detected Verses panel hotfix"
+
+[[outputs]]
+id = "lLYjFkpU8KkDmXewYAq-L"
+uri = "file://artifacts/exports/ScriptureLive-AI-v0.7.95-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.95 — Source ZIP (root-cause fix for chrome-error after Deactivate / Move-to-Another-PC)"
+
+[[outputs]]
+id = "DTXfBG5JO9ZMpMvRZLkuw"
+uri = "file://exports/ScriptureLive-AI-v0.7.96-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.96 — durable persistence + crash-mask hardening (with proof-tests)"
+
+[[outputs]]
+id = "vv1s-lUBJmzP7AjbKwKLY"
+uri = "file://exports/ScriptureLive-AI-v0.7.97-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.97 — default Text Size 90% + Bible Line-Height 0.95"
+
+[[outputs]]
+id = "C8pvoOj-Q5smtw7e_pcdH"
+uri = "file://exports/ScriptureLive-AI-v0.7.98-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.98 — Source ZIP"
+
+[[outputs]]
+id = "YX_a9sufIvj6Ruy50BWYl"
+uri = "file://exports/ScriptureLive-AI-v0.7.100-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.100 — Source ZIP (synchronous hard-reset, architect-fixed)"
+
+[[outputs]]
+id = "9X8PT_9d4TCFfGg88f2HL"
+uri = "file://exports/ScriptureLive-AI-v0.7.101-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.101 — Source ZIP (Activate hard-reset + single Move button)"
+
+[[outputs]]
+id = "PT0butuZcc5V29mvVRCr5"
+uri = "file://exports/ScriptureLive-AI-v0.7.102-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.102 — Source ZIP (Move-to-Another-PC fix)"
+
+[[outputs]]
+id = "XeOu-WEIXU2LPDLcMHCu1"
+uri = "file://exports/ScriptureLive-AI-v0.7.102-zai-handoff.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.102 — z.ai Handoff Bundle (upload this)"
+
+[[outputs]]
+id = "MvAfMl2KQRZFvofjlrPL7"
+uri = "file://exports/ScriptureLive-AI-v0.7.103-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.103 — NDI Linger Mode (OBS/vMix stays connected)"
+
+[[outputs]]
+id = "1J8m8jXKCsdwntBdGJVn5"
+uri = "file://.local/dist/scripturelive-ai-v0.7.104-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.104 — Source ZIP"
+
+[[outputs]]
+id = "ft_uflapY4B9l3nVUIJfZ"
+uri = "file://.local/dist/scripturelive-ai-v0.7.105-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.105 — Source ZIP (hotfix: centralized auto-fire gate)"
+
+[[outputs]]
+id = "3lPBKYTMTtTKmLftsNTyH"
+uri = "file://.local/builds/scripturelive-v0.7.106-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.106 — source (built locally, NOT pushed)"
+
+[[outputs]]
+id = "JMXLL7J-YMelN9IbHP6Sl"
+uri = "file://exports/ScriptureLive-AI-v0.7.107-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.107 — source (chrome-error fix + per-column auto-live + newest-on-top)"
+
+[[outputs]]
+id = "wEL6TxYccZ1kOeEBQ-vWX"
+uri = "file://exports/ScriptureLive-AI-v0.7.108-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.108 — source (paraphrase floor 0.80 → 0.55)"
+
+[[outputs]]
+id = "qBFqlBAZCIxe7UC3tSJVy"
+uri = "file://exports/ScriptureLive-AI-v0.7.109-source.zip"
+type = "unspecified"
+title = "ScriptureLive-AI-v0.7.109-source.zip"
+
+[[outputs]]
+id = "BEUdkzi6EZfZoswQw9Q4C"
+uri = "file://exports/ScriptureLive-AI-v0.7.110-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.110 — source"
+
+[[outputs]]
+id = "VgO7bXFc4MaB-NleRdDWn"
+uri = "file://exports/ScriptureLive-AI-v0.7.111-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.111 — source"
+
+[[outputs]]
+id = "C4J3OZxq6aXxLikxsufIS"
+uri = "file://exports/ScriptureLive-AI-v0.7.112-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.112 source"
+
+[[outputs]]
+id = "4B_Nm0UMiHkj3i7VZ3umR"
+uri = "file://exports/ScriptureLive-AI-v0.7.113-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.113 source"
+
+[[outputs]]
+id = "JyVdyI95dBIfApLnnH6HL"
+uri = "file://exports/ScriptureLive-AI-v0.7.114-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.114 — Source ZIP"
+
+[[outputs]]
+id = "pdz7v3YJ2UJEqw0516lHO"
+uri = "file://exports/ScriptureLive-AI-v0.7.115-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.115 — source zip"
+
+[[outputs]]
+id = "CcfTKAvN-yjUoywbiml9R"
+uri = "file://exports/ScriptureLive-AI-v0.7.116-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.116 — Source ZIP"
+
+[[outputs]]
+id = "t-Gyp-O4SE34cDJedxbNp"
+uri = "file://exports/ScriptureLive-AI-v0.7.117-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.117 — Source ZIP"
+
+[[outputs]]
+id = "rwFl00FwNYdQa6rgMmHXv"
+uri = "file://exports/ScriptureLive-AI-v0.7.118-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.118 — Source ZIP"
+
+[[outputs]]
+id = "hb3ydiWDMDQlPLP8o7vZ7"
+uri = "file://artifacts/imported-app/exports/ScriptureLive-AI-v0.7.119-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.119 — Dead-Input Fix + Cross-Source Dedupe (124 MB)"
+
+[[outputs]]
+id = "9FsfreECocjPzAxHoJ9tI"
+uri = "file://artifacts/imported-app/exports/ScriptureLive-AI-v0.7.120-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.120 source"
+
+[[outputs]]
+id = "byc33NRxVWaJ9TB3eoZeK"
+uri = "file://artifacts/imported-app/exports/ScriptureLive-AI-v0.7.121-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.121 — source ZIP"
+
+[[outputs]]
+id = "sDlkI5gnd4nazH1Gf1yag"
+uri = "file://exports/ScriptureLive-AI-v0.7.122-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.122 source"
+
+[[outputs]]
+id = "pD0crHV9SsFMtMhnAZ1sD"
+uri = "file://exports/ScriptureLive-AI-v0.7.123-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.123 source"
+
+[[outputs]]
+id = "Gp0-Xsju3XCR-BP5ErM8o"
+uri = "file://exports/ScriptureLive-AI-v0.7.124-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.124 source"
+
+[[outputs]]
+id = "eX3Ibc6rS7jyRnguQ7Luw"
+uri = "file://exports/ScriptureLive-AI-v0.7.125-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.125 source"
+
+[[outputs]]
+id = "qkE03HaMBtMtc_gH5GWBX"
+uri = "file://exports/ScriptureLive-AI-v0.7.126-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.126 — Branded Installer Wizard"
+
+[[outputs]]
+id = "XRbctTwnB8tgxCtdgoVBY"
+uri = "file://exports/ScriptureLive-AI-v0.7.127-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.127 — source ZIP"
+
+[[outputs]]
+id = "6y-GX1E-cgj2gLvp1KeGT"
+uri = "file://exports/ScriptureLive-AI-v0.7.128-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.128 — High-Conf VS High-Conf escape hatch"
+
+[[outputs]]
+id = "uZCclSbGIcx82ajU7nu0e"
+uri = "file://exports/ScriptureLive-AI-v0.7.129-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.129 — Startup Update Popup"
+
+[[outputs]]
+id = "wWekM7XWUY_KvNB_FjMAx"
+uri = "file://exports/ScriptureLive-AI-v0.7.130-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.130 — Update popup without external link"
+
+[[outputs]]
+id = "IZjI6VAZ28bgkgxIvnALP"
+uri = "file://exports/ScriptureLive-AI-v0.7.131-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.131 — Cross-pipeline auto-live fix"
+
+[[outputs]]
+id = "tENwwhfvWmh-F6x5S7yJG"
+uri = "file://exports/ScriptureLive-AI-v0.7.132-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.132 — No more GitHub in the UI, single update popup, Ezekiel + dry bones"
+
+[[outputs]]
+id = "v7y0PQM2T2mn7_5AR30--"
+uri = "file://exports/ScriptureLive-AI-v0.7.133-source.zip"
+type = "unspecified"
+title = "ScriptureLive-AI-v0.7.133-source.zip"
+
+[[outputs]]
+id = "ycjleApS21c1XNN6NLfDL"
+uri = "file://exports/ScriptureLive-AI-v0.7.134-source.zip"
+type = "unspecified"
+title = "ScriptureLive-AI-v0.7.134-source.zip"
+
+[[outputs]]
+id = "tCduCIq1MkCEDOx-CWID4"
+uri = "file://exports/ScriptureLive-AI-v0.7.135-source.zip"
+type = "unspecified"
+title = "ScriptureLive-AI-v0.7.135-source.zip"
+
+[[outputs]]
+id = "NzBKOlva0mMLf66nWR3oB"
+uri = "file://exports/ScriptureLive-AI-v0.7.136-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.136 — source zip"
+
+[[outputs]]
+id = "H6OGvBrZvuf_7A2ogXkjd"
+uri = "file://exports/ScriptureLive-AI-v0.7.137-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.137 source (Twerɛ Kronkron + Ewe)"
+
+[[outputs]]
+id = "XivUSBxqc-9sFRQsck9x6"
+uri = "file://exports/ScriptureLive-AI-v0.7.138-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.138 source (admin route tsc fix)"
+
+[[outputs]]
+id = "vEZNYqcv6FWe6SO5DZztx"
+uri = "file://exports/ScriptureLive-AI-v0.7.139-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.139 source (installer polish)"
+
+[[outputs]]
+id = "lcP5h3CE1NXjpERE1i5wp"
+uri = "file://exports/ScriptureLive-AI-v0.7.140-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.140 source (single update modal + HTML strip)"
+
+[[outputs]]
+id = "QHVqEHZMAAsNFH4NG16Fh"
+uri = "file://exports/ScriptureLive-AI-v0.7.141-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.141 source (hide DG engine badge)"
+
+[[outputs]]
+id = "zkm3RQySdcVFiCe3v7LcT"
+uri = "file://exports/ScriptureLive-AI-v0.7.142-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.142 source (post-install \"Open now?\" prompt)"
+
+[[outputs]]
+id = "QyVHj5FSy_dzA2BXy_MTr"
+uri = "file://exports/ScriptureLive-AI-v0.7.143-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.143 source (no double-launch)"
+
+[[outputs]]
+id = "_Vq014YcI5aNkTlK9iWC0"
+uri = "file://exports/ScriptureLive-AI-v0.7.144-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.144 source (live-mic dot restored)"
+
+[[outputs]]
+id = "eDgYTm0PxgFyj4_IlnhHP"
+uri = "file://exports/ScriptureLive-AI-v0.7.145-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.145 — Source (run BUILD.bat on Windows)"
+
+[[outputs]]
+id = "3eIlgP6NRnIjyge9fZNab"
+uri = "file://exports/ScriptureLive-AI-v0.7.146-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.146 — Source with bundled NDI runtime (run BUILD.bat on Windows)"
+
+[[outputs]]
+id = "ZSowj4R2A5hg8cpKjjyDZ"
+uri = "file://exports/ScriptureLive-AI-v0.7.147-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.147 — Matthew 4:19 paraphrase fix (run BUILD.bat on Windows)"
+
+[[outputs]]
+id = "XfFSyfGlzoLJSDydJaK81"
+uri = "file://exports/ScriptureLive-AI-v0.7.148-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.148 — source (399-paraphrase corpus + Matt 4:19 + Psalm 124:7)"
+
+[[outputs]]
+id = "lmcCRkIMGkJEuKGuR-Iw9"
+uri = "file://exports/ScriptureLive-AI-v0.7.149-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.149 — source (boot splash polish)"
+
+[[outputs]]
+id = "JxKTjGYHStw9Lr6dgrAnH"
+uri = "file://exports/ScriptureLive-AI-v0.7.150-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.150 — source (explicit always wins + freeze latch)"
+
+[[outputs]]
+id = "W6cQ0bRGbaSz2WCECT5Z-"
+uri = "file://exports/ScriptureLive-AI-v0.7.151-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.151 — source (narrow latch + AVM-detect-again release)"
+
+[[outputs]]
+id = "fVuLe9EiTfXFpUUY6knFw"
+uri = "file://artifacts/imported-app/exports/ScriptureLive-AI-v0.7.152-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.152 — BRQ→AVM direction CORRECTED (source zip)"
+
+[[outputs]]
+id = "M-ltwlkKXpX0Tmq7tq7_A"
+uri = "file://screenshots/obs-browser-source-card.jpg"
+type = "image"
+title = "OBS Browser Source URL card (v0.7.153 preview)"
+
+[[outputs]]
+id = "xjMe246ud1f_tGcORf9eo"
+uri = "file://artifacts/imported-app/exports/ScriptureLive-AI-v0.7.155-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.155 — source zip"
+
+[[outputs]]
+id = "HmWvoqVEhdlltFlmePZCX"
+uri = "file://exports/ScriptureLive-AI-v0.7.156-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.156 source (HOTFIX)"
+
+[[outputs]]
+id = "Bcd-hKjwrYzyzdwhDa8B3"
+uri = "file://exports/ScriptureLive-AI-v0.7.157-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.157 (final — includes architect-flagged fixes)"
+
+[[outputs]]
+id = "D8EFM-IALu5yZyZCUtuL1"
+uri = "file://exports/ScriptureLive-AI-v0.7.158-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.158 — Source ZIP (single-renderer refactor)"
+
+[[outputs]]
+id = "aQLH1OdoCieAVj5Nuybb8"
+uri = "file://exports/ScriptureLive-AI-v0.7.159-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.159 — Source ZIP (NDI preview bg + StableStage + content-hash)"
+
+[[outputs]]
+id = "SorKbEtfEZZjGTmBRjlYB"
+uri = "file://exports/ScriptureLive-AI-v0.7.160-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.160 — Cross-Device Admin Sync Visible"
+
+[[outputs]]
+id = "3iz5EKelRA2IhCbK4Jzm0"
+uri = "file://exports/ScriptureLive-AI-v0.7.161-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.161 — Auto-Sync Out-Of-The-Box"
+
+[[outputs]]
+id = "22gJdva8ohmTngFXLqB2q"
+uri = "file://exports/ScriptureLive-AI-v0.7.162-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.162 — Cloud Sync Real Global Stats"
+
+[[outputs]]
+id = "difmJw2jttz729ByUG7f8"
+uri = "file://exports/ScriptureLive-AI-v0.7.163-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.163 — source (run BUILD.bat on Windows)"
+
+[[outputs]]
+id = "vO-cZiYcU8x_3uwvnNHk3"
+uri = "file://exports/ScriptureLive-AI-v0.7.164-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.164 — source (NKJV + NLT + AMP bundled offline)"
+
+[[outputs]]
+id = "obimcDjSmhUmfdQ9QvlOK"
+uri = "file://exports/ScriptureLive-AI-v0.7.166-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.166 — Windows source"
+
+[[outputs]]
+id = "Q1o9Y-ofoRCx9IogfNYfD"
+uri = "file://exports/ScriptureLive-AI-v0.7.168-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.168 — Offline Bibles Fix"
+
+[[outputs]]
+id = "MtloutIOY0Nb6HsOWgn9Z"
+uri = "file://exports/ScriptureLive-AI-v0.7.169-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.169 — LLM + AI Detector Responsiveness"
+
+[[outputs]]
+id = "SDLlgTGdBYOhNtamagGr3"
+uri = "file://exports/ScriptureLive-AI-v0.7.170-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.170 — Workflow Card No Longer Red"
+
+[[outputs]]
+id = "OZvW9nTVIzaYBS6oKm4by"
+uri = "file://exports/ScriptureLive-AI-v0.7.171-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.171 — GitHub Actions CI Fix"
+
+[[outputs]]
+id = "HbxJ7yVQMp-o34WxKvjg3"
+uri = "file://exports/ScriptureLive-AI-v0.7.172-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.172 — Windows source ZIP"

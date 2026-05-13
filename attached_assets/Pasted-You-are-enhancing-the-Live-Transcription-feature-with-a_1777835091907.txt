@@ -1,0 +1,135 @@
+You are enhancing the Live Transcription feature with a Bible verse detection system (Bible-only references).
+
+The goal is to detect spoken scripture in real-time, including:
+
+Full verses
+Partial phrases
+Common preacher-style expressions
+1. DETECTION RULES
+
+The system must:
+
+Match text without case sensitivity (uppercase/lowercase should not matter)
+Ignore punctuation (commas, periods, apostrophes, etc.)
+Detect partial phrases, not only full verses
+Allow fuzzy matching (to handle speech errors or transcription mistakes)
+Work in real-time during live transcription
+2. OUTPUT FORMAT (IN WORDS)
+
+When a scripture is detected, the system should return:
+
+The phrase that was detected
+The Bible reference (Book, Chapter, Verse)
+Optionally, the full verse text
+
+Example (in words):
+
+Detected phrase: “Jesus wept”
+Reference: John chapter 11 verse 35
+3. CORE BIBLE DETECTION PHRASES
+
+Below is a large set of preacher-style Bible phrases mapped to references.
+
+These should be stored in your system and used for matching.
+
+🔹 FOUNDATIONAL VERSES
+Jesus wept — John 11:35
+For God so loved the world — John 3:16
+The Lord is my shepherd — Psalm 23:1
+I shall not want — Psalm 23:1
+In the beginning God created — Genesis 1:1
+Let there be light — Genesis 1:3
+🔹 SALVATION & FAITH
+The wages of sin is death — Romans 6:23
+The gift of God is eternal life — Romans 6:23
+All have sinned — Romans 3:23
+Walk by faith not by sight — 2 Corinthians 5:7
+Faith without works is dead — James 2:26
+The just shall live by faith — Romans 1:17
+🔹 TRUST & DEPENDENCE ON GOD
+Trust in the Lord with all your heart — Proverbs 3:5
+Lean not on your own understanding — Proverbs 3:5
+Acknowledge Him and He shall direct your paths — Proverbs 3:6
+Be still and know that I am God — Psalm 46:10
+🔹 STRENGTH & ENCOURAGEMENT
+I can do all things through Christ — Philippians 4:13
+The joy of the Lord is your strength — Nehemiah 8:10
+Greater is He that is in you — 1 John 4:4
+No weapon formed against you shall prosper — Isaiah 54:17
+🔹 PRAYER & SPIRITUAL LIFE
+Pray without ceasing — 1 Thessalonians 5:17
+Call upon me and I will answer you — Jeremiah 33:3
+Draw near to God and He will draw near to you — James 4:8
+Resist the devil and he will flee — James 4:7
+🔹 PREACHER-STYLE EXPRESSIONS (VERY IMPORTANT)
+
+These are critical for real sermon detection:
+
+Weeping may endure for a night — Psalm 30:5
+Joy comes in the morning — Psalm 30:5
+This is the day the Lord has made — Psalm 118:24
+We will rejoice and be glad in it — Psalm 118:24
+The battle is the Lord’s — 1 Samuel 17:47
+Stand still and see the salvation of the Lord — Exodus 14:13
+The Lord will fight for you — Exodus 14:14
+Though He slay me yet will I trust Him — Job 13:15
+Your latter shall be greater than your former — Job 8:7
+You meant it for evil but God meant it for good — Genesis 50:20
+🔹 MIRACLES & JESUS MINISTRY
+Peace be still — Mark 4:39
+Lazarus come forth — John 11:43
+Take up your bed and walk — John 5:8
+Stretch forth your hand — Matthew 12:13
+Your faith has made you whole — Mark 5:34
+🔹 HOLY SPIRIT & POWER
+You shall receive power — Acts 1:8
+I will pour out my Spirit upon all flesh — Joel 2:28
+Your sons and daughters shall prophesy — Joel 2:28
+🔹 ENDURANCE & SPIRITUAL WARFARE
+We wrestle not against flesh and blood — Ephesians 6:12
+Put on the whole armor of God — Ephesians 6:11
+Take the shield of faith — Ephesians 6:16
+Quench all the fiery darts — Ephesians 6:16
+🔹 WISDOM & CHARACTER
+Guard your heart with all diligence — Proverbs 4:23
+Wisdom is the principal thing — Proverbs 4:7
+Pride goes before destruction — Proverbs 16:18
+Life and death are in the power of the tongue — Proverbs 18:21
+🔹 GOD’S PROMISES
+I know the plans I have for you — Jeremiah 29:11
+Plans to prosper you and not to harm you — Jeremiah 29:11
+My grace is sufficient for you — 2 Corinthians 12:9
+🔹 COMMON SERMON LINES (IMPORTANT FOR MATCHING)
+
+These may not be exact verses but should still trigger detection:
+
+Trouble don’t last always — Psalm 30:5
+God will make a way — Isaiah 43:19
+Step out on faith — 2 Corinthians 5:7
+Hold on to God’s unchanging hand — Hebrews 13:8
+4. HOW THE SYSTEM SHOULD WORK (IN WORDS)
+The system listens to live transcription text
+It compares spoken words against stored Bible phrases
+It checks for:
+Exact matches
+Partial matches
+Similar phrases (fuzzy matching)
+If similarity is high enough (about 80%):
+It detects a scripture
+When detected:
+It highlights the phrase
+It shows the Bible reference
+It creates a new paragraph (as you requested earlier)
+5. IMPORTANT PERFORMANCE RULES
+
+To make this work smoothly:
+
+Detection must be fast (real-time)
+Avoid repeated detection of the same verse
+Allow multiple verses in one transcript
+Do not interrupt transcription flow
+6. OPTIONAL ENHANCEMENTS (HIGHLY RECOMMENDED)
+Highlight scripture text live
+Show verse on second screen
+Group verses into paragraphs
+Add sound/visual alert when s...

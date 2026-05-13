@@ -20,8 +20,70 @@ permissions:
   contents: write
 
 jobs:
+  # Fast Linux preflight that catches release-build files which an overly-
+  # broad .gitignore rule has silently dropped from the source tree at tag
+  # time. This has bitten us at least three times — v0.7.47
+  # (build-resources/* dropped), v0.7.61 (src/lib/bibles/local-bible.ts
+  # dropped by a `local-*` ignore), and v0.7.62 (notarize.js, icons,
+  # entitlements dropped after the build-resources allowlist went stale)
+  # — and each round cost a real release tag. Running on Linux means the
+  # check completes in ~2 minutes instead of waiting 15-25 minutes for the
+  # full Windows packaging job to fail (or worse, silently succeed with a
+  # broken installer).
+  #
+  # Two checks, both on a fresh `actions/checkout` (i.e. exactly what a
+  # `git clone` of the tag would produce):
+  #   1. `verify:release-files` — explicit allowlist of paths that MUST
+  #      exist AND be tracked by git. Reports the offending .gitignore
+  #      line on failure.
+  #   2. `pnpm run build` — full Next.js production build. Catches any
+  #      additional missing-import classes the explicit allowlist doesn't
+  #      know about (including imports added by future PRs).
+  preflight:
+    name: Verify release-build files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      # Fast (~1s) explicit allowlist check that names the offending
+      # .gitignore rule on failure. Runs first so a missing build-resource
+      # asset is reported before the user waits 90s for the Next.js build.
+      - name: Verify required release files are tracked
+        run: pnpm --filter @workspace/imported-app run verify:release-files
+
+      # Full Next.js production build. Catches any source file that the
+      # build imports but git no longer ships (e.g. v0.7.61's
+      # local-bible.ts). We skip electron packaging here — the windows
+      # `build` job below already does the heavy lift and we just want to
+      # fail fast on missing imports without burning a Windows runner.
+      - name: Build Next.js production bundle
+        run: pnpm --filter @workspace/imported-app run build
+        env:
+          # Match the Windows `build` job's prebuild step so the
+          # inject-keys prebuild doesn't fail if a key is unset on a fork
+          # — we're only checking the import graph, not shipping a real
+          # build artifact.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+
   build:
     name: Build Windows installer
+    needs: preflight
     runs-on: windows-latest
     steps:
       # `fetch-depth: 0` so the opt-out step below can read annotated-tag

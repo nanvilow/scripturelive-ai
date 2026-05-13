@@ -88,6 +88,35 @@ artifacts/imported-app/upload/
 artifacts/imported-app/.turbo/
 .turbo/
 
+# v0.7.166 deploy fix — Next.js dev/cache subdirs of `.next/`. We
+# CANNOT exclude `.next/` outright (the comment at the top of this
+# file explains why — it would strip the production standalone
+# bundle and break the runtime). But the production runtime ONLY
+# reads `.next/standalone`, `.next/static`, `.next/server`,
+# `.next/types`, and the small JSON manifests at the root of
+# `.next/`. The subdirs below are populated by `next dev`
+# (Turbopack dev-mode cache, webpack incremental cache, dev
+# diagnostics, build traces) and are NOT touched by `node
+# server.mjs` in production. On a fresh checkout these subdirs
+# don't exist, so the production deploy worked. After a developer
+# runs the local dev server they balloon — `.next/dev/` alone
+# reached 2.8 GB on this workspace, which is what pushed the
+# Cloud Run image past the 8 GiB limit and broke the v0.7.166
+# deploy. Stripping these on upload reclaims the headroom without
+# affecting the production server.
+artifacts/imported-app/.next/dev/
+artifacts/imported-app/.next/cache/
+artifacts/imported-app/.next/diagnostics/
+artifacts/imported-app/.next/turbopack/
+artifacts/imported-app/.next/trace
+artifacts/imported-app/.next/trace-build
+
+# v0.7.166 deploy fix — Stray repo-root `artifacts/exports/` dir
+# (separate from the workspace-root `/exports/` already excluded
+# above) holds historical source-ZIP releases. ~135 MB on this
+# workspace, never served by the runtime.
+artifacts/exports/
+
 # Hoisted workspace `node_modules` — re-installed by the deploy build
 # phase. We use ANCHORED paths (NOT `**/node_modules`) because the
 # globbed pattern would also strip `.next/standalone/node_modules/`,
