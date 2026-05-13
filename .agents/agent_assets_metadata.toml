@@ -1031,3 +1031,9 @@ id = "SDLlgTGdBYOhNtamagGr3"
 uri = "file://exports/ScriptureLive-AI-v0.7.170-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.170 — Workflow Card No Longer Red"
+
+[[outputs]]
+id = "OZvW9nTVIzaYBS6oKm4by"
+uri = "file://exports/ScriptureLive-AI-v0.7.171-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.171 — GitHub Actions CI Fix"
