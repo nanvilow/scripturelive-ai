@@ -763,16 +763,22 @@ export function SettingsView() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {/* WYSIWYG preview — mirrors the secondary screen / NDI feed
-              so operators can see display-mode + position changes
-              instantly without opening the projector. Updates live as
-              they tweak any setting. */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <OutputPreview mode="full" label="Preview (Full Screen)" />
-            <OutputPreview mode="lower-third" label="Preview (Lower Third)" />
-          </div>
-          <Separator className="my-2" />
+        <CardContent>
+          {/* v0.7.172 — Two-column layout matching the NDI Output panel
+              (lg:grid-cols-[1fr_360px]). Controls on the left, single
+              compact preview on the right that sticks to the top while
+              the operator scrolls the controls. The previous layout
+              had two giant side-by-side preview boxes (Full + Lower
+              Third) at the TOP of the card eating ~40% of the viewport
+              before the operator could see any controls — and the
+              Lower Third preview here was redundant with the dedicated
+              "Lower Third Settings" card directly below this one. The
+              right-side compact 360px preview is the same pattern
+              every other "Settings + Preview" card now uses, so the
+              operator's eyes don't have to retrain per-card. */}
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5">
+            {/* ── LEFT COLUMN — controls ─────────────────────────── */}
+            <div className="space-y-4">
           <div className="space-y-2">
             <Label className="text-sm font-medium">Display Mode</Label>
             <div className="flex flex-wrap gap-2">
@@ -995,6 +1001,20 @@ export function SettingsView() {
               ))}
             </div>
           </div>
+            </div>{/* end LEFT COLUMN */}
+
+            {/* ── RIGHT COLUMN — sticky compact preview ─────────── */}
+            <div className="space-y-1.5 lg:sticky lg:top-2 self-start">
+              <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
+                Live Preview
+              </div>
+              <OutputPreview mode="full" hideModeBadge />
+              <p className="text-[10px] text-muted-foreground/80 px-1 leading-snug">
+                Mirrors the secondary screen / NDI feed. Updates instantly
+                as you change any setting on the left.
+              </p>
+            </div>
+          </div>{/* end grid-cols-[1fr_360px] */}
         </CardContent>
       </Card>
 
@@ -1041,16 +1061,16 @@ export function SettingsView() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Self-contained preview so the operator can see their LT
-              edits without scrolling back up to the Display & Output
-              card. mode='lower-third' forces ?lowerThird=1 regardless
-              of the current displayMode, so the preview is meaningful
-              even while the operator is still on Full Screen. */}
-          <OutputPreview mode="lower-third" label="Live Preview" />
-
-          <Separator />
-
+        <CardContent>
+          {/* v0.7.172 — Two-column layout matching the NDI Output panel
+              (lg:grid-cols-[1fr_360px]). Operator complaint: the LT
+              preview added in v0.7.172a sat as a giant 16:9 box at the
+              top of the card and ate the entire viewport before any
+              control was visible. Switched to the same compact 360px
+              right-side sticky preview the NDI panel uses. */}
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5">
+            {/* ── LEFT COLUMN — controls ─────────────────────────── */}
+            <div className="space-y-4">
           {/* Position */}
           <div className="space-y-2">
             <Label className="text-sm font-medium">Position</Label>
@@ -1330,6 +1350,20 @@ export function SettingsView() {
               </div>
             </div>
           </div>
+            </div>{/* end LEFT COLUMN */}
+
+            {/* ── RIGHT COLUMN — sticky compact LT preview ───────── */}
+            <div className="space-y-1.5 lg:sticky lg:top-2 self-start">
+              <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
+                Live Preview
+              </div>
+              <OutputPreview mode="lower-third" hideModeBadge />
+              <p className="text-[10px] text-muted-foreground/80 px-1 leading-snug">
+                Lower-third overlay preview. Updates instantly as you change
+                position, height, or typography on the left.
+              </p>
+            </div>
+          </div>{/* end grid-cols-[1fr_360px] */}
         </CardContent>
       </Card>
 
@@ -1784,8 +1818,13 @@ export function SettingsView() {
                 is passed, so dropping the prop wires both previews to
                 whatever Genesis 2:5 / John 3:16 / etc. the operator
                 clicked in the search results. */}
-            <OutputPreview mode="full" />
-            <OutputPreview mode="lower-third" />
+            {/* v0.7.172 — Lower-Third preview removed from this card.
+                LT now has its own dedicated "Lower Third Settings" card
+                directly below the "Display & Output" card with its own
+                compact right-side preview, so duplicating the LT
+                preview here forced the operator to scroll past two
+                near-identical preview boxes for no reason. */}
+            <OutputPreview mode="full" hideModeBadge />
           </div>
         </CardContent>
       </Card>
