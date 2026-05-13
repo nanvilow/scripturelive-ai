@@ -798,298 +798,22 @@ export function SettingsView() {
             </div>
           </div>
 
-          {settings.displayMode.startsWith('lower-third') && (
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">Lower Third Position</Label>
-              <div className="flex gap-2">
-                {(['bottom', 'top'] as const).map((pos) => (
-                  <button
-                    key={pos}
-                    onClick={() => updateSettings({ lowerThirdPosition: pos })}
-                    className={cn(
-                      'px-3 py-1.5 rounded-md text-xs font-medium transition-colors border capitalize',
-                      settings.lowerThirdPosition === pos
-                        ? 'bg-primary/15 border-primary/30 text-primary'
-                        : 'bg-muted border-border text-muted-foreground hover:bg-muted/80'
-                    )}
-                  >
-                    {pos}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {settings.displayMode.startsWith('lower-third') && (
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">Lower Third Height</Label>
-              <div className="flex gap-2">
-                {([
-                  { value: 'sm' as const, label: 'Small' },
-                  { value: 'md' as const, label: 'Medium' },
-                  { value: 'lg' as const, label: 'Large' },
-                ]).map((h) => (
-                  <button
-                    key={h.value}
-                    onClick={() => updateSettings({ lowerThirdHeight: h.value })}
-                    className={cn(
-                      'px-3 py-1.5 rounded-md text-xs font-medium transition-colors border',
-                      settings.lowerThirdHeight === h.value
-                        ? 'bg-primary/15 border-primary/30 text-primary'
-                        : 'bg-muted border-border text-muted-foreground hover:bg-muted/80'
-                    )}
-                  >
-                    {h.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* v0.7.167 — Lower Third Typography. Independent of both
-              the body (Full Screen) typography AND the NDI broadcast
-              typography. Whatever the operator picks here applies
-              uniformly to: Settings → Preview (Lower Third) box, the
-              live display window, the secondary screen / projector,
-              and the OBS Browser Source URL — the four "in-app
-              lower-third" surfaces. The actual NDI capture surface
-              keeps its own typography on the NDI Output panel.
-              "Mirror Full Screen" leaves the slot undefined so the
-              body settings show through (same as a fresh install). */}
-          {settings.displayMode.startsWith('lower-third') && (
-            <div className="space-y-3 rounded-md border border-border bg-muted/10 p-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label className="text-sm font-medium">Lower Third Typography</Label>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                    Independent from Full Screen and NDI. Applies to the
-                    Preview, live display, secondary screen, and OBS
-                    Browser Source URL.
-                  </p>
-                </div>
-                {(settings.lowerThirdFontFamily !== undefined ||
-                  settings.lowerThirdFontSize !== undefined ||
-                  settings.lowerThirdTextShadow !== undefined ||
-                  settings.lowerThirdTextAlign !== undefined ||
-                  settings.lowerThirdTextScale !== undefined ||
-                  settings.lowerThirdBibleColor !== undefined ||
-                  settings.lowerThirdBibleLineHeight !== undefined) && (
-                  <button
-                    onClick={() =>
-                      updateSettings({
-                        lowerThirdFontFamily: undefined,
-                        lowerThirdFontSize: undefined,
-                        lowerThirdTextShadow: undefined,
-                        lowerThirdTextAlign: undefined,
-                        lowerThirdTextScale: undefined,
-                        lowerThirdBibleColor: undefined,
-                        lowerThirdBibleLineHeight: undefined,
-                      })
-                    }
-                    className="text-[10px] text-muted-foreground hover:text-foreground underline"
-                  >
-                    Reset all
-                  </button>
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    Font
-                  </label>
-                  <select
-                    value={settings.lowerThirdFontFamily ?? '__inherit__'}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      updateSettings({
-                        lowerThirdFontFamily: v === '__inherit__' ? undefined : v,
-                      })
-                    }}
-                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
-                  >
-                    <option value="__inherit__">Mirror Full Screen ({settings.fontFamily})</option>
-                    <option value="sans">Sans-serif</option>
-                    <option value="serif">Serif</option>
-                    <option value="mono">Monospace</option>
-                    <option value="playfair">Playfair</option>
-                    <option value="merriweather">Merriweather</option>
-                    <option value="lora">Lora</option>
-                    <option value="inter">Inter</option>
-                    <option value="poppins">Poppins</option>
-                    <option value="roboto">Roboto</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    Size
-                  </label>
-                  <select
-                    value={settings.lowerThirdFontSize ?? '__inherit__'}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      updateSettings({
-                        lowerThirdFontSize:
-                          v === '__inherit__'
-                            ? undefined
-                            : (v as 'sm' | 'md' | 'lg' | 'xl'),
-                      })
-                    }}
-                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
-                  >
-                    <option value="__inherit__">Mirror Full Screen ({settings.fontSize})</option>
-                    <option value="sm">Small</option>
-                    <option value="md">Medium</option>
-                    <option value="lg">Large</option>
-                    <option value="xl">Extra Large</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    Drop shadow
-                  </label>
-                  <select
-                    value={
-                      settings.lowerThirdTextShadow === undefined
-                        ? '__inherit__'
-                        : settings.lowerThirdTextShadow
-                          ? 'on'
-                          : 'off'
-                    }
-                    onChange={(e) => {
-                      const v = e.target.value
-                      updateSettings({
-                        lowerThirdTextShadow: v === '__inherit__' ? undefined : v === 'on',
-                      })
-                    }}
-                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
-                  >
-                    <option value="__inherit__">
-                      Mirror Full Screen ({settings.textShadow ? 'On' : 'Off'})
-                    </option>
-                    <option value="on">On</option>
-                    <option value="off">Off</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    Align
-                  </label>
-                  <select
-                    value={settings.lowerThirdTextAlign ?? '__inherit__'}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      updateSettings({
-                        lowerThirdTextAlign:
-                          v === '__inherit__'
-                            ? undefined
-                            : (v as 'left' | 'center' | 'right' | 'justify'),
-                      })
-                    }}
-                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
-                  >
-                    <option value="__inherit__">Mirror Full Screen ({settings.textAlign})</option>
-                    <option value="left">Left</option>
-                    <option value="center">Center</option>
-                    <option value="right">Right</option>
-                    <option value="justify">Justify</option>
-                  </select>
-                </div>
-                <div className="space-y-1 col-span-2">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center justify-between">
-                    <span>Bible color</span>
-                    {settings.lowerThirdBibleColor !== undefined && (
-                      <button
-                        onClick={() => updateSettings({ lowerThirdBibleColor: undefined })}
-                        className="text-[9px] text-muted-foreground hover:text-foreground underline"
-                      >
-                        clear
-                      </button>
-                    )}
-                  </label>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="color"
-                      value={settings.lowerThirdBibleColor ?? '#ffffff'}
-                      onChange={(e) =>
-                        updateSettings({ lowerThirdBibleColor: e.target.value })
-                      }
-                      className="h-8 w-10 rounded-md border border-border bg-background cursor-pointer"
-                    />
-                    <input
-                      type="text"
-                      value={settings.lowerThirdBibleColor ?? ''}
-                      placeholder="(mirror Full Screen)"
-                      onChange={(e) => {
-                        const v = e.target.value.trim()
-                        updateSettings({
-                          lowerThirdBibleColor: v.length === 0 ? undefined : v,
-                        })
-                      }}
-                      className="flex-1 h-8 rounded-md border border-border bg-background px-2 text-xs font-mono"
-                    />
-                  </div>
-                </div>
-                <div className="space-y-1 col-span-2">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center justify-between">
-                    <span>
-                      Bible line-height (
-                      {settings.lowerThirdBibleLineHeight?.toFixed(2) ?? 'mirror Full Screen'})
-                    </span>
-                    {settings.lowerThirdBibleLineHeight !== undefined && (
-                      <button
-                        onClick={() =>
-                          updateSettings({ lowerThirdBibleLineHeight: undefined })
-                        }
-                        className="text-[9px] text-muted-foreground hover:text-foreground underline"
-                      >
-                        clear
-                      </button>
-                    )}
-                  </label>
-                  <input
-                    type="range"
-                    min="0.9"
-                    max="2.5"
-                    step="0.05"
-                    value={settings.lowerThirdBibleLineHeight ?? 1.4}
-                    onChange={(e) =>
-                      updateSettings({
-                        lowerThirdBibleLineHeight: parseFloat(e.target.value),
-                      })
-                    }
-                    className="w-full accent-primary"
-                  />
-                </div>
-                <div className="space-y-1 col-span-2">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center justify-between">
-                    <span>
-                      Bible text scale (
-                      {settings.lowerThirdTextScale?.toFixed(2) ?? 'mirror Full Screen'})
-                    </span>
-                    {settings.lowerThirdTextScale !== undefined && (
-                      <button
-                        onClick={() => updateSettings({ lowerThirdTextScale: undefined })}
-                        className="text-[9px] text-muted-foreground hover:text-foreground underline"
-                      >
-                        clear
-                      </button>
-                    )}
-                  </label>
-                  <input
-                    type="range"
-                    min="0.5"
-                    max="2"
-                    step="0.05"
-                    value={settings.lowerThirdTextScale ?? 1}
-                    onChange={(e) =>
-                      updateSettings({ lowerThirdTextScale: parseFloat(e.target.value) })
-                    }
-                    className="w-full accent-primary"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
+          {/* v0.7.172 — Lower Third Position, Height, and Typography
+              moved out of "Display & Output" into the dedicated
+              always-visible "Lower Third Settings" card directly
+              below this one. Two operator-facing wins: (a) operators
+              no longer have to switch displayMode to lower-third
+              first just to discover that the controls exist (the v0.7.167
+              `displayMode.startsWith('lower-third')` gate hid them
+              completely on a fresh install / Full Screen mode);
+              (b) Full Screen settings now contain ZERO lower-third-only
+              controls — exactly as the operator requested ("remove
+              anything that applies to lower third settings from the
+              full-screen display setting"). */}
+          {/* v0.7.172 — All Lower Third controls (Position, Height,
+              7-field Typography) extracted to the dedicated, always-
+              visible "Lower Third Settings" card placed directly after
+              this Card closes. See the comment above. */}
 
           <Separator />
 
@@ -1269,6 +993,341 @@ export function SettingsView() {
                   {theme}
                 </button>
               ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ───────────────────────────────────────────────────────────────
+          v0.7.172 — Dedicated, ALWAYS-VISIBLE "Lower Third Settings" card.
+
+          Operator pain v0.7.171 fixed: pre-v0.7.172 the LT controls
+          (Position, Height, 7-field Typography) were nested inside the
+          "Display & Output" card AND gated on
+          `displayMode.startsWith('lower-third')`. On a fresh install
+          (Full Screen mode), the operator literally could not see ANY
+          Lower Third settings at all — the gate hid them completely.
+          Operator could not "find them on the app".
+
+          Fix: dedicated card here, no displayMode gate. Operator can
+          design their lower-third look while still on Full Screen, then
+          flip the display mode and the design is already in place.
+
+          Wiring (verified end-to-end with curl): every control writes
+          to `lowerThird*` keys → `buildOutputPayload()` → consumed by
+          `/api/output/congregation` whenever
+          `USE_LT_OVERRIDES = !IS_NDI && dm.indexOf('lower-third')===0`.
+          That predicate fires for ALL FOUR in-app surfaces:
+            (1) Settings → Preview (Lower Third) box (?preview=1&lowerThird=1)
+            (2) Live Display window (?lowerThird=1)
+            (3) Secondary screen / projector (no flags, dm from store)
+            (4) OBS Browser Source URL (?transparent=1, dm from store)
+          IS_NDI=true (the ?ndi=1 broadcast feed) deliberately
+          ignores these and uses the separate `ndi*` overrides on the
+          NDI Output panel — that surface is for vMix/Wirecast and the
+          operator may want a different look there. */}
+      <Card className="bg-card border-border">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <Layers className="h-5 w-5 text-primary" />
+            <div>
+              <CardTitle className="text-base">Lower Third Settings</CardTitle>
+              <CardDescription>
+                Independent from Full Screen and from the NDI broadcast feed.
+                These apply to the Preview (Lower Third) box, the Live Display
+                window, the secondary screen, and the OBS Browser Source URL —
+                whenever the display mode is set to Lower Third.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Self-contained preview so the operator can see their LT
+              edits without scrolling back up to the Display & Output
+              card. mode='lower-third' forces ?lowerThird=1 regardless
+              of the current displayMode, so the preview is meaningful
+              even while the operator is still on Full Screen. */}
+          <OutputPreview mode="lower-third" label="Live Preview" />
+
+          <Separator />
+
+          {/* Position */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Position</Label>
+            <div className="flex gap-2">
+              {(['bottom', 'top'] as const).map((pos) => (
+                <button
+                  key={pos}
+                  onClick={() => updateSettings({ lowerThirdPosition: pos })}
+                  className={cn(
+                    'px-3 py-1.5 rounded-md text-xs font-medium transition-colors border capitalize',
+                    settings.lowerThirdPosition === pos
+                      ? 'bg-primary/15 border-primary/30 text-primary'
+                      : 'bg-muted border-border text-muted-foreground hover:bg-muted/80'
+                  )}
+                >
+                  {pos}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Height */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Height</Label>
+            <div className="flex gap-2">
+              {([
+                { value: 'sm' as const, label: 'Small' },
+                { value: 'md' as const, label: 'Medium' },
+                { value: 'lg' as const, label: 'Large' },
+              ]).map((h) => (
+                <button
+                  key={h.value}
+                  onClick={() => updateSettings({ lowerThirdHeight: h.value })}
+                  className={cn(
+                    'px-3 py-1.5 rounded-md text-xs font-medium transition-colors border',
+                    settings.lowerThirdHeight === h.value
+                      ? 'bg-primary/15 border-primary/30 text-primary'
+                      : 'bg-muted border-border text-muted-foreground hover:bg-muted/80'
+                  )}
+                >
+                  {h.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Typography — independent from both Full Screen and NDI */}
+          <div className="space-y-3 rounded-md border border-border bg-muted/10 p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <Label className="text-sm font-medium">Typography</Label>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  &quot;Mirror Full Screen&quot; on a field means: leave it unset and
+                  inherit the Full Screen value. Setting any value here makes
+                  the lower third diverge from Full Screen for that field only.
+                </p>
+              </div>
+              {(settings.lowerThirdFontFamily !== undefined ||
+                settings.lowerThirdFontSize !== undefined ||
+                settings.lowerThirdTextShadow !== undefined ||
+                settings.lowerThirdTextAlign !== undefined ||
+                settings.lowerThirdTextScale !== undefined ||
+                settings.lowerThirdBibleColor !== undefined ||
+                settings.lowerThirdBibleLineHeight !== undefined) && (
+                <button
+                  onClick={() =>
+                    updateSettings({
+                      lowerThirdFontFamily: undefined,
+                      lowerThirdFontSize: undefined,
+                      lowerThirdTextShadow: undefined,
+                      lowerThirdTextAlign: undefined,
+                      lowerThirdTextScale: undefined,
+                      lowerThirdBibleColor: undefined,
+                      lowerThirdBibleLineHeight: undefined,
+                    })
+                  }
+                  className="text-[10px] text-muted-foreground hover:text-foreground underline"
+                >
+                  Reset all
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Font
+                </label>
+                <select
+                  value={settings.lowerThirdFontFamily ?? '__inherit__'}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    updateSettings({
+                      lowerThirdFontFamily: v === '__inherit__' ? undefined : v,
+                    })
+                  }}
+                  className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                >
+                  <option value="__inherit__">Mirror Full Screen ({settings.fontFamily})</option>
+                  <option value="sans">Sans-serif</option>
+                  <option value="serif">Serif</option>
+                  <option value="mono">Monospace</option>
+                  <option value="playfair">Playfair</option>
+                  <option value="merriweather">Merriweather</option>
+                  <option value="lora">Lora</option>
+                  <option value="inter">Inter</option>
+                  <option value="poppins">Poppins</option>
+                  <option value="roboto">Roboto</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Size
+                </label>
+                <select
+                  value={settings.lowerThirdFontSize ?? '__inherit__'}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    updateSettings({
+                      lowerThirdFontSize:
+                        v === '__inherit__'
+                          ? undefined
+                          : (v as 'sm' | 'md' | 'lg' | 'xl'),
+                    })
+                  }}
+                  className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                >
+                  <option value="__inherit__">Mirror Full Screen ({settings.fontSize})</option>
+                  <option value="sm">Small</option>
+                  <option value="md">Medium</option>
+                  <option value="lg">Large</option>
+                  <option value="xl">Extra Large</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Drop shadow
+                </label>
+                <select
+                  value={
+                    settings.lowerThirdTextShadow === undefined
+                      ? '__inherit__'
+                      : settings.lowerThirdTextShadow
+                        ? 'on'
+                        : 'off'
+                  }
+                  onChange={(e) => {
+                    const v = e.target.value
+                    updateSettings({
+                      lowerThirdTextShadow: v === '__inherit__' ? undefined : v === 'on',
+                    })
+                  }}
+                  className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                >
+                  <option value="__inherit__">
+                    Mirror Full Screen ({settings.textShadow ? 'On' : 'Off'})
+                  </option>
+                  <option value="on">On</option>
+                  <option value="off">Off</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Align
+                </label>
+                <select
+                  value={settings.lowerThirdTextAlign ?? '__inherit__'}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    updateSettings({
+                      lowerThirdTextAlign:
+                        v === '__inherit__'
+                          ? undefined
+                          : (v as 'left' | 'center' | 'right' | 'justify'),
+                    })
+                  }}
+                  className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                >
+                  <option value="__inherit__">Mirror Full Screen ({settings.textAlign})</option>
+                  <option value="left">Left</option>
+                  <option value="center">Center</option>
+                  <option value="right">Right</option>
+                  <option value="justify">Justify</option>
+                </select>
+              </div>
+              <div className="space-y-1 col-span-2">
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+                  <span>Bible color</span>
+                  {settings.lowerThirdBibleColor !== undefined && (
+                    <button
+                      onClick={() => updateSettings({ lowerThirdBibleColor: undefined })}
+                      className="text-[9px] text-muted-foreground hover:text-foreground underline"
+                    >
+                      clear
+                    </button>
+                  )}
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="color"
+                    value={settings.lowerThirdBibleColor ?? '#ffffff'}
+                    onChange={(e) =>
+                      updateSettings({ lowerThirdBibleColor: e.target.value })
+                    }
+                    className="h-8 w-10 rounded-md border border-border bg-background cursor-pointer"
+                  />
+                  <input
+                    type="text"
+                    value={settings.lowerThirdBibleColor ?? ''}
+                    placeholder="(mirror Full Screen)"
+                    onChange={(e) => {
+                      const v = e.target.value.trim()
+                      updateSettings({
+                        lowerThirdBibleColor: v.length === 0 ? undefined : v,
+                      })
+                    }}
+                    className="flex-1 h-8 rounded-md border border-border bg-background px-2 text-xs font-mono"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1 col-span-2">
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+                  <span>
+                    Bible line-height (
+                    {settings.lowerThirdBibleLineHeight?.toFixed(2) ?? 'mirror Full Screen'})
+                  </span>
+                  {settings.lowerThirdBibleLineHeight !== undefined && (
+                    <button
+                      onClick={() =>
+                        updateSettings({ lowerThirdBibleLineHeight: undefined })
+                      }
+                      className="text-[9px] text-muted-foreground hover:text-foreground underline"
+                    >
+                      clear
+                    </button>
+                  )}
+                </label>
+                <input
+                  type="range"
+                  min="0.9"
+                  max="2.5"
+                  step="0.05"
+                  value={settings.lowerThirdBibleLineHeight ?? 1.4}
+                  onChange={(e) =>
+                    updateSettings({
+                      lowerThirdBibleLineHeight: parseFloat(e.target.value),
+                    })
+                  }
+                  className="w-full accent-primary"
+                />
+              </div>
+              <div className="space-y-1 col-span-2">
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+                  <span>
+                    Bible text scale (
+                    {settings.lowerThirdTextScale?.toFixed(2) ?? 'mirror Full Screen'})
+                  </span>
+                  {settings.lowerThirdTextScale !== undefined && (
+                    <button
+                      onClick={() => updateSettings({ lowerThirdTextScale: undefined })}
+                      className="text-[9px] text-muted-foreground hover:text-foreground underline"
+                    >
+                      clear
+                    </button>
+                  )}
+                </label>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="2"
+                  step="0.05"
+                  value={settings.lowerThirdTextScale ?? 1}
+                  onChange={(e) =>
+                    updateSettings({ lowerThirdTextScale: parseFloat(e.target.value) })
+                  }
+                  className="w-full accent-primary"
+                />
+              </div>
             </div>
           </div>
         </CardContent>
