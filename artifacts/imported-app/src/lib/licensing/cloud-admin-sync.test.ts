@@ -366,6 +366,99 @@ describe('v0.7.153 — cross-device admin ledger sync', () => {
     })
   })
 
+  it('v0.7.166 — activation lifecycle (isUsed/usedAt/subscriptionExpiresAt) propagates cross-device', async () => {
+    // Reproduces the operator screenshots: same 5-code ledger,
+    // desktop showed "1 ACTIVE / 3 UNUSED" while phone showed
+    // "0 ACTIVE / 4 UNUSED" because the v0.7.153 activation merge
+    // never adopted the incoming isUsed flip.
+
+    // 1. Cloud (phone) and desktop both start with the SAME unused code.
+    const seed = await withDevice(cloud, (s) => {
+      s.generateStandaloneActivation({ planCode: '1M', note: 'lifecycle-test' }, findPlan)
+      return s.extractAdminLedgerSnapshot()
+    })
+    const code = seed.activationCodes[0].code
+    await withDevice(desktop, (s) => s.applyAdminLedgerSnapshot(seed))
+
+    // Both sides agree it's never-used.
+    await withDevice(cloud, (s) => {
+      const row = s.getFile().activationCodes.find((a) => a.code === code)
+      expect(row?.isUsed).toBe(false)
+    })
+    await withDevice(desktop, (s) => {
+      const row = s.getFile().activationCodes.find((a) => a.code === code)
+      expect(row?.isUsed).toBe(false)
+    })
+
+    // 2. Desktop activates the code (the operator pastes it into a
+    //    fresh install). We mutate the row directly to mirror what
+    //    activateCode() does to the persisted activation row, without
+    //    coupling the test to the full subscription bookkeeping.
+    const usedAt = new Date().toISOString()
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+    await withDevice(desktop, (s) => {
+      const f = s.getFile()
+      const row = f.activationCodes.find((a) => a.code === code)!
+      row.isUsed = true
+      row.usedAt = usedAt
+      row.subscriptionExpiresAt = expiresAt
+    })
+
+    // 3. Desktop pushes its snapshot to the cloud (the every-list-read
+    //    fan-out in v0.7.160).
+    const desktopSnap = await withDevice(desktop, (s) => s.extractAdminLedgerSnapshot())
+    const cloudChanged = await withDevice(cloud, (s) => s.applyAdminLedgerSnapshot(desktopSnap))
+    expect(cloudChanged).toBeGreaterThan(0)
+
+    // 4. Cloud (= phone admin reads here) MUST now report the code as
+    //    USED with the desktop's usedAt + subscriptionExpiresAt. This
+    //    is the assertion the v0.7.153 code FAILED — pre-fix the
+    //    cloud row stayed isUsed=false and the phone admin saw
+    //    NEVER-USED for a code that was actively running on desktop.
+    await withDevice(cloud, (s) => {
+      const row = s.getFile().activationCodes.find((a) => a.code === code)
+      expect(row?.isUsed).toBe(true)
+      expect(row?.usedAt).toBe(usedAt)
+      expect(row?.subscriptionExpiresAt).toBe(expiresAt)
+    })
+
+    // 5. Monotonic guard: a STALE snapshot that still says
+    //    isUsed=false MUST NOT un-use the cloud row.
+    const staleUnusedSnap = {
+      ...desktopSnap,
+      activationCodes: desktopSnap.activationCodes.map((a) =>
+        a.code === code
+          ? { ...a, isUsed: false, usedAt: undefined, subscriptionExpiresAt: undefined }
+          : a,
+      ),
+    }
+    await withDevice(cloud, (s) => s.applyAdminLedgerSnapshot(staleUnusedSnap))
+    await withDevice(cloud, (s) => {
+      const row = s.getFile().activationCodes.find((a) => a.code === code)
+      expect(row?.isUsed).toBe(true) // monotonic — cannot revert
+      expect(row?.usedAt).toBe(usedAt)
+      expect(row?.subscriptionExpiresAt).toBe(expiresAt)
+    })
+
+    // 6. Renewal: a LATER usedAt + further-out expiry must win.
+    const renewalUsedAt = new Date(Date.parse(usedAt) + 60_000).toISOString()
+    const renewalExp = new Date(Date.parse(expiresAt) + 30 * 24 * 60 * 60 * 1000).toISOString()
+    const renewalSnap = {
+      ...desktopSnap,
+      activationCodes: desktopSnap.activationCodes.map((a) =>
+        a.code === code
+          ? { ...a, isUsed: true, usedAt: renewalUsedAt, subscriptionExpiresAt: renewalExp }
+          : a,
+      ),
+    }
+    await withDevice(cloud, (s) => s.applyAdminLedgerSnapshot(renewalSnap))
+    await withDevice(cloud, (s) => {
+      const row = s.getFile().activationCodes.find((a) => a.code === code)
+      expect(row?.usedAt).toBe(renewalUsedAt)
+      expect(row?.subscriptionExpiresAt).toBe(renewalExp)
+    })
+  })
+
   it('rejects snapshots from a wrong cloudAdminCode (constant-time compare)', async () => {
     // Cloud-side snapshot route enforces the credential. Drive it
     // directly with a NextRequest mock. We must reset the module
