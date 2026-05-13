@@ -1,3 +1,23 @@
+## v0.7.175 — Hotfix: Untrack Installer Artwork from `.gitignore` (CI Windows Build Red on v0.7.173)
+
+Operator: "v0.7.173 faild" — terse, but the v0.7.173 GitHub Actions release run came back red on the `Build & package Windows installer` step. Pulled the failed-step log from the Actions API and the root cause was electron-builder NSIS phase erroring with `cannot find specified resource "build-resources/installerHeader.bmp"` and `installerSidebar.bmp` (Errors #1 and #2, both fatal — `Cannot cleanup` followed by `ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL` on `package:win`).
+
+The files exist on the local Replit dev box (and have for months — last touched 2026-05-09 / 2026-05-10) but were NEVER tracked in git: `artifacts/imported-app/.gitignore` line 91 was a blanket `build-resources/*` rule with only 4 carve-outs (`notarize.js`, `icon.ico`, `icon.png`, `entitlements.mac.plist`). Every other installer asset — the two NSIS BMPs, the uninstaller BMP, `installer.nsh` (NSIS hook with `customInstall` MessageBox, see v0.7.142–143 GR), `license.txt` (the ASCII license per v0.7.139 GR), and the bundled NDI runtime DLL `build-resources/ndi/Processing.NDI.Lib.x64.dll` (28 MB, the v0.7.146 "no separate NDI Tools install required" guarantee) — was silently excluded from every git push.
+
+CI checks out from git, finds an empty `build-resources/` (only 4 files), and electron-builder fails the moment NSIS goes to render the wizard chrome. The local Windows BUILD.bat path always worked because it operates against the live working tree, so this never surfaced before — the v0.7.173 Actions run was the first one where the missing assets were the only failure mode (prior CI reds were the v0.7.171 webpack `node:` scheme + v0.7.170 edge-runtime warnings, both now fixed, so the NSIS phase finally got reached and immediately exposed the missing artwork).
+
+**Fix — `.gitignore` carve-outs (`artifacts/imported-app/.gitignore` lines 99-109)**: added 6 explicit `!build-resources/<asset>` lines covering `installerHeader.bmp`, `installerSidebar.bmp`, `uninstallerSidebar.bmp`, `installer.nsh`, `license.txt`, and the NDI directory (`!build-resources/ndi/` + `!build-resources/ndi/**`). The blanket `build-resources/*` rule is INTENTIONALLY kept on line 94 — the directory accumulates electron-builder cache junk (release/, win-unpacked/, etc.) that we never want in the repo, so the carve-out pattern is correct: deny by default + allow-list the exact runtime/branding assets. Pushed all 6 newly-tracked files (28 MB NDI DLL + ~350 KB BMPs + scripts) as part of the v0.7.175 commit.
+
+**Files**: `artifacts/imported-app/.gitignore` (+11 lines), 6 newly-tracked binary/text assets in `build-resources/` (DLL + BMPs + NSH + license), `package.json` + `BUILD.bat` banner bumped to 0.7.175. Tests: `tsc --noEmit` clean (gitignore changes are CI-only, no source impact).
+
+**GUARD-RAIL (A)**: any new file added under `artifacts/imported-app/build-resources/` that ships INTO the installer (referenced from `electron-builder.yml`, `installer.nsh`, or `extraResources`) MUST get a matching `!build-resources/<path>` line in `.gitignore` — the blanket `build-resources/*` denial WILL silently strip it from git and the failure won't surface until a CI run hits the NSIS/extraResources phase (which can be many commits downstream of the file's introduction). Verify after every add with `git --no-optional-locks check-ignore -v artifacts/imported-app/build-resources/<file>` — if it prints anything, you need a `!` carve-out.
+
+**GUARD-RAIL (B)**: when triaging a CI red on the GitHub Actions Windows build, ALWAYS pull the failed step's log via the Actions REST API (`GET /repos/<owner>/<repo>/actions/runs/<id>/logs` returns a ZIP; the per-step files live under `Build Windows installer/<N>_<step-name>.txt`). The local Replit BUILD.bat operates on the working tree, not the git index, so any "file in working tree but not in git" failure is INVISIBLE locally and ONLY surfaces in CI — `pnpm typecheck` will never catch it.
+
+**GUARD-RAIL (C)**: NEVER convert the `build-resources/*` rule into a flat `!build-resources/` allow-all. The directory is a working scratchpad for electron-builder (release/, win-unpacked/, win-arm64-unpacked/, .cache/, *.tmp) and accidentally tracking those bloats the repo by hundreds of MB per release cycle. Deny-by-default + explicit allow-list is the only correct pattern.
+
+---
+
 ## v0.7.174 — Bible-Book Homophone Normaliser (Ruth → "Root"/"Roach" Field Bug)
 
 Operator field-report after upgrading to v0.7.173: "i was saying Ruth chapter 6 verse 1 but see what came 'Roach top touch is best. Root. Root chapter 6 verses. Root chapter 6 verses.'"
