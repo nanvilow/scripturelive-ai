@@ -675,6 +675,25 @@ function render(s){
         ?s.settings.ndiDisplayMode
         :(s.displayMode||'full')));
   var st=s.settings||{};
+  // v0.7.165 — Unified lower-third typography. Operator complaint:
+  // the "PREVIEW (LOWER THIRD)" designer card (which sets
+  // ?lowerThird=1 only, NOT ?ndi=1) read the standard textAlign /
+  // referenceTextAlign / referenceFontSize fields, while the
+  // congregation NDI capture, OBS Browser Source, and second-screen
+  // surfaces (which set ?ndi=1) read the parallel ndi* override
+  // fields. Two different field stores → preview painted one layout,
+  // every actual output painted another. Same root cause for the
+  // Live Display / Main Preview iframe panes: they don't pass ?ndi=1
+  // either, so they tracked the projector's standard fields, not the
+  // ndi* overrides that the OBS Browser Source / NDI capture used.
+  // Conceptually the lower-third *is* the NDI/OBS chyron output —
+  // there's only ONE lower-third look — so when the renderer
+  // resolves dm==='lower-third', every surface paints with the same
+  // ndi* override pile. Outside of lower-third (full-screen
+  // projector, hymn slides, etc.) IS_NDI still gates the overrides
+  // on the NDI surface alone, so the projector keeps its branded
+  // typography unchanged.
+  var USE_NDI_OVERRIDES = IS_NDI || dm === 'lower-third';
   // v0.5.57 — NDI surface gets its own aspect ratio when set.
   // 'auto' or undefined → fall back to displayRatio (Live Display).
   var AR=(IS_NDI && st.ndiAspectRatio && st.ndiAspectRatio!=='auto')
@@ -707,21 +726,21 @@ function render(s){
   // use it. Otherwise fall back to the Live Display setting. The
   // reference typography (rf*) keeps its existing fallback chain
   // (rf || body), but the "body" source is now NDI-aware via T_*.
-  var T_FF=(IS_NDI && st.ndiFontFamily) ? st.ndiFontFamily : st.fontFamily;
-  var T_FS=(IS_NDI && st.ndiFontSize) ? st.ndiFontSize : (st.fontSize||'lg');
-  var T_SH_BOOL=(IS_NDI && (typeof st.ndiTextShadow==='boolean')) ? st.ndiTextShadow : (st.textShadow!==false);
-  var T_TS=(IS_NDI && (typeof st.ndiTextScale==='number')) ? st.ndiTextScale : (typeof st.textScale==='number'?st.textScale:1);
-  var T_TA=(IS_NDI && st.ndiTextAlign) ? st.ndiTextAlign : (st.textAlign||'center');
+  var T_FF=(USE_NDI_OVERRIDES && st.ndiFontFamily) ? st.ndiFontFamily : st.fontFamily;
+  var T_FS=(USE_NDI_OVERRIDES && st.ndiFontSize) ? st.ndiFontSize : (st.fontSize||'lg');
+  var T_SH_BOOL=(USE_NDI_OVERRIDES && (typeof st.ndiTextShadow==='boolean')) ? st.ndiTextShadow : (st.textShadow!==false);
+  var T_TS=(USE_NDI_OVERRIDES && (typeof st.ndiTextScale==='number')) ? st.ndiTextScale : (typeof st.textScale==='number'?st.textScale:1);
+  var T_TA=(USE_NDI_OVERRIDES && st.ndiTextAlign) ? st.ndiTextAlign : (st.textAlign||'center');
   // v0.5.57 — NDI-only bible body color + line-height. Both are
   // pure CSS overrides applied to the .slide-text node only when
   // IS_NDI is true; the secondary screen keeps the theme defaults.
-  var T_COLOR=(IS_NDI && st.ndiBibleColor) ? st.ndiBibleColor : '';
+  var T_COLOR=(USE_NDI_OVERRIDES && st.ndiBibleColor) ? st.ndiBibleColor : '';
   // v0.6.9 — Bible line-height now has a Live Display source too.
   // NDI override > Live Display setting > 0 (no override). Previously
   // this only honoured the NDI value, so the new operator-facing
   // bibleLineHeight slider in the Typography panel had no effect
   // on the secondary screen.
-  var T_LH=(IS_NDI && typeof st.ndiBibleLineHeight==='number')
+  var T_LH=(USE_NDI_OVERRIDES && typeof st.ndiBibleLineHeight==='number')
     ? Math.min(2.5, Math.max(0.9, st.ndiBibleLineHeight))
     : (typeof st.bibleLineHeight==='number'
       ? Math.min(2.5, Math.max(0.9, st.bibleLineHeight))
@@ -743,15 +762,15 @@ function render(s){
   // bucket so the broadcast deck can run a tiny italic chyron-style
   // reference while the in-room projector keeps the standard
   // body-aligned label.
-  var rfTsRaw=(IS_NDI && typeof st.ndiRefScale==='number')
+  var rfTsRaw=(USE_NDI_OVERRIDES && typeof st.ndiRefScale==='number')
     ? st.ndiRefScale
     : ((typeof st.referenceTextScale==='number')?st.referenceTextScale:T_TS);
   var rfTs=Math.min(2,Math.max(.5,rfTsRaw));
-  var rfBucket=(IS_NDI && st.ndiRefSize) ? st.ndiRefSize : (st.referenceFontSize||T_FS);
+  var rfBucket=(USE_NDI_OVERRIDES && st.ndiRefSize) ? st.ndiRefSize : (st.referenceFontSize||T_FS);
   var rfScale=rfTs*(FS_MULT[rfBucket]||1);
-  var rfStyle=(IS_NDI && st.ndiRefStyle==='italic') ? 'italic' : 'normal';
-  var rfPosition=(IS_NDI && st.ndiRefPosition) ? st.ndiRefPosition : 'top';
-  var rfHidden=(IS_NDI && st.ndiRefPosition==='hidden');
+  var rfStyle=(USE_NDI_OVERRIDES && st.ndiRefStyle==='italic') ? 'italic' : 'normal';
+  var rfPosition=(USE_NDI_OVERRIDES && st.ndiRefPosition) ? st.ndiRefPosition : 'top';
+  var rfHidden=(USE_NDI_OVERRIDES && st.ndiRefPosition==='hidden');
   // Reference clamp — same shape as the LT body clamp below, but a
   // narrower band so the reference label stays subordinate to the
   // verse body. Mirrors lowerThirdClamp() in src/lib/fonts.ts so the
@@ -955,7 +974,7 @@ function render(s){
     // v0.7.11 — FLIPPED PRECEDENCE (see __lhKey above for full
     // rationale). Live SSE state wins; FORCE_SC is now only the
     // first-paint fallback before SSE arrives.
-    var ndiLtScale = IS_NDI
+    var ndiLtScale = USE_NDI_OVERRIDES
       ? (typeof st.ndiLowerThirdScale === 'number'
           ? Math.min(2, Math.max(0.5, st.ndiLowerThirdScale))
           : (FORCE_SC !== null ? FORCE_SC : 1))
@@ -1025,7 +1044,7 @@ function render(s){
     // the operator's control: the surrounding frame is always alpha
     // (NDI as designed) but the lower-third card keeps or drops its
     // themed gradient backdrop based on the operator's preference.
-    var ltTransparent=IS_NDI && st.ndiLowerThirdTransparent===true;
+    var ltTransparent=IS_NDI && st.ndiLowerThirdTransparent===true; // intentionally IS_NDI-only: only the actual NDI capture surface drops the themed backdrop for vMix/OBS keying.
     var ltTransparentClass=ltTransparent?' transparent':'';
     // v0.7.8 — REVERTED v0.6.5. The .ndi-full class (which removed
     // the max-width cap and shrank side padding from 6% → 2%) was the

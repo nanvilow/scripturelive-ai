@@ -2329,6 +2329,43 @@ export function applyAdminLedgerSnapshot(snap: AdminLedgerSnapshot): number {
     const incXfer = inc.transferCount ?? 0
     const curXfer = cur.transferCount ?? 0
     if (incXfer > curXfer) { cur.transferCount = incXfer; mutated = true }
+
+    // v0.7.166 — Activation LIFECYCLE fields (isUsed / usedAt /
+    // subscriptionExpiresAt) MUST propagate cross-device. The
+    // original v0.7.153 merge intentionally skipped these because
+    // the lifecycle was thought to be per-device. That assumption
+    // breaks the operator's mental model: a code activated on
+    // device-A still reads as NEVER-USED on device-B because the
+    // cloud row never adopted device-A's flip. Operator screenshots
+    // showed desktop "1 ACTIVE / 3 UNUSED" vs phone "0 ACTIVE /
+    // 4 UNUSED" for the SAME 5-code ledger — exactly this drift.
+    //
+    // Merge rules:
+    //   • isUsed is monotonic (false → true wins, never the reverse).
+    //     The only legitimate "un-use" is operator cancel/restore
+    //     which goes through cancelledAt / softDeletedAt — both of
+    //     those are already merged above.
+    //   • usedAt: take the LATER ISO. A re-activation after a
+    //     transfer or restore writes a fresher usedAt; we want the
+    //     most recent one to surface.
+    //   • subscriptionExpiresAt: take the LATER ISO. A renewal
+    //     extends expiry; we never want a stale shorter window from
+    //     one device to overwrite a longer remote-renewed one.
+    //   • lastSeenLocation already carries the "CLOUD-CLAIMED:<id>"
+    //     marker for cross-device claims (see line ~2042) and is
+    //     already merged above via the lastSeenAt latest-write rule.
+    if (!cur.isUsed && inc.isUsed) {
+      cur.isUsed = true
+      mutated = true
+    }
+    const newUsedAt = laterIso(cur.usedAt, inc.usedAt)
+    if (newUsedAt !== cur.usedAt) { cur.usedAt = newUsedAt; mutated = true }
+    const newExp = laterIso(cur.subscriptionExpiresAt, inc.subscriptionExpiresAt)
+    if (newExp !== cur.subscriptionExpiresAt) {
+      cur.subscriptionExpiresAt = newExp
+      mutated = true
+    }
+
     if (mutated) changed += 1
   }
 

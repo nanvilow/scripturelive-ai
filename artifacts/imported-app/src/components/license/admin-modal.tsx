@@ -623,11 +623,27 @@ export function AdminModal() {
     // v0.7.1 — also gate on `authed` so we don't 401-spam the
     // server (and pollute the audit log) before the operator
     // submits the password.
-    if (!open || !authed) return
+    //
+    // v0.7.166 — Additionally gate on `tab === 'overview'`. The
+    // /admin/list reload only feeds the Overview KPI cards +
+    // Recent Payments / Activations / Notifications tables; firing
+    // it every 5 s while the operator is on the Codes or Settings
+    // tab caused two visible regressions:
+    //   (a) the Settings card flickered every 5 s as Radix's Dialog
+    //       re-evaluated its overlay after each setRecords() state
+    //       update — operator described it as the panel "blurring"
+    //       on every auto-refresh tick.
+    //   (b) the cross-device admin sync push fan-out (triggered by
+    //       every list-read on the cloud side) ran 3× more often
+    //       than necessary, multiplying network chatter and giving
+    //       the merge logic 3× as many chances to race.
+    // Mirrors the existing per-tab gating used by reloadCodes (line
+    // ~672) and reloadRecords (line ~682).
+    if (!open || !authed || tab !== 'overview') return
     reload()
     const id = setInterval(reload, 5_000)
     return () => clearInterval(id)
-  }, [open, authed, reload])
+  }, [open, authed, tab, reload])
 
   // v0.7.160 — Auto-probe cross-device sync the moment the admin
   // modal opens (and re-probe every 30 s while it stays open) so
