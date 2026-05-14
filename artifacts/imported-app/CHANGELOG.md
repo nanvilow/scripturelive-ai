@@ -1,3 +1,90 @@
+## v0.7.184.1 — Hotfix on v0.7.184: persist version actually bumped + autofit lock moved to module-level cache
+
+Code review caught two latent regressions in v0.7.184 before any operator build was produced. Both fixed under the same code-review-then-ship loop, no new operator request. Operator-visible behaviour now matches the v0.7.184 changelog claims.
+
+**1. Persist version: 4 → 5 — `src/lib/store.ts:1209`**
+
+v0.7.184 added a v4→v5 migration block that coerces stale `displayMode='lower-third'`/`'lower-third-black'` → `'full'` on first boot, but forgot to bump the persist `version` from 4 to 5. Zustand only runs migrations where `version < currentVersion`, so the coercion was dead code on every existing install. Operators upgrading from v0.7.183 with `displayMode='lower-third'` persisted on disk would have rendered in-app surfaces in undefined mode (the LT UI was deleted). Now bumped, with an explicit comment block above the version literal explaining why future LT-shaped state changes need both a migration block AND a version bump in lockstep.
+
+**2. Autofit lock moved to MODULE-LEVEL cache — `src/app/api/output/congregation/route.ts` ~L685-715**
+
+v0.7.184 stored the per-verse lock key on `p.dataset.fitKey`. Code review correctly observed that every render reassigns the output container's `innerHTML` (route.ts ~L1277, ~L1299), which DESTROYS and recreates the verse paragraph. So the dataset attribute never survived across renders → the lock never engaged → the SSE-tick flash bug v0.7.184 claimed to fix was actually still present.
+
+Fix: replaced the dataset-attribute lock with module-level closure state (`var __fitKey='', __fitScale=1` declared once at script-init time). On each render: compute the new key from the current paragraph's textContent length + parent W/H. If the key matches the cached `__fitKey`, REAPPLY the cached `__fitScale` directly via `transform: scale()` without re-measuring — avoids the rounding-flip micro-flash that operator reported. If the key differs (new verse, or window resize), measure and recompute as before, updating both `__fitKey` and `__fitScale`. The transform must be re-written on every render (because the `<p>` was just recreated by the `innerHTML` assignment), but the SCALE VALUE is now stable across same-verse renders.
+
+Also stripped backticks out of the new comment block (the surrounding script lives inside a tagged template literal per the v0.5.55 note at ~L483 — backticks anywhere in the script body terminate the string and break the build). Added a guard-rail line in-comment.
+
+**Files**: `store.ts` (1-line bump + 7-line comment), `route.ts` (~30 lines: new module-level cache vars + reworked fitVerseText body + comment), `package.json` + `BUILD.bat` → 0.7.184.1. Tests: `tsc --noEmit` clean.
+
+**GUARD-RAIL (A)**: any persist-state migration block in `store.ts migrate:` MUST be paired with a corresponding `version: N+1` bump on the persist config. Adding a migration without bumping the version is dead code; bumping the version without adding a migration silently drops state. Verify both with a single grep: `rg -n "version: [0-9]|version <" src/lib/store.ts`.
+
+**GUARD-RAIL (B)**: cross-render state for the renderer script (anything that needs to survive an `innerHTML` reassignment) MUST live in module-level closure state, NEVER on a `data-` attribute on a child element of `#output`. The output subtree is destroyed and recreated on every render. Per-element dataset attributes are fine for state that's only needed within a single render's lifecycle.
+
+**GUARD-RAIL (C)**: ANY new code added inside the renderer-script template literal in `route.ts` (the giant `<script>...<\/script>` block) MUST be backtick-free. Backticks terminate the surrounding template literal and produce confusing TS1005/TS1443 errors that look like syntax errors in unrelated lines. Use plain quotes in code, and avoid `code` style in comments — write `__fitKey` (no backticks) instead.
+
+---
+
+## v0.7.184 — In-app LT REMOVED (again) + Auto-route detection ALWAYS fires (dedupe-safe) + Verse autofit per-verse LOCK + OBS bake re-verified
+
+Five operator-approved fixes bundled in one ship under explicit pre-authorization ("when you are done will all the works you can ship them"). Each item below maps directly to a numbered request in the operator's chat message.
+
+**1. Auto-route detected refs to Chapter Navigator + 5. Dedupe-safe (single fix in `addDetectedVerse`)**
+
+`src/lib/store.ts` ~L801-818 — `requestNavigatorRef(v.reference)` now fires AT THE TOP of `addDetectedVerse`, BEFORE the v0.7.119 cross-source dedupe block. Operator's bug report: "speaker says a verse, detector drops it; speaker mentions previous verse — detector doesn't drop it again because it's in the column already, so it doesn't auto-send."
+
+Root cause: pre-v0.7.184, navigator routing happened at five separate speech-provider call sites (per v0.7.182's first cut). When a verse was already in `detectedVerses`, the call site WAS still fired, but the v0.7.182 design only navigated when the dedupe added a new entry. The new design moves the call into `addDetectedVerse` itself AND places it before the dedupe early-return — so EVERY detection (new add OR dedupe-suppressed re-mention) re-navigates. Column stays clean (dedupe still suppresses the duplicate row), navigator still flips (the operator's stated need).
+
+`addDetectedVerseCandidate` deliberately NOT wired this way — speculative <50% guesses thrash the navigator.
+
+**2. In-app Lower Third REMOVED (operator-explicit; v0.7.182 redux)**
+
+Three in-app surfaces stripped, NDI Output panel intentionally untouched:
+
+- **`src/lib/store.ts:44`** — `DisplayMode` type narrowed from `'full' | 'lower-third' | 'lower-third-black'` → `'full'`. TypeScript surfaces every dead in-app LT branch as a type error.
+- **Persist migration v4 → v5 — `src/lib/store.ts` ~L1286-1307** — silently coerces stale `settings.displayMode='lower-third'` / `'lower-third-black'` → `'full'` on first boot of v0.7.184. Idempotent: a fresh install at v5 already has `displayMode='full'` and the equality check skips. NDI's separate `ndiDisplayMode` is intentionally NOT touched — operators with configured LT NDI broadcasts keep them.
+- **`src/components/views/settings.tsx`** — Display Mode 3-button picker DELETED (~L782-805); entire Lower Third Settings card (~333 lines: Position / Height / Typography / Bible color / Line height / Text scale + LIVE PREVIEW) DELETED (~L1021-1353).
+- **`src/components/layout/easyworship-shell.tsx`** — `modeMenuOpen` state DELETED; top-bar Output Display Mode Popover DELETED (~L968-1031); status pill at ~L1492 collapsed to literal `Full Screen` (the ternary on `settings.displayMode` always returned the left branch after type narrow).
+
+NDI Output panel intentionally UNTOUCHED — `ndiDisplayMode` picker, `lowerThirdPosition/Height/Typography`, `ndiLowerThird*` font/color/scale/transparent, OBS URL bake (v0.7.181) all stay. Renderer route.ts LT branch retained — driven exclusively by `IS_NDI && st.ndiDisplayMode === 'lower-third'`. Persisted `lowerThird*` keys remain on disk (no destructive migration); `USE_LT_OVERRIDES = !IS_NDI && dm.indexOf('lower-third')===0` permanently false in-app.
+
+**3. OBS Browser Source URL — re-verified, no code change needed**
+
+Operator: "Make all output of OBS Browser Source URL pick the same output settings from NDI Full display and Lower third display and disable it from receiving output from elsewhere; only NDI output source is applied to OBS Browser Source URL." This was already implemented in v0.7.181 via `buildCongregationParams()` in `src/components/views/ndi-output-panel.tsx` ~L93-109. Verified:
+
+- URL ALWAYS bakes `ndi=1` + `transparent=1` → `route.ts` `IS_NDI=true` → uses `ndi*` overrides exclusively.
+- When `ndiDisplayMode === 'lower-third'`, URL also bakes `lowerThird=1` + `position=top|bottom` + `lh=sm|md|lg` + `sc=<0.5..2>` so OBS first-paint matches NDI broadcast immediately (no SSE-catch-up flash).
+- Three URL emitters in lockstep: `electron/main.ts` FrameCapture, `NdiPreviewSurface`, `buildObsUrl()` / `browserFallbackUrl`.
+- Operator's screenshots (`postimg.cc/CnC4zrNG`, `postimg.cc/VdrfPyKv`) showed NDI Live Preview correctly mirroring the OBS URL content with arrows pointing to the URL — the existing pipe is doing exactly what was asked.
+
+**4. Verse-text autofit per-verse LOCK — `src/app/api/output/congregation/route.ts` ~L658-695**
+
+Operator: "When autofit is done to the text to fit the frame, lock it so it won't change to another autofit. What I want is for anytime autofit frame is done, lock it down until it autofits another long verse... it auto-fits the same verse again, making the screen flash."
+
+Root cause: v0.7.183's `fitVerseText` ran on EVERY render — including SSE updates that don't change verse text (font color tweak, background tweak, line-height slider, etc.). Each render reset `transform=''`, re-measured, recomputed `k`. Tiny `scrollHeight` rounding flips between paint cycles caused k to oscillate by 0.5–2% per tick — visible as a micro-flash on the projector.
+
+Fix: cache a `data-fit-key` attribute on the verse `<p>` element. Key = `(textContent.length + '|' + parent.clientWidth + 'x' + parent.clientHeight)`. On render:
+- New verse text → new length → new key → recompute, repaint scale.
+- Same verse, same frame → key match → EARLY EXIT before resetting transform. Previous scale stays pinned exactly. Zero flash.
+- Window resize → new W/H → new key → recompute (correct behaviour).
+
+Why textContent.length, not the full string: cheap (no allocation), good enough as a discriminator (different verses ≠ identical length in 99.9% of cases; in the rare collision, the next genuine slide change corrects it).
+
+**Files**: `store.ts` (~30 lines: type narrow + comment + addDetectedVerse navigator-fire + v4→v5 migration), `settings.tsx` (~360 lines deleted: Display Mode picker + entire LT Settings card, replaced by 16-line comments), `easyworship-shell.tsx` (~70 lines deleted: Popover + modeMenuOpen + status-pill collapse, replaced by comments), `route.ts` (~25 lines: per-verse lock + comment), `package.json` + `BUILD.bat` → 0.7.184. Tests: `tsc --noEmit` clean.
+
+**Process** — followed v0.7.183 GR-E playbook: read all 3 operator proof images first (`postimg.cc/gallery/0qCrkP9` for in-app LT visibility; `postimg.cc/CnC4zrNG` + `postimg.cc/VdrfPyKv` for OBS-vs-NDI parity), surveyed current code state, batched edits in parallel where independent, verified typecheck clean, presented summary in chat, then shipped under operator's explicit pre-authorization ("you can ship them").
+
+**GUARD-RAIL (A) — addDetectedVerse navigator-fire MUST be at the TOP of the function, BEFORE the dedupe early-return.** Moving it inside the dedupe success branch (where v0.7.182's first cut placed it) reintroduces the bug operator reported in v0.7.184 #5: re-mentioning a verse already in the column doesn't re-navigate. The current placement guarantees navigator routing fires on EVERY authoritative detection regardless of dedupe outcome.
+
+**GUARD-RAIL (B) — never re-introduce in-app LT UI without coordinated rollback of: (1) v4→v5 migration coercion, (2) `DisplayMode = 'full'` type narrow.** Architecture is "in-app surfaces are Full only, NDI broadcast can be Full or Lower Third via `ndiDisplayMode`." Mixing muddles the operator mental model. Verify migration version with `rg -n "version: [0-9]" src/lib/store.ts`; verify type narrow with `rg -n "export type DisplayMode" src/lib/store.ts`.
+
+**GUARD-RAIL (C) — autofit LOCK key is `(textContent.length + parent W + parent H)`, persisted on `p.dataset.fitKey`.** Do NOT replace with a Map keyed on element identity (the rendered `<p>` is recreated by every `innerHTML` assignment so identity changes per render and the lock would never engage). Do NOT include any per-render-volatile field (font-size, color, etc.) in the key — that's the bug we just fixed.
+
+**GUARD-RAIL (D) — OBS URL must continue to bake the four LT params (`lowerThird=1`, `position`, `lh`, `sc`) when `ndiDisplayMode === 'lower-third'`.** v0.7.181's `buildCongregationParams()` is the canonical source; FrameCapture and NdiPreviewSurface mirror the same logic in three lockstep call sites. Adding a fourth NDI-downstream URL emitter (e.g. future Wirecast / vMix direct URL) MUST follow the same 4-param bake.
+
+**GUARD-RAIL (E) [PROCESS]** — operator's explicit "you can ship" authorization in the same message as the work request is sufficient ship approval. Still surface a chat-level summary BEFORE running the push script so the operator can see what's about to ship. v0.7.184 followed this and shipped on first iteration.
+
+---
+
 ## v0.7.183 — Verse-text autofit redesign (single-shot math, floor 0.60) + Admin Modal poll-rate perf pass
 
 Two operator-driven fixes after v0.7.182 was reverted (the v0.7.182 first-cut autofit shrunk readable verses to ~30% globally — postimg `njBn2fSY` flagged it as broken).

@@ -29,7 +29,16 @@ export interface ScheduleItem {
 }
 
 export type BibleTranslation = string
-export type DisplayMode = 'full' | 'lower-third' | 'lower-third-black'
+// v0.7.184 — In-app DisplayMode narrowed to 'full' ONLY. The two
+// 'lower-third*' variants were removed from the in-app UI entirely
+// (operator: "remove the lower third from the app, leaving only the
+// lower third that can be operated in NDI settings only"). NDI broadcast
+// keeps its own LT mode via the separate `ndiDisplayMode` field below
+// (line ~184). Migration v4→v5 silently coerces any persisted stale
+// 'lower-third' / 'lower-third-black' value to 'full' on first boot.
+// See v0.7.184 GR-A in CHANGELOG: re-introducing in-app LT requires
+// coordinated rollback of (1) this narrow + (2) the v4→v5 migration.
+export type DisplayMode = 'full'
 export type OutputDestination = 'window' | 'ndi' | 'both'
 
 export interface MediaLibraryItem {
@@ -788,6 +797,22 @@ export const useAppStore = create<AppState>()(
       detectedVerses: [],
       addDetectedVerse: (v) =>
         set((state) => {
+          // v0.7.184 — Auto-route to Chapter Navigator. Fire BEFORE the
+          // dedupe check below so the navigator updates EVEN WHEN the
+          // verse is already in the detected column. Operator-reported
+          // bug: "speaker says a verse, detector drops it; speaker
+          // mentions previous verse — detector doesn't drop it again
+          // because it's in the column already, so it doesn't auto-send."
+          // The dedupe correctly suppresses the duplicate column entry
+          // (we don't want the same verse appearing twice), but the
+          // navigator should STILL re-navigate to that verse so the
+          // operator can flip to it instantly. Done at the top so it
+          // fires regardless of whether the dedupe block returns early.
+          // `addDetectedVerseCandidate` (line ~860) is intentionally NOT
+          // wired this way — speculative <50% guesses thrash the navigator.
+          if (v.reference) {
+            try { get().requestNavigatorRef(v.reference) } catch { /* defensive */ }
+          }
           // v0.7.119 — Cross-source dedupe. Operator reported "the
           // verse appeared in Bible Reference Quoted but the live
           // counter incremented in Auto Verse Match" — root cause is
@@ -1171,7 +1196,14 @@ export const useAppStore = create<AppState>()(
       // automatically, but every field they explicitly set survives.
       // This stops the "I upgraded and my trial reset / my fonts
       // changed / my mic gain went back to 1" complaints.
-      version: 4,
+      // v0.7.184 — bumped to 5 so the v4→v5 LT-coercion migration block
+      // below actually executes on existing installs upgrading from v0.7.183
+      // and earlier. Without this bump the migration is dead code: zustand
+      // only runs migration steps where `version < currentVersion`, so
+      // leaving this at 4 means stale persisted `displayMode='lower-third'`
+      // / `'lower-third-black'` would never be coerced and the in-app LT
+      // surfaces (now deleted) would render in undefined mode.
+      version: 5,
       migrate: (persistedState: unknown, version: number) => {
         const ps = (persistedState as {
           settings?: Partial<AppSettings> & { defaultTranslation?: string; ndiTranslation?: string }
@@ -1254,6 +1286,28 @@ export const useAppStore = create<AppState>()(
             settings: fixedSettings,
             selectedTranslation: fixedSelected,
           }
+        }
+        // v0.7.184 → v5: coerce stale in-app `displayMode` of
+        // 'lower-third' or 'lower-third-black' → 'full'. The in-app
+        // Lower Third UI was removed in v0.7.184 (operator-explicit:
+        // "remove the lower third from the app, leaving only the lower
+        // third that can be operated in NDI settings only"). Without
+        // this migration, an existing install that last persisted
+        // `displayMode='lower-third'` would render NOTHING on the
+        // in-app Live Display surface (the LT branch in route.ts is
+        // now NDI-only). Idempotent: a fresh install at version 5
+        // already has displayMode='full' and the equality check skips.
+        // NDI's separate `ndiDisplayMode` field is intentionally NOT
+        // touched — operators who configured an LT NDI broadcast keep it.
+        if (version < 5) {
+          const s = (ps.settings ?? {}) as Omit<Partial<AppSettings>, 'displayMode'> & { displayMode?: string }
+          if (s.displayMode === 'lower-third' || s.displayMode === 'lower-third-black') {
+            return {
+              ...ps,
+              settings: { ...s, displayMode: 'full' as DisplayMode },
+            }
+          }
+          return ps
         }
         return ps
       },
