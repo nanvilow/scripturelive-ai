@@ -1556,6 +1556,22 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         const dedupKey = `v2:${refKey}`
         const now = Date.now()
         const lastAt = processedRefsRef.current.get(dedupKey) ?? 0
+        // v0.7.184.2 — RE-MENTION NAVIGATOR FIRE. When the same explicit
+        // reference is spoken again WITHIN the 30s dedupe window, the
+        // big block below correctly suppresses the duplicate column
+        // entry, BUT pre-v0.7.184.2 it also silently dropped the
+        // navigator update because addDetectedVerse was never reached.
+        // Operator bug: "speaker says Amos 1:3, then John 3:4, then
+        // Amos 1:3 again — third one doesn't auto-send because it's
+        // already in the column." Fix: fire requestNavigatorRef on
+        // the suppress path so the Chapter Navigator re-routes to the
+        // re-mentioned verse, while the column stays clean (no dup).
+        // Only fires when lastAt > 0 (= we actually have a prior hit;
+        // guards against firing on the very-first-ever mention which
+        // also lands in the `now - lastAt >= TTL` branch below).
+        if (lastAt > 0 && now - lastAt < REF_DEDUPE_TTL_MS) {
+          try { useAppStore.getState().requestNavigatorRef(refKey) } catch { /* defensive */ }
+        }
         if (now - lastAt >= REF_DEDUPE_TTL_MS) {
           // Prune stale entries opportunistically so the map doesn't grow
           // unbounded across a long service.
@@ -1791,6 +1807,16 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               ? references.includes(top.reference) ||
                 processedRefsRef.current.has(top.reference)
               : false
+            // v0.7.184.2 — RE-MENTION NAVIGATOR FIRE on the keyword
+            // text-search (sticky-live) path. When the top hit IS
+            // already in one of the dedupe sets, the if-block below
+            // skips column add (correct) but pre-v0.7.184.2 also
+            // silently skipped navigator update. Fire it here so a
+            // re-quoted paraphrase still routes the Chapter Navigator
+            // back to the matched verse.
+            if (top && (willHandleBelow || processedTextHitsRef.current.has(top.reference))) {
+              try { useAppStore.getState().requestNavigatorRef(top.reference) } catch { /* defensive */ }
+            }
             if (top && !willHandleBelow && !processedTextHitsRef.current.has(top.reference)) {
               // v0.7.73 — Raised minSim 0.32/0.40 → 0.55/0.60. The
               // previous floor matched any verse sharing two content
@@ -1940,9 +1966,24 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                 // as a candidate either — the operator was getting noise
                 // suggestions for verses nobody mentioned).
                 if (m.score < 0.55) continue
-                if (processedSemanticHitsRef.current.has(m.reference)) continue
-                if (processedRefsRef.current.has(m.reference)) continue
-                if (processedTextHitsRef.current.has(m.reference)) continue
+                // v0.7.184.2 — RE-MENTION NAVIGATOR FIRE on the AI
+                // cosine-matcher (semantic) path. Three separate
+                // dedupe checks suppress duplicate column adds; each
+                // one now also fires the navigator so the operator's
+                // re-mention re-routes the Chapter Navigator. Same
+                // operator bug pattern as the v2/regex paths above.
+                if (processedSemanticHitsRef.current.has(m.reference)) {
+                  try { useAppStore.getState().requestNavigatorRef(m.reference) } catch { /* defensive */ }
+                  continue
+                }
+                if (processedRefsRef.current.has(m.reference)) {
+                  try { useAppStore.getState().requestNavigatorRef(m.reference) } catch { /* defensive */ }
+                  continue
+                }
+                if (processedTextHitsRef.current.has(m.reference)) {
+                  try { useAppStore.getState().requestNavigatorRef(m.reference) } catch { /* defensive */ }
+                  continue
+                }
                 processedSemanticHitsRef.current.add(m.reference)
 
                 // Re-fetch in operator's selected translation when
@@ -2046,7 +2087,16 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
 
       for (const detectedRef of detectedRefs) {
         const ref = detectedRef.reference
-        if (processedRefsRef.current.has(ref) || processedTextHitsRef.current.has(ref)) continue
+        if (processedRefsRef.current.has(ref) || processedTextHitsRef.current.has(ref)) {
+          // v0.7.184.2 — RE-MENTION NAVIGATOR FIRE on the regex-detector
+          // explicit-reference path. Same operator bug as the v2 path
+          // above: a re-mentioned reference is dedupe-suppressed for
+          // the column (correct) but the navigator silently stayed put
+          // (wrong). Fire requestNavigatorRef before continuing so the
+          // operator can flip to the re-mentioned verse instantly.
+          try { useAppStore.getState().requestNavigatorRef(ref) } catch { /* defensive */ }
+          continue
+        }
         processedRefsRef.current.set(ref, Date.now())
 
         try {

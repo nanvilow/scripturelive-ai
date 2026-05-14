@@ -1,3 +1,52 @@
+## v0.7.184.2 — Re-mention navigator-fire across ALL dedupe gates + NDI Lower-Third autofit measurement fix
+
+Two operator-driven fixes after v0.7.184.1's nav-fire-on-dedupe shipped but the operator reported "it doesn't work at all" — root-cause diagnosis revealed the store-level fix was unreachable on re-mention because four UPSTREAM dedupe gates in `speech-provider.tsx` were silently dropping the second mention before `addDetectedVerse` was ever called. Plus a separate operator request to fix NDI lower-third autofit which had never worked due to a flex-layout measurement bug.
+
+### (1) Re-mention navigator-fire — `src/components/providers/speech-provider.tsx` (4 surgical edits)
+
+The v0.7.184 fix in `store.ts addDetectedVerse` was correct: fire `requestNavigatorRef` BEFORE the cross-source dedupe early-return. But it never ran on re-mention because four upstream dedupe gates in the speech provider returned early without ever reaching the store. Fixed at all four gates:
+
+| # | Pipeline | Gate (line) | Lifetime |
+|---|---|---|---|
+| 1 | Reference Engine v2 (explicit address parses like "Amos 1:3") | `processedRefsRef` Map at L1561 | 30 s TTL |
+| 2 | Regex-detector explicit fallback | `processedRefsRef` ∪ `processedTextHitsRef` at L2068 | 30 s + permanent |
+| 3 | AI cosine-matcher (semantic paraphrase) | 3 separate Sets at L1968-1976 | permanent |
+| 4 | Keyword text-search (sticky-live paraphrase) | `processedTextHitsRef` at L1820 | permanent |
+
+At each gate's suppress branch, fire `useAppStore.getState().requestNavigatorRef(ref)` before the early-return / continue. The column dedupe is preserved (no duplicate row on re-mention) but the Chapter Navigator now re-routes to the re-mentioned verse so the operator can flip to it instantly.
+
+Reference Engine v2 specifically guards with `lastAt > 0 && now - lastAt < REF_DEDUPE_TTL_MS` — the `lastAt > 0` half prevents double-firing on the very-first-ever mention (which also lands in the `>= TTL` branch with `lastAt = 0`).
+
+`addDetectedVerseCandidate` (speculative <50 % guesses) deliberately NOT touched — those would thrash the navigator on every speech tick.
+
+### (2) NDI Lower-Third autofit measurement fix — `src/app/api/output/congregation/route.ts` (~lines 704-747)
+
+Operator-reported: "The NDI lower third does not auto-fit text as you done to the rest." Root cause: in the LT branch the verse `<p>`'s parent is `.lt-content` which is `display:flex;flex-direction:column;overflow:hidden;min-height:0`. Under flex-shrink, the `<p>` child's LAYOUT BOX (offsetHeight) collapses to its min-content size (~1 line). `parent.scrollHeight` sums children's layout-box heights, NOT their internal overflow, so `parent.scrollHeight ≈ parent.clientHeight` even when the verse text inside `<p>` is overflowing massively. Result: `actual <= avail` always → bail at `scale(1)` → no autofit on NDI lower-third. The fullscreen branch worked because `.slide-content` has no `overflow:hidden`, so flex didn't shrink the `<p>`.
+
+Fix: measure `p.scrollHeight` directly (unaffected by parent's flex-shrink because `<p>` itself has `overflow:visible`) and subtract sibling heights (the `.slide-reference` chyron) from the available space. Single measurement now works for BOTH surfaces.
+
+Worked example: bar 200 px, verse natural 250 px, ref 40 px. Old math: `actual = parent.scrollHeight = 200` (collapsed), `k = 0.98 → no shrink → text clipped`. New math: `avail = 200 − 40 = 160`, `actual = p.scrollHeight = 250`, `k = 160/250 × 0.98 = 0.627 → verse 156.7 + ref 40 = 196.7 → fits perfectly`.
+
+Strict improvement for fullscreen too: old math `k = clientH/(verse+ref)` under-corrected because shrinking the verse via transform doesn't reduce the ref's reserved space; new math `k = (clientH − ref)/verse` is exact.
+
+Per-verse lock (`__fitKey`/`__fitScale` module-level cache from v0.7.184.1) preserved unchanged — same-key path still skips re-measurement so style-only SSE ticks don't re-flash. Floor 0.60 preserved (operator-explicit "not even small"). Title slides untouched (use `.slide-text`, selector misses).
+
+### Files
+- `src/components/providers/speech-provider.tsx` (~50 lines added across 4 sites, mostly comments)
+- `src/app/api/output/congregation/route.ts` (~30 lines comment + 4 lines logic in `fitVerseText`)
+- `package.json` + `BUILD.bat` → 0.7.184.2
+
+Tests: `tsc --noEmit` exit 0.
+
+### GUARD-RAIL (A) — Re-mention nav-fire at every dedupe gate
+The store-level fix in `addDetectedVerse` is necessary but NOT sufficient — every upstream dedupe gate in the speech-provider that can return early WITHOUT calling `addDetectedVerse` MUST also fire `requestNavigatorRef(ref)` on the suppress branch. Pre-v0.7.184.2 the four gates listed above were all leaking. Any NEW dedupe gate added to `speech-provider.tsx` that gates a path leading to `addDetectedVerse` MUST also wire the nav-fire — verify with `rg -n "processed.*Ref.*has\(|continue" src/components/providers/speech-provider.tsx | rg -B 2 "continue"` and confirm a `requestNavigatorRef` precedes each new `continue`.
+
+### GUARD-RAIL (B) — Autofit measurement target is `<p>`, NOT parent
+`fitVerseText` MUST measure `p.scrollHeight` (the verse's own internal overflow, unaffected by ancestor `overflow:hidden` or flex-shrink) — NEVER `parent.scrollHeight`. The parent measurement silently lies under nested flex+overflow:hidden layouts (the LT branch); the `<p>` measurement is robust because `<p>` itself has `overflow:visible`. Sibling heights (e.g. `.slide-reference`) MUST be subtracted from `parent.clientHeight` so `avail` is "what the verse can actually use," not "the whole parent." Reverting to `parent.scrollHeight` will silently re-break NDI LT.
+
+### GUARD-RAIL (C) [PROCESS] — Diagnose before patching when "it doesn't work at all"
+v0.7.184 + v0.7.184.1 both shipped a store-level nav-fire that LOOKED correct in isolation, but the upstream pipeline gates blocked the path entirely. When operator reports "doesn't work at all" after a verified-and-merged fix, the FIRST move is to trace the full call path from input to the place we patched, NOT to re-patch the same place. v0.7.184.2 followed this loop properly: traced from speech tick → all 5 addDetectedVerse call sites → found 4 upstream gates → fixed each.
+
 ## v0.7.184.1 — Hotfix on v0.7.184: persist version actually bumped + autofit lock moved to module-level cache
 
 Code review caught two latent regressions in v0.7.184 before any operator build was produced. Both fixed under the same code-review-then-ship loop, no new operator request. Operator-visible behaviour now matches the v0.7.184 changelog claims.
