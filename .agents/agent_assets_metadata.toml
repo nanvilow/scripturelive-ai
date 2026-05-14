@@ -1169,3 +1169,9 @@ id = "Tke4UYk4f9RmDRAKiQszN"
 uri = "file://attached_assets/screenshots/livedisplay_zoom.png"
 type = "image"
 title = "Your screenshot, zoomed — the red line you marked with arrows"
+
+[[outputs]]
+id = "foadgw3ZGe4-WcWPXzahd"
+uri = "file://exports/v0.7.182-lt-removal-proof.png"
+type = "image"
+title = "v0.7.182 — In-app Lower Third REMOVED (proof)"
