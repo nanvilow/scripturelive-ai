@@ -649,7 +649,11 @@ export function AdminModal() {
     // ~672) and reloadRecords (line ~682).
     if (!open || !authed || tab !== 'overview') return
     reload()
-    const id = setInterval(reload, 5_000)
+    // v0.7.183 — operator-explicit perf pass: 5s → 30s. Cuts admin/list
+    // requests by 6× while still feeling "live" enough for the overview
+    // tab. Manual actions still call reload() directly so freshness
+    // after a write is unchanged.
+    const id = setInterval(reload, 30_000)
     return () => clearInterval(id)
   }, [open, authed, tab, reload])
 
@@ -677,7 +681,8 @@ export function AdminModal() {
   useEffect(() => {
     if (!open || !authed) return
     void probeCloudSync()
-    const id = setInterval(() => { void probeCloudSync() }, 30_000)
+    // v0.7.183 — perf pass: 30s → 60s. Status-only probe; doesn't drive any data.
+    const id = setInterval(() => { void probeCloudSync() }, 60_000)
     return () => clearInterval(id)
   }, [open, authed, probeCloudSync])
 
@@ -696,7 +701,8 @@ export function AdminModal() {
   useEffect(() => {
     if (!open || !authed || tab !== 'codes') return
     reloadCodes()
-    const id = setInterval(reloadCodes, 5_000)
+    // v0.7.183 — perf pass: 5s → 30s. heartbeat updates still appear within ~30s.
+    const id = setInterval(reloadCodes, 30_000)
     return () => clearInterval(id)
   }, [open, authed, tab, reloadCodes])
 
@@ -706,7 +712,8 @@ export function AdminModal() {
   useEffect(() => {
     if (!open || !authed || tab !== 'overview') return
     reloadRecords()
-    const id = setInterval(reloadRecords, 10_000)
+    // v0.7.183 — perf pass: 10s → 60s. Telemetry doesn't need sub-minute freshness.
+    const id = setInterval(reloadRecords, 60_000)
     return () => clearInterval(id)
   }, [open, authed, tab, reloadRecords])
 

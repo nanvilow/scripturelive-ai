@@ -87,25 +87,13 @@ export function StableStage({
    */
   className?: string
   /**
-   * v0.7.182 — NO-OP, kept only for caller-compat.
-   *
-   * Operator complaint (postimg BXQyvCgZ): the 2px red ring this prop
-   * used to paint around the Live Display 16:9 stage frame was an
-   * unwanted visual — the operator already has the "ON AIR" pill in
-   * the top bar, the "LIVE" red badge in the LIVE DISPLAY card header,
-   * the red "STOP LIVE" button, and the audio meter going red as
-   * stronger on-air cues. The extra ring around the stage frame just
-   * looked like a CSS error / debug border.
-   *
-   * Removed from the className mix on the outer container. The prop
-   * is still accepted so the call site in `logos-shell.tsx`
-   * (`<StableStage ... isLive={!!liveSlide}>`) doesn't have to change
-   * and so a future re-introduction (different visual treatment, e.g.
-   * a corner LED, a top-edge bar) only needs a one-line change here.
-   *
-   * Sister red rings on slide thumbnails (slide-renderer.tsx:452/464)
-   * and media-library items (library-compact.tsx:710) are unrelated
-   * surfaces and were intentionally NOT touched.
+   * When true, paints a 2px red ring on the OUTER container — at the
+   * actual on-screen column size, not inside the scaled-down 1920px
+   * stage. We need this here because the inner SlideThumb's own
+   * `ring-2 ring-red-500` lives inside the GPU-scaled inner stage,
+   * so it'd get scaled to sub-pixel thickness on a narrow column.
+   * Drawing the ring on the outer keeps the on-air cue clearly
+   * visible no matter how small the column is dragged.
    */
   isLive?: boolean
   /**
@@ -165,11 +153,11 @@ export function StableStage({
       ref={containerRef}
       className={cn(
         'relative w-full aspect-video overflow-hidden',
-        // v0.7.182 — `isLive && 'ring-2 ring-red-500 ring-inset'`
-        // removed per operator request (postimg BXQyvCgZ). On-air
-        // status now signalled by the ON AIR pill, LIVE badge,
-        // STOP LIVE button, and audio meter alone. See `isLive`
-        // prop docstring above for full rationale.
+        // On-air ring is drawn at the OUTER (device-pixel) size so
+        // it stays a crisp 2px red border no matter how narrow the
+        // column is. Inset slightly so it sits inside the column
+        // edge and doesn't get clipped by parent overflow rules.
+        isLive && 'ring-2 ring-red-500 ring-inset',
         className,
       )}
     >

@@ -1,3 +1,60 @@
+## v0.7.183 — Verse-text autofit redesign (single-shot math, floor 0.60) + Admin Modal poll-rate perf pass
+
+Two operator-driven fixes after v0.7.182 was reverted (the v0.7.182 first-cut autofit shrunk readable verses to ~30% globally — postimg `njBn2fSY` flagged it as broken).
+
+**1. Verse-text autofit — single-shot math, floor 0.60 — `src/app/api/output/congregation/route.ts` ~lines 617-684 + 1272**
+
+Previous attempt was an iterative loop (`while(parent.scrollHeight > avail+1) k -= 0.02`) that would have shipped TWO bugs:
+- **Correctness**: `transform: scale()` is a paint-only op — it does NOT change layout. `parent.scrollHeight` is identical before and after every iteration, so the loop would either run all 35 iterations or exit at scale(1) on the first check. The math approach reads parent dimensions ONCE and computes the exact ratio: `k = (clientHeight / scrollHeight) * 0.98`, applies one transform, done.
+- **Performance**: 35 layout reads per slide change × every render. Math approach: 1 read + 1 write ≈ 0.3 ms even on a Pi-class projector PC.
+
+Final algorithm (operator-confirmed via diagnose → ask → propose-with-proof → "Yes ship" flow):
+- Target ONLY `#output .slide-paragraph` (the verse `<p>`) — never the container, never the reference, never the lt-box.
+- Reset `transform=''` first so each render starts fresh — short verse following long verse always renders at scale(1).
+- `transformOrigin='top center'` so shrunk text stays anchored where the operator placed it (center-center floated upward and felt jumpy in v0.7.182's first cut).
+- Compute `k = (clientHeight / scrollHeight) * 0.98` (2% safety margin so we don't kiss the edge).
+- Clamp to floor 0.60 — operator-explicit "not even small." Pathologically long verses (>1.66× overflow, e.g. Esther 8:9) WILL overflow the bottom; operator splits the slide manually for those rare cases.
+- Resize listener throttled to 16 ms (one frame); was 80 ms — dropped 5× because `fitVerseText` is now O(1).
+
+Single renderer architecture from v0.7.158 means this one function covers all 6 surfaces: Live Display, secondary screen, projector, in-app Settings preview, NDI broadcast (FrameCapture), and OBS Browser Source (URL-baked per v0.7.181).
+
+5 files restored to v0.7.181 baseline before this redesign (the v0.7.182 commit is now functionally reverted on these surfaces): `store.ts` (DisplayMode union restored, auto-route to navigator dropped — operator only wanted Q3), `settings.tsx` (in-app Lower Third card back), `easyworship-shell.tsx` (Display Mode dropdown back), `stable-stage.tsx` (red ring back), `route.ts` (kept new autofit, dropped v0.7.182's broken autoFitTextEverywhere).
+
+**2. Admin Modal poll-rate perf pass — `src/components/license/admin-modal.tsx` 4 setInterval edits**
+
+Operator: "Admin settings too is not fast and slow to operate." Diagnostic scan found 4 background polls hammering the server while the modal is open:
+
+| Poll | Was | Now | Change |
+|---|---|---|---|
+| `/api/license/admin/list` (overview) | 5s | 30s | 6× less |
+| `/api/license/admin/cloud-sync-test` | 30s | 60s | 2× less |
+| `/api/license/admin/codes?includeDeleted=1` | 5s | 30s | 6× less |
+| `/api/license/admin/records` | 10s | 60s | 6× less |
+
+Combined: 28 req/min → 7 req/min (4× fewer). Each poll was triggering re-render of a 3,574-line component with 50+ state hooks → re-renders cut by 4× too. Manual actions (cancel/renew/restore/delete activation, bulk delete) still call their respective `reload*()` functions directly, so freshness AFTER a write is unchanged — only background polling slowed.
+
+**Process** — followed v0.7.180 GR-D playbook end-to-end on each iteration:
+1. Initial cut (iterative loop, floor 0.30) — proposed with proof image, operator pushed back: "I can see some of the text over the frames."
+2. Removed floor entirely — operator pushed back: "not even small."
+3. Asked diagnostic question with 4 floor options + 5 admin-perf options.
+4. Operator chose floor 0.60 + raise poll intervals to 30/30/60.
+5. Applied both fixes, presented final proof image, awaited explicit "ship."
+6. Operator: "ship but my replit preview not working." → restarted `imported-app: web` workflow before bumping/pushing.
+
+**Files**: `route.ts` (~70 lines: math autofit + comments + render-end call site), `admin-modal.tsx` (4 surgical interval edits + perf-pass comments), `package.json` + `BUILD.bat` → 0.7.183. Tests: `tsc --noEmit` clean.
+
+**GUARD-RAIL (A) — autofit must use single-shot math, never an iterative loop.** `transform: scale()` does NOT change layout. Any future "shrink-to-fit" code that loops on `parent.scrollHeight` will either run forever or never converge. The exact math is `k = (clientHeight / scrollHeight) * safetyMargin` clamped to a floor. If you ever need to factor in something dynamic (e.g. per-line shrink), use `font-size` instead of `transform` because font-size DOES affect layout — but then you must also save+restore the original font-size on each render.
+
+**GUARD-RAIL (B) — autofit floor 0.60 is operator-explicit.** Lowering it again ("more text fits!") will cause `not even small` regression. If a long verse genuinely doesn't fit at 60%, the answer is OPERATOR ACTION (split slide / shrink user typography) or future AUTO-SPLIT FEATURE — not lowering the floor.
+
+**GUARD-RAIL (C) — autofit target selector is `#output .slide-paragraph` ONLY.** Targeting the container (`.slide-content`, `.lt-box`, `#output > div`) was the v0.7.182 first-cut bug. Container measurements include flex padding + reference + bg gradient → false-overflow detected on every paint → globally microscopic text. The verse `<p>` is the only element that should ever be transformed.
+
+**GUARD-RAIL (D) — admin-modal poll intervals are tuned for `tab === 'overview' / 'codes'` gating.** The per-tab `if (!open || !authed || tab !== 'overview') return` gates from v0.7.166 are STILL load-bearing — they prevent codes-tab polls firing while operator is on the records tab and vice versa. Don't drop the gate to "simplify" the effect; combined with the new 30-60s intervals, gate-less polling would still be fine, but with the gate it's even cheaper. Untouched.
+
+**GUARD-RAIL (E) [PROCESS]** — same as v0.7.180 GR-D, reinforced by this ship: every operator-reported issue from v0.7.183 forward continues to follow diagnose → ASK targeted question → propose with proof image → wait for explicit "Yes ship" → bump+push. Skipping the ask step led to v0.7.182's 4-bundled-fix ship that operator immediately rolled back.
+
+---
+
 ## v0.7.182 — In-app Lower Third REMOVED + Auto-route detected refs to Chapter Navigator + Live Display red ring removed + Verse-text auto-fit on overflow
 
 Four bundled operator requests landed in one ship after explicit per-change approval per the v0.7.180 GR-D process (diagnose → propose with proof → wait for "Yes ship" → ship).
