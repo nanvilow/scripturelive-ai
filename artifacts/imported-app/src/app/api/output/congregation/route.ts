@@ -611,6 +611,57 @@ function applyRender(s){
   }
 }
 
+// v0.7.182 — Verse-text autofit (operator-spec, REVISED).
+//   Goal: keep the user's chosen typography UNCHANGED. Only when a
+//   single verse genuinely overflows its frame, scale ONLY that
+//   .slide-paragraph element down by the smallest amount that makes
+//   it fit. Reset on every render so the previous shrink never
+//   carries into the next verse. NO global font-size changes, NO
+//   container-wide transforms, NO touching .slide-content/.lt-box/
+//   .slide-reference — only the verse paragraph itself.
+//
+//   Selector: '#output .slide-paragraph' is the verse text element
+//   (see line 1016 fullscreen render and line 1188 lower-third
+//   render via .lt-content). Both surfaces use the same class so a
+//   single function covers Live Display + secondary screen +
+//   projector + Settings preview + NDI broadcast + OBS.
+//
+//   Ramp: 2% step, floor 0.6, 20-iter cap. Softer than v0.7.182's
+//   first cut (8% / 0.4 / 16) which over-shrunk readable verses to
+//   ~30% globally — the screenshot operator flagged. Real overflow
+//   is detected by parent.scrollHeight > parent.clientHeight (NOT
+//   the paragraph itself, because <p> with no fixed height has
+//   scrollHeight===clientHeight). Resetting transform first means
+//   short verses always render at scale(1) — byte-identical to the
+//   v0.7.181 baseline operator approved.
+function fitVerseText(){
+  try{
+    var p=document.querySelector('#output .slide-paragraph');
+    if(!p)return;
+    // Reset any prior shrink so this render starts fresh.
+    p.style.transform='';
+    p.style.transformOrigin='center center';
+    var parent=p.parentElement;
+    if(!parent)return;
+    var avail=parent.clientHeight;
+    if(!avail)return;
+    // Force layout flush before measuring.
+    void p.offsetHeight;
+    var k=1.0, iter=0;
+    while(parent.scrollHeight>avail+1 && k>0.6 && iter<20){
+      k-=0.02;
+      p.style.transform='scale('+k.toFixed(3)+')';
+      iter++;
+    }
+  }catch(e){}
+}
+var __fitTimer=0;
+function fitVerseTextDebounced(){
+  if(__fitTimer)clearTimeout(__fitTimer);
+  __fitTimer=setTimeout(function(){__fitTimer=0;fitVerseText();},80);
+}
+window.addEventListener('resize',fitVerseTextDebounced);
+
 function render(s){
   if(!s){$('output').innerHTML='';$('output').classList.add('hidden');lastRenderKey='';dropLiveVideoCache();return}
   // BLACK / HIDDEN — operator has hit the "Black" transport button or
@@ -1210,6 +1261,12 @@ function render(s){
     $('output').innerHTML='<div class="'+fsTheme+'" style="width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';'+fontStyle+'">'+fsBg+'<div class="slide-content" style="text-align:'+ta+';'+fontStyle+'">'+fsOrdered+'</div></div>';
   }
   $('output').classList.remove('hidden');
+  // v0.7.182 — fire autofit AFTER layout settles. rAF guarantees the
+  // browser has run layout for the freshly-injected innerHTML before
+  // we measure scrollHeight. Fallback to setTimeout(0) keeps the
+  // call ordering identical when rAF is unavailable (extremely old
+  // Electron / SSR test).
+  if(typeof requestAnimationFrame==='function'){requestAnimationFrame(fitVerseText);}else{setTimeout(fitVerseText,0);}
 }
 
 // Polling fallback. Server-Sent Events break when the deployment is
