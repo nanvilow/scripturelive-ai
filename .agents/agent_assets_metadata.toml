@@ -1061,3 +1061,9 @@ id = "AFumqZXedmXCE4gYbOKKL"
 uri = "file://exports/ScriptureLive-AI-v0.7.175-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.175 — source"
+
+[[outputs]]
+id = "YK6GnznFZr9tQNYmg11l2"
+uri = "file://screenshots/v0.7.176-lt-proof.jpg"
+type = "image"
+title = "v0.7.176 NDI lower-third — dark plate restored (proof)"
