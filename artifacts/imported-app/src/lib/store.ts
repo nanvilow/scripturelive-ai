@@ -1196,7 +1196,14 @@ export const useAppStore = create<AppState>()(
       // automatically, but every field they explicitly set survives.
       // This stops the "I upgraded and my trial reset / my fonts
       // changed / my mic gain went back to 1" complaints.
-      version: 4,
+      // v0.7.184 — bumped to 5 so the v4→v5 LT-coercion migration block
+      // below actually executes on existing installs upgrading from v0.7.183
+      // and earlier. Without this bump the migration is dead code: zustand
+      // only runs migration steps where `version < currentVersion`, so
+      // leaving this at 4 means stale persisted `displayMode='lower-third'`
+      // / `'lower-third-black'` would never be coerced and the in-app LT
+      // surfaces (now deleted) would render in undefined mode.
+      version: 5,
       migrate: (persistedState: unknown, version: number) => {
         const ps = (persistedState as {
           settings?: Partial<AppSettings> & { defaultTranslation?: string; ndiTranslation?: string }

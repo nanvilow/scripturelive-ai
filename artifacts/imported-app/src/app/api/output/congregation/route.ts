@@ -652,23 +652,36 @@ function applyRender(s){
 //   of the text box so the first line stays where the operator
 //   placed it. center-center would float text upward as it shrinks
 //   and felt jumpy on slide change in v0.7.182's first cut.
-// v0.7.184 — PER-VERSE LOCK. Once we've fit a verse to its frame at a
-// given container size, we DON'T recompute on subsequent renders that
-// re-render the same verse text into the same-size frame. Operator
-// reported a flash on every SSE tick (font color tweak, bg tweak, etc.)
-// because each render re-ran fitVerseText, and tiny scrollHeight
-// rounding flips between paint cycles caused k to oscillate by 0.5–2%
-// per tick — visible as a micro-flash on the projector. The lock keys
-// on (verse text length + parent W×H). New verse text → new length →
-// new key → recompute. Window resize → new W/H → new key → recompute.
-// Same verse, same frame, just a font-color SSE update → same key →
-// EARLY EXIT before resetting transform. The previous scale stays
-// pinned exactly where it was — zero flash.
+// v0.7.184 — PER-VERSE LOCK with MODULE-LEVEL cache. Once we've fit a
+// verse to its frame at a given container size, we DON'T re-measure on
+// subsequent renders that re-render the same verse text into the
+// same-size frame. Operator reported a flash on every SSE tick (font
+// color tweak, bg tweak, etc.) because each render re-ran fitVerseText,
+// and tiny scrollHeight rounding flips between paint cycles caused k
+// to oscillate by 0.5–2% per tick — visible as a micro-flash on the
+// projector.
+//
+// IMPORTANT lifecycle note (cost-of-doing-business with this renderer):
+// every render reassigns the output container's innerHTML which DESTROYS
+// and recreates the verse paragraph element. So a data- attribute on the
+// element itself can't survive across renders. We therefore keep the
+// lock in MODULE-LEVEL closure state (__fitKey + __fitScale) initialised
+// once when the renderer script runs.
+// (No backticks anywhere in this comment block — the surrounding script
+// is itself a tagged template literal; see v0.5.55 note ~L483.)
+//
+// Key = (verse textContent length + parent W×H). Different verse →
+// different length → recompute. Window resize → different W/H →
+// recompute. Same verse same frame on a style-only SSE tick → key match
+// → REAPPLY the cached scale directly (no measurement, no rounding
+// flip, no flash).
 //
 // Why textContent.length, not the full string: cheap (no allocation),
 // good enough as a discriminator (different verses ≠ identical length
-// in 99.9% of cases; in the rare collision the worst outcome is one
-// missed re-fit, which the next genuine slide change will correct).
+// in 99.9% of cases; in the rare collision the worst outcome is the
+// new verse renders at the previous verse's scale until the next
+// genuine slide change corrects it).
+var __fitKey='', __fitScale=1;
 function fitVerseText(){
   try{
     var p=document.querySelector('#output .slide-paragraph');
@@ -676,16 +689,25 @@ function fitVerseText(){
     var parent=p.parentElement;
     if(!parent)return;
     var key=(p.textContent||'').length+'|'+parent.clientWidth+'x'+parent.clientHeight;
-    if(p.dataset.fitKey===key)return; // LOCKED — same verse + same frame; keep current scale, no flash.
-    p.dataset.fitKey=key;
-    // Reset prior shrink first so measurements are natural.
+    if(key===__fitKey){
+      // LOCKED — same verse + same frame. Reapply cached scale directly
+      // without re-measuring (avoids the rounding-flip micro-flash).
+      // We still have to write the transform because the <p> was just
+      // recreated by the latest innerHTML assignment.
+      p.style.transformOrigin='top center';
+      if(__fitScale<1) p.style.transform='scale('+__fitScale.toFixed(3)+')';
+      return;
+    }
+    // New key → measure + recompute.
+    __fitKey=key;
     p.style.transform='';
     p.style.transformOrigin='top center';
     var avail=parent.clientHeight;
     var actual=parent.scrollHeight;
-    if(!avail||!actual||actual<=avail)return;
+    if(!avail||!actual||actual<=avail){ __fitScale=1; return; }
     var k=(avail/actual)*0.98;
     if(k<0.60)k=0.60;
+    __fitScale=k;
     if(k>=1)return;
     p.style.transform='scale('+k.toFixed(3)+')';
   }catch(e){}

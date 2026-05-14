@@ -1,3 +1,29 @@
+## v0.7.184.1 — Hotfix on v0.7.184: persist version actually bumped + autofit lock moved to module-level cache
+
+Code review caught two latent regressions in v0.7.184 before any operator build was produced. Both fixed under the same code-review-then-ship loop, no new operator request. Operator-visible behaviour now matches the v0.7.184 changelog claims.
+
+**1. Persist version: 4 → 5 — `src/lib/store.ts:1209`**
+
+v0.7.184 added a v4→v5 migration block that coerces stale `displayMode='lower-third'`/`'lower-third-black'` → `'full'` on first boot, but forgot to bump the persist `version` from 4 to 5. Zustand only runs migrations where `version < currentVersion`, so the coercion was dead code on every existing install. Operators upgrading from v0.7.183 with `displayMode='lower-third'` persisted on disk would have rendered in-app surfaces in undefined mode (the LT UI was deleted). Now bumped, with an explicit comment block above the version literal explaining why future LT-shaped state changes need both a migration block AND a version bump in lockstep.
+
+**2. Autofit lock moved to MODULE-LEVEL cache — `src/app/api/output/congregation/route.ts` ~L685-715**
+
+v0.7.184 stored the per-verse lock key on `p.dataset.fitKey`. Code review correctly observed that every render reassigns the output container's `innerHTML` (route.ts ~L1277, ~L1299), which DESTROYS and recreates the verse paragraph. So the dataset attribute never survived across renders → the lock never engaged → the SSE-tick flash bug v0.7.184 claimed to fix was actually still present.
+
+Fix: replaced the dataset-attribute lock with module-level closure state (`var __fitKey='', __fitScale=1` declared once at script-init time). On each render: compute the new key from the current paragraph's textContent length + parent W/H. If the key matches the cached `__fitKey`, REAPPLY the cached `__fitScale` directly via `transform: scale()` without re-measuring — avoids the rounding-flip micro-flash that operator reported. If the key differs (new verse, or window resize), measure and recompute as before, updating both `__fitKey` and `__fitScale`. The transform must be re-written on every render (because the `<p>` was just recreated by the `innerHTML` assignment), but the SCALE VALUE is now stable across same-verse renders.
+
+Also stripped backticks out of the new comment block (the surrounding script lives inside a tagged template literal per the v0.5.55 note at ~L483 — backticks anywhere in the script body terminate the string and break the build). Added a guard-rail line in-comment.
+
+**Files**: `store.ts` (1-line bump + 7-line comment), `route.ts` (~30 lines: new module-level cache vars + reworked fitVerseText body + comment), `package.json` + `BUILD.bat` → 0.7.184.1. Tests: `tsc --noEmit` clean.
+
+**GUARD-RAIL (A)**: any persist-state migration block in `store.ts migrate:` MUST be paired with a corresponding `version: N+1` bump on the persist config. Adding a migration without bumping the version is dead code; bumping the version without adding a migration silently drops state. Verify both with a single grep: `rg -n "version: [0-9]|version <" src/lib/store.ts`.
+
+**GUARD-RAIL (B)**: cross-render state for the renderer script (anything that needs to survive an `innerHTML` reassignment) MUST live in module-level closure state, NEVER on a `data-` attribute on a child element of `#output`. The output subtree is destroyed and recreated on every render. Per-element dataset attributes are fine for state that's only needed within a single render's lifecycle.
+
+**GUARD-RAIL (C)**: ANY new code added inside the renderer-script template literal in `route.ts` (the giant `<script>...<\/script>` block) MUST be backtick-free. Backticks terminate the surrounding template literal and produce confusing TS1005/TS1443 errors that look like syntax errors in unrelated lines. Use plain quotes in code, and avoid `code` style in comments — write `__fitKey` (no backticks) instead.
+
+---
+
 ## v0.7.184 — In-app LT REMOVED (again) + Auto-route detection ALWAYS fires (dedupe-safe) + Verse autofit per-verse LOCK + OBS bake re-verified
 
 Five operator-approved fixes bundled in one ship under explicit pre-authorization ("when you are done will all the works you can ship them"). Each item below maps directly to a numbered request in the operator's chat message.
