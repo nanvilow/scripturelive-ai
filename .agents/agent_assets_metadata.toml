@@ -1043,3 +1043,81 @@ id = "HbxJ7yVQMp-o34WxKvjg3"
 uri = "file://exports/ScriptureLive-AI-v0.7.172-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.172 — Windows source ZIP"
+
+[[outputs]]
+id = "ZlzFwCnNxzpjJ23nF1yda"
+uri = "file://exports/ScriptureLive-AI-v0.7.173-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.173 — source ZIP"
+
+[[outputs]]
+id = "ayZES_Dp7i_LQBEFEyXLr"
+uri = "file://exports/ScriptureLive-AI-v0.7.174-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.174 — source ZIP"
+
+[[outputs]]
+id = "AFumqZXedmXCE4gYbOKKL"
+uri = "file://exports/ScriptureLive-AI-v0.7.175-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.175 — source"
+
+[[outputs]]
+id = "YK6GnznFZr9tQNYmg11l2"
+uri = "file://screenshots/v0.7.176-lt-proof.jpg"
+type = "image"
+title = "v0.7.176 NDI lower-third — dark plate restored (proof)"
+
+[[outputs]]
+id = "H5wq_uAdROwlqb0YxBsP4"
+uri = "file://screenshots/v0.7.176-ndi-locked.jpg"
+type = "image"
+title = "v0.7.176 — NDI lower-third frame locked at one size"
+
+[[outputs]]
+id = "Cs_NtDheDoFHMZFUhsBoK"
+uri = "file://screenshots/v0.7.176-lt-locked-all-surfaces.jpg"
+type = "image"
+title = "v0.7.176 — LT frame locked on every surface, doesn't expand"
+
+[[outputs]]
+id = "3dFJ3ZM-R94uoDavGDFUs"
+uri = "file://screenshots/v0.7.176-final-proof.jpg"
+type = "image"
+title = "v0.7.176 — LT frame matches NDI on every surface"
+
+[[outputs]]
+id = "ZHjuYoLJiN5DnmjuZgZeG"
+uri = "file://screenshots/v0.7.176-congregation-real-2.jpg"
+type = "image"
+title = "v0.7.176 — Real congregation output (what Live Display / OBS / secondary screen receive)"
+
+[[outputs]]
+id = "UzrwCjbKdteCtFFYqX2u3"
+uri = "file://screenshots/v0.7.176-congregation-correct.jpg"
+type = "image"
+title = "v0.7.176 — Real LT output (Romans 8:27 / ASV)"
+
+[[outputs]]
+id = "k0vhtnqpOIlXMI2qzRMg6"
+uri = "file://screenshots/v0.7.176-lt-sm.jpg"
+type = "image"
+title = "v0.7.176 — Small bucket (Live Display / OBS / NDI / secondary screen)"
+
+[[outputs]]
+id = "bIDQc6x4wmt3AF8XwEDfB"
+uri = "file://screenshots/v0.7.176-lt-md.jpg"
+type = "image"
+title = "v0.7.176 — Medium bucket"
+
+[[outputs]]
+id = "ou26oKqv77EAAng0vGlBh"
+uri = "file://screenshots/v0.7.176-lt-lg.jpg"
+type = "image"
+title = "v0.7.176 — Large bucket"
+
+[[outputs]]
+id = "pCVrLueRwqLpTunAU4xqe"
+uri = "file://screenshots/v0.7.176-locked-sm.jpg"
+type = "image"
+title = "v0.7.176 — Frame locked at Small bucket on every surface (sm/md/lg requests all render identical)"

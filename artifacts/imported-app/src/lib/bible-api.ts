@@ -523,10 +523,67 @@ function wordsToNumbers(parts: string[]): number[] {
  * still match. Ordinal "first/second/third" prefix to a book is also
  * normalized so "first John" → "1 John".
  */
+// v0.7.174 — Bible-book homophone normaliser (Deepgram/Whisper mishears).
+// Even with `keyterm=Ruth` biasing on Nova-3, short single-syllable book
+// names like "Ruth" still come back as their acoustic neighbours
+// ("root", "roach", "roof", "route") — operator field-report:
+// "Ruth chapter 6 verse 1" transcribed as "Roach top touch is best.
+// Root chapter 6 verses." We can't fix Deepgram's acoustic model from
+// here, but every false hit follows the SAME structural pattern: the
+// mishear sits immediately before "chapter", a digit, or a spoken
+// number-word. That context window is unique to verse references —
+// no English sentence other than a verse reference says "root chapter"
+// or "roach chapter" — so a tightly-scoped regex rewrite is safe.
+//
+// Each entry: [misheard pattern (regex-source, case-insensitive),
+//              correct book name]. Patterns MUST require either
+// "chapter" or a digit / number-word follower so we never false-positive
+// on legitimate uses ("the root of the problem", "Mark the date").
+const BOOK_HOMOPHONES: ReadonlyArray<[string, string]> = Object.freeze([
+  // "Ruth" → root / roach / roof / route / rooth / ruse
+  ['(?:roo?th|root|roots|roach|roof|route|ruse)', 'Ruth'],
+  // "Job" with long-O is sometimes heard as "joe" / "jobe"
+  ['(?:joe|jobe)', 'Job'],
+  // "Jude" → dude / jewed
+  ['(?:dude|jewed)', 'Jude'],
+  // "Amos" → famous (rare but seen); "ammos"
+  ['(?:ammos)', 'Amos'],
+  // "Titus" → tightest
+  ['(?:tightest)', 'Titus'],
+  // "Habakkuk" → "had a cook" / "have a cook" — phrase-level
+  ['(?:ha[dv]e?\\s+a\\s+cook)', 'Habakkuk'],
+  // "Malachi" → malarkey
+  ['(?:malarkey)', 'Malachi'],
+  // "Joel" → jewel
+  ['(?:jewel)', 'Joel'],
+  // "Acts" → axe / ax (only when followed by chapter/digit)
+  ['(?:axe|ax)', 'Acts'],
+  // "Hosea" → hoseah / hosier
+  ['(?:hoseah|hosier)', 'Hosea'],
+])
+// Number-word stem matches one/two/.../twenty/thirty/.../hundred and
+// ordinals so "Root chapter six verse one" / "Root six twelve" both fire.
+const NUM_WORD_STEM = '(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|first|second|third)'
+function normalizeBookHomophones(text: string): string {
+  if (!text) return text
+  let out = text
+  for (const [pat, book] of BOOK_HOMOPHONES) {
+    // Trigger when the mishear is followed (allowing punctuation) by
+    // either: " chapter ", a 1-3 digit number, or a spoken number-word.
+    const re = new RegExp(`\\b${pat}\\b([\\s,.:;!?]+)(chapter\\b|\\d{1,3}\\b|${NUM_WORD_STEM}\\b)`, 'gi')
+    out = out.replace(re, `${book}$1$2`)
+  }
+  return out
+}
+
 function normalizeSpokenNumbers(text: string): string {
   if (!text) return text
+  // v0.7.174 — defensive homophone fix BEFORE the ordinal prefix pass,
+  // so e.g. "root chapter six" first becomes "Ruth chapter six" and
+  // then number-word collapsing turns "six" → "6" downstream.
+  let t = normalizeBookHomophones(text)
   // Ordinal prefixes for book numbers
-  let t = text
+  t = t
     .replace(/\b(first|1st)\s+/gi, '1 ')
     .replace(/\b(second|2nd)\s+/gi, '2 ')
     .replace(/\b(third|3rd)\s+/gi, '3 ')

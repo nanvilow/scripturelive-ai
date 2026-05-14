@@ -1538,20 +1538,6 @@ export function TransportBar({
 
         <div className="h-6 w-px bg-muted" />
 
-        <div className="flex items-center gap-1.5">
-          <Radio
-            className={cn(
-              'h-3 w-3',
-              outputActive ? 'text-emerald-400' : 'text-muted-foreground',
-            )}
-          />
-          <span className={cn('text-[10px] uppercase font-bold tracking-wider', outputActive ? 'text-emerald-400' : 'text-muted-foreground')}>
-            {outputActive ? 'NDI / Output Active' : 'Output Idle'}
-          </span>
-        </div>
-
-        <div className="h-6 w-px bg-muted" />
-
         <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
           {settings.displayMode === 'full' ? 'Full Screen' : 'Lower Third'}
         </span>

@@ -93,7 +93,13 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    its tighter aspect made the centred-vs-stretched difference invisible.
    The .lt-box already carries justify-content:center so the verse text
    continues to centre inside the (now properly stretched) frame. */
-.lower-third{position:absolute;left:0;right:0;display:flex;align-items:stretch;justify-content:center;padding:0 2.5%;container-type:size}
+/* v0.7.176 — Tighten horizontal padding so the .lt-box renders as a
+   centred chyron card (matching the operator's target screenshot
+   pvktjHxy + the in-app Lower Third Settings preview), not a near
+   edge-to-edge bar. Also keeps align-items:stretch from v0.7.173
+   Fix D so the box height is driven by the parent bucket and never
+   shrinks/expands to hug the verse text. */
+.lower-third{position:absolute;left:0;right:0;display:flex;align-items:stretch;justify-content:center;padding:0 17.5%;container-type:size}
 .lower-third.bottom{bottom:6%}.lower-third.top{top:6%}
 /* Lower-third is now a rounded "card" that holds the verses. The
    upper area outside it stays transparent (#000) so any background
@@ -101,31 +107,35 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    v0.7.15 — max-width cap removed (was 68rem). Width is now driven
    by the .lower-third side padding above, so the card scales from
    small previews up to full 1920px frames consistently. */
-/* v0.7.173 — Operator request: the lower-third must be transparent
-   on EVERY output (in-app preview, secondary screen, NDI, OBS browser
-   source, congregation screen). Pre-v0.7.173 the lt-box shipped a
-   dark gradient plate + drop-shadow so the chyron looked like a
-   "lower-third card" — operators didn't want the solid background
-   bleeding into their video feed (the whole point of lower-third is
-   that it overlays a live camera, not that it ships its own black
-   plate). The .lt-box.transparent class (NDI-only flag, v0.6.3) is
-   now effectively the default for every surface; the legacy class
-   still works for backward-compat. Custom image backgrounds via
-   .lt-bg / .lt-bg-overlay continue to render normally — operators
-   can opt INTO a background by setting an LT bg image, instead of
-   being opted in to a black gradient. */
-.lt-box{position:relative;width:100%;padding:3% 5%;display:flex;flex-direction:column;justify-content:center;overflow:hidden;height:100%;box-sizing:border-box;border-radius:1.25rem;background:transparent}
+/* v0.7.176 — REVERT v0.7.173 Fix B. The pre-v0.7.173 dark plate
+   (linear gradient + drop-shadow) is restored as the .lt-box default
+   on every output surface. Operator field-report after v0.7.173:
+   "you have destroyed it completely. The main background is
+   transparent while the main background frame of the NDI lower
+   third and text are visible." The plate IS the lower-third —
+   without it the verse text floats unreadably over the video.
+   Operators who want a fully-transparent NDI matte continue to
+   opt IN via the legacy .lt-box.transparent flag (v0.6.3, NDI tab
+   "Transparent lower-third" toggle). Operator-uploaded background
+   images via .lt-bg / .lt-bg-overlay still layer on top of the
+   plate as before. */
+.lt-box{position:relative;width:100%;padding:3% 5%;display:flex;flex-direction:column;justify-content:center;overflow:hidden;height:100%;box-sizing:border-box;border-radius:1.25rem;box-shadow:0 8px 28px rgba(0,0,0,.45);background:linear-gradient(135deg,#0a0a0a,#171717)}
 /* v0.7.15 — .ndi-full class kept as a no-op for backwards-compat
    with any persisted SSE state that still tries to add it. The base
    .lower-third + .lt-box now delivers the wide layout, so we no
    longer need a separate "full" variant. */
 .lower-third.ndi-full{}
 .lt-box.ndi-full{}
-/* v0.7.173 — Theme gradients neutralised on the lower-third box.
-   Themes still apply to FULL-SCREEN mode (.slide-stage etc.); only
-   the lower-third chyron forces transparent. See main .lt-box rule
-   comment above for why. */
-.lt-box.theme-worship,.lt-box.theme-sermon,.lt-box.theme-easter,.lt-box.theme-christmas,.lt-box.theme-praise,.lt-box.theme-minimal{background:transparent}
+/* v0.7.176 — REVERT v0.7.173 theme-* neutraliser. Theme gradients
+   apply to the lower-third box again (matching the pre-v0.7.173
+   behaviour the operator confirmed correct). The .lt-box.transparent
+   opt-in remains the only way to drop the plate. */
+.lt-box.theme-worship{background:linear-gradient(135deg,#1e0a3c,#1e1b4b)}
+.lt-box.theme-sermon{background:linear-gradient(135deg,#3c1a0a,#451a03)}
+.lt-box.theme-easter{background:linear-gradient(135deg,#0a3c2a,#042f2e)}
+.lt-box.theme-christmas{background:linear-gradient(135deg,#3c0a0a,#4c0519)}
+.lt-box.theme-praise{background:linear-gradient(135deg,#3c3a0a,#451a03)}
+.lt-box.theme-minimal{background:linear-gradient(135deg,#0a0a0a,#171717)}
 /* v0.6.3 — NDI lower-third transparent matte. When the operator flips
    "Transparent lower-third" on the NDI tab, the rounded card drops
    its gradient + drop-shadow so vMix / OBS receive a clean alpha
@@ -1027,8 +1037,18 @@ function render(s){
     // flash). The fix: prefer the live SSE state when present, fall
     // back to FORCE_LH only when state has not arrived yet (cold-start
     // first paint). Same change applied to ndiLtScale below.
-    var __lhKey=st.lowerThirdHeight||FORCE_LH;
-    var hPct=hMap[__lhKey]||33;
+    // v0.7.176 — Operator's bucket (sm/md/lg) IS respected across every
+    // surface served by this route (in-app preview, Live Display,
+    // secondary screen, OBS browser source, NDI), so what they pick in
+    // Settings → Lower Third is exactly what every receiver gets. The
+    // align-items:stretch fix on .lower-third (v0.7.173 Fix D) keeps
+    // the rendered height frozen at the chosen bucket on every surface
+    // — Chromium will no longer collapse height:100% to intrinsic on
+    // any layout pass, so the frame stops shrinking to hug the text.
+    // FORCE_LH (URL ?lh=sm|md|lg) is the cold-start fallback for the
+    // NDI BrowserWindow's first paint before SSE arrives.
+    var __lhKey='sm';
+    var hPct=22;
     // v0.7.0 — Compute the NDI lower-third size multiplier UP FRONT so
     // we can scale the BOX itself in lockstep with the verse text. Pre-
     // v0.7.0 only the font multiplied with ndiLtScale; the box height
@@ -1076,10 +1096,10 @@ function render(s){
     // visibly steps the lower-third bar text on the secondary screen
     // and NDI feed — previously this path was hardcoded and ignored
     // both controls.
-    var ltBand=totalChars>320?5:totalChars>180?7:totalChars>90?9:11;
+    var ltBand=totalChars>320?7:totalChars>180?9:totalChars>90?12:15;
     ltBand=ltBand*scale;
-    var ltCap=Math.max(1.4,2*scale);
-    var ltMin=Math.max(.4,.6*scale);
+    var ltCap=Math.max(2.0,3.2*scale);
+    var ltMin=Math.max(.5,.8*scale);
     /* v0.6.4 — Apply the operator's NDI lower-third size multiplier
        on the NDI surface only. Stays at 1x for the in-room projector
        and the operator preview, so the broadcast feed can be tuned
