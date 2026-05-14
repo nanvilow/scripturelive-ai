@@ -1133,3 +1133,9 @@ id = "h1uyvuI9o8OsGkRHT7EKF"
 uri = "file://screenshots/lt-preview-proof-v0.7.177.jpg"
 type = "image"
 title = "v0.7.177 LT preview fix — before/after proof"
+
+[[outputs]]
+id = "PuCq_pqk7isCNOggP1qHB"
+uri = "file://screenshots/obs-ndi-parity-v0.7.178.jpg"
+type = "image"
+title = "v0.7.178 — OBS Browser Source URL → NDI Settings parity proof"
