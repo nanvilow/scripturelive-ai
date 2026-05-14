@@ -702,8 +702,40 @@ function fitVerseText(){
     __fitKey=key;
     p.style.transform='';
     p.style.transformOrigin='top center';
+    // v0.7.184.2 — Measure the VERSE PARAGRAPH'S OWN scrollHeight, not
+    // parent.scrollHeight. Operator-reported bug: NDI lower-third
+    // surface never auto-fit (verse text overflowed and got clipped by
+    // the bar's overflow:hidden). Root cause: in the LT branch, the
+    // verse <p>'s parent is .lt-content which is
+    //   display:flex; flex-direction:column; overflow:hidden;
+    // Under flex-shrink, the <p> child's LAYOUT BOX (offsetHeight)
+    // collapses to its min-content size (~1 line). parent.scrollHeight
+    // sums children's layout-box heights, not their internal overflow,
+    // so parent.scrollHeight ≈ parent.clientHeight even when the verse
+    // text inside <p> is overflowing massively. Result: actual<=avail
+    // always → bail at scale(1) → no autofit. The fullscreen branch
+    // worked because .slide-content has no overflow:hidden, so flex
+    // didn't shrink the <p>, so parent.scrollHeight included the
+    // overflow.
+    //
+    // p.scrollHeight is unaffected by the parent's flex-shrink because
+    // <p> itself has overflow:visible — its scrollHeight reports the
+    // full wrapped text height even when its layout box is collapsed.
+    // This single measurement now works for BOTH surfaces (LT + full).
+    //
+    // We also subtract sibling heights (the .slide-reference chyron
+    // that sits above or below the verse inside the same parent) from
+    // the available space, so the shrink target is "what the verse can
+    // actually use" rather than "the whole parent including the ref".
+    // This is also a strict improvement for the fullscreen path: the
+    // old math k=clientH/(verse+ref) under-corrected because applying
+    // scale to the verse alone doesn't shrink the ref's reserved space
+    // — new math k=(clientH-ref)/verse is exact.
     var avail=parent.clientHeight;
-    var actual=parent.scrollHeight;
+    for(var i=0;i<parent.children.length;i++){
+      if(parent.children[i]!==p) avail-=parent.children[i].offsetHeight;
+    }
+    var actual=p.scrollHeight;
     if(!avail||!actual||actual<=avail){ __fitScale=1; return; }
     var k=(avail/actual)*0.98;
     if(k<0.60)k=0.60;
