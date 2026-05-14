@@ -1139,3 +1139,9 @@ id = "PuCq_pqk7isCNOggP1qHB"
 uri = "file://screenshots/obs-ndi-parity-v0.7.178.jpg"
 type = "image"
 title = "v0.7.178 — OBS Browser Source URL → NDI Settings parity proof"
+
+[[outputs]]
+id = "bFPBl9nCq99yv7YWR3nFP"
+uri = "file://exports/ScriptureLive-AI-v0.7.179-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.179 — Source"
