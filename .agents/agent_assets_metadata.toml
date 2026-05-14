@@ -1181,3 +1181,9 @@ id = "hGJvzaOHln91Qo3tM2GjY"
 uri = "file://exports/v0.7.182-auto-nav-proof.png"
 type = "image"
 title = "v0.7.182 — Auto-route detected refs to Chapter Navigator (proof)"
+
+[[outputs]]
+id = "TjbvPjhzpgn0r5fZm617m"
+uri = "file://exports/scripturelive-ai-v0.7.182-source.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.182 — source ZIP"

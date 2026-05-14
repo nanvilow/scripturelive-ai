@@ -1,3 +1,56 @@
+## v0.7.182 — In-app Lower Third REMOVED + Auto-route detected refs to Chapter Navigator + Live Display red ring removed + Verse-text auto-fit on overflow
+
+Four bundled operator requests landed in one ship after explicit per-change approval per the v0.7.180 GR-D process (diagnose → propose with proof → wait for "Yes ship" → ship).
+
+**1. In-app Lower Third REMOVED — operator: "remove the lower third from the app, leaving only the lower third that can be operated in NDI settings only. Anywhere there's a lower third on the app, remove it and let users use it in only NDI settings."**
+
+Three in-app surfaces stripped, NDI Output panel intentionally untouched:
+
+- **Type narrowing — `src/lib/store.ts:46`**: `DisplayMode = 'full' | 'lower-third' | 'lower-third-black'` → `DisplayMode = 'full'`. The TypeScript compiler then surfaces every dead in-app LT branch as a type error so each call site is handled by deletion, not by re-widening the type. The separate `ndiDisplayMode: 'full' | 'lower-third'` field on the store stays as-is — NDI broadcast keeps its own LT mode driven by the NDI Output panel.
+- **Persist migration v4 → v5 — `src/lib/store.ts:1188 + 1272-1290`**: any persisted `settings.displayMode` of `'lower-third'` or `'lower-third-black'` (carried over from older builds) silently coerces to `'full'` on first boot of v0.7.182. Idempotent: a fresh install at version 5 already has `displayMode='full'` and skips the coercion. NDI's separate `ndiDisplayMode` is intentionally NOT touched.
+- **Display Mode picker DELETED — `src/components/views/settings.tsx` ~line 786-805 (~25 lines removed, comment block left in source)**: previously a 3-button picker (Full Screen / Lower Third / Lower Third (Black)). With LT now NDI-only, the picker collapses to a single 'Full Screen' option, so the entire control was removed.
+- **Top-bar Output Display Mode dropdown DELETED — `src/components/layout/easyworship-shell.tsx` lines 966-1030 (~65 lines removed) + `modeMenuOpen` state cleanup at line 327-329**: previously a Popover with Full Screen / Lower Third / Lower Third · Black options. The status pill at line 1477 (`{settings.displayMode === 'full' ? 'Full Screen' : 'Lower Third'}`) collapsed to literal `Full Screen`. Header now goes Output Display button → NDI button directly with no LT picker between.
+- **Lower Third Settings card DELETED — `src/components/views/settings.tsx` lines 1008-1358 (~320 lines removed)**: entire `<Card>` containing Position picker (Bottom/Top), Height picker (Small/Medium/Large), Typography card (Font, Size, Drop Shadow, Align), Bible Color picker, Bible Line-Height slider, Bible Text Scale slider, and the LIVE PREVIEW box. Persisted `lowerThird*` keys remain on disk (no destructive migration), but `USE_LT_OVERRIDES = !IS_NDI && dm.indexOf('lower-third')===0` is now permanently false in-app because dm = 'full' always — the values are inert until/unless a future build re-surfaces an in-app LT layer.
+- **NDI Output panel — UNTOUCHED**: `src/components/views/ndi-output-panel.tsx` not modified. `ndiDisplayMode` picker (Full / Lower Third) stays. `lowerThirdPosition / Height / Typography` controls stay (they live in the NDI panel UI now). `ndiLowerThird*` font/color/scale/transparent stay. OBS Browser Source URL bake from v0.7.181 stays. Renderer route.ts lower-third branch retained — driven exclusively by `IS_NDI && st.ndiDisplayMode === 'lower-third'`.
+
+**2. Auto-route detected references to Chapter Navigator — operator: "Immediately a bible or bible reference is quoted are detected; also send it to Chapter Navigator."**
+
+Single source-of-truth fix at `src/lib/store.ts:803-861` (`addDetectedVerse`): after the v0.7.119 dedupe `set()` call, fire `get().requestNavigatorRef(v.reference)` unconditionally when a reference exists. The bridge mechanism is unchanged — `requestNavigatorRef` writes `${ref}\u0000${Date.now()}` to `navigatorRequestedRef`, and the `BibleLookupCompact` `useEffect` at `library-compact.tsx:189-203` strips the timestamp suffix, parses the reference, calls `setSearchQuery(ref)` + `loadChapter(parsed.book, parsed.chapter, parsed.verseStart)`. Timestamp suffix guarantees React diffs the string even when the same ref re-detects, so the navigator re-jumps each time.
+
+Five existing detection call sites in `speech-provider.tsx` (lines 1600 explicit refs, 1701 semantic owns-live, 1836 sticky live, 2014 follow-mode, 2069 promote-from-candidate) all get the auto-nav for free without per-site edits. Any future caller of `addDetectedVerse` also gets it for free. Atomicity safe: `get().requestNavigatorRef` is defined later in the same store factory; runtime closure resolution guarantees it exists by the time any detection fires.
+
+`addDetectedVerseCandidate` is intentionally NOT auto-nav'd — those are <50% confidence guesses and would thrash the navigator on every speech tick. Manual click on a Detected Verses row already calls `requestNavigatorRef` (logos-shell.tsx L1935/1938/1949) so the bridge is proven; v0.7.182 just adds the auto-fire upstream.
+
+**3. Live Display red ring removed — operator's earlier postimg flagged the inset red ring on the Live Display surface as visual noise that doesn't help operators**
+
+`src/components/presenter/stable-stage.tsx:160` — removed `isLive && 'ring-2 ring-red-500 ring-inset'` from the className composition. The `isLive` prop is kept as a no-op for caller-compat (caller still passes it; component just ignores it cosmetically). Sister red-ring sites at `slide-renderer.tsx:452/464` and `library-compact.tsx:710` are intentionally LEFT ALONE — those are different surfaces (preview thumbnails / library item highlights) where the ring is operator-useful. The removal is Live Display-specific per the operator's explicit scope.
+
+**4. Verse-text auto-fit on overflow — `src/app/api/output/congregation/route.ts` (~95 lines added inside the inline output script)**
+
+`fitText()` + `autoFitTextEverywhere()` helpers measure `scrollHeight` vs container `clientHeight` after layout, then iteratively scale the verse text down (8% step, minK = 0.4 floor, 16-iter cap) until it fits without clipping. Wired at end-of-render via `requestAnimationFrame` (so layout is finalised before measure) and also fires on resize via 80 ms debounce. Covers all 6 verse-display surfaces via the v0.7.158 single-renderer architecture (Live Display, secondary screen, projector, in-app Settings preview, NDI broadcast, OBS Browser Source) without per-surface duplication. Static proof at `public/_lt-autofit-proof.html` was used for review and is removed in this ship.
+
+**Files**:
+- `src/lib/store.ts` (DisplayMode type narrow + persist migration v4→v5 + addDetectedVerse auto-nav fire — ~80 lines)
+- `src/components/views/settings.tsx` (Display Mode picker delete + Lower Third Settings card delete — ~340 lines removed, replaced by ~12-line comment block)
+- `src/components/layout/easyworship-shell.tsx` (Output Display Mode dropdown delete + modeMenuOpen state cleanup + status pill ternary collapse — ~65 lines removed)
+- `src/components/presenter/stable-stage.tsx` (red ring removal at line 160)
+- `src/app/api/output/congregation/route.ts` (auto-fit helpers + rAF + 80 ms debounced resize — ~95 lines)
+- `package.json` + `BUILD.bat` banner bumped to 0.7.182.
+- `public/_lt-autofit-proof.html` deleted (review-only artefact).
+
+Tests: `tsc --noEmit` clean.
+
+**GUARD-RAIL (A)** — never re-introduce in-app Lower Third UI without coordinated removal of: (1) the v4→v5 migration coercion (otherwise the migration silently flips the operator's freshly-chosen LT mode back to 'full' on next boot), (2) the `DisplayMode = 'full'` type narrowing in `store.ts:46`. The current architecture is "in-app surfaces are Full only, NDI broadcast can be Full or Lower Third via `ndiDisplayMode`." Mixing the two muddles the operator's mental model — they explicitly asked for the split.
+
+**GUARD-RAIL (B)** — when removing UI for a state field that has a persist migration, ALWAYS bump the persist version and add a coercion branch. Skipping the bump means existing installs with stale state keep rendering UI-less surfaces in the deleted mode. Verify by `rg -n "version: [0-9]" src/lib/store.ts` and confirming the new version > the previous one.
+
+**GUARD-RAIL (C)** — `addDetectedVerse` auto-nav: any future detection-pipeline action MUST decide whether to fire `requestNavigatorRef` based on whether the detection is operator-confirmed (≥50% confidence, authoritative) vs speculative (<50%, candidate). Authoritative → fire (current addDetectedVerse). Speculative → DO NOT fire (current addDetectedVerseCandidate). Auto-firing on speculative detections thrashes the navigator on every speech tick and erodes operator trust in the auto-nav.
+
+**GUARD-RAIL (D)** — when narrowing a union type to suppress dead branches, prefer single-literal narrow (`type X = 'full'` over `type X = 'full' | never`) — TS compiler treats both identically but the single-literal form is less likely to be re-widened by a copy-paste that thinks `'full' | never` is intentionally extensible. The narrowing is THE enforcement mechanism for "this state field has only one valid value" — if a future agent re-widens it, the migration coercion silently masks the regression and the operator-removed UI silently comes back to life through other surfaces.
+
+**GUARD-RAIL (E)** — `stable-stage.tsx` `isLive` prop is now a no-op cosmetically but MUST stay in the component signature. Removing it from the props interface would break every caller in `presenter/`, `views/live-display.tsx`, and downstream consumers. The pattern (keep prop, drop the visual) is the safe refactor — operator-explicit "remove the red ring" doesn't mean "rip out the prop plumbing."
+
+
 ## v0.7.181 — OBS Browser Source URL: bake current NDI settings into URL + strip OBS mentions from Settings UI
 
 Operator follow-up after v0.7.180 ship: "OBS is not showing what output NDI is firing OBS out still firing from main App. when i told you disconnect anything applied to it i need only NDI output to applied to OBS only." v0.7.178 added `?ndi=1&transparent=1` to the OBS Browser Source URL builder, which fixed the route's `IS_NDI` gating but did NOT fix this second class of bug — the OBS surface was first-painting at default state (Full mode, lh=md, sc=1.0) because no `lowerThird=1` / `position` / `lh` / `sc` URL params were baked in. SSE eventually caught up and updated the OBS surface, but OBS Browser Source aggressively caches the initial paint, so operators reported "OBS still firing from main App" because the first frame OBS captured used `s.displayMode` (the Live Display body mode) and `lh=md` defaults — which visually matches the main app feed when the operator is on Full mode, and looks like a stale/wrong LT layout when the operator switched NDI to Lower Third mode.
