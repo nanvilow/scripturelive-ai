@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '@/lib/store'
 import { buildOutputPayload, type OutputPayload } from '@/lib/output-payload'
 import type { Slide } from '@/lib/store'
@@ -280,6 +280,40 @@ export function OutputPreview({
     }
   }
 
+  // v0.7.177 — Render the iframe at NATIVE 1920×1080 (or matching
+  // 4:3 / 21:9 native height-pinned size) and CSS transform-scale into
+  // the preview card. Same WYSIWYG technique that NdiPreviewSurface
+  // uses (see ndi-output-panel.tsx ~line 1100, v0.7.9 fix). Without
+  // this, the iframe inner viewport equals the card's physical pixel
+  // size (~360 px wide in a settings card). At that size the LT box
+  // at hPct=22% is only ~45 px tall — `cqw`/`cqh` font math floors at
+  // 0.5 rem and 4-line verses crash into the rounded edges (operator
+  // screenshot: Romans 8:23 ASV in the Lower Third Settings preview
+  // showed text reaching the box edges with no breathing room, even
+  // with Bible line-height 0.90 + Bible text scale 0.50 maxed out).
+  // Native 1920×1080 → 22% × 1080 = 237 px LT box → ltBand 9vw at
+  // 1920 vw = 173 px font (auto-clamped to ltCap 3.2 rem) → text fits
+  // with the same neat geometry the actual NDI broadcast paints. The
+  // rendered card looks identical to before; only the internal pixel
+  // coordinates change.
+  const wrapperRef = useRef<HTMLDivElement | null>(null)
+  const NATIVE_H = 1080
+  const NATIVE_W =
+    aspect === '4 / 3' ? 1440 : aspect === '21 / 9' ? 2520 : 1920
+  const [scale, setScale] = useState(1)
+  useLayoutEffect(() => {
+    const el = wrapperRef.current
+    if (!el) return
+    const measure = () => {
+      const w = el.clientWidth
+      if (w > 0) setScale(w / NATIVE_W)
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [NATIVE_W])
+
   return (
     <div className="space-y-1.5">
       {label && (
@@ -288,19 +322,38 @@ export function OutputPreview({
         </div>
       )}
       <div
+        ref={wrapperRef}
         className={
           className ??
           'relative w-full bg-black overflow-hidden rounded-md ring-1 ring-border'
         }
         style={{ aspectRatio: aspect }}
       >
-        <iframe
-          ref={iframeRef}
-          src={src}
-          title={label || 'Output Preview'}
-          onLoad={onIframeLoad}
-          className="absolute inset-0 w-full h-full block border-0 pointer-events-none"
-        />
+        <div
+          style={{
+            width: NATIVE_W,
+            height: NATIVE_H,
+            transform: `scale(${scale})`,
+            transformOrigin: 'top left',
+            position: 'absolute',
+            top: 0,
+            left: 0,
+          }}
+        >
+          <iframe
+            ref={iframeRef}
+            src={src}
+            title={label || 'Output Preview'}
+            onLoad={onIframeLoad}
+            style={{
+              border: 0,
+              display: 'block',
+              width: '100%',
+              height: '100%',
+              pointerEvents: 'none',
+            }}
+          />
+        </div>
         {!hideModeBadge && (
           <div className="absolute top-1 right-1 z-10 pointer-events-none">
             <span className="text-[8px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded bg-black/60 text-white/80 border border-white/10">

@@ -1037,15 +1037,18 @@ export function SettingsView() {
           to `lowerThird*` keys → `buildOutputPayload()` → consumed by
           `/api/output/congregation` whenever
           `USE_LT_OVERRIDES = !IS_NDI && dm.indexOf('lower-third')===0`.
-          That predicate fires for ALL FOUR in-app surfaces:
+          That predicate fires for the THREE in-app surfaces:
             (1) Settings → Preview (Lower Third) box (?preview=1&lowerThird=1)
             (2) Live Display window (?lowerThird=1)
             (3) Secondary screen / projector (no flags, dm from store)
-            (4) OBS Browser Source URL (?transparent=1, dm from store)
-          IS_NDI=true (the ?ndi=1 broadcast feed) deliberately
+          IS_NDI=true (the ?ndi=1 broadcast feed AND the OBS Browser
+          Source URL — both ship `?ndi=1` as of v0.7.178) deliberately
           ignores these and uses the separate `ndi*` overrides on the
-          NDI Output panel — that surface is for vMix/Wirecast and the
-          operator may want a different look there. */}
+          NDI Output panel. The OBS Browser Source URL is intentionally
+          locked to NDI-only control so vMix/Wirecast/OBS operators
+          tune one place and get one feed; in-app surfaces never bleed
+          into the broadcast and the broadcast never bleeds into the
+          in-app surfaces. */}
       <Card className="bg-card border-border">
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
@@ -1055,8 +1058,9 @@ export function SettingsView() {
               <CardDescription>
                 Independent from Full Screen and from the NDI broadcast feed.
                 These apply to the Preview (Lower Third) box, the Live Display
-                window, the secondary screen, and the OBS Browser Source URL —
-                whenever the display mode is set to Lower Third.
+                window, and the secondary screen — whenever the display mode
+                is set to Lower Third. The OBS Browser Source URL is controlled
+                exclusively from the NDI Output panel (v0.7.178).
               </CardDescription>
             </div>
           </div>

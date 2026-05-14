@@ -61,12 +61,30 @@ export function NdiOutputPanel() {
     }).catch(() => { /* leave null — card just falls back to copy-only */ })
     return () => { cancelled = true }
   }, [desktopBridge])
-  // Build the OBS Browser Source URLs. We always send `?transparent=1`
-  // so OBS receives a clean alpha matte (verse text only, no card
-  // backdrop) — the operator can layer it over their service program
-  // bus the same way they would an NDI feed.
+  // Build the OBS Browser Source URLs. We always send `?ndi=1` AND
+  // `?transparent=1` so OBS gets a feed that is BYTE-IDENTICAL to the
+  // actual NDI broadcast capture:
+  //   - `?ndi=1` flips `IS_NDI=true` on the route, which gates the
+  //     `USE_NDI_OVERRIDES` resolver → typography, colours, line-
+  //     height, aspect ratio, display mode (full vs lower-third),
+  //     translation, lower-third frame size, etc. ALL come from the
+  //     `ndi*` setting pile that the operator controls in this NDI
+  //     Output panel above. The route specifically resolves the
+  //     display mode as `(IS_NDI && st.ndiDisplayMode) ? st.ndi
+  //     DisplayMode : (s.displayMode||'full')` — so toggling NDI
+  //     Full / Lower Third in the controls below propagates to OBS
+  //     instantly. The in-app `lowerThird*` pile (USE_LT_OVERRIDES)
+  //     can NEVER bleed in because USE_NDI_OVERRIDES and USE_LT_
+  //     OVERRIDES are mutually exclusive on `IS_NDI`.
+  //   - `?transparent=1` keeps the clean alpha matte (verse text
+  //     only, no card backdrop) so the operator can layer it over
+  //     the service program bus the same way they would an NDI feed.
+  // v0.7.178 — added `?ndi=1` after operator confirmed via two
+  // annotated screenshots (NDI Live Preview vs OBS Browser Source
+  // copy) that the OBS URL was rendering with the in-app lower-
+  // third typography instead of the NDI broadcast typography.
   const buildObsUrl = (host: string, port: number) =>
-    `http://${host}:${port}/api/output/congregation?transparent=1`
+    `http://${host}:${port}/api/output/congregation?ndi=1&transparent=1`
   // v0.7.157 — Browser-side fallback so the card NEVER disappears.
   // Pre-v0.7.157 the OBS Browser Source URL card was conditionally
   // rendered only when the Electron IPC `app:get-server-info` had
@@ -82,7 +100,7 @@ export function NdiOutputPanel() {
   // happened to load before IPC settled.
   const browserFallbackUrl =
     typeof window !== 'undefined' && window.location?.origin
-      ? `${window.location.origin}/api/output/congregation?transparent=1`
+      ? `${window.location.origin}/api/output/congregation?ndi=1&transparent=1`
       : null
   const localObsUrl = serverInfo && serverInfo.port > 0
     ? buildObsUrl('127.0.0.1', serverInfo.port)
