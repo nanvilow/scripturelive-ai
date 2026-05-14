@@ -1157,3 +1157,15 @@ id = "YKOdaw7gulYpeWMa_ljGR"
 uri = "file://exports/ScriptureLive-AI-v0.7.181-source.zip"
 type = "unspecified"
 title = "ScriptureLive AI v0.7.181 — source ZIP"
+
+[[outputs]]
+id = "i90yb0hSoXwPAfpEAJhg3"
+uri = "file://exports/v0.7.182-stage-ring-removal-proof.png"
+type = "image"
+title = "v0.7.182 — BEFORE / AFTER: Live Display red ring removed"
+
+[[outputs]]
+id = "Tke4UYk4f9RmDRAKiQszN"
+uri = "file://attached_assets/screenshots/livedisplay_zoom.png"
+type = "image"
+title = "Your screenshot, zoomed — the red line you marked with arrows"
