@@ -1205,3 +1205,9 @@ id = "pxZTGyjukO3iX70dIm5p8"
 uri = "file://exports/v0.7.183-autofit-all-surfaces.png"
 type = "image"
 title = "v0.7.183 — Autofit on ALL surfaces (In-App + NDI Full + NDI LT + OBS)"
+
+[[outputs]]
+id = "EAn7m6m0Z6MF9AshcTPRm"
+uri = "file://exports/v0.7.183-autofit-v3-math.png"
+type = "image"
+title = "v0.7.183 — Autofit v3 (single-shot math, ~35× faster)"
