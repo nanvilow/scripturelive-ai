@@ -632,11 +632,11 @@ function applyRender(s){
 //   3. If scrollHeight <= clientHeight → no overflow → bail at scale(1).
 //   4. Otherwise compute k = (clientHeight / scrollHeight) * 0.98
 //      (the 0.98 leaves a 2% safety margin so we don't kiss the edge).
-//   5. NO FLOOR — operator-explicit: "all the verse text must fit."
-//      A floor would let a 4× overflow STILL spill outside the frame.
-//      Pathologically long verses dip into small text (~0.25-0.35),
-//      which is still legible on a projector and far better than
-//      cropped/overflowing scripture.
+//   5. Clamp to floor 0.60 — operator-explicit: "not even small."
+//      Text never shrinks below 60% so it always stays readable on a
+//      projector. Pathologically long verses (>1.66× overflow) WILL
+//      overflow the bottom of the frame; operator manually adjusts
+//      typography or splits the slide for those rare cases.
 //   6. Apply ONE transform: scale(k) and we're done.
 //
 //   Why math, not iteration: transform: scale() is a PAINT-only op —
@@ -665,6 +665,7 @@ function fitVerseText(){
     var actual=parent.scrollHeight;
     if(!avail||!actual||actual<=avail)return;
     var k=(avail/actual)*0.98;
+    if(k<0.60)k=0.60;
     if(k>=1)return;
     p.style.transform='scale('+k.toFixed(3)+')';
   }catch(e){}
