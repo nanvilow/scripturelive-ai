@@ -1073,3 +1073,9 @@ id = "H5wq_uAdROwlqb0YxBsP4"
 uri = "file://screenshots/v0.7.176-ndi-locked.jpg"
 type = "image"
 title = "v0.7.176 — NDI lower-third frame locked at one size"
+
+[[outputs]]
+id = "Cs_NtDheDoFHMZFUhsBoK"
+uri = "file://screenshots/v0.7.176-lt-locked-all-surfaces.jpg"
+type = "image"
+title = "v0.7.176 — LT frame locked on every surface, doesn't expand"

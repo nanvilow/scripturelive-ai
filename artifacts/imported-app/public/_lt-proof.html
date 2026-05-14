@@ -8,36 +8,36 @@ h2{margin:18px 24px 6px;font-size:16px;font-weight:600}
 .tag{font-size:11px;opacity:.75;margin:0 0 4px}
 .frame{position:relative;width:100%;aspect-ratio:16/9;background:url('https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=1280&q=70') center/cover;border:2px solid #b91c1c}
 /* CSS lifted verbatim from artifacts/imported-app/src/app/api/output/congregation/route.ts (v0.7.176) */
-.lower-third{position:absolute;left:0;right:0;bottom:6%;display:flex;align-items:stretch;justify-content:center;padding:0 2.5%;container-type:size}
+.lower-third{position:absolute;left:0;right:0;bottom:6%;display:flex;align-items:stretch;justify-content:center;padding:0 17.5%;container-type:size;height:33%}
 .lt-box{position:relative;width:100%;padding:3% 5%;display:flex;flex-direction:column;justify-content:center;overflow:hidden;height:100%;box-sizing:border-box;border-radius:1.25rem;box-shadow:0 8px 28px rgba(0,0,0,.45);background:linear-gradient(135deg,#0a0a0a,#171717)}
 .lt-box .lt-content{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;align-items:center;width:100%;height:100%;text-align:center}
 .lt-box .slide-reference{font-size:14px;font-weight:700;line-height:1.2;margin-bottom:4px}
-.lt-box .slide-text{font-weight:600;line-height:1.25;font-size:18px}
+.lt-box .slide-text{font-weight:600;line-height:1.25;font-size:16px}
 </style></head>
 <body>
-<h2>v0.7.176 — NDI frame is now LOCKED at one size (33%) regardless of in-app sm/md/lg</h2>
+<h2>v0.7.176 — Frame is LOCKED at one fixed size on every output. sm/md/lg in main app no longer resizes the box.</h2>
 <div class="row">
-  <div class="cell"><p class="tag">NDI · operator clicked SMALL → frame stays 33%</p>
-    <div class="frame"><div class="lower-third" style="height:33%"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit</div></div></div></div></div>
+  <div class="cell"><p class="tag">Live Display · operator clicked SMALL → frame stays the same</p>
+    <div class="frame"><div class="lower-third"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit, because he maketh intercession for the saints according to [the will of] God.</div></div></div></div></div>
   </div>
-  <div class="cell"><p class="tag">NDI · operator clicked MEDIUM → frame stays 33%</p>
-    <div class="frame"><div class="lower-third" style="height:33%"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit</div></div></div></div></div>
+  <div class="cell"><p class="tag">Live Display · operator clicked MEDIUM → frame stays the same</p>
+    <div class="frame"><div class="lower-third"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit, because he maketh intercession for the saints according to [the will of] God.</div></div></div></div></div>
   </div>
-  <div class="cell"><p class="tag">NDI · operator clicked LARGE → frame stays 33%</p>
-    <div class="frame"><div class="lower-third" style="height:33%"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit</div></div></div></div></div>
+  <div class="cell"><p class="tag">Live Display · operator clicked LARGE → frame stays the same</p>
+    <div class="frame"><div class="lower-third"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit, because he maketh intercession for the saints according to [the will of] God.</div></div></div></div></div>
   </div>
 </div>
 
-<h2>For comparison — in-app preview / secondary screen still respects sm/md/lg (unchanged)</h2>
+<h2>Frame also stays still when verse text length changes (no expansion)</h2>
 <div class="row">
-  <div class="cell"><p class="tag">In-app · SMALL → 22%</p>
-    <div class="frame"><div class="lower-third" style="height:22%"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit</div></div></div></div></div>
+  <div class="cell"><p class="tag">Short verse — frame size unchanged</p>
+    <div class="frame"><div class="lower-third"><div class="lt-box"><div class="lt-content"><div class="slide-reference">John 11:35 — ASV</div><div class="slide-text">Jesus wept.</div></div></div></div></div>
   </div>
-  <div class="cell"><p class="tag">In-app · MEDIUM → 33%</p>
-    <div class="frame"><div class="lower-third" style="height:33%"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit</div></div></div></div></div>
+  <div class="cell"><p class="tag">Medium verse — frame size unchanged</p>
+    <div class="frame"><div class="lower-third"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit.</div></div></div></div></div>
   </div>
-  <div class="cell"><p class="tag">In-app · LARGE → 45%</p>
-    <div class="frame"><div class="lower-third" style="height:45%"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit</div></div></div></div></div>
+  <div class="cell"><p class="tag">Long verse — frame size unchanged (text shrinks to fit)</p>
+    <div class="frame"><div class="lower-third"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit, because he maketh intercession for the saints according to [the will of] God, who hath called us with a holy calling, not according to our works.</div></div></div></div></div>
   </div>
 </div>
 </body></html>

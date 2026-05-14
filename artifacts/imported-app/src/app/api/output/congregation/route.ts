@@ -93,7 +93,13 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    its tighter aspect made the centred-vs-stretched difference invisible.
    The .lt-box already carries justify-content:center so the verse text
    continues to centre inside the (now properly stretched) frame. */
-.lower-third{position:absolute;left:0;right:0;display:flex;align-items:stretch;justify-content:center;padding:0 2.5%;container-type:size}
+/* v0.7.176 — Tighten horizontal padding so the .lt-box renders as a
+   centred chyron card (matching the operator's target screenshot
+   pvktjHxy + the in-app Lower Third Settings preview), not a near
+   edge-to-edge bar. Also keeps align-items:stretch from v0.7.173
+   Fix D so the box height is driven by the parent bucket and never
+   shrinks/expands to hug the verse text. */
+.lower-third{position:absolute;left:0;right:0;display:flex;align-items:stretch;justify-content:center;padding:0 17.5%;container-type:size}
 .lower-third.bottom{bottom:6%}.lower-third.top{top:6%}
 /* Lower-third is now a rounded "card" that holds the verses. The
    upper area outside it stays transparent (#000) so any background
@@ -1031,19 +1037,18 @@ function render(s){
     // flash). The fix: prefer the live SSE state when present, fall
     // back to FORCE_LH only when state has not arrived yet (cold-start
     // first paint). Same change applied to ndiLtScale below.
-    // v0.7.176 — Operator request: NDI lower-third frame size is now
-    // COMPLETELY independent of the in-app LT Small/Medium/Large
-    // height bucket. Operators reported the NDI top edge enlarging
-    // every time they clicked sm/md/lg in the main app — which is
-    // exactly wrong: the NDI feed goes to vMix/Wirecast/OBS where the
-    // operator has already framed the bar to a fixed broadcast slot
-    // and CANNOT have it jumping in size mid-service. Lock IS_NDI to
-    // the md baseline (33% of frame). The in-app preview, secondary
-    // screen, and congregation/OBS browser-source surfaces continue
-    // to honour st.lowerThirdHeight so the operator's preview
-    // reflects the in-app sm/md/lg toggle.
-    var __lhKey=IS_NDI?'md':(st.lowerThirdHeight||FORCE_LH);
-    var hPct=IS_NDI?33:(hMap[__lhKey]||33);
+    // v0.7.176 — Operator follow-up: lock the frame height for EVERY
+    // surface served by this route (in-app preview, Live Display,
+    // secondary screen, OBS browser source, NDI). Operator screenshot
+    // gbPzbFfQ vs target pvktjHxy: clicking Small/Medium/Large in the
+    // in-app Lower Third Settings was visibly resizing the box on
+    // every output, and operators have already framed their broadcast
+    // slot — the bar must NOT jump. The sm/md/lg buttons in the in-app
+    // settings are now decorative for the FRAME size (typography,
+    // alignment, theme still flow through). The frame stays at the
+    // md baseline (33% of frame) on every surface.
+    var __lhKey='md';
+    var hPct=33;
     // v0.7.0 — Compute the NDI lower-third size multiplier UP FRONT so
     // we can scale the BOX itself in lockstep with the verse text. Pre-
     // v0.7.0 only the font multiplied with ndiLtScale; the box height
