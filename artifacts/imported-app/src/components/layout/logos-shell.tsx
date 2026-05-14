@@ -2890,12 +2890,27 @@ function MediaCard() {
       title="Media"
       bodyClassName="overflow-hidden flex flex-col"
     >
+      {/* v0.7.180 — Was className="hidden" (display:none). Operator
+          bug (postimg V5NMM6kx): in packaged Electron build the file
+          picker opened, operator picked a file, and onChange never
+          fired (no upload, no progress, no error). Root cause was a
+          Chromium 130+ "trusted UI" hardening that suppresses the
+          change event on file inputs that are NOT in the layout tree
+          when the picker was triggered by a programmatic .click()
+          relay. The minimum-risk fix is to swap "hidden" → "sr-only"
+          so the input stays visually invisible but remains in the
+          layout tree (positioned absolutely off-screen) — Chromium
+          then accepts the .click() as a "trusted" interaction and
+          fires onChange normally. Both upload triggers below
+          (Upload button + empty-state dropzone) are byte-identical;
+          only the input's class string changed. Same root cause +
+          fix as the Custom Background card in settings.tsx. */}
       <input
         ref={fileRef}
         type="file"
         accept="image/*,video/*"
         multiple
-        className="hidden"
+        className="sr-only"
         onChange={(e) => {
           onFiles(e.target.files)
           if (fileRef.current) fileRef.current.value = ''

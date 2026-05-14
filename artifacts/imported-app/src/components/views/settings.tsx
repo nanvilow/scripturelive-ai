@@ -1886,8 +1886,29 @@ export function SettingsView() {
               </div>
             </div>
           ) : (
-            <div
-              onClick={() => fileInputRef.current?.click()}
+            // v0.7.180 — Native <label htmlFor> pattern instead of the
+            // pre-v0.7.180 div+onClick+ref.click() relay. Operator bug
+            // (postimg V5NMM6kx): in the packaged Electron build the
+            // file picker opened, the operator picked a file, and then
+            // NOTHING happened (no spinner, no toast). Root cause was
+            // the hidden file input (`className="hidden"` → CSS
+            // display:none) intermittently dropping its `change` event
+            // when the picker was triggered by a programmatic .click()
+            // — a Chromium 130+ "trusted UI" hardening that suppresses
+            // change events on inputs not in the layout tree, which
+            // bites packaged apps but not Turbopack dev (different
+            // Chromium build channel). The native label-for pairing
+            // bypasses the JS relay entirely: Chromium routes the
+            // click straight from the label to the input through the
+            // "labelable element" semantics it has supported since
+            // forever, and the input now uses `sr-only` (positioned
+            // off-screen but still in the layout tree) so the change
+            // event fires reliably in production. The dropzone visual
+            // is byte-identical — only the wrapper element changed
+            // from <div onClick=…> to <label htmlFor=…> and the input
+            // class from "hidden" to "sr-only".
+            <label
+              htmlFor="bg-upload-input"
               className="border-2 border-dashed border-border rounded-lg p-8 flex flex-col items-center justify-center cursor-pointer hover:border-primary/30 hover:bg-muted/30 transition-colors"
             >
               {isUploading ? (
@@ -1899,16 +1920,16 @@ export function SettingsView() {
                   <p className="text-xs text-muted-foreground mt-1">Image (PNG, JPEG, WebP) or Video (MP4, WebM, MOV) — up to 3 GB</p>
                 </>
               )}
-            </div>
+              <input
+                id="bg-upload-input"
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,video/x-matroska"
+                onChange={handleUploadBackground}
+                className="sr-only"
+              />
+            </label>
           )}
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,video/x-matroska"
-            onChange={handleUploadBackground}
-            className="hidden"
-          />
         </CardContent>
       </Card>
 
