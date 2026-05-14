@@ -821,10 +821,19 @@ function render(s){
   // override). Previously this only honoured the NDI value, so the
   // new operator-facing bibleLineHeight slider in the Typography
   // panel had no effect on the secondary screen.
+  // v0.7.177 — LT-only line-height floor + default raised to 1.4 so
+  // verses on the in-app LT preview / Live Display / secondary screen
+  // / OBS browser source get breathing room between lines without
+  // touching the frame size (operator-explicit: "adjust only the
+  // text, not the frame is ok"). NDI branch (st.ndiBibleLineHeight)
+  // is UNCHANGED — broadcast feed keeps 0.9 floor so vMix/OBS-NDI
+  // operators can still go tight when their own framing demands it.
   var T_LH=(USE_NDI_OVERRIDES && typeof st.ndiBibleLineHeight==='number')
     ? Math.min(2.5, Math.max(0.9, st.ndiBibleLineHeight))
-    : ((USE_LT_OVERRIDES && typeof st.lowerThirdBibleLineHeight==='number')
-      ? Math.min(2.5, Math.max(0.9, st.lowerThirdBibleLineHeight))
+    : (USE_LT_OVERRIDES
+      ? (typeof st.lowerThirdBibleLineHeight==='number'
+          ? Math.min(2.5, Math.max(1.2, st.lowerThirdBibleLineHeight))
+          : 1.4)
       : (typeof st.bibleLineHeight==='number'
         ? Math.min(2.5, Math.max(0.9, st.bibleLineHeight))
         : 0));
