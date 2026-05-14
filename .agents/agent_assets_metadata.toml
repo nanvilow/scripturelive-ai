@@ -1091,3 +1091,9 @@ id = "ZHjuYoLJiN5DnmjuZgZeG"
 uri = "file://screenshots/v0.7.176-congregation-real-2.jpg"
 type = "image"
 title = "v0.7.176 — Real congregation output (what Live Display / OBS / secondary screen receive)"
+
+[[outputs]]
+id = "UzrwCjbKdteCtFFYqX2u3"
+uri = "file://screenshots/v0.7.176-congregation-correct.jpg"
+type = "image"
+title = "v0.7.176 — Real LT output (Romans 8:27 / ASV)"
