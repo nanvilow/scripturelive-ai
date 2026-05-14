@@ -324,8 +324,7 @@ export function TopToolbar({
   // blocked the live preview beneath it.
   const [micMenuOpen, setMicMenuOpen] = useState(false)
   const [outputMenuOpen, setOutputMenuOpen] = useState(false)
-  // v0.7.182 — Output Display Mode dropdown removed (LT moved to NDI-only).
-  // The `modeMenuOpen` Popover state went with it.
+  const [modeMenuOpen, setModeMenuOpen] = useState(false)
 
   // ── Live mic-input level meter ──────────────────────────────────────
   // A continuously-running RMS reader on the chosen microphone so the
@@ -964,6 +963,71 @@ export function TopToolbar({
           </PopoverContent>
         </Popover>
 
+        {/* ── Output Display Mode (Full / Lower Third) ─────────────────
+            Per FRS: a clearly-labelled, easily-accessible top-level
+            control to switch the output between Full Screen and Lower
+            Third for BOTH the secondary screen AND the NDI feed. The
+            currently active mode is reflected in the trigger label and
+            the selected row. Changes are picked up by the global
+            <OutputBroadcaster /> on the next animation frame, so the
+            preview, the secondary screen and the NDI feed all flip
+            together with no refresh required. */}
+        <Popover open={modeMenuOpen} onOpenChange={setModeMenuOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[11px] gap-1.5 border text-foreground border-border hover:bg-muted hover:text-foreground"
+              title="Switch the live output between Full Screen and Lower Third overlay. Applies to both the secondary screen and NDI."
+            >
+              <MonitorPlay className="h-3 w-3" />
+              {displayMode === 'lower-third'
+                ? 'Lower Third'
+                : displayMode === 'lower-third-black'
+                  ? 'L/3 · Black'
+                  : 'Full Screen'}
+              <ChevronDown className="h-3 w-3 opacity-60" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-[260px] p-1 bg-background border-border">
+            <div className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
+              Output Display Mode
+            </div>
+            {[
+              { value: 'full', label: 'Full Screen', sub: 'Slide fills the screen' },
+              { value: 'lower-third', label: 'Lower Third', sub: 'Bar over background' },
+              { value: 'lower-third-black', label: 'Lower Third · Black', sub: 'Bar on black frame' },
+            ].map((opt) => {
+              const active = displayMode === opt.value
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => {
+                    updateSettings({ displayMode: opt.value as 'full' | 'lower-third' | 'lower-third-black' })
+                    setModeMenuOpen(false)
+                  }}
+                  className={cn(
+                    'w-full text-left px-2 py-1.5 rounded text-[11px] flex items-start gap-2 transition-colors',
+                    active
+                      ? 'bg-sky-500/15 text-sky-200 ring-1 ring-sky-500/40'
+                      : 'text-foreground hover:bg-muted',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'mt-0.5 inline-block h-1.5 w-1.5 rounded-full',
+                      active ? 'bg-sky-400' : 'bg-muted-foreground/40',
+                    )}
+                  />
+                  <span className="flex-1">
+                    <span className="block font-medium">{opt.label}</span>
+                    <span className="block text-[10px] text-muted-foreground">{opt.sub}</span>
+                  </span>
+                </button>
+              )
+            })}
+          </PopoverContent>
+        </Popover>
 
         {/* NDI single-toggle. Click = start/stop. The whole popover-of-
             settings is gone; the only thing operators do mid-service is
@@ -1475,9 +1539,7 @@ export function TransportBar({
         <div className="h-6 w-px bg-muted" />
 
         <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
-          {/* v0.7.182 — in-app displayMode is now locked to 'full' (LT
-              moved to NDI-only). Static label kept; ternary collapsed. */}
-          Full Screen
+          {settings.displayMode === 'full' ? 'Full Screen' : 'Lower Third'}
         </span>
       </div>
     </div>
