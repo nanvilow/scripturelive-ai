@@ -1115,3 +1115,9 @@ id = "ou26oKqv77EAAng0vGlBh"
 uri = "file://screenshots/v0.7.176-lt-lg.jpg"
 type = "image"
 title = "v0.7.176 — Large bucket"
+
+[[outputs]]
+id = "pCVrLueRwqLpTunAU4xqe"
+uri = "file://screenshots/v0.7.176-locked-sm.jpg"
+type = "image"
+title = "v0.7.176 — Frame locked at Small bucket on every surface (sm/md/lg requests all render identical)"

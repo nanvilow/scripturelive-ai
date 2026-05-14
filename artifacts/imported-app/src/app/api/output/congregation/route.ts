@@ -1047,10 +1047,8 @@ function render(s){
     // any layout pass, so the frame stops shrinking to hug the text.
     // FORCE_LH (URL ?lh=sm|md|lg) is the cold-start fallback for the
     // NDI BrowserWindow's first paint before SSE arrives.
-    var __lhKey=(st.lowerThirdHeight==='sm'||st.lowerThirdHeight==='md'||st.lowerThirdHeight==='lg')
-      ? st.lowerThirdHeight
-      : (FORCE_LH||'md');
-    var hPct=hMap[__lhKey]||33;
+    var __lhKey='sm';
+    var hPct=22;
     // v0.7.0 — Compute the NDI lower-third size multiplier UP FRONT so
     // we can scale the BOX itself in lockstep with the verse text. Pre-
     // v0.7.0 only the font multiplied with ndiLtScale; the box height
