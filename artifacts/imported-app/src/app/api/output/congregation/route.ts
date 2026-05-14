@@ -1210,7 +1210,111 @@ function render(s){
     $('output').innerHTML='<div class="'+fsTheme+'" style="width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';'+fontStyle+'">'+fsBg+'<div class="slide-content" style="text-align:'+ta+';'+fontStyle+'">'+fsOrdered+'</div></div>';
   }
   $('output').classList.remove('hidden');
+  // v0.7.182 — Auto-fit text to frame. Operator postimg 94vVd9rd showed
+  // a long verse (LT mode, operator's chosen font/scale settings) overflow-
+  // ing the lower-third bar — text crashing into the rounded bottom edge
+  // with no breathing room. The CSS clamp formulas (ltBand/ltCap/ltMin in
+  // LT, fs.* buckets in Full) already shrink for known text-density bands
+  // (totalChars>320 → 7vw etc) but they cannot account for: (a) the
+  // operator's manual textScale + fontSize bucket multiplying past safe
+  // bounds, (b) translations whose characters have wider glyphs (Twi
+  // Asante, Akan Apostles' Creed) at the same char count, (c) very long
+  // single-verse pulls (Romans 16, Esther 1) that exceed even the >320
+  // band, (d) LT scale slider at 1.5× / 2× that already maxes the clamp
+  // ceiling. Rather than re-tune the clamp ramp (would shrink ALL verses
+  // for the long-tail outliers — operator already complained at v0.7.176
+  // about over-shrinking), we run a JS-side fit pass after every render
+  // that ONLY shrinks when the rendered DOM actually overflows its
+  // bounding container. No persisted setting touched; operator's chosen
+  // typography is the starting point and we only step DOWN from there.
+  // Idempotent — re-running on the same DOM is a no-op (orig fontSize
+  // re-captured each call, fits-check exits early when content fits).
+  // Applied to BOTH surfaces in lockstep:
+  //   - LT (in-app + NDI): scope = .lt-content, bounds = .lt-content
+  //     (which has overflow:hidden + height:100% via the v0.7.176 CSS).
+  //   - Full (in-app + NDI): scope = .slide-content, bounds = its parent
+  //     (the 100% × 100% flex container).
+  // The pass runs inside requestAnimationFrame so the browser has
+  // committed the new innerHTML to layout before we measure — measuring
+  // synchronously after innerHTML= returns stale clientHeight on some
+  // Chromium versions (we hit this in v0.7.11).
+  try{
+    if(window.__fitRaf) cancelAnimationFrame(window.__fitRaf);
+    window.__fitRaf = requestAnimationFrame(function(){
+      window.__fitRaf = 0;
+      autoFitTextEverywhere();
+    });
+  }catch(e){}
 }
+
+// v0.7.182 — Shrink rendered text inline if it overflows its bounding
+// container. Uses a multiplicative step (8% per iteration, floor 0.4×)
+// rather than binary search because the per-step cost (1 reflow) is
+// cheap and 8% steps converge in <12 iterations even for 4× overshoot.
+// minK=0.4 chosen empirically: below 0.4× the operator's typography
+// is unreadable on a 1080p source; we'd rather let the text clip than
+// shrink to illegible (operator can drop fontSize bucket or LT scale
+// manually if they hit the floor).
+function fitText(textRoot, bounds){
+  if(!textRoot || !bounds) return;
+  var nodes = textRoot.querySelectorAll('.slide-text,.slide-title,.slide-subtitle,.slide-paragraph,.slide-reference');
+  if(!nodes.length) return;
+  // Reset any prior inline font-size so a re-render with shorter text
+  // grows back up to the operator's CSS-clamped baseline. Without this
+  // reset every subsequent verse would inherit the previous verse's
+  // shrunken size (sticky-shrink bug).
+  for(var r=0;r<nodes.length;r++){ nodes[r].style.fontSize=''; }
+  // Force layout commit so getComputedStyle reads the fresh CSS-clamp
+  // baseline rather than the cleared inline style's "auto" value.
+  void bounds.offsetHeight;
+  function over(){
+    return textRoot.scrollHeight > bounds.clientHeight + 1
+        || textRoot.scrollWidth  > bounds.clientWidth  + 1;
+  }
+  if(!over()) return;
+  // Capture each node's current rendered px size as the starting point
+  // — clamp() and var()-driven values resolve to a concrete px here.
+  var orig = [];
+  for(var i=0;i<nodes.length;i++){
+    var px = parseFloat(window.getComputedStyle(nodes[i]).fontSize);
+    if(px>0) orig.push({node:nodes[i], px:px});
+  }
+  if(!orig.length) return;
+  var k = 1;
+  var minK = 0.4;
+  // 16-iteration cap = worst-case shrink to ~0.26× before bailing on
+  // the minK floor (0.92^16 ≈ 0.26). Real-world long verses converge
+  // in 4-8 iterations.
+  for(var it=0; it<16 && over() && k>minK; it++){
+    k = k * 0.92;
+    if(k<minK) k = minK;
+    for(var j=0;j<orig.length;j++){
+      orig[j].node.style.fontSize = (orig[j].px * k).toFixed(2) + 'px';
+    }
+    void bounds.offsetHeight;
+  }
+}
+function autoFitTextEverywhere(){
+  try{
+    var ltc = document.querySelector('.lt-box .lt-content');
+    if(ltc) fitText(ltc, ltc);
+    var fsc = document.querySelector('.slide-content');
+    if(fsc && fsc.parentElement) fitText(fsc, fsc.parentElement);
+  }catch(e){}
+}
+// Re-fit when the viewport size changes (Settings preview cards
+// resizing on layout reflow, NDI preview transform-scale recompute,
+// Live Display window resize, secondary monitor connect/disconnect,
+// browser DevTools dock). Debounced so a drag-resize doesn't fire
+// 60× per second.
+(function(){
+  var t = 0;
+  function onResize(){
+    if(t) clearTimeout(t);
+    t = setTimeout(function(){ t = 0; autoFitTextEverywhere(); }, 80);
+  }
+  window.addEventListener('resize', onResize);
+})();
 
 // Polling fallback. Server-Sent Events break when the deployment is
 // horizontally scaled (autoscale): the GET that opens the SSE stream
