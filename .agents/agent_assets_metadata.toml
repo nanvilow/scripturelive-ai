@@ -1199,3 +1199,9 @@ id = "ELeu5l2zCDu58z3mxLLGl"
 uri = "file://exports/v0.7.183-autofit-proof-v2.png"
 type = "image"
 title = "v0.7.183 — Autofit redesign v2 (floor 0.30, all verse text fits)"
+
+[[outputs]]
+id = "pxZTGyjukO3iX70dIm5p8"
+uri = "file://exports/v0.7.183-autofit-all-surfaces.png"
+type = "image"
+title = "v0.7.183 — Autofit on ALL surfaces (In-App + NDI Full + NDI LT + OBS)"
