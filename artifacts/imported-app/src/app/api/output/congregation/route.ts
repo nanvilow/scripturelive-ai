@@ -626,14 +626,17 @@ function applyRender(s){
 //   single function covers Live Display + secondary screen +
 //   projector + Settings preview + NDI broadcast + OBS.
 //
-//   Ramp: 2% step, floor 0.6, 20-iter cap. Softer than v0.7.182's
-//   first cut (8% / 0.4 / 16) which over-shrunk readable verses to
-//   ~30% globally — the screenshot operator flagged. Real overflow
-//   is detected by parent.scrollHeight > parent.clientHeight (NOT
-//   the paragraph itself, because <p> with no fixed height has
-//   scrollHeight===clientHeight). Resetting transform first means
-//   short verses always render at scale(1) — byte-identical to the
-//   v0.7.181 baseline operator approved.
+//   Ramp: 2% step, floor 0.30, 35-iter cap. The 0.30 floor + 35-iter
+//   cap together guarantee even pathologically long verses (e.g.
+//   Esther 8:9, the longest verse in the KJV) STILL fit on screen —
+//   operator-explicit: "when you auto-fit all the verse text must
+//   fit." 2% step keeps the shrink gradual so most verses land at
+//   0.85-0.98 (visually unchanged); only genuinely huge verses dip
+//   below 0.5. Real overflow is detected by parent.scrollHeight >
+//   parent.clientHeight (NOT the paragraph itself, because <p> with
+//   no fixed height has scrollHeight===clientHeight). Resetting
+//   transform first means short verses always render at scale(1) —
+//   byte-identical to the v0.7.181 baseline operator approved.
 function fitVerseText(){
   try{
     var p=document.querySelector('#output .slide-paragraph');
@@ -648,7 +651,7 @@ function fitVerseText(){
     // Force layout flush before measuring.
     void p.offsetHeight;
     var k=1.0, iter=0;
-    while(parent.scrollHeight>avail+1 && k>0.6 && iter<20){
+    while(parent.scrollHeight>avail+1 && k>0.30 && iter<35){
       k-=0.02;
       p.style.transform='scale('+k.toFixed(3)+')';
       iter++;

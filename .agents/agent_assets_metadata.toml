@@ -1193,3 +1193,9 @@ id = "4pdumSrWZ0ybRN6xV6OXM"
 uri = "file://exports/v0.7.182-autofit-redesign-proof.png"
 type = "image"
 title = "v0.7.182 — Autofit redesign proof (Q3, NOT shipped)"
+
+[[outputs]]
+id = "ELeu5l2zCDu58z3mxLLGl"
+uri = "file://exports/v0.7.183-autofit-proof-v2.png"
+type = "image"
+title = "v0.7.183 — Autofit redesign v2 (floor 0.30, all verse text fits)"
