@@ -652,15 +652,35 @@ function applyRender(s){
 //   of the text box so the first line stays where the operator
 //   placed it. center-center would float text upward as it shrinks
 //   and felt jumpy on slide change in v0.7.182's first cut.
+// v0.7.184 — PER-VERSE LOCK. Once we've fit a verse to its frame at a
+// given container size, we DON'T recompute on subsequent renders that
+// re-render the same verse text into the same-size frame. Operator
+// reported a flash on every SSE tick (font color tweak, bg tweak, etc.)
+// because each render re-ran fitVerseText, and tiny scrollHeight
+// rounding flips between paint cycles caused k to oscillate by 0.5–2%
+// per tick — visible as a micro-flash on the projector. The lock keys
+// on (verse text length + parent W×H). New verse text → new length →
+// new key → recompute. Window resize → new W/H → new key → recompute.
+// Same verse, same frame, just a font-color SSE update → same key →
+// EARLY EXIT before resetting transform. The previous scale stays
+// pinned exactly where it was — zero flash.
+//
+// Why textContent.length, not the full string: cheap (no allocation),
+// good enough as a discriminator (different verses ≠ identical length
+// in 99.9% of cases; in the rare collision the worst outcome is one
+// missed re-fit, which the next genuine slide change will correct).
 function fitVerseText(){
   try{
     var p=document.querySelector('#output .slide-paragraph');
     if(!p)return;
+    var parent=p.parentElement;
+    if(!parent)return;
+    var key=(p.textContent||'').length+'|'+parent.clientWidth+'x'+parent.clientHeight;
+    if(p.dataset.fitKey===key)return; // LOCKED — same verse + same frame; keep current scale, no flash.
+    p.dataset.fitKey=key;
     // Reset prior shrink first so measurements are natural.
     p.style.transform='';
     p.style.transformOrigin='top center';
-    var parent=p.parentElement;
-    if(!parent)return;
     var avail=parent.clientHeight;
     var actual=parent.scrollHeight;
     if(!avail||!actual||actual<=avail)return;
