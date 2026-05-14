@@ -1059,8 +1059,7 @@ export function SettingsView() {
                 Independent from Full Screen and from the NDI broadcast feed.
                 These apply to the Preview (Lower Third) box, the Live Display
                 window, and the secondary screen — whenever the display mode
-                is set to Lower Third. The OBS Browser Source URL is controlled
-                exclusively from the NDI Output panel (v0.7.178).
+                is set to Lower Third.
               </CardDescription>
             </div>
           </div>
@@ -1490,7 +1489,7 @@ export function SettingsView() {
             <CardContent className="p-3 flex items-start gap-2">
               <Wifi className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
               <p className="text-xs text-amber-300/80 leading-relaxed">
-                <strong>Wireless display:</strong> Open the congregation URL on any browser that can reach this app, then capture that screen with NDI Tools, AirPlay, Chromecast, OBS, vMix, or Wirecast. For a private local network install, use your machine&apos;s local IP plus <code className="bg-amber-500/20 px-1 rounded">/api/output/congregation</code>.
+                <strong>Wireless display:</strong> Open the congregation URL on any browser that can reach this app, then capture that screen with NDI Tools, AirPlay, or Chromecast. For a private local network install, use your machine&apos;s local IP plus <code className="bg-amber-500/20 px-1 rounded">/api/output/congregation</code>.
               </p>
             </CardContent>
           </Card>
@@ -2578,7 +2577,7 @@ function HelpAndUpdatesCard() {
                         <AlertDialogDescription>
                           Restarting will drop the NDI feed for about 10
                           seconds while ScriptureLive AI installs the update
-                          and relaunches. vMix / OBS / Wirecast will lose the
+                          and relaunches. NDI receivers will lose the
                           source for the duration of the restart.
                           <br />
                           <br />

@@ -61,30 +61,54 @@ export function NdiOutputPanel() {
     }).catch(() => { /* leave null — card just falls back to copy-only */ })
     return () => { cancelled = true }
   }, [desktopBridge])
-  // Build the OBS Browser Source URLs. We always send `?ndi=1` AND
-  // `?transparent=1` so OBS gets a feed that is BYTE-IDENTICAL to the
-  // actual NDI broadcast capture:
-  //   - `?ndi=1` flips `IS_NDI=true` on the route, which gates the
-  //     `USE_NDI_OVERRIDES` resolver → typography, colours, line-
-  //     height, aspect ratio, display mode (full vs lower-third),
-  //     translation, lower-third frame size, etc. ALL come from the
-  //     `ndi*` setting pile that the operator controls in this NDI
-  //     Output panel above. The route specifically resolves the
-  //     display mode as `(IS_NDI && st.ndiDisplayMode) ? st.ndi
-  //     DisplayMode : (s.displayMode||'full')` — so toggling NDI
-  //     Full / Lower Third in the controls below propagates to OBS
-  //     instantly. The in-app `lowerThird*` pile (USE_LT_OVERRIDES)
-  //     can NEVER bleed in because USE_NDI_OVERRIDES and USE_LT_
-  //     OVERRIDES are mutually exclusive on `IS_NDI`.
-  //   - `?transparent=1` keeps the clean alpha matte (verse text
-  //     only, no card backdrop) so the operator can layer it over
-  //     the service program bus the same way they would an NDI feed.
-  // v0.7.178 — added `?ndi=1` after operator confirmed via two
-  // annotated screenshots (NDI Live Preview vs OBS Browser Source
-  // copy) that the OBS URL was rendering with the in-app lower-
-  // third typography instead of the NDI broadcast typography.
+  // Build the OBS Browser Source URLs. We send `?ndi=1` + `?transparent=1`
+  // PLUS the operator's current lower-third params (`lowerThird=1`,
+  // `position`, `lh`, `sc`) BAKED INTO THE URL — exactly the way the
+  // FrameCapture window (electron/main.ts ~line 2316) bakes them for the
+  // actual NDI broadcast and exactly the way NdiPreviewSurface (~line
+  // 1188) bakes them for the in-panel preview. Without baking, OBS first-
+  // paints with default state (Full mode, lh=md, sc=1.0) until SSE catches
+  // up, and OBS aggressively caches that first paint — operator reported
+  // in v0.7.181 "OBS still firing from main App" because the route's
+  // initial server-rendered HTML used `s.displayMode` (the Live Display
+  // body mode) when no `lowerThird=1` URL param was present. Three NDI
+  // surfaces now emit byte-identical params on first paint:
+  //   - FrameCapture (vMix / NDI Tools)        — electron/main.ts
+  //   - NdiPreviewSurface (in-panel preview)   — same file, ~line 1158
+  //   - buildObsUrl / browserFallbackUrl       — here
+  // After first paint, SSE owns subsequent updates so dragging the LT
+  // scale slider or recolouring the typography updates OBS live without
+  // the operator re-pasting the URL. Re-paste is only needed when
+  // ndiDisplayMode / position / height bucket / scale change AND OBS
+  // disconnects + reconnects.
+  // We use `useAppStore.getState()` (lazy read) instead of the captured
+  // hook locals because the URL builders run BEFORE the
+  // lowerThirdHeightSetting hook is declared (~line 245) and we don't
+  // want to restructure the surrounding effect+QR ordering. The component
+  // is already subscribed to all four fields (ndiDisplayMode line 138,
+  // lowerThirdPosition line 169, ndiLowerThirdScale line 174,
+  // lowerThirdHeight line 245) so any change re-renders this component,
+  // re-runs the URL builders, re-reads getState() — fresh values every
+  // render with zero TDZ risk.
+  const buildCongregationParams = (): string => {
+    const s = useAppStore.getState().settings
+    const p = new URLSearchParams()
+    p.set('ndi', '1')
+    p.set('transparent', '1')
+    if (s.ndiDisplayMode === 'lower-third') {
+      p.set('lowerThird', '1')
+      if (s.lowerThirdPosition === 'top') p.set('position', 'top')
+      const lh = s.lowerThirdHeight
+      if (lh === 'sm' || lh === 'md' || lh === 'lg') p.set('lh', lh)
+      const sc = s.ndiLowerThirdScale
+      if (typeof sc === 'number' && sc >= 0.5 && sc <= 2) {
+        p.set('sc', String(sc))
+      }
+    }
+    return p.toString()
+  }
   const buildObsUrl = (host: string, port: number) =>
-    `http://${host}:${port}/api/output/congregation?ndi=1&transparent=1`
+    `http://${host}:${port}/api/output/congregation?${buildCongregationParams()}`
   // v0.7.157 — Browser-side fallback so the card NEVER disappears.
   // Pre-v0.7.157 the OBS Browser Source URL card was conditionally
   // rendered only when the Electron IPC `app:get-server-info` had
@@ -100,7 +124,7 @@ export function NdiOutputPanel() {
   // happened to load before IPC settled.
   const browserFallbackUrl =
     typeof window !== 'undefined' && window.location?.origin
-      ? `${window.location.origin}/api/output/congregation?ndi=1&transparent=1`
+      ? `${window.location.origin}/api/output/congregation?${buildCongregationParams()}`
       : null
   const localObsUrl = serverInfo && serverInfo.port > 0
     ? buildObsUrl('127.0.0.1', serverInfo.port)
