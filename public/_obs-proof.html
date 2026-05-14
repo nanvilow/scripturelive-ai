@@ -1,0 +1,95 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>v0.7.178 OBS=NDI proof</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;background:#0b0b10;color:#e6e6ea;padding:22px}
+h1{font-size:18px;margin:0 0 4px;display:flex;align-items:center;gap:10px}
+h1 .tag{background:#10b981;color:#000;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:800;letter-spacing:.04em}
+.sub{color:#9aa3b2;margin:0 0 18px;max-width:1100px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:1100px;margin-bottom:16px}
+.col{background:#14141c;border:1px solid #25252f;border-radius:10px;padding:14px}
+.col.before{border-color:#5c2828;background:#1a1010}
+.col.after{border-color:#1f5c3c;background:#0e1812}
+.label{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#9aa;margin-bottom:6px;font-weight:600}
+.col.before .label{color:#ef9b9b}
+.col.after .label{color:#7ee0a3}
+.url{font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:12.5px;background:#000;border:1px solid #2b2b35;border-radius:6px;padding:10px 12px;word-break:break-all;line-height:1.55;color:#cfd}
+.url .add{background:#10b981;color:#000;font-weight:700;padding:0 4px;border-radius:3px}
+.url .strike{color:#888;text-decoration:line-through}
+.chain{margin-top:10px;font-size:12.5px;color:#bcc}
+.chain b{color:#fff}
+.chain .ok{color:#4ade80;font-weight:700}
+.chain .bad{color:#f87171;font-weight:700}
+.box{max-width:1100px;background:#14141c;border:1px solid #25252f;border-radius:10px;padding:14px;margin-bottom:14px}
+.box h3{margin:0 0 8px;font-size:13px;color:#a5b4fc;text-transform:uppercase;letter-spacing:.06em}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid #25252f;vertical-align:top}
+th{color:#9aa;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.path{font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:11.5px;color:#cfd}
+td.bad{color:#fca5a5}
+td.good{color:#86efac;font-weight:600}
+.foot{font-size:12px;color:#9aa;max-width:1100px;margin-top:8px}
+.foot code{background:#000;padding:1px 6px;border-radius:3px;color:#cfd;font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:11.5px}
+</style></head><body>
+
+<h1>OBS Browser Source URL → NDI Settings <span class="tag">v0.7.178 fix</span></h1>
+<p class="sub">Per operator's two annotated screenshots (postimg <code style="background:#000;padding:1px 5px;border-radius:3px;color:#cfd;font-size:11.5px">CnC4zrNG</code> + <code style="background:#000;padding:1px 5px;border-radius:3px;color:#cfd;font-size:11.5px">VdrfPyKv</code>): make the OBS Browser Source URL pull settings from the NDI pile (not the in-app Lower Third pile or Live Display pile). Fix is one-line per URL builder, plus extensive inline guard-rail comments.</p>
+
+<div class="row">
+  <div class="col before">
+    <div class="label">BEFORE (v0.7.177 and earlier)</div>
+    <div class="url">http://127.0.0.1:47330/api/output/congregation?<span class="strike">transparent=1</span></div>
+    <div class="chain">
+      <b>Route resolves:</b> <code style="background:#000;padding:1px 5px;border-radius:3px;color:#fca5a5">IS_NDI = false</code><br>
+      → <span class="bad">USE_NDI_OVERRIDES = false</span> (NDI typography pile ignored)<br>
+      → in Lower-Third mode: pulls <code style="color:#fca5a5">lowerThird*</code> pile (in-app LT settings)<br>
+      → in Full mode: pulls body settings (<code style="color:#fca5a5">fontSize</code>, <code style="color:#fca5a5">fontFamily</code>, …)<br>
+      <b style="color:#f87171">Result:</b> OBS feed silently differs from NDI Live Preview.
+    </div>
+  </div>
+  <div class="col after">
+    <div class="label">AFTER (v0.7.178)</div>
+    <div class="url">http://127.0.0.1:47330/api/output/congregation?<span class="add">ndi=1</span>&amp;transparent=1</div>
+    <div class="chain">
+      <b>Route resolves:</b> <code style="background:#000;padding:1px 5px;border-radius:3px;color:#86efac">IS_NDI = true</code><br>
+      → <span class="ok">USE_NDI_OVERRIDES = true</span> (NDI typography pile wins on every slot)<br>
+      → display mode reads <code style="color:#86efac">ndiDisplayMode</code> (Full / Lower Third toggle)<br>
+      → <code style="color:#86efac">USE_LT_OVERRIDES = !IS_NDI && …</code> = <b>false</b> — in-app LT pile <b>cannot</b> bleed in.<br>
+      <b style="color:#4ade80">Result:</b> OBS feed = NDI broadcast, byte-for-byte.
+    </div>
+  </div>
+</div>
+
+<div class="box">
+  <h3>Setting-by-setting routing — what OBS picks up now</h3>
+  <table>
+    <thead><tr><th>Slot</th><th>Source on the OBS feed</th><th>Where the operator tunes it</th></tr></thead>
+    <tbody>
+      <tr><td>Display mode (Full vs Lower-Third)</td><td class="good">st.ndiDisplayMode</td><td>NDI Output panel — Full / Lower Third tabs</td></tr>
+      <tr><td>Font family / size / shadow / align</td><td class="good">st.ndiFontFamily / ndiFontSize / ndiTextShadow / ndiTextAlign</td><td>NDI Output panel — Typography</td></tr>
+      <tr><td>Bible color / line-height</td><td class="good">st.ndiBibleColor / ndiBibleLineHeight</td><td>NDI Output panel — Bible style</td></tr>
+      <tr><td>Reference size / style / position / scale</td><td class="good">st.ndiRefSize / ndiRefStyle / ndiRefPosition / ndiRefScale</td><td>NDI Output panel — Reference</td></tr>
+      <tr><td>LT frame scale / height / position / transparency</td><td class="good">st.ndiLowerThirdScale / ndiLowerThirdHeight / ndiLowerThirdPosition / ndiLowerThirdTransparent</td><td>NDI Output panel — Lower Third</td></tr>
+      <tr><td>Aspect ratio</td><td class="good">st.ndiAspectRatio (override) → st.displayRatio (fallback)</td><td>NDI Output panel — Aspect</td></tr>
+      <tr><td>Translation</td><td class="good">st.ndiTranslation</td><td>NDI Output panel — Translation</td></tr>
+      <tr><td>Background / theme</td><td class="good">st.ndiCustomBackground / ndiTheme</td><td>NDI Output panel — Background</td></tr>
+      <tr><td>In-app Lower-Third settings (lowerThird*)</td><td class="bad">NEVER reach the OBS feed</td><td>(Live Display only — by route construction)</td></tr>
+      <tr><td>In-app Live Display body settings</td><td class="bad">Only when the matching ndi* override is undefined</td><td>(intentional partial-profile fallback)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="box">
+  <h3>Source diff — `src/components/views/ndi-output-panel.tsx`</h3>
+  <table>
+    <thead><tr><th>#</th><th>Line</th><th>Before</th><th>After</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td class="path">~line 69 (buildObsUrl)</td><td class="bad path">`http://${host}:${port}/api/output/congregation?transparent=1`</td><td class="good path">`http://${host}:${port}/api/output/congregation?ndi=1&transparent=1`</td></tr>
+      <tr><td>2</td><td class="path">~line 85 (browserFallbackUrl)</td><td class="bad path">`${origin}/api/output/congregation?transparent=1`</td><td class="good path">`${origin}/api/output/congregation?ndi=1&transparent=1`</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p class="foot">Same PC URL → <code>http://127.0.0.1:&lt;port&gt;/api/output/congregation?ndi=1&amp;transparent=1</code> &nbsp;·&nbsp; LAN URL → <code>http://&lt;lan-ip&gt;:&lt;port&gt;/api/output/congregation?ndi=1&amp;transparent=1</code> &nbsp;·&nbsp; Browser fallback → <code>${window.location.origin}/api/output/congregation?ndi=1&amp;transparent=1</code></p>
+
+</body></html>

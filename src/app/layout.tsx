@@ -1,0 +1,101 @@
+import type { Metadata } from "next";
+import "./globals.css";
+import { PathAwareToaster } from "@/components/ui/path-aware-toaster";
+import { GoogleFontsLink } from "@/components/google-fonts-link";
+import { UpdateBanner } from "@/components/update-banner";
+import { UpdateAvailableDialog } from "@/components/update-available-dialog";
+import { ThemeProvider } from "@/components/providers/theme-provider";
+import { PointerEventsWatchdog } from "@/components/pointer-events-watchdog";
+import { ConfirmDialogProvider } from "@/components/ui/confirm-dialog";
+
+// NOTE: We intentionally do NOT use next/font/google here. The Electron
+// desktop build runs `next build` on the operator's machine which often
+// has flaky or no internet access to fonts.googleapis.com, causing the
+// build to fail. System UI fonts render fine for the console; user-
+// selected display fonts are loaded at runtime via `googleFontsHref`
+// (which only fetches when an internet connection is available).
+const geistSans = { variable: "font-sans" };
+const geistMono = { variable: "font-mono" };
+
+export const metadata: Metadata = {
+  title: "ScriptureLive AI — AI-Powered Bible & Worship Platform",
+  description:
+    "Real-time scripture detection, AI-powered slide generation, worship lyrics management, and live presentation mode for churches and ministries.",
+  keywords: [
+    "Bible",
+    "worship",
+    "church",
+    "presentation",
+    "AI",
+    "scripture detection",
+    "sermon",
+    "lyrics",
+  ],
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+      { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/favicon-16.png", sizes: "16x16", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
+    shortcut: "/favicon-32.png",
+  },
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    // v0.6.0 — `dark` class is no longer hard-coded. The ThemeProvider
+    // (next-themes) injects it on the <html> element after hydration
+    // based on the operator's saved preference (default: dark, so
+    // long-time users see no change on first install).
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Preconnect hints are static so they're safe in SSR head.
+            The actual Google Fonts <link> is added client-side by
+            <GoogleFontsLink /> below to avoid a hydration mismatch
+            with the dev-tools script Replit injects into <head>. */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+      </head>
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
+      >
+        <ThemeProvider>
+          {/* v0.7.125 — Provides useConfirm() so destructive actions
+              (deactivate, move-to-PC, remove offline bible) prompt
+              with a styled Radix AlertDialog instead of the native
+              Chromium window.confirm box. Mounted INSIDE ThemeProvider
+              so the AlertDialog inherits the operator's dark/light
+              theme; mounted at the root so any descendant can call
+              useConfirm() without re-wrapping. */}
+          <ConfirmDialogProvider>
+            <PointerEventsWatchdog />
+            <GoogleFontsLink />
+            {children}
+            {/* v0.7.129 — Startup-time "Update Available" modal that
+                hijacks the foreground the moment the app opens with
+                a fresh release on disk or on GitHub. Mounted
+                alongside <UpdateBanner> (which stays as the passive
+                progress surface) so operators see the prompt even
+                if they ignored the bottom-right banner on a previous
+                launch. Per-version dismissal in localStorage stops
+                the modal from nagging for the same release twice;
+                each new release re-engages it. */}
+            <UpdateAvailableDialog />
+            <UpdateBanner />
+            {/* Toasts are suppressed on /congregation, /presenter, and
+                the NDI fan-out so display/output actions never appear
+                on the audience screen. The operator console still
+                sees toasts. */}
+            <PathAwareToaster />
+          </ConfirmDialogProvider>
+        </ThemeProvider>
+      </body>
+    </html>
+  );
+}

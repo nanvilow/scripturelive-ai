@@ -1,81 +1,252 @@
 appId: ai.scripturelive.desktop
 productName: ScriptureLive AI
 copyright: ScriptureLive AI
+# Pinned because electron-builder cannot reliably auto-detect the
+# electron version in a pnpm workspace (the package is hoisted to the
+# repo root, not under artifacts/imported-app/node_modules), which
+# triggers: "Cannot compute electron version from installed node modules".
 electronVersion: 33.4.11
+# electron-updater pulls signed installers from this GitHub repo.
+# `owner` and `repo` are intentionally NOT inlined here — electron-builder
+# auto-detects them from the `repository` field in package.json, which is
+# the single source of truth shared with the renderer (see
+# src/lib/github-repo.ts). To move the project to a different repo, update
+# package.json's `repository.url` and both this build config and the
+# in-app links will follow. The Build Windows Installer GH workflow uses
+# GITHUB_TOKEN so no extra config is required.
 publish:
   - provider: github
-    owner: nanvilow
-    repo: scripturelive-ai
     releaseType: release
 directories:
-  app: artifacts/imported-app
   output: release
-  buildResources: artifacts/imported-app/build-resources
+  buildResources: build-resources
 files:
   - dist-electron/**/*
   - package.json
   - "node_modules/**/*"
-  - "!node_modules/**/{*.md,*.markdown,*.ts,*.map,test,tests,__tests__,docs,doc,example,examples,LICENSE*}"
+  # v0.7.66 — INSTALL-SPEED PASS. Strip everything from node_modules
+  # that has zero runtime value but inflates the download:
+  #   - docs / READMEs / changelogs
+  #   - TypeScript sources, declaration files, source-maps
+  #   - test fixtures, snapshots, Jest configs
+  #   - example dirs, .github CI configs, .vscode settings
+  #   - linter / formatter / editorconfig artifacts
+  #   - typing-only packages from devDependency tarballs
+  # On a Next.js + Electron app like this one, these strips routinely
+  # shave 60-120 MB off the installer with zero functional impact.
+  - "!node_modules/**/{*.md,*.markdown,*.ts,*.tsx,*.cts,*.mts,*.d.ts,*.map,*.flow}"
+  - "!node_modules/**/{test,tests,__tests__,__mocks__,docs,doc,example,examples,LICENSE*,CHANGELOG*,HISTORY*,AUTHORS*}"
+  - "!node_modules/**/{.github,.vscode,.idea,.editorconfig,.eslintrc*,.prettierrc*,.stylelintrc*,.npmignore,.gitattributes,.gitignore,.travis.yml,appveyor.yml,karma.conf.js,jest.config.*,vitest.config.*,tsconfig*.json,rollup.config.*}"
+  - "!node_modules/**/{*.coffee,*.scss,*.less,*.h,*.c,*.cc,*.cpp,*.cxx,*.gyp,*.gypi,*.mk,Makefile,binding.gyp}"
   - "!node_modules/.cache/**/*"
+  - "!node_modules/.bin/**/*"
+  - "!node_modules/@types/**/*"
+  # Exclude dev-only native watchers Next.js drags in transitively. They are
+  # only used in `next dev` and trip electron-builder's node-gyp rebuild on
+  # Windows machines without Python / VS Build Tools installed.
   - "!node_modules/@parcel/watcher/**/*"
   - "!node_modules/@parcel/watcher-*/**/*"
   - "!node_modules/.pnpm/@parcel+watcher@*/**/*"
   - "!node_modules/.pnpm/@parcel+watcher-*/**/*"
   - "!node_modules/fsevents/**/*"
   - "!node_modules/.pnpm/fsevents@*/**/*"
+  # pnpm workspace symlinks resolve outside app dir; physically stripped
+  # by `strip:workspace-symlinks` script before electron-builder runs.
+  - "!node_modules/@workspace/**/*"
 asarUnpack:
+  # koffi ships native .node binaries that MUST live on the real
+  # filesystem (not inside an asar) so Electron can dlopen them at runtime.
+  # We unpack BOTH the hoisted top-level path AND the pnpm-isolated path
+  # because pnpm 10 stores the real files under node_modules/.pnpm/ and
+  # only symlinks them into node_modules/.
   - "node_modules/koffi/**/*"
   - "node_modules/.pnpm/koffi@*/**/*"
   - "node_modules/.pnpm/koffi@*/node_modules/koffi/**/*"
+  # sharp (used by electron/tray-badges.ts to composite the colored
+  # update-state dot onto the tray icon) ships per-platform native
+  # bindings as @img/sharp-{platform}-{arch} optionalDependencies.
+  # These dlopen .node files at require time and would fail with
+  # "Could not load the sharp module" if left inside the asar.
+  # The Windows runner only needs the win32 variants but we unpack
+  # all of them so the same config works for any platform we package
+  # from in the future.
+  - "node_modules/sharp/**/*"
+  - "node_modules/@img/sharp-*/**/*"
+  - "node_modules/@img/sharp-libvips-*/**/*"
+  - "node_modules/.pnpm/sharp@*/**/*"
+  - "node_modules/.pnpm/@img+sharp-*/**/*"
+  - "node_modules/.pnpm/@img+sharp-libvips-*/**/*"
+# Skip electron-builder's automatic `npm rebuild` step. We have ZERO
+# native modules that need compiling — koffi (the only native dep we
+# ship) bundles precompiled win32-x64 binaries inside its npm tarball.
+# Disabling rebuild eliminates the need for Python / Visual Studio
+# Build Tools / node-gyp on the user's machine entirely.
 npmRebuild: false
 buildDependenciesFromSource: false
+# v0.7.66 — Maximum LZMA compression. Trades ~30s of build time for
+# a smaller installer download. On this codebase that's roughly
+# 50-80 MB off the .exe and a proportional speedup at "Downloading
+# update… 0%". Decompression on the user's machine is still fast
+# (LZMA decode is single-pass, hardware-accelerated on modern CPUs).
+compression: maximum
+# v0.7.66 — Ship English-only Electron locale .pak files. Electron
+# bundles ~50 locale .paks (~10 MB total) by default; we use none of
+# them since the entire UI is English-only. This shrinks the installer
+# without affecting any user-visible behaviour.
+electronLanguages:
+  - en-US
 extraResources:
   # Next.js (with output: "standalone" + outputFileTracingRoot pinned to the
-  # workspace root in artifacts/imported-app/next.config.ts) emits the
-  # standalone bundle at artifacts/imported-app/.next/standalone/artifacts/
-  # imported-app/server.js. The full standalone tree is copied as-is and the
-  # Electron launcher is aware of the nested artifacts/imported-app/ segment.
-  - from: artifacts/imported-app/.next/standalone
+  # workspace root) emits the standalone bundle at
+  # `.next/standalone/artifacts/imported-app/server.js`. We copy the WHOLE
+  # standalone tree as-is so the relative node_modules layout inside it
+  # remains valid. The Electron launcher (electron/main.ts) is aware of the
+  # nested `artifacts/imported-app/` segment and spawns server.js there.
+  - from: .next/standalone
     to: app/.next/standalone
     filter: ["**/*"]
-  # Static assets must sit next to server.js (cwd-relative).
-  - from: artifacts/imported-app/.next/static
+  # Static assets must sit next to server.js (cwd-relative), so they go into
+  # the same nested `artifacts/imported-app/` location, not the top of the
+  # standalone tree.
+  - from: .next/static
     to: app/.next/standalone/artifacts/imported-app/.next/static
     filter: ["**/*"]
-  - from: artifacts/imported-app/public
+  - from: public
     to: app/.next/standalone/artifacts/imported-app/public
     filter: ["**/*"]
-  - from: artifacts/imported-app/db/custom.db
+  - from: db/custom.db
     to: app-db/custom.db
-afterSign: artifacts/imported-app/build-resources/notarize.js
+  # v0.7.146 — Bundled NDI runtime. Ships Processing.NDI.Lib.x64.dll
+  # next to the .exe so NDI "just works" on every customer PC without
+  # a separate NDI Tools install (operator complaint: "make it work
+  # like Wirecast and vMix"). The NDI SDK license explicitly permits
+  # redistribution of the runtime DLL inside integrated applications —
+  # vMix, Wirecast, OBS Studio, Resolume, and Streamlabs all do this.
+  # Lands at process.resourcesPath/ndi/Processing.NDI.Lib.x64.dll
+  # which is the FIRST path electron/ndi-service.ts findNdiDll()
+  # checks (before any system NDI Tools install), so we pin to a
+  # known-good copy even on PCs that already have NDI installed.
+  - from: build-resources/ndi
+    to: ndi
+    filter: ["Processing.NDI.Lib.x64.dll"]
+# A small hook that runs after electron-builder finishes signing each platform
+# package. For macOS it submits the .app to Apple's notarytool when notarization
+# credentials are present in the environment. For all other platforms (and when
+# credentials are missing) it is a no-op.
+afterSign: build-resources/notarize.js
 win:
   target:
     - target: nsis
       arch: [x64]
   icon: build-resources/icon.ico
-  artifactName: "${productName}-${version}-Setup-${arch}.${ext}"
+  # IMPORTANT: do NOT use ${productName} in artifactName here.
+  # `productName` is "ScriptureLive AI" (with a space). electron-builder
+  # normalizes that space inconsistently across the two places it gets
+  # written: the actual asset filename uploaded to GitHub Releases ends
+  # up using a dot ("ScriptureLive.AI-..."), while the URL written into
+  # latest.yml uses a hyphen ("ScriptureLive-AI-..."). The result is
+  # that electron-updater fetches latest.yml, follows the URL inside,
+  # and gets a 404 — so auto-update silently fails. Hardcoding a
+  # slug-safe name keeps both names identical.
+  artifactName: "ScriptureLive-AI-${version}-Setup-${arch}.${ext}"
+  # Authenticode code signing.
+  # electron-builder reads the certificate from these standard env vars:
+  #   CSC_LINK            path to .pfx, base64-encoded .pfx contents, or https URL
+  #   CSC_KEY_PASSWORD    password for the .pfx
+  # If both are absent the installer is built unsigned and SmartScreen will warn.
   signtoolOptions:
     signingHashAlgorithms:
       - sha256
     rfc3161TimeStampServer: http://timestamp.digicert.com
 nsis:
+  # v0.7.126 — Switched from oneClick to the full assisted MUI2 wizard
+  # (Welcome → License → Progress → Finish) so the installer LOOKS
+  # professional instead of the bare 1990s "Installing, please wait..."
+  # mini-dialog NSIS shows in oneClick mode (operator screenshot:
+  # https://ibb.co/fzQ95pt4 — looked like a malware installer). The
+  # wizard now mirrors Wirecast / vMix / OBS / Pro Presenter: dark
+  # branded sidebar artwork on Welcome + Finish, white header banner
+  # with logo + wordmark on inner pages, EULA on the License page,
+  # and a "Run ScriptureLive AI now" checkbox on the Finish page so
+  # the perceived flow is still ~3 clicks (Next → I Agree → Install
+  # → Finish). perMachine stays FALSE so no UAC prompt fires —
+  # install still happens in %LOCALAPPDATA% silently.
+  #
+  # The bitmaps are produced by ImageMagick at v0.7.126 release time
+  # (see scripts in CHANGELOG.md / replit.md). All three are 24-bit
+  # uncompressed BMP3 because that's the only format NSIS MUI2 reads
+  # reliably across every Windows version we ship to.
   oneClick: false
   perMachine: false
-  allowToChangeInstallationDirectory: true
+  allowToChangeInstallationDirectory: false
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  # Show the EULA before install. license.txt sits beside this YAML
+  # in build-resources/. Plain ASCII so NSIS renders it without RTF
+  # parsing surprises.
+  license: build-resources/license.txt
+  # Branded artwork. Paths are relative to build-resources/.
+  installerIcon: build-resources/icon.ico
+  uninstallerIcon: build-resources/icon.ico
+  installerHeaderIcon: build-resources/icon.ico
+  # 150x57 BMP3, white→slate gradient with logo + wordmark, shown
+  # top-right on every inner wizard page.
+  installerHeader: build-resources/installerHeader.bmp
+  # 164x314 BMP3, dark navy→indigo gradient with centred logo +
+  # ScriptureLive AI text, shown on the left of Welcome + Finish.
+  installerSidebar: build-resources/installerSidebar.bmp
+  uninstallerSidebar: build-resources/uninstallerSidebar.bmp
+  # v0.7.66 — Faster sequential install + faster auto-update apply.
+  # `differentialPackage: true` tells electron-updater to download
+  # ONLY the changed blocks of the .exe on subsequent updates by
+  # using the .blockmap we already publish. v0.7.66 → v0.7.67 will
+  # typically pull a few MB instead of the full 490 MB. (First
+  # install from a fresh machine still downloads the whole .exe;
+  # this only helps repeat updaters, which is most of the user base.)
+  differentialPackage: true
+  # Don't wipe the user's data dir on uninstall — license keys,
+  # custom translations, and the SQLite cache live there and the
+  # operator wants reinstalls to be non-destructive.
+  deleteAppDataOnUninstall: false
+  # v0.7.85 — Custom NSIS macros that kill the running ScriptureLive
+  # AI process tree (main window + spawned Next child + helpers)
+  # BEFORE the new installer tries to overwrite files. Without this
+  # the operator was forced to uninstall v0.7.83/v0.7.84 manually
+  # before installing the next version, because the running .exe and
+  # app.asar were locked. See build-resources/installer.nsh.
+  include: build-resources/installer.nsh
 mac:
   target:
     - target: dmg
       arch: [x64, arm64]
   icon: build-resources/icon.png
   category: public.app-category.productivity
+  # Same reason as `win.artifactName` above: avoid ${productName} so the
+  # asset filename and the URL inside latest-mac.yml stay byte-identical
+  # and electron-updater can actually find the .dmg it advertises.
+  artifactName: "ScriptureLive-AI-${version}-${arch}.${ext}"
+  # Required for Apple Developer ID signing + notarization to succeed.
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build-resources/entitlements.mac.plist
   entitlementsInherit: build-resources/entitlements.mac.plist
+  # electron-builder reads the signing identity from these standard env vars:
+  #   CSC_LINK            path to .p12, base64-encoded .p12 contents, or https URL
+  #   CSC_KEY_PASSWORD    password for the .p12
+  # If absent, the .app is left unsigned and the afterSign hook skips notarization.
+  # Notarization (handled in build-resources/notarize.js via @electron/notarize)
+  # reads these env vars:
+  #   APPLE_ID                     Apple developer account email
+  #   APPLE_APP_SPECIFIC_PASSWORD  app-specific password from appleid.apple.com
+  #   APPLE_TEAM_ID                10-character Team ID from developer.apple.com
   notarize: false
-  artifactName: "${productName}-${version}-${arch}.${ext}"
 dmg:
   writeUpdateInfo: true
+  # The DMG is signed with the same Developer ID identity electron-builder
+  # picks up from CSC_LINK. Combined with the notarization ticket stapled to
+  # the inner .app, this gives Gatekeeper a clean install on first launch.
   sign: true
+# (Single `publish:` block lives at the top of this file. A second
+#  block here would silently override it under YAML merge semantics
+#  and point auto-update to the wrong GitHub repo, so it has been
+#  removed.)
