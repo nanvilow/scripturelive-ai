@@ -1175,3 +1175,9 @@ id = "foadgw3ZGe4-WcWPXzahd"
 uri = "file://exports/v0.7.182-lt-removal-proof.png"
 type = "image"
 title = "v0.7.182 — In-app Lower Third REMOVED (proof)"
+
+[[outputs]]
+id = "hGJvzaOHln91Qo3tM2GjY"
+uri = "file://exports/v0.7.182-auto-nav-proof.png"
+type = "image"
+title = "v0.7.182 — Auto-route detected refs to Chapter Navigator (proof)"

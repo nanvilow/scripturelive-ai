@@ -797,7 +797,7 @@ export const useAppStore = create<AppState>()(
       isListening: false,
       setIsListening: (l) => set({ isListening: l }),
       detectedVerses: [],
-      addDetectedVerse: (v) =>
+      addDetectedVerse: (v) => {
         set((state) => {
           // v0.7.119 — Cross-source dedupe. Operator reported "the
           // verse appeared in Bible Reference Quoted but the live
@@ -827,7 +827,35 @@ export const useAppStore = create<AppState>()(
           return {
             detectedVerses: [v, ...state.detectedVerses].slice(0, 100),
           }
-        }),
+        })
+        // v0.7.182 — Auto-route every detected reference to the
+        // Chapter Navigator. Operator: "Immediately a bible or bible
+        // reference is quoted are detected; also send it to Chapter
+        // Navigator." Single source-of-truth fix: firing from inside
+        // addDetectedVerse means every detection path the speech
+        // pipeline owns (5 sites in speech-provider.tsx — explicit
+        // refs, semantic owns-live, sticky live, follow-mode, and
+        // promote-from-candidate) plus any future caller gets the
+        // auto-nav for free. We deliberately do NOT auto-nav from
+        // addDetectedVerseCandidate — those are <50% guesses and
+        // would thrash the navigator on every speech tick.
+        // Atomicity note: we fire AFTER set() unconditionally when a
+        // reference exists. Even when the dedupe path returned {}
+        // (a higher-or-equal authoritative entry already lived in
+        // the list), the operator still wants the navigator to
+        // FOLLOW the speaker — the dedupe rule is about the
+        // detected-verses LIST, not about suppressing navigation.
+        // Bridge mechanism (unchanged): requestNavigatorRef writes
+        // `${ref}\u0000${Date.now()}` to navigatorRequestedRef; the
+        // BibleLookupCompact useEffect at library-compact.tsx ~190
+        // strips the timestamp suffix, parses the reference, and
+        // calls loadChapter() + setSearchQuery(). Timestamp suffix
+        // guarantees React diffs the string even when the same ref
+        // re-detects, so the navigator re-jumps each time.
+        if (v.reference) {
+          get().requestNavigatorRef(v.reference)
+        }
+      },
       clearDetectedVerses: () => set({ detectedVerses: [] }),
       // v0.7.134 — Per-column wipe. Source matching mirrors
       // verse-auto-live.ts `sourceOf()`: untagged detections default
