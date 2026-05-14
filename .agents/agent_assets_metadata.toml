@@ -1097,3 +1097,21 @@ id = "UzrwCjbKdteCtFFYqX2u3"
 uri = "file://screenshots/v0.7.176-congregation-correct.jpg"
 type = "image"
 title = "v0.7.176 — Real LT output (Romans 8:27 / ASV)"
+
+[[outputs]]
+id = "k0vhtnqpOIlXMI2qzRMg6"
+uri = "file://screenshots/v0.7.176-lt-sm.jpg"
+type = "image"
+title = "v0.7.176 — Small bucket (Live Display / OBS / NDI / secondary screen)"
+
+[[outputs]]
+id = "bIDQc6x4wmt3AF8XwEDfB"
+uri = "file://screenshots/v0.7.176-lt-md.jpg"
+type = "image"
+title = "v0.7.176 — Medium bucket"
+
+[[outputs]]
+id = "ou26oKqv77EAAng0vGlBh"
+uri = "file://screenshots/v0.7.176-lt-lg.jpg"
+type = "image"
+title = "v0.7.176 — Large bucket"

@@ -1037,18 +1037,20 @@ function render(s){
     // flash). The fix: prefer the live SSE state when present, fall
     // back to FORCE_LH only when state has not arrived yet (cold-start
     // first paint). Same change applied to ndiLtScale below.
-    // v0.7.176 — Operator follow-up: lock the frame height for EVERY
+    // v0.7.176 — Operator's bucket (sm/md/lg) IS respected across every
     // surface served by this route (in-app preview, Live Display,
-    // secondary screen, OBS browser source, NDI). Operator screenshot
-    // gbPzbFfQ vs target pvktjHxy: clicking Small/Medium/Large in the
-    // in-app Lower Third Settings was visibly resizing the box on
-    // every output, and operators have already framed their broadcast
-    // slot — the bar must NOT jump. The sm/md/lg buttons in the in-app
-    // settings are now decorative for the FRAME size (typography,
-    // alignment, theme still flow through). The frame stays at the
-    // md baseline (33% of frame) on every surface.
-    var __lhKey='md';
-    var hPct=33;
+    // secondary screen, OBS browser source, NDI), so what they pick in
+    // Settings → Lower Third is exactly what every receiver gets. The
+    // align-items:stretch fix on .lower-third (v0.7.173 Fix D) keeps
+    // the rendered height frozen at the chosen bucket on every surface
+    // — Chromium will no longer collapse height:100% to intrinsic on
+    // any layout pass, so the frame stops shrinking to hug the text.
+    // FORCE_LH (URL ?lh=sm|md|lg) is the cold-start fallback for the
+    // NDI BrowserWindow's first paint before SSE arrives.
+    var __lhKey=(st.lowerThirdHeight==='sm'||st.lowerThirdHeight==='md'||st.lowerThirdHeight==='lg')
+      ? st.lowerThirdHeight
+      : (FORCE_LH||'md');
+    var hPct=hMap[__lhKey]||33;
     // v0.7.0 — Compute the NDI lower-third size multiplier UP FRONT so
     // we can scale the BOX itself in lockstep with the verse text. Pre-
     // v0.7.0 only the font multiplied with ndiLtScale; the box height
@@ -1096,10 +1098,10 @@ function render(s){
     // visibly steps the lower-third bar text on the secondary screen
     // and NDI feed — previously this path was hardcoded and ignored
     // both controls.
-    var ltBand=totalChars>320?5:totalChars>180?7:totalChars>90?9:11;
+    var ltBand=totalChars>320?7:totalChars>180?9:totalChars>90?12:15;
     ltBand=ltBand*scale;
-    var ltCap=Math.max(1.4,2*scale);
-    var ltMin=Math.max(.4,.6*scale);
+    var ltCap=Math.max(2.0,3.2*scale);
+    var ltMin=Math.max(.5,.8*scale);
     /* v0.6.4 — Apply the operator's NDI lower-third size multiplier
        on the NDI surface only. Stays at 1x for the in-room projector
        and the operator preview, so the broadcast feed can be tuned
