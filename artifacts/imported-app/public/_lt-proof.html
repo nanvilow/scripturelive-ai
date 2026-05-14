@@ -2,38 +2,42 @@
 <html><head><meta charset="utf-8"/><title>v0.7.176 LT proof</title>
 <style>
 html,body{margin:0;padding:0;background:#0b1d2e;color:#fff;font-family:Inter,system-ui,sans-serif}
-.label{position:absolute;top:8px;left:12px;font-size:12px;opacity:.7;z-index:10}
-.frame{position:relative;width:1280px;height:720px;margin:24px auto;background:url('https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=1280&q=70') center/cover;border:2px solid #b91c1c}
+h2{margin:18px 24px 6px;font-size:16px;font-weight:600}
+.row{display:flex;gap:12px;padding:0 24px 12px;flex-wrap:wrap}
+.cell{flex:1;min-width:380px}
+.tag{font-size:11px;opacity:.75;margin:0 0 4px}
+.frame{position:relative;width:100%;aspect-ratio:16/9;background:url('https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=1280&q=70') center/cover;border:2px solid #b91c1c}
 /* CSS lifted verbatim from artifacts/imported-app/src/app/api/output/congregation/route.ts (v0.7.176) */
-.lower-third{position:absolute;left:0;right:0;display:flex;align-items:stretch;justify-content:center;padding:0 2.5%;container-type:size}
-.lower-third.bottom{bottom:6%;height:33%}
+.lower-third{position:absolute;left:0;right:0;bottom:6%;display:flex;align-items:stretch;justify-content:center;padding:0 2.5%;container-type:size}
 .lt-box{position:relative;width:100%;padding:3% 5%;display:flex;flex-direction:column;justify-content:center;overflow:hidden;height:100%;box-sizing:border-box;border-radius:1.25rem;box-shadow:0 8px 28px rgba(0,0,0,.45);background:linear-gradient(135deg,#0a0a0a,#171717)}
-.lt-box .lt-content{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;width:100%;height:100%;align-items:center;text-align:center}
-.lt-box .slide-reference{font-size:18px;opacity:1;font-weight:700;line-height:1.2;margin-bottom:8px}
-.lt-box .slide-text{font-weight:600;line-height:1.25;font-size:28px}
-.lt-box.transparent{background:transparent !important;box-shadow:none !important}
+.lt-box .lt-content{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;align-items:center;width:100%;height:100%;text-align:center}
+.lt-box .slide-reference{font-size:14px;font-weight:700;line-height:1.2;margin-bottom:4px}
+.lt-box .slide-text{font-weight:600;line-height:1.25;font-size:18px}
 </style></head>
 <body>
-<div class="label">v0.7.176 — DEFAULT (dark plate restored, like the previous good NDI output)</div>
-<div class="frame">
-  <div class="lower-third bottom">
-    <div class="lt-box">
-      <div class="lt-content">
-        <div class="slide-reference">Romans 8:27 — ASV</div>
-        <div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit, because he maketh intercession for the saints according to [the will of] God.</div>
-      </div>
-    </div>
+<h2>v0.7.176 — NDI frame is now LOCKED at one size (33%) regardless of in-app sm/md/lg</h2>
+<div class="row">
+  <div class="cell"><p class="tag">NDI · operator clicked SMALL → frame stays 33%</p>
+    <div class="frame"><div class="lower-third" style="height:33%"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit</div></div></div></div></div>
+  </div>
+  <div class="cell"><p class="tag">NDI · operator clicked MEDIUM → frame stays 33%</p>
+    <div class="frame"><div class="lower-third" style="height:33%"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit</div></div></div></div></div>
+  </div>
+  <div class="cell"><p class="tag">NDI · operator clicked LARGE → frame stays 33%</p>
+    <div class="frame"><div class="lower-third" style="height:33%"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit</div></div></div></div></div>
   </div>
 </div>
-<div class="label" style="position:relative;margin:24px auto;width:1280px;top:0">v0.7.176 — OPT-IN .lt-box.transparent (NDI tab "Transparent lower-third" toggle still works)</div>
-<div class="frame">
-  <div class="lower-third bottom">
-    <div class="lt-box transparent">
-      <div class="lt-content">
-        <div class="slide-reference">Romans 8:27 — ASV</div>
-        <div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit, because he maketh intercession for the saints according to [the will of] God.</div>
-      </div>
-    </div>
+
+<h2>For comparison — in-app preview / secondary screen still respects sm/md/lg (unchanged)</h2>
+<div class="row">
+  <div class="cell"><p class="tag">In-app · SMALL → 22%</p>
+    <div class="frame"><div class="lower-third" style="height:22%"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit</div></div></div></div></div>
+  </div>
+  <div class="cell"><p class="tag">In-app · MEDIUM → 33%</p>
+    <div class="frame"><div class="lower-third" style="height:33%"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit</div></div></div></div></div>
+  </div>
+  <div class="cell"><p class="tag">In-app · LARGE → 45%</p>
+    <div class="frame"><div class="lower-third" style="height:45%"><div class="lt-box"><div class="lt-content"><div class="slide-reference">Romans 8:27 — ASV</div><div class="slide-text">and he that searcheth the hearts knoweth what is the mind of the Spirit</div></div></div></div></div>
   </div>
 </div>
 </body></html>

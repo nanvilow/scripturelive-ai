@@ -1067,3 +1067,9 @@ id = "YK6GnznFZr9tQNYmg11l2"
 uri = "file://screenshots/v0.7.176-lt-proof.jpg"
 type = "image"
 title = "v0.7.176 NDI lower-third — dark plate restored (proof)"
+
+[[outputs]]
+id = "H5wq_uAdROwlqb0YxBsP4"
+uri = "file://screenshots/v0.7.176-ndi-locked.jpg"
+type = "image"
+title = "v0.7.176 — NDI lower-third frame locked at one size"

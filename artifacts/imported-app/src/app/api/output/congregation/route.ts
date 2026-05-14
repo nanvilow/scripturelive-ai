@@ -1031,8 +1031,19 @@ function render(s){
     // flash). The fix: prefer the live SSE state when present, fall
     // back to FORCE_LH only when state has not arrived yet (cold-start
     // first paint). Same change applied to ndiLtScale below.
-    var __lhKey=st.lowerThirdHeight||FORCE_LH;
-    var hPct=hMap[__lhKey]||33;
+    // v0.7.176 — Operator request: NDI lower-third frame size is now
+    // COMPLETELY independent of the in-app LT Small/Medium/Large
+    // height bucket. Operators reported the NDI top edge enlarging
+    // every time they clicked sm/md/lg in the main app — which is
+    // exactly wrong: the NDI feed goes to vMix/Wirecast/OBS where the
+    // operator has already framed the bar to a fixed broadcast slot
+    // and CANNOT have it jumping in size mid-service. Lock IS_NDI to
+    // the md baseline (33% of frame). The in-app preview, secondary
+    // screen, and congregation/OBS browser-source surfaces continue
+    // to honour st.lowerThirdHeight so the operator's preview
+    // reflects the in-app sm/md/lg toggle.
+    var __lhKey=IS_NDI?'md':(st.lowerThirdHeight||FORCE_LH);
+    var hPct=IS_NDI?33:(hMap[__lhKey]||33);
     // v0.7.0 — Compute the NDI lower-third size multiplier UP FRONT so
     // we can scale the BOX itself in lockstep with the verse text. Pre-
     // v0.7.0 only the font multiplied with ndiLtScale; the box height
