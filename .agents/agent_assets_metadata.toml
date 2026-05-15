@@ -1259,3 +1259,9 @@ id = "GEos2ARTjZ8Z2wnPp2hjs"
 uri = "file://screenshots/rementionlive-proof.jpg"
 type = "image"
 title = "v0.7.187.2 re-mention auto-live proof"
+
+[[outputs]]
+id = "we4s-C99FS0rrNhDFjxdP"
+uri = "file://screenshots/lt-options.jpg"
+type = "image"
+title = "Lower-Third Frame Options vs. Red-Box Target"

@@ -1,0 +1,87 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>LT Frame Options</title>
+<style>
+  * { box-sizing: border-box; margin:0; padding:0; }
+  body { background:#0a0a0a; color:#fff; font-family:ui-sans-serif,system-ui,sans-serif; padding:24px; }
+  h1 { font-size:20px; font-weight:700; margin-bottom:6px; }
+  .sub { color:#9ca3af; font-size:13px; margin-bottom:24px; }
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap:24px; }
+  .card { background:#111; border:1px solid #262626; border-radius:12px; padding:16px; }
+  .card h2 { font-size:15px; font-weight:600; margin-bottom:4px; }
+  .card .meta { font-size:12px; color:#9ca3af; margin-bottom:12px; }
+  /* simulated 1920x1080 frame, scaled */
+  .frame { position:relative; width:100%; aspect-ratio:16/9;
+    background:url('https://images.unsplash.com/photo-1438232992991-995b7058bbb3?auto=format&fit=crop&w=1280&q=60') center/cover, #1f2937;
+    border-radius:8px; overflow:hidden; }
+  .frame::after { content:''; position:absolute; inset:0; background:rgba(0,0,0,.25); }
+  .ltbar { position:absolute; left:0; right:0; z-index:2;
+    background:linear-gradient(135deg,#0a0a0a,#171717);
+    border-radius:1.25rem; box-shadow:0 8px 28px rgba(0,0,0,.45);
+    padding: 1.5% 3%; display:flex; flex-direction:column; justify-content:center; overflow:hidden; }
+  .ltref { font-size:11px; font-weight:700; opacity:.9; margin-bottom:4px; }
+  .lttext { font-weight:600; line-height:1.25; color:#fff; text-shadow:0 2px 12px rgba(0,0,0,.4); }
+  /* Current Large: 45% h, 6% bottom margin, side margins via card padding */
+  .opt-current .ltbar { bottom:6%; height:45%; margin:0 5%; width:90%; }
+  .opt-current .lttext { font-size:22px; }
+  /* Option A: NEW XL bucket = 60% height, same 6% margin, same side margins */
+  .opt-a .ltbar { bottom:6%; height:60%; margin:0 5%; width:90%; }
+  .opt-a .lttext { font-size:30px; }
+  /* Option B: Large bucket but FLUSH to bottom edge AND full width (no margins) */
+  .opt-b .ltbar { bottom:0; height:45%; margin:0; width:100%; border-radius:0; }
+  .opt-b .lttext { font-size:26px; font-weight:700; }
+  /* Option C: NEW XL bucket + FLUSH = 60% height, edge to edge */
+  .opt-c .ltbar { bottom:0; height:60%; margin:0; width:100%; border-radius:0; }
+  .opt-c .lttext { font-size:34px; font-weight:700; }
+  /* Red box overlay matches operator's screenshot */
+  .redbox { position:absolute; left:1%; right:1%; bottom:3%; height:35%;
+    border:3px solid #ef4444; border-radius:6px; z-index:3; pointer-events:none; }
+  .legend { margin-top:8px; font-size:11px; color:#9ca3af; }
+  .legend span { color:#ef4444; }
+</style></head>
+<body>
+<h1>Lower-Third Frame — Options vs. your red-box target</h1>
+<div class="sub">Each frame is a simulated 1920×1080 NDI output. Red box = the area you marked in your screenshot.</div>
+<div class="grid">
+
+  <div class="card opt-current">
+    <h2>Current — "Large" bucket (lh=lg)</h2>
+    <div class="meta">height 45% · bottom margin 6% · side margins 5% · text auto-fits up to 2.50×</div>
+    <div class="frame">
+      <div class="ltbar"><div class="ltref">Esther 5:1 — KJV</div><div class="lttext">Now it came to pass on the third day, that Esther put on her royal apparel, and stood in the inner court of the king's house.</div></div>
+      <div class="redbox"></div>
+    </div>
+    <div class="legend">Bar is smaller than your <span>red target</span>.</div>
+  </div>
+
+  <div class="card opt-a">
+    <h2>Option A — NEW "Extra Large" bucket (lh=xl)</h2>
+    <div class="meta">height 60% · bottom margin 6% · side margins 5% · autofit raised to 3.50×</div>
+    <div class="frame">
+      <div class="ltbar"><div class="ltref">Esther 5:1 — KJV</div><div class="lttext">Now it came to pass on the third day, that Esther put on her royal apparel, and stood in the inner court of the king's house.</div></div>
+      <div class="redbox"></div>
+    </div>
+    <div class="legend">Bigger bar, keeps rounded card + margins. Adds an XL button to the picker.</div>
+  </div>
+
+  <div class="card opt-b">
+    <h2>Option B — Drop margins (flush to edges)</h2>
+    <div class="meta">height 45% · bottom 0 · side 0 · square corners · text bumped to 700 weight</div>
+    <div class="frame">
+      <div class="ltbar"><div class="ltref">Esther 5:1 — KJV</div><div class="lttext">Now it came to pass on the third day, that Esther put on her royal apparel, and stood in the inner court of the king's house.</div></div>
+      <div class="redbox"></div>
+    </div>
+    <div class="legend">Same height bucket, but bar stretches edge-to-edge. Loses the rounded chyron look.</div>
+  </div>
+
+  <div class="card opt-c">
+    <h2>Option C — XL bucket + flush (BOTH)</h2>
+    <div class="meta">height 60% · bottom 0 · side 0 · square corners · 700 weight · autofit 3.50×</div>
+    <div class="frame">
+      <div class="ltbar"><div class="ltref">Esther 5:1 — KJV</div><div class="lttext">Now it came to pass on the third day, that Esther put on her royal apparel, and stood in the inner court of the king's house.</div></div>
+      <div class="redbox"></div>
+    </div>
+    <div class="legend">Maximum size — fully fills your <span>red target</span>. Best for streaming legibility.</div>
+  </div>
+
+</div>
+</body></html>
