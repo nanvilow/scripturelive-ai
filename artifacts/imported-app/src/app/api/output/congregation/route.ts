@@ -961,19 +961,15 @@ try{
     document.fonts.ready.then(function(){fitVerseTextForce();});
   }
 }catch(fe){}
-try{
-  if(typeof ResizeObserver==='function'){
-    var __fitRO=new ResizeObserver(function(){fitVerseTextForce();});
-    var __fitROObserved=false;
-    function __ensureFitObserver(){
-      if(__fitROObserved)return;
-      var p=document.querySelector('#output .slide-paragraph');
-      if(p && p.parentElement){__fitRO.observe(p.parentElement);__fitROObserved=true;}
-    }
-    // Re-attempt on every render via the post-render hook below.
-    window.__ensureFitObserver=__ensureFitObserver;
-  }
-}catch(roe){}
+// v0.7.193-hotfix.3 — ResizeObserver REMOVED. The hotfix.2 RO observed
+// the verse parent and called fitVerseTextForce on any size change. In
+// practice each SSE-driven render (live slides tick frequently) nudges
+// parent.clientHeight by sub-pixels during reflow → RO fires → forced
+// re-fit → that re-fit causes another reflow → RO fires again → visible
+// "keeps searching" pumping reported by the operator. The two remaining
+// belts (document.fonts.ready + 250ms safety) are sufficient for the
+// original Settings round-trip text-shrink bug because both are ONE-SHOT
+// and fire only on iframe (re)load, not per render.
 setTimeout(function(){fitVerseTextForce();},250);
 
 function render(s){
@@ -1679,7 +1675,7 @@ function render(s){
   // we measure scrollHeight. Fallback to setTimeout(0) keeps the
   // call ordering identical when rAF is unavailable (extremely old
   // Electron / SSR test).
-  if(typeof requestAnimationFrame==='function'){requestAnimationFrame(function(){fitVerseText();try{if(window.__ensureFitObserver)window.__ensureFitObserver();}catch(e){}});}else{setTimeout(function(){fitVerseText();try{if(window.__ensureFitObserver)window.__ensureFitObserver();}catch(e){}},0);}
+  if(typeof requestAnimationFrame==='function'){requestAnimationFrame(fitVerseText);}else{setTimeout(fitVerseText,0);}
 }
 
 // Polling fallback. Server-Sent Events break when the deployment is
