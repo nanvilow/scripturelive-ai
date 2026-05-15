@@ -567,8 +567,14 @@ interface AppState {
   // Operator-controlled play/pause for media-slide videos. Broadcast
   // to all renderers (preview, secondary screen, NDI). Only
   // meaningful when the active slide is a media video.
-  mediaPaused: boolean
-  setMediaPaused: (b: boolean) => void
+  // v0.7.193-hotfix.2 — split per-surface so Preview and Live transport
+  // controls are fully independent. Each pane's Play / Pause / Stop /
+  // Loop / Scrub writes ONLY to its own pair of fields. The SSE
+  // broadcast (NDI / OBS / secondary screen) follows the LIVE pair only.
+  previewMediaPaused: boolean
+  setPreviewMediaPaused: (b: boolean) => void
+  liveMediaPaused: boolean
+  setLiveMediaPaused: (b: boolean) => void
 
   // Real-time playback signals from the actual <video> elements on
   // the Preview and Live surfaces. Used by the audio meters so they
@@ -640,8 +646,10 @@ interface AppState {
   // surfaces (Preview pane, secondary congregation screen) read this
   // value and seek to it whenever it drifts more than ~0.4s, so a
   // pause / scrub on Live freezes every screen at the same frame.
-  mediaCurrentTime: number
-  setMediaCurrentTime: (t: number) => void
+  previewMediaCurrentTime: number
+  setPreviewMediaCurrentTime: (t: number) => void
+  liveMediaCurrentTime: number
+  setLiveMediaCurrentTime: (t: number) => void
 
   // v0.7.193 — Loop toggle for media-video transport. Persists per-
   // session. The in-app React <video> elements (Preview + Live
@@ -649,8 +657,10 @@ interface AppState {
   // mirror it onto their `loop` attribute, so a clip loops on every
   // surface (NDI / OBS / secondary screen too) as long as it's
   // playing.
-  mediaLoop: boolean
-  setMediaLoop: (b: boolean) => void
+  previewMediaLoop: boolean
+  setPreviewMediaLoop: (b: boolean) => void
+  liveMediaLoop: boolean
+  setLiveMediaLoop: (b: boolean) => void
 
   // Media library view mode. Mirrors the Windows Explorer "View"
   // menu options the user requested: Large Icons / Medium Icons /
@@ -1163,8 +1173,10 @@ export const useAppStore = create<AppState>()(
       // Startup logo / media playback flags (not persisted).
       hasShownContent: false,
       setHasShownContent: (b) => set({ hasShownContent: b }),
-      mediaPaused: false,
-      setMediaPaused: (b) => set({ mediaPaused: b }),
+      previewMediaPaused: false,
+      setPreviewMediaPaused: (b) => set({ previewMediaPaused: b }),
+      liveMediaPaused: false,
+      setLiveMediaPaused: (b) => set({ liveMediaPaused: b }),
       previewVideoPlaying: false,
       setPreviewVideoPlaying: (b) => set({ previewVideoPlaying: b }),
       liveVideoPlaying: false,
@@ -1216,10 +1228,14 @@ export const useAppStore = create<AppState>()(
       setAutoLiveThreshold: (t) =>
         set({ autoLiveThreshold: Math.max(0, Math.min(1, t)) }),
 
-      mediaCurrentTime: 0,
-      setMediaCurrentTime: (t) => set({ mediaCurrentTime: Math.max(0, t) }),
-      mediaLoop: false,
-      setMediaLoop: (b) => set({ mediaLoop: b }),
+      previewMediaCurrentTime: 0,
+      setPreviewMediaCurrentTime: (t) => set({ previewMediaCurrentTime: Math.max(0, t) }),
+      liveMediaCurrentTime: 0,
+      setLiveMediaCurrentTime: (t) => set({ liveMediaCurrentTime: Math.max(0, t) }),
+      previewMediaLoop: false,
+      setPreviewMediaLoop: (b) => set({ previewMediaLoop: b }),
+      liveMediaLoop: false,
+      setLiveMediaLoop: (b) => set({ liveMediaLoop: b }),
 
       // Media library view density. Defaults to a comfortable middle
       // ground; user pick is persisted via partialize below.

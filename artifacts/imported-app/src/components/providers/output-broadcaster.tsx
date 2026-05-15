@@ -93,10 +93,10 @@ export function OutputBroadcaster() {
       const cur = baseCur
         ? {
             ...baseCur,
-            mediaPaused: isMediaVideo ? !!s.mediaPaused : undefined,
+            mediaPaused: isMediaVideo ? !!s.liveMediaPaused : undefined,
             // Broadcast the master clock so the secondary screen seeks
             // to the same frame as Live whenever drift exceeds ~0.4s.
-            mediaCurrentTime: isMediaVideo ? s.mediaCurrentTime : undefined,
+            mediaCurrentTime: isMediaVideo ? s.liveMediaCurrentTime : undefined,
           }
         : null
       const next = s.liveSlideIndex >= 0 && s.liveSlideIndex + 1 < s.slides.length

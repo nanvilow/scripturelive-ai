@@ -1148,6 +1148,16 @@ function NdiPreviewSurface(props: NdiPreviewSurfaceProps): React.JSX.Element {
   const NATIVE_H = 1080
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [scale, setScale] = useState<number>(1)
+  // v0.7.193-hotfix.2 — Mount the iframe ONLY when the panel is
+  // actually visible in the viewport. The iframe loads a full
+  // congregation renderer (including a media <video> if the active
+  // slide is a video), and that's a real decoder — historically it
+  // ran 24/7 whenever the operator had Settings → NDI open even if
+  // they had scrolled the preview off-screen, eating one of their
+  // GPU's limited concurrent decode slots for no benefit. With
+  // IntersectionObserver gating, the iframe unmounts when scrolled
+  // away and remounts on-screen — no decoder consumed when invisible.
+  const [isOnScreen, setIsOnScreen] = useState<boolean>(false)
 
   useEffect(() => {
     const el = containerRef.current
@@ -1163,7 +1173,17 @@ function NdiPreviewSurface(props: NdiPreviewSurfaceProps): React.JSX.Element {
       }
     })
     ro.observe(el)
-    return () => ro.disconnect()
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) setIsOnScreen(entry.isIntersecting)
+      },
+      { threshold: 0.01 },
+    )
+    io.observe(el)
+    return () => {
+      ro.disconnect()
+      io.disconnect()
+    }
   }, [])
 
   // v0.7.11 — Freeze the iframe src AFTER MOUNT so it never reloads in

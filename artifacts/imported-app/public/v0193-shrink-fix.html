@@ -1,0 +1,72 @@
+<!doctype html>
+<html><head><meta charset="utf-8"/><title>Settings round-trip text-shrink fix</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:Inter,system-ui,sans-serif}
+body{background:#0a0e1a;color:#e5e7eb;padding:32px;min-height:100vh}
+h1{font-size:22px;margin-bottom:6px}
+.sub{color:#9ca3af;font-size:13px;margin-bottom:24px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px}
+.panel{background:#0f1422;border:1px solid #1f2937;border-radius:10px;padding:14px;overflow:hidden}
+.panel.bad{border-color:#7f1d1d}.panel.ok{border-color:#14532d}
+.panel h2{font-size:13px;color:#9ca3af;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.badge{font-size:10px;padding:2px 8px;border-radius:4px;letter-spacing:.05em}
+.badge.bad{background:#7f1d1d;color:#fecaca}.badge.ok{background:#14532d;color:#bbf7d0}
+.shot{width:100%;border-radius:6px;border:1px solid #1f2937;display:block}
+.note{color:#9ca3af;font-size:12px;line-height:1.6;margin-top:10px}
+.q{background:#0a1f2a;border:1px solid #0e7490;border-radius:8px;padding:14px 16px;margin-top:6px;font-size:13px;color:#a5f3fc;line-height:1.6}
+.q b{color:#fff}
+.cause{background:#1a1208;border:1px solid #92400e;border-radius:8px;padding:12px 14px;margin:18px 0;font-size:12px;color:#fde68a;line-height:1.7}
+.fix{background:#0a1f1a;border:1px solid #14532d;border-radius:8px;padding:12px 14px;font-size:12px;color:#bbf7d0;line-height:1.7}
+.section{font-size:13px;color:#fbbf24;margin:8px 0 10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+code{background:#1f2937;padding:1px 6px;border-radius:3px;font-size:11px;color:#fcd34d}
+</style></head><body>
+
+<h1>Settings round-trip text-shrink — diagnosis & fix</h1>
+<p class="sub">Operator's report: open a verse, go to Settings without touching anything, come back → text is suddenly smaller.</p>
+
+<div class="row">
+  <div class="panel bad">
+    <h2>1. Before opening Settings <span class="badge bad">FIRST PAINT</span></h2>
+    <img class="shot" src="/shrink-bug-before.png" alt="Esther 5:1 large text"/>
+    <p class="note">Verse fills the safe area — autofit picked the largest scale that fits both width and height. This is correct.</p>
+  </div>
+  <div class="panel bad">
+    <h2>2. After Settings round-trip <span class="badge bad">SAME VERSE — SHRUNK</span></h2>
+    <img class="shot" src="/shrink-bug-after.png" alt="Esther 5:1 small text"/>
+    <p class="note">Same verse, same operator pick, same container size — but autofit settled at a smaller scale. The bottom of the safe area is now empty.</p>
+  </div>
+</div>
+
+<p class="section">Root cause</p>
+<div class="cause">
+  When the operator opens Settings, the live console (including both Preview and Live iframes) <b>unmounts</b> — Settings is a full-screen overlay that REPLACES the shell (this is documented in the OutputBroadcaster comment too). Coming back, both iframes mount fresh and run <code>fitVerseText()</code> on their first paint.
+  <br><br>
+  But on first paint the <b>web fonts haven't finished loading yet</b> — the iframe renders with the system fallback font, which has wider character metrics. Autofit picks a smaller scale to make the wider fallback fit, then caches that scale in <code>__fitKey</code>. A few hundred ms later the web font loads, characters reflow narrower, and the verse now has unused space at the bottom — but the cache says "we already fit this," so autofit never re-runs. Permanent shrink until the operator manually triggers a re-render.
+</div>
+
+<p class="section">Fix (3 belts in <code>route.ts</code> ~L936-980)</p>
+<div class="fix">
+  <b>(a) Re-fit when web fonts finish loading.</b> Hook <code>document.fonts.ready</code> and force a re-fit when the promise resolves — kills the FOIT/FOUT race directly.
+  <br><br>
+  <b>(b) ResizeObserver on the verse parent.</b> Any container-size change (Settings overlay closing, operator resizing a panel, dev tools opening, browser zoom) triggers a forced re-fit. Window <code>resize</code> alone misses iframe-internal layout shifts that don't bubble out.
+  <br><br>
+  <b>(c) Belt-and-braces 250ms re-fit.</b> One extra forced re-fit a quarter-second after first paint, in case the font CDN is slow or layout settles asynchronously.
+  <br><br>
+  Each forced re-fit clears <code>__fitKey=''</code> first so the binary search runs against the now-correct font metrics. Net cost: ~1.5 ms total, only on first paint of a fresh iframe.
+</div>
+
+<div class="q" style="margin-top:18px">
+  <b>This bundles into v0.7.193-hotfix.2 alongside:</b>
+  <br>• A — Preview/Live transport independence (per-surface state)
+  <br>• B — Send-to-Live auto-pauses Preview
+  <br>• C — Output matches Live Display (faster broadcast clock)
+  <br>• D — Unmount Preview &lt;video&gt; when same media is on Live (biggest decoder win)
+  <br>• E — Skip Web Audio analyser on muted surfaces
+  <br>• F — Loosen drift threshold 0.12s → 0.20s (smoother on slower machines)
+  <br>• G — IntersectionObserver gate on the in-app NDI preview iframe
+  <br>• <b>H — Settings round-trip text-shrink fix (this one)</b>
+  <br><br>
+  Reply <b>"ship it"</b> and I'll bump <code>0.7.193-hotfix.2</code>, prepend the changelog entry to <code>replit.md</code>, demote v0.7.193 to a one-line guard-rail (replit.md is oversized — auto-reminder firing again), and push via <code>.local/push-r.mjs</code>.
+</div>
+
+</body></html>
