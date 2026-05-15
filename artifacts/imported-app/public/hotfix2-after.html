@@ -1,0 +1,97 @@
+<!doctype html>
+<html><head><meta charset="utf-8"/><title>v0.7.192-hotfix.2 — AFTER preview</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system,sans-serif}
+  body{background:#0a0a0a;color:#e5e7eb;padding:18px}
+  h1{font-size:18px;margin-bottom:6px;color:#fbbf24}
+  h2{font-size:13px;margin:16px 0 6px;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em}
+  .frame{position:relative;width:100%;aspect-ratio:16/9;overflow:hidden;border-radius:8px;border:2px solid #374151;margin-bottom:8px}
+  .bg-white{background:#f5f5f0}
+  .bg-storm{background-image:radial-gradient(circle at 70% 30%, rgba(251,191,36,.45), transparent 55%),linear-gradient(135deg,#1e1b4b 0%,#831843 50%,#7f1d1d 100%)}
+  .bible{position:absolute;left:50%;top:28%;transform:translate(-50%,-50%);font-size:4.2vw;text-align:center;color:#1e3a8a;text-shadow:1px 1px 0 #f59e0b;font-weight:700;line-height:1}
+  .lt-wrap{position:absolute;left:1%;right:1%;bottom:3%;height:35%;border-radius:1.25rem;padding:1.5% 3%;display:flex;flex-direction:column;justify-content:center;overflow:hidden;box-sizing:border-box;box-shadow:0 8px 28px rgba(0,0,0,.5);background:linear-gradient(135deg,rgba(10,10,10,.92),rgba(23,23,23,.92));text-align:center;color:#fff;text-shadow:0 2px 8px rgba(0,0,0,.7)}
+  .slide-reference{font-weight:700;line-height:1.1;letter-spacing:.04em;margin-bottom:.6%}
+  .slide-text{font-weight:700;line-height:1.2}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .caption{font-size:11px;color:#9ca3af;line-height:1.4;margin-bottom:6px}
+  .badge{display:inline-block;background:#14532d;color:#bbf7d0;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+  /* Sizes are tuned per the production autofit cap (body 3.50x, ref 2.0x base) */
+  .short .slide-reference{font-size:2.2vw}
+  .short .slide-text{font-size:4.6vw;line-height:1.05}
+  .medium .slide-reference{font-size:1.6vw}
+  .medium .slide-text{font-size:2.4vw}
+  .long .slide-reference{font-size:1.4vw}
+  .long .slide-text{font-size:1.35vw;line-height:1.22}
+</style></head><body>
+
+<h1>v0.7.192-hotfix.2 — AFTER preview (faithful render of new CSS)</h1>
+<p style="color:#94a3b8;font-size:12px;margin-bottom:14px">Same shipped CSS — bar at <b>left:1% right:1% bottom:3% height:35% (Large)</b>, <b>weight 700</b>, drop-shadow on text. Three verse lengths × two backgrounds. Sizes shown match what the production binary-search autofit will land on.</p>
+
+<h2>Long verse — body autofit shrinks; reference still bold-grown</h2>
+<div class="grid">
+  <div>
+    <span class="badge">white bg</span>
+    <div class="frame bg-white">
+      <div class="bible">✠ HOLY<br>BIBLE</div>
+      <div class="lt-wrap long">
+        <div class="slide-reference">Esther 2:3 — KJV</div>
+        <div class="slide-text">And let the king appoint officers in all the provinces of his kingdom, that they may gather together all the fair young virgins unto Shushan the palace, to the house of the women, unto the custody of Hege the king's chamberlain, keeper of the women.</div>
+      </div>
+    </div>
+    <div class="caption">Long verse fits inside bar; reference still bold and clearly readable.</div>
+  </div>
+  <div>
+    <span class="badge">photo bg</span>
+    <div class="frame bg-storm">
+      <div class="lt-wrap long">
+        <div class="slide-reference">Esther 2:3 — KJV</div>
+        <div class="slide-text">And let the king appoint officers in all the provinces of his kingdom, that they may gather together all the fair young virgins unto Shushan the palace, to the house of the women, unto the custody of Hege the king's chamberlain, keeper of the women.</div>
+      </div>
+    </div>
+    <div class="caption">Same verse over a busy photo background — bar still pops with weight 700 + shadow.</div>
+  </div>
+</div>
+
+<h2>Medium verse — body grows, reference grows proportionally</h2>
+<div class="grid">
+  <div>
+    <div class="frame bg-white">
+      <div class="bible">✠ HOLY<br>BIBLE</div>
+      <div class="lt-wrap medium">
+        <div class="slide-reference">John 3:16 — KJV</div>
+        <div class="slide-text">For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.</div>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div class="frame bg-storm">
+      <div class="lt-wrap medium">
+        <div class="slide-reference">John 3:16 — KJV</div>
+        <div class="slide-text">For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>Short verse — body autofit blooms to 3.50× cap, reference to 2.0× cap</h2>
+<div class="grid">
+  <div>
+    <div class="frame bg-white">
+      <div class="bible">✠ HOLY<br>BIBLE</div>
+      <div class="lt-wrap short">
+        <div class="slide-reference">John 11:35 — KJV</div>
+        <div class="slide-text">Jesus wept.</div>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div class="frame bg-storm">
+      <div class="lt-wrap short">
+        <div class="slide-reference">John 11:35 — KJV</div>
+        <div class="slide-text">Jesus wept.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body></html>
