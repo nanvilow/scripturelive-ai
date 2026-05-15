@@ -1325,3 +1325,9 @@ id = "oWH6XkrrTwIk4JTgY471v"
 uri = "file://screenshots/v0193-shrink-fix.jpg"
 type = "image"
 title = "Settings round-trip text-shrink — diagnosis & fix (bundled into hotfix.2)"
+
+[[outputs]]
+id = "DRHMToLeShVQzrqt6DnyK"
+uri = "file://screenshots/v0194-trial-mockup.jpg"
+type = "image"
+title = "v0.7.194 — 3-Day Wall-Clock Trial (3 states)"
