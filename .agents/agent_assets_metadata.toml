@@ -1229,3 +1229,9 @@ id = "XI3Oh9-1Us2JGXPmnQiIx"
 uri = "file://screenshots/lt-fit-proof-v5.jpg"
 type = "image"
 title = "NDI LT autofit — v3 proposal: bold + fills bar + reference visible"
+
+[[outputs]]
+id = "hqEHeBTUtZHAo_OwYrzmR"
+uri = "file://screenshots/remention-proof.jpg"
+type = "image"
+title = "Re-mention auto-live bug — diagnosis, trace, and proposed v0.7.186 fix"

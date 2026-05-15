@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Re-mention auto-live — BEFORE vs AFTER trace</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#1a1a1a;color:#eee;font-family:-apple-system,system-ui,sans-serif;padding:20px;font-size:14px;line-height:1.5}
+  h1{font-size:20px;margin-bottom:6px;color:#fff}
+  h2{font-size:15px;margin:20px 0 10px;color:#9cf}
+  .sub{color:#aaa;font-size:12px;margin-bottom:14px}
+  table{border-collapse:collapse;width:100%;margin-bottom:18px;background:#252525;border-radius:8px;overflow:hidden}
+  th,td{padding:11px 14px;border:1px solid #3a3a3a;vertical-align:top;font-size:13px}
+  th{background:#333;color:#9cf;font-weight:600;text-align:left}
+  th.step{width:60px;text-align:center}
+  th.spoken{width:170px}
+  th.stage{width:140px;text-align:center}
+  td.step{text-align:center;font-weight:700;color:#9cf;font-size:16px}
+  td.spoken{font-style:italic;color:#fff}
+  td.stage{text-align:center;font-size:12px}
+  .ok{color:#4ade80;font-weight:600}
+  .bad{color:#f87171;font-weight:600}
+  .meh{color:#facc15;font-weight:600}
+  .code-block{background:#0d0d0d;border:1px solid #333;border-radius:6px;padding:14px;font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.55;overflow-x:auto;margin-bottom:14px;color:#ddd;white-space:pre}
+  .add{background:rgba(74,222,128,.10);color:#86efac}
+  .del{background:rgba(248,113,113,.10);color:#fca5a5;text-decoration:line-through;opacity:.7}
+  .marker{color:#9cf;font-weight:600}
+  .diag-box{background:#252525;border:1px solid #444;border-left:4px solid #9cf;border-radius:6px;padding:14px;margin-bottom:14px}
+  .diag-box .title{color:#9cf;font-weight:600;margin-bottom:6px;font-size:13px}
+  .scenario{background:#1f2937;border:1px solid #374151;border-left:4px solid #facc15;border-radius:6px;padding:14px;margin-bottom:18px}
+  .scenario .title{color:#facc15;font-weight:600;margin-bottom:6px;font-size:13px}
+</style></head><body>
+
+<h1>Re-mention auto-live bug — DIAGNOSIS &amp; PROPOSED FIX</h1>
+<p class="sub">Bug: speaker says Amos 1:3 → live; says John 3:4 → live; says Amos 1:3 again → Live Display stays on John 3:4. AUTO toggle is ON.</p>
+
+<div class="scenario">
+  <div class="title">OPERATOR SCENARIO (from screenshot)</div>
+  AUTO toggle: ON · auto-live threshold: 0.78 (default) · all four detection gates active
+</div>
+
+<h2>Step-by-step trace — BEFORE (current v0.7.185) vs AFTER (proposed v0.7.186)</h2>
+<table>
+  <tr>
+    <th class="step">Step</th>
+    <th class="spoken">Spoken</th>
+    <th class="stage">Live Display<br>(BEFORE)</th>
+    <th class="stage">Live Display<br>(AFTER)</th>
+    <th>What fires</th>
+  </tr>
+  <tr>
+    <td class="step">1</td>
+    <td class="spoken">"…in Amos 1:3 it says…"</td>
+    <td class="stage"><span class="ok">Amos 1:3 ✓</span></td>
+    <td class="stage"><span class="ok">Amos 1:3 ✓</span></td>
+    <td>First mention. <code>processedRefsRef.has('Amos 1:3') = false</code> → fall-through to L2120: <span class="marker">addDetectedVerse + setLiveVerse(verse) + addToVerseHistory</span>. Live Display = Amos 1:3. ✓</td>
+  </tr>
+  <tr>
+    <td class="step">2</td>
+    <td class="spoken">"…now turn to John 3:4…"</td>
+    <td class="stage"><span class="ok">John 3:4 ✓</span></td>
+    <td class="stage"><span class="ok">John 3:4 ✓</span></td>
+    <td>First mention. Same path: <span class="marker">addDetectedVerse + setLiveVerse(verse)</span>. Live Display = John 3:4. ✓</td>
+  </tr>
+  <tr>
+    <td class="step">3</td>
+    <td class="spoken">"…back to Amos 1:3 again…"</td>
+    <td class="stage"><span class="bad">John 3:4 ✗</span><br><span class="meh">(stuck)</span></td>
+    <td class="stage"><span class="ok">Amos 1:3 ✓</span></td>
+    <td>
+      <b>Re-mention.</b> <code>processedRefsRef.has('Amos 1:3') = true</code> → enters suppress branch (L2090).<br>
+      <b>BEFORE:</b> only <code>requestNavigatorRef('Amos 1:3')</code> fires (Chapter Navigator search box updates), then <code>continue</code>. <span class="bad">setLiveVerse never called</span> → Live Display stuck on John 3:4. <b>BUG.</b><br>
+      <b>AFTER:</b> <code>requestNavigatorRef</code> + <span class="add">re-fetch verse + setLiveVerse(verse) + addToVerseHistory</span> (column dedupe still suppressed → no dup row in "Verses Live"). Live Display = Amos 1:3. ✓
+    </td>
+  </tr>
+</table>
+
+<h2>Root cause</h2>
+<div class="diag-box">
+  <div class="title">v0.7.184.2 fixed half the bug — only the navigator half.</div>
+  v0.7.184.2 wired <code>requestNavigatorRef(ref)</code> at all four upstream dedupe gates so re-mentions move the Chapter Navigator. But <code>requestNavigatorRef</code> only updates the navigator search box — it does <b>not</b> push to Live Display. The first-mention path at L2120 calls a separate <code>setLiveVerse(verse)</code> which is what actually sends a verse to ON AIR. The suppress branches never call <code>setLiveVerse</code>, so re-mentions land in the navigator but never on screen.<br><br>
+  Operator's complaint maps to this exactly: "the detector doesn't want to drop it again because it's in the column already and doesn't want to auto-send it." → Column dedupe (correct, no dup row) + missing setLiveVerse = stuck Live Display.
+</div>
+
+<h2>Proposed fix — same shape at all 4 dedupe gates</h2>
+<div class="sub">Each gate gets the same 6-line addition: re-fetch verse, set live, add to history. Gated by <code>autoLiveOn</code> so the AUTO toggle still controls behaviour.</div>
+
+<div class="code-block">// speech-provider.tsx L2088-2099 — Regex-detector explicit branch (representative)
+for (const detectedRef of detectedRefs) {
+  const ref = detectedRef.reference
+  if (processedRefsRef.current.has(ref) || processedTextHitsRef.current.has(ref)) {
+    try { useAppStore.getState().requestNavigatorRef(ref) } catch { /* defensive */ }
+<span class="add">    // v0.7.186 — RE-MENTION AUTO-LIVE. Same shape as first-mention</span>
+<span class="add">    // L2120 (setLiveVerse + addToVerseHistory) MINUS addDetectedVerse</span>
+<span class="add">    // (column dedupe stays clean → no duplicate row).</span>
+<span class="add">    if (autoLiveOn) {</span>
+<span class="add">      try {</span>
+<span class="add">        const verse = await fetchBibleVerse(ref, state.selectedTranslation)</span>
+<span class="add">        if (verse) {</span>
+<span class="add">          useAppStore.getState().setLiveVerse(verse)</span>
+<span class="add">          useAppStore.getState().addToVerseHistory(verse)</span>
+<span class="add">        }</span>
+<span class="add">      } catch { /* network errors fail open */ }</span>
+<span class="add">    }</span>
+    continue
+  }
+  // … first-mention path unchanged (L2100-2129)
+}</div>
+
+<div class="code-block">// Same 6-line addition at the other three gates:
+// L1572-1574 — Reference Engine v2 (TTL dedupe)
+// L1817-1819 — Keyword text-search (sticky-live)  ← ref text already in scope as `top`
+// L1975-1985 — AI cosine matcher (3 sets)         ← ref already in scope as `m.reference`</div>
+
+<h2>Why <code>autoLiveOn</code> gating is correct</h2>
+<div class="diag-box">
+  When AUTO is OFF the operator manually clicks verses to push them live. In that mode a re-mention should NOT auto-jump — the operator might be on a different slide intentionally. With <code>if (autoLiveOn)</code> wrap, re-mention auto-live mirrors first-mention exactly: both fire when AUTO is on, neither fires when AUTO is off. Symmetric behaviour, no surprises.
+</div>
+
+<h2>What does NOT change</h2>
+<ul style="margin-left:24px;color:#ccc;font-size:13px;line-height:1.7">
+  <li>Column dedupe (no duplicate "Amos 1:3" row in Verses Live) — preserved.</li>
+  <li><code>requestNavigatorRef</code> at all 4 gates — preserved (v0.7.184.2 fix stands).</li>
+  <li>First-mention path at L2120 — untouched.</li>
+  <li>Stability gate in logos-shell.tsx (centralized auto-go-live for non-explicit sources) — untouched.</li>
+  <li><code>addDetectedVerseCandidate</code> (speculative &lt;50%) — never triggers nav OR auto-live (v0.7.182 GR-C preserved).</li>
+</ul>
+
+<h2>Guard-rails to add to the v0.7.186 changelog entry</h2>
+<ul style="margin-left:24px;color:#ccc;font-size:13px;line-height:1.7">
+  <li><b>GR-A:</b> at every dedupe-suppress branch in speech-provider.tsx, BOTH <code>requestNavigatorRef</code> AND (gated by <code>autoLiveOn</code>) <code>setLiveVerse + addToVerseHistory</code> MUST fire. Either alone is incomplete: nav-only = navigator updates but Live Display stuck (v0.7.184.2 bug); live-only = ON AIR jumps but operator's search box stays out of sync.</li>
+  <li><b>GR-B:</b> the suppress branch MUST NOT call <code>addDetectedVerse</code> — that was the v0.7.119 column-dedupe and re-introducing it gives duplicate rows in the Verses Live column (visible in operator screenshot).</li>
+  <li><b>GR-C:</b> any NEW dedupe gate MUST wire all three calls (nav + setLiveVerse + addToVerseHistory). Single grep to verify: <code>rg -n "processedRefsRef\\.current\\.has\\|processedTextHitsRef\\.current\\.has\\|processedSemanticHitsRef\\.current\\.has" src/components/providers/speech-provider.tsx</code> — every match should have nav-fire AND autoLive-gated re-fire within the same branch.</li>
+</ul>
+
+</body></html>
