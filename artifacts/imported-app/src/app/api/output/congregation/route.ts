@@ -1324,12 +1324,18 @@ function render(s){
     if(slide.mediaKind==='video'&&canReuse){
       // Same source — just honour the transport flag, do not rebuild.
       try{
-        // Re-sync to the master clock if drift > 0.4s. This keeps the
-        // congregation screen on the same frame as the operator's Live
-        // pane after a pause / scrub.
+        // v0.7.193-hotfix.2 — Tightened drift tolerance from 0.4s to
+        // 0.12s. The output (NDI / OBS / secondary screen) was running
+        // visibly AHEAD of the in-app Live Display because the iframe
+        // <video> auto-played from the seed-seek frame slightly faster
+        // than the in-app React <video> could mount + start, and the
+        // 0.4s tolerance never triggered a correction so the offset
+        // persisted for the entire clip. With 0.12s the renderer snaps
+        // back to the in-app Live's frame within ~3-4 frames at 30fps,
+        // so what the congregation sees matches what the operator sees.
         if(typeof slide.mediaCurrentTime==='number'&&slide.mediaCurrentTime>0){
           var drift=Math.abs((existingVid.currentTime||0)-slide.mediaCurrentTime);
-          if(drift>0.4){try{existingVid.currentTime=slide.mediaCurrentTime;}catch(e){}}
+          if(drift>0.12){try{existingVid.currentTime=slide.mediaCurrentTime;}catch(e){}}
         }
         if(slide.mediaPaused){existingVid.pause();}
         else{var p=existingVid.play();if(p&&p.catch)p.catch(function(){});}

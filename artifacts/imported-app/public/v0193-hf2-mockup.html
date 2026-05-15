@@ -140,6 +140,37 @@ h1{font-size:22px;margin-bottom:6px}
   </div>
 </div>
 
+<p class="section">Plus — Output now matches Live Display (NEW)</p>
+<p style="text-align:center;color:#22c55e;font-size:14px;margin:-8px 0 18px;font-weight:600">↓ NDI / OBS / secondary screen now snap back to Live's frame within ~3-4 frames at 30fps. ↓</p>
+<div class="row">
+  <div class="panel ok">
+    <h2>Live Display (operator) <span class="badge">MASTER CLOCK</span></h2>
+    <div class="video"><span class="label live"><span class="live-dot"></span>LIVE</span><span>🪔</span></div>
+    <div class="transport">
+      <div class="btn active-play">▶</div>
+      <div class="btn">■</div>
+      <div class="btn">↻</div>
+      <span class="time">0:24</span>
+      <div class="scrub p38"></div>
+      <span class="time">1:21</span>
+    </div>
+    <p class="note">In-app Live writes its currentTime to the broadcast clock every <b>0.10s</b> (was 0.25s).</p>
+  </div>
+  <div class="panel ok">
+    <h2>Output (NDI / OBS / Secondary) <span class="badge">FOLLOWS</span></h2>
+    <div class="video"><span class="label live"><span class="live-dot"></span>OUTPUT</span><span>🪔</span></div>
+    <div class="transport">
+      <div class="btn active-play">▶</div>
+      <div class="btn">■</div>
+      <div class="btn">↻</div>
+      <span class="time">0:24</span>
+      <div class="scrub p38"></div>
+      <span class="time">1:21</span>
+    </div>
+    <p class="note">Renderer snaps to broadcast clock if drift > <b>0.12s</b> (was 0.4s) — output never gets ahead of operator.</p>
+  </div>
+</div>
+
 <div class="callout">
   <b>What changed:</b> the three shared store fields (<code>mediaPaused</code>, <code>mediaCurrentTime</code>, <code>mediaLoop</code>) were split into <code>previewMediaPaused / liveMediaPaused</code>, <code>previewMediaCurrentTime / liveMediaCurrentTime</code>, <code>previewMediaLoop / liveMediaLoop</code>. The Preview transport reads/writes only the <code>preview*</code> trio; the Live transport only the <code>live*</code> trio.<br><br>
   <b>External feeds (NDI / OBS / secondary screen):</b> these always show the LIVE pane to the congregation, so they follow the <code>live*</code> trio — unchanged behaviour from the operator's point of view.<br><br>

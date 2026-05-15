@@ -367,18 +367,23 @@ function MediaVideoSurface({
     else if (mediaPaused) v.pause()
   }, [surface, isLive, mediaPaused, mediaCurrentTime, src])
 
-  // Write the surface's current time back to its OWN clock so a remount
-  // (e.g. slide swap) restores the playhead. Throttled to ¼-second
-  // jumps to avoid feedback with the seek effect above.
+  // Write the surface's current time back to its OWN clock. For the
+  // LIVE surface this clock is also broadcast over SSE to NDI / OBS /
+  // secondary-screen iframes, so a tighter threshold keeps the output
+  // tracked frame-accurately to what the operator sees in the Live
+  // Display. v0.7.193-hotfix.2 — Live writes every >0.10s, Preview
+  // every >0.25s (no need to spam writes for a clock no other surface
+  // consumes).
   useEffect(() => {
     const v = videoRef.current
     if (!v) return
+    const writeThreshold = surface === 'live' ? 0.10 : 0.25
     const onTimeUpdate = () => {
       const cur = v.currentTime
       const stored = surface === 'preview'
         ? useAppStore.getState().previewMediaCurrentTime
         : useAppStore.getState().liveMediaCurrentTime
-      if (Math.abs(cur - stored) > 0.25) setOwnCurrentTime(cur)
+      if (Math.abs(cur - stored) > writeThreshold) setOwnCurrentTime(cur)
     }
     v.addEventListener('timeupdate', onTimeUpdate)
     return () => v.removeEventListener('timeupdate', onTimeUpdate)

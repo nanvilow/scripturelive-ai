@@ -1307,3 +1307,9 @@ id = "IRTcA4ca9ExzCFX9i9lFo"
 uri = "file://screenshots/v0193-hf2-mockup-v2.jpg"
 type = "image"
 title = "v0.7.193-hotfix.2 — Independence + auto-stop Preview on send-to-Live"
+
+[[outputs]]
+id = "HUe0rFmzJCTsc-jt21vmf"
+uri = "file://screenshots/v0193-hf2-mockup-v3.jpg"
+type = "image"
+title = "v0.7.193-hotfix.2 — Independence + auto-stop Preview + Output matches Live"
