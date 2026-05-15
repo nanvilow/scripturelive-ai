@@ -120,7 +120,7 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    edge-to-edge bar. Also keeps align-items:stretch from v0.7.173
    Fix D so the box height is driven by the parent bucket and never
    shrinks/expands to hug the verse text. */
-.lower-third{position:absolute;left:0;right:0;display:flex;align-items:stretch;justify-content:center;padding:0 17.5%;container-type:size}
+.lower-third{position:absolute;left:0;right:0;display:flex;align-items:stretch;justify-content:center;padding:0;container-type:size}
 .lower-third.bottom{bottom:6%}.lower-third.top{top:6%}
 /* Lower-third is now a rounded "card" that holds the verses. The
    upper area outside it stays transparent (#000) so any background
@@ -825,6 +825,35 @@ function applyRender(s){
 var __fitKey='', __fitScale=1, __fitBase=0;
 function fitVerseText(){
   try{
+    // v0.7.192-hotfix.2 Fix 3 — Reference autofit (LT only).
+    // .slide-reference uses CSS clamp capped at 1.4rem which floors to
+    // ~15 px inside the LT bar. Binary-search a larger size up to 2.0×
+    // the computed base, with a smaller cap than the body so the verse
+    // remains the visual anchor. Use getComputedStyle (NOT el.style.fontSize)
+    // per v0.7.190-hotfix.2 GR-A to resolve the clamp() to real pixels.
+    // Runs BEFORE the body fit so the body's sibling-height subtraction
+    // (L860-862) picks up the ref's new offsetHeight on the same pass.
+    try{
+      var rEl=document.querySelector('#output .lt-box .slide-reference');
+      if(rEl && rEl.parentElement){
+        var rPar=rEl.parentElement;
+        var rBase=parseFloat(window.getComputedStyle(rEl).fontSize)||14;
+        var rAvailW=rPar.clientWidth;
+        var rLo=0.60, rHi=2.0, rBest=1.0;
+        rEl.style.transform='';
+        for(var ri=0;ri<10;ri++){
+          var rMid=(rLo+rHi)/2;
+          rEl.style.fontSize=(rBase*rMid).toFixed(2)+'px';
+          if(rEl.scrollWidth<=rAvailW){ rBest=rMid; rLo=rMid; } else { rHi=rMid; }
+        }
+        rEl.style.fontSize=(rBase*rBest).toFixed(2)+'px';
+        // Invalidate body cache: parent.clientHeight is unchanged but ref's
+        // offsetHeight just grew — body must re-binary-search for the new
+        // available height. Without this, cached __fitKey would short-circuit
+        // and the body would render at the OLD (smaller-ref) scale.
+        __fitKey='';
+      }
+    }catch(re){}
     var p=document.querySelector('#output .slide-paragraph');
     if(!p)return;
     var parent=p.parentElement;
@@ -1013,12 +1042,19 @@ function render(s){
   // v0.7.127 — FORCE_FULL wins over FORCE_LT so the side-by-side
   // Settings preview cards can pin the layout per card without the
   // operator's projector displayMode bleeding through.
+  // v0.7.192-hotfix.2 Fix 2 — On IS_NDI surfaces (NDI capture, NDI Preview,
+  // OBS Browser Source — all three carry ?ndi=1) the live SSE ndiDisplayMode
+  // wins over FORCE_LT (URL ?lowerThird=1). Pre-fix the URL param pinned the
+  // mode forever, so a stale OBS URL pasted in LT mode would never auto-flip
+  // when the operator switched the app to Full Display. Settings PREVIEW
+  // cards are unaffected — they use ?lowerThird=1 WITHOUT ?ndi=1, so they
+  // fall through to the FORCE_LT branch and stay pinned per card as before.
   var dm=FORCE_FULL
     ?'full'
-    :(FORCE_LT
-      ?'lower-third'
-      :((IS_NDI&&s.settings&&s.settings.ndiDisplayMode)
-        ?s.settings.ndiDisplayMode
+    :((IS_NDI && s.settings && (s.settings.ndiDisplayMode==='full'||s.settings.ndiDisplayMode==='lower-third'))
+      ?s.settings.ndiDisplayMode
+      :(FORCE_LT
+        ?'lower-third'
         :(s.displayMode||'full')));
   var st=s.settings||{};
   // v0.7.165 — Unified lower-third typography. Operator complaint:
