@@ -1224,17 +1224,56 @@ export function MediaLibraryCompact() {
     })
   }
 
+  // v0.7.190 — Build a proper `media`-type slide (not `custom` with
+  // background:dataUrl). The whole audio-meter + freeze-preview-on-
+  // go-live + anti-echo machinery added in v0.7.186 is gated on
+  // slide.type === 'media' && mediaUrl. Stuffing the video into the
+  // background field made every uploaded clip invisible to that
+  // gate, so the VU meter never mounted, both Preview and Live
+  // iframes played the same <video> simultaneously (echo + decoder
+  // fight = freeze), and `mediaPaused:true` was never spliced in
+  // when the operator hit Go Live.
+  const buildMediaSlide = (m: MediaItem): Slide => ({
+    id: `slide-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    type: 'media',
+    title: m.name,
+    subtitle: '',
+    content: [],
+    mediaUrl: m.dataUrl,
+    mediaKind: m.kind,
+  })
+
   const addToSchedule = (m: MediaItem) => {
-    const slide: Slide = {
-      id: `slide-${Date.now()}`,
-      type: 'custom',
-      title: m.name,
-      subtitle: '',
-      content: [],
-      background: m.dataUrl,
-    }
+    const slide = buildMediaSlide(m)
     addScheduleItem({ type: 'slides', title: m.name, slides: [slide] })
     toast.success(`${m.name} added to schedule`)
+  }
+
+  // v0.7.190 — Restore the click-to-preview / double-click-to-live
+  // pattern operators expect (matches the verse list at L534-543).
+  // Single click stages the media in Preview ONLY — audio meter
+  // mounts, but Live Display is untouched. Double click promotes
+  // the same slide to Live; the iframe pause-on-promote logic in
+  // logos-shell.tsx L877 then splices `mediaPaused:true` into the
+  // Preview slide payload, which freezes Preview's iframe video at
+  // its current frame and zeroes the VU meter — no echo, no double
+  // decoder.
+  const sendMediaToPreview = (m: MediaItem) => {
+    const slide = buildMediaSlide(m)
+    addScheduleItem({ type: 'slides', title: m.name, slides: [slide] })
+    const s = useAppStore.getState()
+    s.setSlides([slide])
+    s.setPreviewSlideIndex(0)
+  }
+
+  const sendMediaToLive = (m: MediaItem) => {
+    const slide = buildMediaSlide(m)
+    addScheduleItem({ type: 'slides', title: m.name, slides: [slide] })
+    const s = useAppStore.getState()
+    s.setSlides([slide])
+    s.setPreviewSlideIndex(0)
+    s.setLiveSlideIndex(0)
+    s.setIsLive(true)
   }
 
   const useAsBackground = (m: MediaItem) => {
@@ -1316,7 +1355,13 @@ export function MediaLibraryCompact() {
         ) : (
           <div className="p-2 grid grid-cols-2 gap-1.5">
             {items.map((m) => (
-              <div key={m.id} className="group relative rounded overflow-hidden border border-border bg-black">
+              <div
+                key={m.id}
+                onClick={() => sendMediaToPreview(m)}
+                onDoubleClick={() => sendMediaToLive(m)}
+                title="Click → preview · Double-click → send live"
+                className="group relative rounded overflow-hidden border border-border bg-black cursor-pointer select-none"
+              >
                 {m.kind === 'image' ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={m.dataUrl} alt={m.name} className="w-full aspect-video object-cover" />
