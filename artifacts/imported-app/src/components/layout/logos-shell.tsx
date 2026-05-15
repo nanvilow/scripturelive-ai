@@ -3569,7 +3569,12 @@ export function LogosShell() {
       }
     }
     useAppStore.getState().setLiveMediaPaused(false)
-    setLiveSlideIndex(previewSlideIndex)
+    // v0.7.193-hotfix.2 — Operator request: when a media slide is sent
+    // to Live, the Preview pane stops playing automatically (it does
+    // NOT keep ticking quietly in the background). This is the explicit
+    // revision to the v0.7.193 "preview keeps ticking, just muted"
+    // behaviour — operators want a clean stop on promote.
+    useAppStore.getState().setPreviewMediaPaused(true)
     setIsLive(true)
     if (previewSlideIndex < slides.length - 1) setPreviewSlideIndex(previewSlideIndex + 1)
   }, [slides.length, previewSlideIndex, setLiveSlideIndex, setIsLive, setPreviewSlideIndex])

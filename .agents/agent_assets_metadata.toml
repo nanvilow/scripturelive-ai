@@ -1301,3 +1301,9 @@ id = "VQ1IDagv88Usx0huPE2Ck"
 uri = "file://screenshots/v0193-hf2-mockup.jpg"
 type = "image"
 title = "v0.7.193-hotfix.2 — Preview/Live transport independence (proof)"
+
+[[outputs]]
+id = "IRTcA4ca9ExzCFX9i9lFo"
+uri = "file://screenshots/v0193-hf2-mockup-v2.jpg"
+type = "image"
+title = "v0.7.193-hotfix.2 — Independence + auto-stop Preview on send-to-Live"
