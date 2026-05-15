@@ -1241,3 +1241,9 @@ id = "Hx4LPRczALJi7URfUSKWh"
 uri = "file://screenshots/media-fix-proof.jpg"
 type = "image"
 title = "v0.7.186 media-fix proof"
+
+[[outputs]]
+id = "jcEXcoBCRGod158ahhvEG"
+uri = "file://screenshots/bgvid-fix-proof.jpg"
+type = "image"
+title = "v0.7.187 BG-video fix proof"

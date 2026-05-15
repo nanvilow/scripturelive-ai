@@ -46,7 +46,28 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 #output.ratio-4x3{aspect-ratio:4/3;width:min(100vw,calc(100vh*4/3));height:min(100vh,calc(100vw*3/4))}
 #output.ratio-21x9{aspect-ratio:21/9;width:min(100vw,calc(100vh*21/9));height:min(100vh,calc(100vw*9/21))}
 .bg-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;pointer-events:none}
-.bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);pointer-events:none}
+.bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);pointer-events:none;z-index:1}
+/* v0.7.187 — Persistent BG VIDEO layer (PERFORMANCE FIX). Pre-fix, the
+   verse-background <video> was inlined into #output's innerHTML on every
+   render. Because the renderer reassigns $('output').innerHTML on every
+   SSE/poll tick (see L665-696 lifecycle note), the <video> was destroyed
+   and recreated several times per second — restarting from t=0 each time,
+   which the operator perceived as constant judder/freezing across all 6
+   surfaces (preview iframe, Live Display, secondary screen, NDI, projector,
+   OBS browser source). The setVid() cache pattern below (~L1062) protects
+   FOREGROUND media but never covered BG.
+   Fix: a sibling layer #bgLayer that is NEVER touched by output.innerHTML.
+   setBgVid(url) (defined just above render()) rebuilds the cached <video>
+   ONLY when the URL changes — same-URL calls are no-op, so successive
+   renders leave playback continuous. Sized identically to #output via the
+   same ratio classes so the bg fills the same letterboxed inner area
+   (no leaking into the black surround when viewport != displayRatio). */
+#bgLayer{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:0;overflow:hidden}
+#bgLayer.ratio-16x9{aspect-ratio:16/9;width:min(100vw,calc(100vh*16/9));height:min(100vh,calc(100vw*9/16))}
+#bgLayer.ratio-4x3{aspect-ratio:4/3;width:min(100vw,calc(100vh*4/3));height:min(100vh,calc(100vw*3/4))}
+#bgLayer.ratio-21x9{aspect-ratio:21/9;width:min(100vw,calc(100vh*21/9));height:min(100vh,calc(100vw*9/21))}
+#bgLayer > video, #bgLayer > img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;display:block}
+#output{position:relative;z-index:1}
 .slide-content{position:relative;z-index:1;text-align:center;width:90%;max-width:90vw;padding:4vh 3vw;display:flex;flex-direction:column;align-items:center;justify-content:center}
 /* v0.6.3 — Bible reference text: BOLD by default + full opacity. The
    previous .55 opacity + default 500 weight made the chapter / verse
@@ -193,7 +214,7 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 <!-- v0.5.33 — bake the splash watermark into the initial body so the
      surface is NEVER visually blank, even before SSE connects or the
      first poll lands. The renderer replaces this on first state. -->
-<div id="stage"><div id="output"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;color:#fff;text-align:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif"><div style="font-size:clamp(2rem,7vmin,7rem);font-weight:600;letter-spacing:-.01em;line-height:1.05;opacity:.4">Scripture AI</div><div style="margin-top:1.4vmin;font-size:clamp(.85rem,1.8vmin,1.6rem);opacity:.3;font-weight:500">Powered By WassMedia (+233246798526)</div></div></div></div>
+<div id="stage"><div id="bgLayer"></div><div id="output"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;color:#fff;text-align:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif"><div style="font-size:clamp(2rem,7vmin,7rem);font-weight:600;letter-spacing:-.01em;line-height:1.05;opacity:.4">Scripture AI</div><div style="margin-top:1.4vmin;font-size:clamp(.85rem,1.8vmin,1.6rem);opacity:.3;font-weight:500">Powered By WassMedia (+233246798526)</div></div></div></div>
 <script>
 // Surface any uncaught script error as a visible red banner instead of
 // silently leaving the splash up forever (which is exactly how the
@@ -512,6 +533,17 @@ function applyRatio(r){
   if(r==='16:9')o.classList.add('ratio-16x9');
   else if(r==='4:3')o.classList.add('ratio-4x3');
   else if(r==='21:9')o.classList.add('ratio-21x9');
+  // v0.7.187 — mirror the ratio onto #bgLayer so the persistent BG
+  // video/image fills the same letterboxed inner area as #output. If
+  // they diverged, a 4:3 projector with a 16:9 viewport would show the
+  // bg leaking past the slide content into the black surround.
+  var bl=document.getElementById('bgLayer');
+  if(bl){
+    bl.classList.remove('ratio-16x9','ratio-4x3','ratio-21x9');
+    if(r==='16:9')bl.classList.add('ratio-16x9');
+    else if(r==='4:3')bl.classList.add('ratio-4x3');
+    else if(r==='21:9')bl.classList.add('ratio-21x9');
+  }
 }
 
 // Drop the cached live <video> reference whenever the renderer is
@@ -522,6 +554,46 @@ function applyRatio(r){
 function dropLiveVideoCache(){
   window.__liveVideoEl=null;
   window.__liveVideoKey='';
+}
+
+// v0.7.187 — Persistent BG video/image cache (PERFORMANCE FIX for
+// Bible-verse video backgrounds). See the CSS comment at #bgLayer
+// (~L53) for the full rationale. Sibling layer #bgLayer holds a
+// long-lived <video> or <img> element that survives every #output
+// innerHTML rewrite. setBgVid(url) is keyed by URL: same URL on
+// successive renders is a no-op so playback stays continuous.
+// Hard-cut on URL change (operator-explicit choice — instant swap, no
+// fade). Pass '' to clear the layer (blanked / cleared / no bg).
+var __bgUrl='';
+function setBgVid(url){
+  var layer=document.getElementById('bgLayer');
+  if(!layer) return;
+  var u=url||'';
+  if(u===__bgUrl) return; // already mounted with this URL — no-op
+  __bgUrl=u;
+  // Stop & detach old element (release decoder + network buffer)
+  while(layer.firstChild){
+    var old=layer.firstChild;
+    if(old.tagName==='VIDEO'){try{old.pause();old.removeAttribute('src');old.load();}catch(e){}}
+    layer.removeChild(old);
+  }
+  if(!u) return;
+  if(isVideoBg(u)){
+    var v=document.createElement('video');
+    v.src=u;
+    v.autoplay=true;v.loop=true;v.muted=true;v.playsInline=true;
+    v.preload='auto';
+    try{v.setAttribute('crossorigin','anonymous');}catch(e){}
+    v.onerror=function(){try{v.style.display='none';}catch(_e){}};
+    layer.appendChild(v);
+    var pp=v.play();if(pp&&pp.catch)pp.catch(function(){});
+  } else {
+    var img=document.createElement('img');
+    img.src=u;img.alt='';
+    try{img.setAttribute('crossorigin','anonymous');}catch(e){}
+    img.onerror=function(){try{img.style.display='none';}catch(_e){}};
+    layer.appendChild(img);
+  }
 }
 
 // applyAudio — pushes the operator's audio toggles down to the live
@@ -755,7 +827,7 @@ function fitVerseTextDebounced(){
 window.addEventListener('resize',fitVerseTextDebounced);
 
 function render(s){
-  if(!s){$('output').innerHTML='';$('output').classList.add('hidden');lastRenderKey='';dropLiveVideoCache();return}
+  if(!s){$('output').innerHTML='';$('output').classList.add('hidden');lastRenderKey='';dropLiveVideoCache();setBgVid('');return}
   // BLACK / HIDDEN — operator has hit the "Black" transport button or
   // toggled the Live Display HIDDEN switch. We paint a solid black
   // frame while keeping the NDI connection alive, so vMix/OBS don't
@@ -767,6 +839,7 @@ function render(s){
     if(bkey===lastRenderKey)return;
     lastRenderKey=bkey;
     dropLiveVideoCache();
+    setBgVid(''); // v0.7.187 — clear persistent BG layer when blanked
     $('output').innerHTML='';
     $('output').style.background='#000';
     $('output').classList.remove('hidden');
@@ -782,6 +855,7 @@ function render(s){
     // The flag flips false the first time a slide is broadcast and
     // never comes back.
     dropLiveVideoCache();
+    setBgVid(''); // v0.7.187 — clear persistent BG layer on type:'clear'
     // v0.5.33 — same change as the fingerprint above. We now show the
     // splash watermark on every clear state UNLESS the operator
     // explicitly disabled it via showStartupLogo===false.
@@ -915,6 +989,7 @@ function render(s){
     // on air so vMix/OBS sees a clean alpha frame instead of a themed
     // gradient panel covering its program output.
     if(FORCE_TRANSPARENT){
+      setBgVid(''); // v0.7.187 — clear persistent BG layer for NDI alpha-key path
       $('output').innerHTML='';
       $('output').classList.remove('hidden');
       return;
@@ -923,8 +998,15 @@ function render(s){
     var tkE=(st.congregationScreenTheme||'minimal');
     var tcE=themes[tkE]||'theme-minimal';
     var safeBgE=safeBgUrl(st.customBackground);
-    var bgE=safeBgE?(isVideoBg(safeBgE)?'<video class="bg-image" src="'+escAttr(safeBgE)+'" autoplay loop muted playsinline crossorigin="anonymous" onerror="this.style.display=\\'none\\'"></video><div class="bg-overlay"></div>':'<img class="bg-image" src="'+escAttr(safeBgE)+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>'):'';
-    $('output').innerHTML='<div class="'+tcE+'" style="width:100%;height:100%;position:relative;">'+bgE+'</div>';
+    // v0.7.187 — BG video/image now lives in the persistent #bgLayer
+    // (sibling of #output). We only emit the dim .bg-overlay inline so
+    // the slide content reads against any custom bg. When a bg is set,
+    // the theme gradient is forced transparent so the bgLayer beneath
+    // shows through; otherwise the theme gradient remains visible.
+    var bgOverlayE=safeBgE?'<div class="bg-overlay"></div>':'';
+    var themeBgE=safeBgE?'background:transparent;':'';
+    setBgVid(safeBgE);
+    $('output').innerHTML='<div class="'+tcE+'" style="'+themeBgE+'width:100%;height:100%;position:relative;">'+bgOverlayE+'</div>';
     $('output').classList.remove('hidden');
     return;
   }
@@ -983,7 +1065,15 @@ function render(s){
   var bibleExtra=(T_COLOR?'color:'+T_COLOR+';':'')+(T_LH?'line-height:'+T_LH+';':'');
   var sh=T_SH_BOOL?'text-shadow:0 2px 12px rgba(0,0,0,.4);':'';
   var safeBg=safeBgUrl(st.customBackground);
-  var bg=safeBg?(isVideoBg(safeBg)?'<video class="bg-image" src="'+escAttr(safeBg)+'" autoplay loop muted playsinline crossorigin="anonymous" onerror="this.style.display=\\'none\\'"></video><div class="bg-overlay"></div>':'<img class="bg-image" src="'+escAttr(safeBg)+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>'):'';
+  // v0.7.187 — BG image/video moved to persistent #bgLayer (see ~L562
+  // setBgVid). Only the dim overlay is emitted inline so the slide
+  // content stays readable against custom backgrounds. setBgVid is
+  // invoked at every render exit so the layer always matches the
+  // currently-rendered bg URL. The .lt-bg path below (LT branch) keeps
+  // its OWN inline tag — it sits inside the chyron card, not behind it,
+  // so the persistent-layer architecture does not apply.
+  var bg=safeBg?'<div class="bg-overlay"></div>':'';
+  var themeBg=safeBg?'background:transparent;':'';
   // Reference typography (Bug #5): the operator now has independent
   // controls for the reference label. Each field falls back to the
   // body equivalent when unset so persisted settings keep working.
@@ -1111,6 +1201,7 @@ function render(s){
     var inner=ar
       ? '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#000"><div style="aspect-ratio:'+ar+';max-width:100%;max-height:100%;width:100%">'+mediaTag+'</div></div>'
       : mediaTag;
+    setBgVid(''); // v0.7.187 — foreground media owns the surface; hide BG layer
     $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:#000">'+inner+'</div>';
     $('output').classList.remove('hidden');
     if(slide.mediaKind==='video'){
@@ -1350,7 +1441,8 @@ function render(s){
     var fsTheme=tc;
     var fsBg=bg;
     var fsOrdered=refOrderTop?(ref+txt):(txt+ref);
-    $('output').innerHTML='<div class="'+fsTheme+'" style="width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';'+fontStyle+'">'+fsBg+'<div class="slide-content" style="text-align:'+ta+';'+fontStyle+'">'+fsOrdered+'</div></div>';
+    setBgVid(safeBg);
+    $('output').innerHTML='<div class="'+fsTheme+'" style="'+themeBg+'width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';'+fontStyle+'">'+fsBg+'<div class="slide-content" style="text-align:'+ta+';'+fontStyle+'">'+fsOrdered+'</div></div>';
   }
   $('output').classList.remove('hidden');
   // v0.7.182 — fire autofit AFTER layout settles. rAF guarantees the
