@@ -1,6 +1,6 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.7.190-hotfix.2",
+  "version": "0.7.191",
   "private": true,
   "main": "dist-electron/main.js",
   "repository": {
