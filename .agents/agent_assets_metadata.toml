@@ -1265,3 +1265,9 @@ id = "we4s-C99FS0rrNhDFjxdP"
 uri = "file://screenshots/lt-options.jpg"
 type = "image"
 title = "Lower-Third Frame Options vs. Red-Box Target"
+
+[[outputs]]
+id = "tTiJ7JwkkuiYZz76rvNS4"
+uri = "file://screenshots/lt-proposed.jpg"
+type = "image"
+title = "Proposed LT spec — BEFORE vs AFTER"

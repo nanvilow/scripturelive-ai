@@ -1,87 +1,85 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>LT Frame Options</title>
+<html><head><meta charset="utf-8"><title>LT Proposed Spec</title>
 <style>
   * { box-sizing: border-box; margin:0; padding:0; }
   body { background:#0a0a0a; color:#fff; font-family:ui-sans-serif,system-ui,sans-serif; padding:24px; }
   h1 { font-size:20px; font-weight:700; margin-bottom:6px; }
-  .sub { color:#9ca3af; font-size:13px; margin-bottom:24px; }
-  .grid { display:grid; grid-template-columns: 1fr 1fr; gap:24px; }
+  .sub { color:#9ca3af; font-size:13px; margin-bottom:20px; }
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap:24px; max-width:1700px; }
   .card { background:#111; border:1px solid #262626; border-radius:12px; padding:16px; }
   .card h2 { font-size:15px; font-weight:600; margin-bottom:4px; }
   .card .meta { font-size:12px; color:#9ca3af; margin-bottom:12px; }
-  /* simulated 1920x1080 frame, scaled */
   .frame { position:relative; width:100%; aspect-ratio:16/9;
     background:url('https://images.unsplash.com/photo-1438232992991-995b7058bbb3?auto=format&fit=crop&w=1280&q=60') center/cover, #1f2937;
     border-radius:8px; overflow:hidden; }
   .frame::after { content:''; position:absolute; inset:0; background:rgba(0,0,0,.25); }
   .ltbar { position:absolute; left:0; right:0; z-index:2;
     background:linear-gradient(135deg,#0a0a0a,#171717);
-    border-radius:1.25rem; box-shadow:0 8px 28px rgba(0,0,0,.45);
-    padding: 1.5% 3%; display:flex; flex-direction:column; justify-content:center; overflow:hidden; }
-  .ltref { font-size:11px; font-weight:700; opacity:.9; margin-bottom:4px; }
-  .lttext { font-weight:600; line-height:1.25; color:#fff; text-shadow:0 2px 12px rgba(0,0,0,.4); }
-  /* Current Large: 45% h, 6% bottom margin, side margins via card padding */
-  .opt-current .ltbar { bottom:6%; height:45%; margin:0 5%; width:90%; }
-  .opt-current .lttext { font-size:22px; }
-  /* Option A: NEW XL bucket = 60% height, same 6% margin, same side margins */
-  .opt-a .ltbar { bottom:6%; height:60%; margin:0 5%; width:90%; }
-  .opt-a .lttext { font-size:30px; }
-  /* Option B: Large bucket but FLUSH to bottom edge AND full width (no margins) */
-  .opt-b .ltbar { bottom:0; height:45%; margin:0; width:100%; border-radius:0; }
-  .opt-b .lttext { font-size:26px; font-weight:700; }
-  /* Option C: NEW XL bucket + FLUSH = 60% height, edge to edge */
-  .opt-c .ltbar { bottom:0; height:60%; margin:0; width:100%; border-radius:0; }
-  .opt-c .lttext { font-size:34px; font-weight:700; }
-  /* Red box overlay matches operator's screenshot */
-  .redbox { position:absolute; left:1%; right:1%; bottom:3%; height:35%;
+    box-shadow:0 8px 28px rgba(0,0,0,.45);
+    display:flex; flex-direction:column; justify-content:center; overflow:hidden; }
+  .ltref { font-weight:700; opacity:.95; }
+  .lttext { font-weight:700; line-height:1.2; color:#fff; text-shadow:0 2px 12px rgba(0,0,0,.4); }
+
+  /* CURRENT (Large bucket today) */
+  .opt-current .ltbar { bottom:6%; height:45%; left:5%; right:5%; border-radius:1.25rem; padding:1.5% 3%; }
+  .opt-current .ltref { font-size:12px; margin-bottom:4px; }
+  .opt-current .lttext { font-size:22px; font-weight:600; }
+
+  /* PROPOSED — your red-box spec */
+  .opt-new .ltbar { bottom:3%; height:35%; left:1%; right:1%; border-radius:.5rem; padding:1.2% 2%; }
+  .opt-new .ltref { font-size:14px; margin-bottom:6px; }
+  .opt-new .lttext { font-size:38px; font-weight:700; }
+
+  /* outer red box = bar target */
+  .redbox-outer { position:absolute; left:1%; right:1%; bottom:3%; height:35%;
     border:3px solid #ef4444; border-radius:6px; z-index:3; pointer-events:none; }
-  .legend { margin-top:8px; font-size:11px; color:#9ca3af; }
-  .legend span { color:#ef4444; }
+  /* inner thin red box = text fill area */
+  .redbox-inner { position:absolute; left:2.5%; right:2.5%; bottom:6%; height:27%;
+    border:1.5px solid #ef4444; border-radius:4px; z-index:4; pointer-events:none; }
+
+  .legend { margin-top:8px; font-size:12px; color:#d1d5db; }
+  .legend b { color:#fff; }
+  .legend .r { color:#ef4444; }
 </style></head>
 <body>
-<h1>Lower-Third Frame — Options vs. your red-box target</h1>
-<div class="sub">Each frame is a simulated 1920×1080 NDI output. Red box = the area you marked in your screenshot.</div>
+<h1>Proposed Lower-Third spec — confirm before I ship</h1>
+<div class="sub">Left = how it looks today on "Large". Right = the proposed change matching your red-box marks.</div>
 <div class="grid">
 
   <div class="card opt-current">
-    <h2>Current — "Large" bucket (lh=lg)</h2>
-    <div class="meta">height 45% · bottom margin 6% · side margins 5% · text auto-fits up to 2.50×</div>
+    <h2>BEFORE — current "Large" (lh=lg)</h2>
+    <div class="meta">height 45% · bottom 6% · sides 5% · rounded · weight 600 · autofit cap 2.50×</div>
     <div class="frame">
       <div class="ltbar"><div class="ltref">Esther 5:1 — KJV</div><div class="lttext">Now it came to pass on the third day, that Esther put on her royal apparel, and stood in the inner court of the king's house.</div></div>
-      <div class="redbox"></div>
     </div>
-    <div class="legend">Bar is smaller than your <span>red target</span>.</div>
+    <div class="legend">Bar is centered, narrower, smaller text.</div>
   </div>
 
-  <div class="card opt-a">
-    <h2>Option A — NEW "Extra Large" bucket (lh=xl)</h2>
-    <div class="meta">height 60% · bottom margin 6% · side margins 5% · autofit raised to 3.50×</div>
+  <div class="card opt-new">
+    <h2>AFTER — proposed "lh=lg" new geometry + bold autofit</h2>
+    <div class="meta">height 35% · bottom 3% · sides 1% · slight rounding · weight 700 · autofit cap 3.50×</div>
     <div class="frame">
       <div class="ltbar"><div class="ltref">Esther 5:1 — KJV</div><div class="lttext">Now it came to pass on the third day, that Esther put on her royal apparel, and stood in the inner court of the king's house.</div></div>
-      <div class="redbox"></div>
+      <div class="redbox-outer"></div>
+      <div class="redbox-inner"></div>
     </div>
-    <div class="legend">Bigger bar, keeps rounded card + margins. Adds an XL button to the picker.</div>
+    <div class="legend">
+      <span class="r">Outer red</span> = the bar frame · <span class="r">Inner red</span> = where the text fills bold &amp; visible. Matches what you marked.
+    </div>
   </div>
 
-  <div class="card opt-b">
-    <h2>Option B — Drop margins (flush to edges)</h2>
-    <div class="meta">height 45% · bottom 0 · side 0 · square corners · text bumped to 700 weight</div>
-    <div class="frame">
-      <div class="ltbar"><div class="ltref">Esther 5:1 — KJV</div><div class="lttext">Now it came to pass on the third day, that Esther put on her royal apparel, and stood in the inner court of the king's house.</div></div>
-      <div class="redbox"></div>
-    </div>
-    <div class="legend">Same height bucket, but bar stretches edge-to-edge. Loses the rounded chyron look.</div>
-  </div>
+</div>
 
-  <div class="card opt-c">
-    <h2>Option C — XL bucket + flush (BOTH)</h2>
-    <div class="meta">height 60% · bottom 0 · side 0 · square corners · 700 weight · autofit 3.50×</div>
-    <div class="frame">
-      <div class="ltbar"><div class="ltref">Esther 5:1 — KJV</div><div class="lttext">Now it came to pass on the third day, that Esther put on her royal apparel, and stood in the inner court of the king's house.</div></div>
-      <div class="redbox"></div>
-    </div>
-    <div class="legend">Maximum size — fully fills your <span>red target</span>. Best for streaming legibility.</div>
-  </div>
-
+<div style="max-width:1700px; margin-top:24px; padding:16px; background:#111; border:1px solid #262626; border-radius:12px;">
+  <h2 style="font-size:14px; font-weight:600; margin-bottom:8px;">Exact change list (if you say YES SHIP)</h2>
+  <ul style="font-size:13px; color:#d1d5db; line-height:1.7; padding-left:20px;">
+    <li><b>Lower-third bar geometry</b> (route.ts ~L1415, L1454): height bucket <code>lg</code> 45 → <b>35%</b>, bottom inset 6% → <b>3%</b>, side insets 5% → <b>1%</b>, border-radius 1.25rem → <b>.5rem</b>. <code>sm</code>/<code>md</code> buckets unchanged.</li>
+    <li><b>Text weight</b> (route.ts L188): <code>.lt-box .slide-text</code> font-weight 600 → <b>700</b> (streaming legibility).</li>
+    <li><b>Autofit cap</b> (route.ts ~L850 binary-search upper bound): 2.50× → <b>3.50×</b> so short verses ("Jesus wept") really fill the wider bar.</li>
+    <li><b>NDI parity</b> auto-applies — OBS Browser Source URL re-renders identically (same <code>?ndi=1&amp;lh=lg…</code> URL).</li>
+    <li><b>Version bump</b>: 0.7.191 → <b>0.7.192</b> (package.json + BUILD.bat banner).</li>
+    <li><b>replit.md</b>: add v0.7.192 entry at top of Recent, demote v0.7.190 / v0.7.190-hotfix.2 to one-liners.</li>
+  </ul>
+  <p style="font-size:12px; color:#9ca3af; margin-top:10px;">No other changes. NDI isolation from v0.7.191 is preserved (NDI_DEFAULTS still controls typography, this only changes the BOX geometry + a global text weight + the autofit cap).</p>
 </div>
 </body></html>
