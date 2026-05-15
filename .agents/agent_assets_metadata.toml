@@ -1247,3 +1247,9 @@ id = "jcEXcoBCRGod158ahhvEG"
 uri = "file://screenshots/bgvid-fix-proof.jpg"
 type = "image"
 title = "v0.7.187 BG-video fix proof"
+
+[[outputs]]
+id = "WVgBVPGDvnLlFwfenruID"
+uri = "file://screenshots/lt-autofit-fill-proof.jpg"
+type = "image"
+title = "v0.7.187.1 NDI LT autofit fill proof"

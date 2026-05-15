@@ -753,7 +753,29 @@ function applyRender(s){
 // in 99.9% of cases; in the rare collision the worst outcome is the
 // new verse renders at the previous verse's scale until the next
 // genuine slide change corrects it).
-var __fitKey='', __fitScale=1;
+// v0.7.187.1 — autofit now SCALES TO FILL on the NDI lower-third
+// surface (operator complaint: "autofit shrinks but text is too small
+// to read; let it spread across the whole lower-third frame"). The
+// fullscreen branch keeps shrink-only behaviour (no balloon for short
+// verses on the main display).
+//
+// Implementation: binary search on font-size rather than transform-
+// scale. Reasons:
+//   (1) transform: scale(k>1) doesn't change the layout box, so the
+//       wrap width stays at clientWidth and the visual width spills
+//       horizontally. Font-size growth re-flows correctly inside
+//       clientWidth — which is what we want for "fill the bar".
+//   (2) Both height AND width constraints are honoured naturally
+//       (search rejects any size where scrollHeight>avail OR
+//       scrollWidth>clientWidth) — fullscreen branch already cared
+//       about width too (long single-line refs).
+//   (3) Cache key includes parent dimensions so a re-render at the
+//       same key reapplies the cached pixel size without re-searching.
+//
+// Bounds:
+//   isLT  → [0.60, 2.50]  (grow short verses up to 2.5× the CSS base)
+//   else  → [0.60, 1.00]  (shrink-only, identical to v0.7.184.2)
+var __fitKey='', __fitScale=1, __fitBase=0;
 function fitVerseText(){
   try{
     var p=document.querySelector('#output .slide-paragraph');
@@ -761,59 +783,62 @@ function fitVerseText(){
     var parent=p.parentElement;
     if(!parent)return;
     var key=(p.textContent||'').length+'|'+parent.clientWidth+'x'+parent.clientHeight;
-    if(key===__fitKey){
-      // LOCKED — same verse + same frame. Reapply cached scale directly
-      // without re-measuring (avoids the rounding-flip micro-flash).
-      // We still have to write the transform because the <p> was just
-      // recreated by the latest innerHTML assignment.
-      p.style.transformOrigin='top center';
-      if(__fitScale<1) p.style.transform='scale('+__fitScale.toFixed(3)+')';
+    if(key===__fitKey && __fitBase>0){
+      // LOCKED — same verse + same frame. Reapply cached pixel size
+      // directly without re-searching. Must rewrite because the <p>
+      // was just recreated by the latest innerHTML assignment.
+      p.style.transform='';
+      p.style.fontSize=(__fitBase*__fitScale).toFixed(2)+'px';
       return;
     }
-    // New key → measure + recompute.
     __fitKey=key;
+    // Reset both legacy transform AND inline font-size so we measure
+    // against the CSS-declared baseline (T_FS in the renderer route).
     p.style.transform='';
-    p.style.transformOrigin='top center';
-    // v0.7.184.2 — Measure the VERSE PARAGRAPH'S OWN scrollHeight, not
-    // parent.scrollHeight. Operator-reported bug: NDI lower-third
-    // surface never auto-fit (verse text overflowed and got clipped by
-    // the bar's overflow:hidden). Root cause: in the LT branch, the
-    // verse <p>'s parent is .lt-content which is
-    //   display:flex; flex-direction:column; overflow:hidden;
-    // Under flex-shrink, the <p> child's LAYOUT BOX (offsetHeight)
-    // collapses to its min-content size (~1 line). parent.scrollHeight
-    // sums children's layout-box heights, not their internal overflow,
-    // so parent.scrollHeight ≈ parent.clientHeight even when the verse
-    // text inside <p> is overflowing massively. Result: actual<=avail
-    // always → bail at scale(1) → no autofit. The fullscreen branch
-    // worked because .slide-content has no overflow:hidden, so flex
-    // didn't shrink the <p>, so parent.scrollHeight included the
-    // overflow.
-    //
-    // p.scrollHeight is unaffected by the parent's flex-shrink because
-    // <p> itself has overflow:visible — its scrollHeight reports the
-    // full wrapped text height even when its layout box is collapsed.
-    // This single measurement now works for BOTH surfaces (LT + full).
-    //
-    // We also subtract sibling heights (the .slide-reference chyron
-    // that sits above or below the verse inside the same parent) from
-    // the available space, so the shrink target is "what the verse can
-    // actually use" rather than "the whole parent including the ref".
-    // This is also a strict improvement for the fullscreen path: the
-    // old math k=clientH/(verse+ref) under-corrected because applying
-    // scale to the verse alone doesn't shrink the ref's reserved space
-    // — new math k=(clientH-ref)/verse is exact.
+    p.style.fontSize='';
+    var baseStr=window.getComputedStyle(p).fontSize;
+    var baseSize=parseFloat(baseStr)||16;
+    __fitBase=baseSize;
+    // Available height: parent.clientHeight minus sibling heights
+    // (.slide-reference chyron sits above-or-below the verse inside
+    // the same flex container; its layout box is fixed even when we
+    // grow the verse). Width bound is parent.clientWidth — both LT
+    // and fullscreen wrap at parent width.
     var avail=parent.clientHeight;
     for(var i=0;i<parent.children.length;i++){
       if(parent.children[i]!==p) avail-=parent.children[i].offsetHeight;
     }
-    var actual=p.scrollHeight;
-    if(!avail||!actual||actual<=avail){ __fitScale=1; return; }
-    var k=(avail/actual)*0.98;
-    if(k<0.60)k=0.60;
-    __fitScale=k;
-    if(k>=1)return;
-    p.style.transform='scale('+k.toFixed(3)+')';
+    var availW=parent.clientWidth;
+    if(avail<=0||availW<=0){ __fitScale=1; return; }
+    // Detect LT context. The verse <p>'s parent is .lt-content (flex
+    // column, overflow:hidden) when rendered through the LT branch in
+    // route.ts ~L1359. Fullscreen verses live inside .slide-content.
+    // closest() includes self so this catches both .lt-content and
+    // any .lt-box ancestor reliably.
+    var isLT=!!(parent.closest && (parent.closest('.lt-content')||parent.closest('.lt-box')));
+    var minK=0.60;
+    var maxK=isLT?2.50:1.00;
+    // Binary search the largest scale factor where BOTH dimensions
+    // fit. 10 iterations gives ~0.001 precision on [0.60, 2.50] which
+    // is well below a single-pixel rounding error at typical sizes.
+    // Each iteration writes fontSize and reads scrollHeight/Width —
+    // forces one layout pass on this <p> only, ~0.05 ms per pass on
+    // the secondary screen. Total work per verse change: ~0.5 ms.
+    var lo=minK, hi=maxK, best=minK;
+    var safety=0.98;
+    for(var j=0;j<10;j++){
+      var mid=(lo+hi)/2;
+      p.style.fontSize=(baseSize*mid).toFixed(2)+'px';
+      var h=p.scrollHeight;
+      var w=p.scrollWidth;
+      if(h<=avail*safety && w<=availW){
+        best=mid; lo=mid;
+      } else {
+        hi=mid;
+      }
+    }
+    __fitScale=best;
+    p.style.fontSize=(baseSize*best).toFixed(2)+'px';
   }catch(e){}
 }
 // Resize is throttled to 16 ms (one frame) — fitVerseText itself is

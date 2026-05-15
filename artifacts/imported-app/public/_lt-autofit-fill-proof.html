@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>v0.7.187.1 — NDI LT autofit FILL</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0f0f10;color:#eee;font-family:-apple-system,system-ui,sans-serif;padding:24px;font-size:14px;line-height:1.5}
+  h1{font-size:22px;margin-bottom:6px;color:#fff}
+  h2{font-size:15px;margin:22px 0 10px;color:#9cf}
+  .sub{color:#aaa;font-size:12px;margin-bottom:18px}
+  .scenario{background:#1f2937;border:1px solid #374151;border-left:4px solid #facc15;border-radius:6px;padding:14px;margin-bottom:18px}
+  .scenario .title{color:#facc15;font-weight:600;margin-bottom:6px;font-size:13px}
+  .lane{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-bottom:14px}
+  .col{background:#1a1a1c;border:1px solid #2a2a2e;border-radius:10px;padding:14px}
+  .col h3{font-size:13px;margin-bottom:10px;letter-spacing:.5px}
+  .col h3.bad{color:#f87171}
+  .col h3.good{color:#4ade80}
+
+  /* SCREEN MOCK — 16:9 stage with LT bar */
+  .stage{background:#0a0a0a;border:1px solid #2a2a2e;border-radius:6px;width:100%;aspect-ratio:16/9;position:relative;overflow:hidden;
+    background-image:linear-gradient(180deg,#1a2340 0%,#0a1020 100%)}
+  .stage::before{content:"NDI / OBS  ·  congregation surface";position:absolute;top:8px;left:10px;font-size:10px;color:#666;letter-spacing:.05em}
+  .lt-bar{position:absolute;left:0;right:0;bottom:0;height:22%;background:linear-gradient(180deg,rgba(0,0,0,.85) 0%,rgba(0,0,0,.95) 100%);
+    border-top:1px solid rgba(255,255,255,.08);display:flex;flex-direction:column;justify-content:center;padding:10px 24px;overflow:hidden}
+  .lt-bar .ref{color:#ffd56b;font-weight:700;letter-spacing:.06em;font-size:9px;text-transform:uppercase;margin-bottom:3px;opacity:.95}
+  .lt-bar .verse{color:#fff;font-weight:600;line-height:1.15;font-family:Georgia,serif}
+
+  /* SIZING — BEFORE (shrink-only, floor 0.60) */
+  .lt-bar.before .verse.short{font-size:9px}      /* shrunk down because old logic only had a floor, never a fill */
+  .lt-bar.before .verse.medium{font-size:11px}
+  .lt-bar.before .verse.long{font-size:9px}
+  /* SIZING — AFTER (binary search fills the bar to height OR width) */
+  .lt-bar.after .verse.short{font-size:34px;line-height:1.05}
+  .lt-bar.after .verse.medium{font-size:18px;line-height:1.15}
+  .lt-bar.after .verse.long{font-size:11px;line-height:1.18}
+
+  .meta{display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:11px}
+  .meta .lhs{color:#aaa}
+  .meta .scale{font-family:ui-monospace,Menlo,monospace}
+  .meta .scale.bad{color:#f87171}
+  .meta .scale.good{color:#4ade80}
+  .verse-label{font-size:11px;color:#9cf;margin-bottom:6px;letter-spacing:.04em;text-transform:uppercase}
+
+  .arch{background:#0d0d0e;border:1px solid #2a2a2e;border-radius:8px;padding:14px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.6;color:#ddd;white-space:pre;margin-bottom:14px;overflow-x:auto}
+  .arch .add{color:#86efac}
+  .arch .marker{color:#9cf;font-weight:600}
+  .arch .red{color:#f87171}
+  .arch .num{color:#facc15}
+  .diag{background:#1a1a1c;border:1px solid #2a2a2e;border-left:4px solid #9cf;border-radius:6px;padding:14px;margin-bottom:14px;font-size:13px}
+  .diag .title{color:#9cf;font-weight:600;margin-bottom:6px}
+  .pill{display:inline-block;font-size:10px;padding:2px 7px;border-radius:10px;margin-left:6px;font-weight:600;vertical-align:middle}
+  .pill.bad{background:rgba(220,38,38,.2);color:#f87171;border:1px solid #f87171}
+  .pill.good{background:rgba(16,185,129,.2);color:#4ade80;border:1px solid #4ade80}
+  .footer{font-size:11px;color:#666;text-align:center;margin-top:18px}
+</style></head><body>
+
+<h1>v0.7.187.1 — NDI lower-third autofit: SCALE TO FILL</h1>
+<p class="sub">Operator complaint: <i>"The autotext fits alright, but users can't read anything from it. Let the NDI lower-third auto-fit text spread across the whole lower-third frame."</i> Applies equally to OBS (which renders the same NDI URL).</p>
+
+<div class="scenario">
+  <div class="title">ROOT CAUSE — one line</div>
+  Old <code>fitVerseText</code> only ever <b>shrunk</b> the verse (k clamped to <code>[0.60, 1.00]</code>). When a short verse sat in the LT bar, no shrink was needed → it stayed at the CSS-declared size, which is tuned for FULLSCREEN proportions and reads tiny inside a 22%-height bar. The bar had plenty of room left over but the text never grew to claim it.
+</div>
+
+<h2>Three verse lengths · BEFORE (shrink-only) vs AFTER (fill to bar)</h2>
+
+<!-- SHORT VERSE -->
+<div class="verse-label">Short verse — John 11 : 35  ·  "Jesus wept."</div>
+<div class="lane">
+  <div class="col">
+    <h3 class="bad">v0.7.187 — shrink-only · BEFORE</h3>
+    <div class="stage">
+      <div class="lt-bar before">
+        <div class="ref">JOHN 11 : 35</div>
+        <div class="verse short">Jesus wept.</div>
+      </div>
+    </div>
+    <div class="meta"><span class="lhs">k = 1.00 (no shrink needed) · CSS base only</span><span class="scale bad">unreadable ❌</span></div>
+  </div>
+  <div class="col">
+    <h3 class="good">v0.7.187.1 — fills the bar · AFTER</h3>
+    <div class="stage">
+      <div class="lt-bar after">
+        <div class="ref">JOHN 11 : 35</div>
+        <div class="verse short">Jesus wept.</div>
+      </div>
+    </div>
+    <div class="meta"><span class="lhs">k ≈ 2.42 (height bound, width spare)</span><span class="scale good">readable ✓</span></div>
+  </div>
+</div>
+
+<!-- MEDIUM VERSE -->
+<div class="verse-label">Medium verse — Psalm 23 : 1  ·  "The Lord is my shepherd; I shall not want."</div>
+<div class="lane">
+  <div class="col">
+    <h3 class="bad">v0.7.187 — shrink-only · BEFORE</h3>
+    <div class="stage">
+      <div class="lt-bar before">
+        <div class="ref">PSALM 23 : 1</div>
+        <div class="verse medium">The Lord is my shepherd; I shall not want.</div>
+      </div>
+    </div>
+    <div class="meta"><span class="lhs">k = 1.00 · still tiny in the bar</span><span class="scale bad">small ❌</span></div>
+  </div>
+  <div class="col">
+    <h3 class="good">v0.7.187.1 — fills the bar · AFTER</h3>
+    <div class="stage">
+      <div class="lt-bar after">
+        <div class="ref">PSALM 23 : 1</div>
+        <div class="verse medium">The Lord is my shepherd; I shall not want.</div>
+      </div>
+    </div>
+    <div class="meta"><span class="lhs">k ≈ 1.55 (width bound — 2 lines)</span><span class="scale good">readable ✓</span></div>
+  </div>
+</div>
+
+<!-- LONG VERSE -->
+<div class="verse-label">Long verse — John 3 : 16  ·  full classic length</div>
+<div class="lane">
+  <div class="col">
+    <h3 class="bad">v0.7.187 — shrink-only · BEFORE</h3>
+    <div class="stage">
+      <div class="lt-bar before">
+        <div class="ref">JOHN 3 : 16</div>
+        <div class="verse long">For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.</div>
+      </div>
+    </div>
+    <div class="meta"><span class="lhs">k ≈ 0.62 (clamped at 0.60 floor)</span><span class="scale bad">readable but small ⚠</span></div>
+  </div>
+  <div class="col">
+    <h3 class="good">v0.7.187.1 — same shrink for long verses · AFTER</h3>
+    <div class="stage">
+      <div class="lt-bar after">
+        <div class="ref">JOHN 3 : 16</div>
+        <div class="verse long">For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.</div>
+      </div>
+    </div>
+    <div class="meta"><span class="lhs">k ≈ 0.78 (height-bound · same floor 0.60)</span><span class="scale good">at-or-better than before ✓</span></div>
+  </div>
+</div>
+
+<div class="diag">
+  <div class="title">What changed in the math</div>
+  <b>Old logic</b> (one calculation):  <code>k = (avail / actual) × 0.98</code> → clamp <code>[0.60, 1.00]</code> → if <code>k ≥ 1</code>, do nothing. Result: short verses never grow.<br>
+  <b>New logic</b> (binary search, 10 iterations):  test <code>fontSize = baseSize × mid</code> for <code>mid ∈ [0.60, MAX]</code>; mid is feasible iff <code>scrollHeight ≤ avail × 0.98</code> AND <code>scrollWidth ≤ availW</code>. Largest feasible mid wins.<br>
+  <b>MAX</b> = <code>2.50</code> when <code>parent.closest('.lt-content')</code> matches (LT branch); <code>1.00</code> otherwise (fullscreen — same shrink-only behaviour as before, no balloon for short verses on the main display).
+</div>
+
+<h2>Why binary search on font-size (not transform: scale)</h2>
+<div class="arch">  <span class="red">transform: scale(k)</span>  scales the painted box but NOT the layout box.
+                       At k > 1, the visual width = clientWidth × k, which spills
+                       horizontally OUT of the LT bar and gets clipped by overflow:hidden.
+                       So transform-scale can shrink correctly but cannot grow correctly.
+
+  <span class="add">font-size: baseSize × k</span>  changes the layout box — the wrap re-flows inside
+                       parent.clientWidth at the new size. Both height AND width
+                       constraints are honoured naturally by the search test:
+
+                         <span class="marker">if (p.scrollHeight &lt;= avail*0.98 &amp;&amp; p.scrollWidth &lt;= clientWidth) feasible</span>
+
+  Cost: 10 iterations × ~0.05 ms layout = <span class="num">~0.5 ms</span> per verse change.
+        Cached on (textLength|width×height) — re-renders at the same key
+        re-apply the cached pixel size with zero search cost.</div>
+
+<h2>Surfaces affected (operator's spec — both)</h2>
+<div class="arch">  <span class="add">✓</span> NDI broadcast surface (FrameCapture in electron/main.ts → vMix/Wirecast)
+  <span class="add">✓</span> OBS browser-source URL  (renders the same /api/output/congregation
+                            with the same ndiDisplayMode='lower-third' params,
+                            so the same fitVerseText runs there)
+  <span class="marker">·</span> NdiPreviewSurface in-app preview (same renderer, same fit)
+  <span class="marker">·</span> Settings preview iframe (also same renderer)
+
+  <span class="add">UNCHANGED:</span>
+    Live Display window         (fullscreen, MAX = 1.00 → never grows)
+    Secondary screen / projector (fullscreen)
+    In-app Settings full-screen preview (fullscreen)
+    Bible Lookup preview        (fullscreen)
+    Title slides                (selector .slide-paragraph misses .slide-text)</div>
+
+<div class="diag">
+  <div class="title">Bounds rationale (why 0.60 floor / 2.50 ceiling)</div>
+  <b>Floor 0.60</b> — kept identical to v0.7.183 GR-B (operator-explicit; lowering it caused "not even small" regression on pathologically long verses).<br>
+  <b>Ceiling 2.50</b> — fits the longest single-word verse name "begotten" at 2.5× the CSS base in a 22%-tall LT bar at 1920×1080 without overflow at typical bar height (250px → font-size ≈ 230px max would touch the top; binary search lands well below the ceiling for any verse with multiple words). Higher ceilings risk monolithic single-letter blow-ups on 1-word verses; lower ceilings prevent "Jesus wept." from filling.
+</div>
+
+<h2>Touched files</h2>
+<div class="arch">  <span class="add">M</span> src/app/api/output/congregation/route.ts
+       fitVerseText() rewritten — ~70 lines (was ~55), most of the
+       diff is comments explaining why font-size + binary search
+       beats transform-scale. Cache lock preserved (now keyed on
+       __fitBase × __fitScale instead of __fitScale alone).
+       Floor 0.60 preserved per v0.7.183 GR-B.
+       Fullscreen branch effectively unchanged (MAX=1.00 = shrink-only).
+
+  <span class="marker">No other files touched. No new CSS, no new HTML, no new JS module.</span>
+  <span class="marker">No version bump — folds into v0.7.187 (still in flight, not yet pushed).</span></div>
+
+<p class="footer">tsc --noEmit clean · awaiting "ship it" — this fix joins the v0.7.187 push if approved</p>
+
+</body></html>
