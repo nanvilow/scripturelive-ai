@@ -1055,6 +1055,31 @@ function render(s){
      -- that pattern catches lower-third AND lower-third-black. */
   var USE_NDI_OVERRIDES = IS_NDI;
   var USE_LT_OVERRIDES = !IS_NDI && dm && dm.indexOf('lower-third')===0;
+  // v0.7.191 — NDI factory defaults. The NDI broadcast feed must NEVER
+  // inherit the operator's in-app typography settings. Pre-v0.7.191 every
+  // ndi* knob fell back to the matching app setting when unset
+  // ("st.ndiFontSize ? st.ndiFontSize : st.fontSize"), so any tweak in
+  // Settings → Typography silently bled through to the NDI capture window
+  // — exactly what the operator complained about. Now the chain is:
+  //   IS_NDI=true   → ndi* override OR NDI_DEFAULTS (NEVER touches body/LT)
+  //   IS_NDI=false  → existing LT-or-body chain (unchanged)
+  // To make NDI different from the defaults, the operator sets the
+  // parallel ndi* field via the NDI Output panel; an unset ndi* now means
+  // "use NDI_DEFAULTS", not "copy from app".
+  var NDI_DEFAULTS = {
+    fontFamily: 'sans-serif',
+    fontSize: 'lg',
+    textShadow: true,
+    textScale: 1.0,
+    textAlign: 'center',
+    bibleColor: '#FFFFFF',
+    bibleLineHeight: 1.4,
+    refSize: 'md',
+    refStyle: 'normal',
+    refPosition: 'top',
+    refScale: 1.0,
+    lowerThirdScale: 1.0
+  };
   // v0.5.57 — NDI surface gets its own aspect ratio when set.
   // 'auto' or undefined → fall back to displayRatio (Live Display).
   var AR=(IS_NDI && st.ndiAspectRatio && st.ndiAspectRatio!=='auto')
@@ -1101,22 +1126,28 @@ function render(s){
   // fallback). Exactly one of USE_NDI_OVERRIDES / USE_LT_OVERRIDES
   // can be true at a time, and full-screen mode passes through to
   // body unchanged.
-  var T_FF=(USE_NDI_OVERRIDES && st.ndiFontFamily) ? st.ndiFontFamily
+  var T_FF=USE_NDI_OVERRIDES
+    ? (st.ndiFontFamily || NDI_DEFAULTS.fontFamily)
     : ((USE_LT_OVERRIDES && st.lowerThirdFontFamily) ? st.lowerThirdFontFamily : st.fontFamily);
-  var T_FS=(USE_NDI_OVERRIDES && st.ndiFontSize) ? st.ndiFontSize
+  var T_FS=USE_NDI_OVERRIDES
+    ? (st.ndiFontSize || NDI_DEFAULTS.fontSize)
     : ((USE_LT_OVERRIDES && st.lowerThirdFontSize) ? st.lowerThirdFontSize : (st.fontSize||'lg'));
-  var T_SH_BOOL=(USE_NDI_OVERRIDES && (typeof st.ndiTextShadow==='boolean')) ? st.ndiTextShadow
+  var T_SH_BOOL=USE_NDI_OVERRIDES
+    ? (typeof st.ndiTextShadow==='boolean' ? st.ndiTextShadow : NDI_DEFAULTS.textShadow)
     : ((USE_LT_OVERRIDES && (typeof st.lowerThirdTextShadow==='boolean')) ? st.lowerThirdTextShadow : (st.textShadow!==false));
-  var T_TS=(USE_NDI_OVERRIDES && (typeof st.ndiTextScale==='number')) ? st.ndiTextScale
+  var T_TS=USE_NDI_OVERRIDES
+    ? (typeof st.ndiTextScale==='number' ? st.ndiTextScale : NDI_DEFAULTS.textScale)
     : ((USE_LT_OVERRIDES && (typeof st.lowerThirdTextScale==='number')) ? st.lowerThirdTextScale : (typeof st.textScale==='number'?st.textScale:1));
-  var T_TA=(USE_NDI_OVERRIDES && st.ndiTextAlign) ? st.ndiTextAlign
+  var T_TA=USE_NDI_OVERRIDES
+    ? (st.ndiTextAlign || NDI_DEFAULTS.textAlign)
     : ((USE_LT_OVERRIDES && st.lowerThirdTextAlign) ? st.lowerThirdTextAlign : (st.textAlign||'center'));
   // v0.5.57 — NDI-only bible body color + line-height. Both are
   // pure CSS overrides applied to the .slide-text node only when
   // IS_NDI is true; the secondary screen keeps the theme defaults.
   // v0.7.167 — LT surfaces get their own color/line-height overrides
   // too, gated on USE_LT_OVERRIDES.
-  var T_COLOR=(USE_NDI_OVERRIDES && st.ndiBibleColor) ? st.ndiBibleColor
+  var T_COLOR=USE_NDI_OVERRIDES
+    ? (st.ndiBibleColor || NDI_DEFAULTS.bibleColor)
     : ((USE_LT_OVERRIDES && st.lowerThirdBibleColor) ? st.lowerThirdBibleColor : '');
   // v0.6.9 — Bible line-height now has a Live Display source too.
   // NDI override > LT override > Live Display setting > 0 (no
@@ -1130,8 +1161,10 @@ function render(s){
   // text, not the frame is ok"). NDI branch (st.ndiBibleLineHeight)
   // is UNCHANGED — broadcast feed keeps 0.9 floor so vMix/OBS-NDI
   // operators can still go tight when their own framing demands it.
-  var T_LH=(USE_NDI_OVERRIDES && typeof st.ndiBibleLineHeight==='number')
-    ? Math.min(2.5, Math.max(0.9, st.ndiBibleLineHeight))
+  var T_LH=USE_NDI_OVERRIDES
+    ? (typeof st.ndiBibleLineHeight==='number'
+        ? Math.min(2.5, Math.max(0.9, st.ndiBibleLineHeight))
+        : NDI_DEFAULTS.bibleLineHeight)
     : (USE_LT_OVERRIDES
       ? (typeof st.lowerThirdBibleLineHeight==='number'
           ? Math.min(2.5, Math.max(1.2, st.lowerThirdBibleLineHeight))
@@ -1155,8 +1188,13 @@ function render(s){
   // controls for the reference label. Each field falls back to the
   // body equivalent when unset so persisted settings keep working.
   // (NDI body fallback is honoured via T_FF / T_FS / T_SH_BOOL etc.)
-  var rfFam=resolveFont(st.referenceFontFamily||T_FF);
-  var rfShOn=(typeof st.referenceTextShadow==='boolean')?st.referenceTextShadow:T_SH_BOOL;
+  // v0.7.191 — NDI ignores st.referenceFontFamily / st.referenceTextShadow
+  // / st.referenceTextScale / st.referenceFontSize / st.referenceTextAlign
+  // (those are app-only). NDI reference typography derives entirely from
+  // the NDI body chain (T_FF / T_SH_BOOL / T_TS / T_FS / T_TA) plus the
+  // dedicated ndiRef* overrides resolved below.
+  var rfFam=resolveFont(USE_NDI_OVERRIDES ? T_FF : (st.referenceFontFamily||T_FF));
+  var rfShOn=USE_NDI_OVERRIDES ? T_SH_BOOL : ((typeof st.referenceTextShadow==='boolean')?st.referenceTextShadow:T_SH_BOOL);
   var rfShCss=rfShOn?'text-shadow:0 2px 12px rgba(0,0,0,.4);':'';
   // v0.5.57 — NDI-only reference overrides win over the body
   // fallbacks above when IS_NDI is true. Style ('italic'|'normal'),
@@ -1164,14 +1202,20 @@ function render(s){
   // bucket so the broadcast deck can run a tiny italic chyron-style
   // reference while the in-room projector keeps the standard
   // body-aligned label.
-  var rfTsRaw=(USE_NDI_OVERRIDES && typeof st.ndiRefScale==='number')
-    ? st.ndiRefScale
+  var rfTsRaw=USE_NDI_OVERRIDES
+    ? (typeof st.ndiRefScale==='number' ? st.ndiRefScale : NDI_DEFAULTS.refScale)
     : ((typeof st.referenceTextScale==='number')?st.referenceTextScale:T_TS);
   var rfTs=Math.min(2,Math.max(.5,rfTsRaw));
-  var rfBucket=(USE_NDI_OVERRIDES && st.ndiRefSize) ? st.ndiRefSize : (st.referenceFontSize||T_FS);
+  var rfBucket=USE_NDI_OVERRIDES
+    ? (st.ndiRefSize || NDI_DEFAULTS.refSize)
+    : (st.referenceFontSize||T_FS);
   var rfScale=rfTs*(FS_MULT[rfBucket]||1);
-  var rfStyle=(USE_NDI_OVERRIDES && st.ndiRefStyle==='italic') ? 'italic' : 'normal';
-  var rfPosition=(USE_NDI_OVERRIDES && st.ndiRefPosition) ? st.ndiRefPosition : 'top';
+  var rfStyle=USE_NDI_OVERRIDES
+    ? ((st.ndiRefStyle||NDI_DEFAULTS.refStyle)==='italic' ? 'italic' : 'normal')
+    : 'normal';
+  var rfPosition=USE_NDI_OVERRIDES
+    ? (st.ndiRefPosition || NDI_DEFAULTS.refPosition)
+    : 'top';
   var rfHidden=(USE_NDI_OVERRIDES && st.ndiRefPosition==='hidden');
   // Reference clamp — same shape as the LT body clamp below, but a
   // narrower band so the reference label stays subordinate to the
@@ -1182,7 +1226,7 @@ function render(s){
   var rfCap=Math.max(1,1.4*rfScale);
   var rfMin=Math.max(.35,.5*rfScale);
   var rfFs='clamp('+rfMin+'rem,min('+(rfBand*0.5)+'cqw,'+rfBand+'cqh),'+rfCap+'rem)';
-  var rfTa=st.referenceTextAlign||T_TA;
+  var rfTa=USE_NDI_OVERRIDES ? T_TA : (st.referenceTextAlign||T_TA);
   var refStyle='font-family:'+rfFam+';font-size:'+rfFs+';text-align:'+rfTa+';font-style:'+rfStyle+';'+rfShCss;
   // Same Strong's-strip + HTML-escape used for the body — keeps the
   // reference line ("Galatians 2:5 — KJV") safe even if a translation
@@ -1390,7 +1434,7 @@ function render(s){
     var ndiLtScale = USE_NDI_OVERRIDES
       ? (typeof st.ndiLowerThirdScale === 'number'
           ? Math.min(2, Math.max(0.5, st.ndiLowerThirdScale))
-          : (FORCE_SC !== null ? FORCE_SC : 1))
+          : (FORCE_SC !== null ? FORCE_SC : NDI_DEFAULTS.lowerThirdScale))
       : 1;
     // v0.7.5 — Frame is FIXED (T503). Operator screenshot showed the
     // box growing past the bottom band of the camera frame (the
