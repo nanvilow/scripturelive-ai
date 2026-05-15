@@ -885,6 +885,35 @@ export function NdiOutputPanel() {
             {/* NDI Layout & Bible Body */}
             <div className="rounded-md border border-border bg-muted/10 p-3 space-y-3">
               <div className="text-[11px] font-semibold text-foreground">NDI Layout &amp; Bible Body</div>
+              {/* v0.7.193-hotfix.4 — Bar Height bucket. Pre-fix this control
+                  did not exist anywhere in the UI; lowerThirdHeight was only
+                  writable via resetSettings(). Operators with persisted
+                  state were stuck at sm/md from older installs and could
+                  not pick the new lg default → bar too narrow → autofit
+                  shrinks long verses to tiny text inside the bar. The
+                  field is SHARED between Live Display and NDI (per
+                  hotfix.1 GR-B), so this writes the shared key directly
+                  with no Mirror Live option. */}
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Bar height (Live Display + NDI)
+                </label>
+                <select
+                  value={lowerThirdHeightSetting === 'sm' || lowerThirdHeightSetting === 'md' || lowerThirdHeightSetting === 'lg' ? lowerThirdHeightSetting : 'lg'}
+                  onChange={(e) => {
+                    const v = e.target.value as 'sm' | 'md' | 'lg'
+                    updateSettings({ lowerThirdHeight: v })
+                  }}
+                  className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                >
+                  <option value="sm">Small (22% of frame) — compact</option>
+                  <option value="md">Medium (33% of frame) — balanced</option>
+                  <option value="lg">Large (35% of frame) — recommended for long verses</option>
+                </select>
+                <p className="text-[10px] text-muted-foreground leading-snug">
+                  Taller bar = bigger Bible text (autofit has more room before it has to shrink). If your NDI text looks tiny, pick Large.
+                </p>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Aspect ratio</label>
