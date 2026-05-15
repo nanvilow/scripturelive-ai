@@ -1217,3 +1217,9 @@ id = "FflHAweY7vnEImvcwRFJ8"
 uri = "file://exports/v0.7.183-final-proof.png"
 type = "image"
 title = "v0.7.183 — Both fixes (floor 0.6 + admin polls slowed)"
+
+[[outputs]]
+id = "bdlKLF14-AwELagDGxAcU"
+uri = "file://screenshots/lt-fit-proof-v2.jpg"
+type = "image"
+title = "NDI LT autofit — BEFORE (v0.7.185, current) vs AFTER (proposed v0.7.186)"
