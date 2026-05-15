@@ -840,16 +840,16 @@ function fitVerseText(){
     }
     __fitKey=key;
     p.style.transform='';
-    // v0.7.190 — CRITICAL: do NOT strip p.style.fontSize before
-    // measuring. The renderer at L1430 sets the operator's chosen
-    // ltFs/fsFs as an inline style on the <p>; stripping discards
-    // that pick and falls back to the body's 16px default, so the
-    // binary search shrinks every verse to 9.6-16px regardless of
-    // what Small/Medium/Large/Extra-Large the operator picked. Read
-    // the inline value FIRST, fall back to computed only if absent.
-    var inlineFs=p.style.fontSize;
-    var baseStr=inlineFs||window.getComputedStyle(p).fontSize;
-    var baseSize=parseFloat(baseStr)||16;
+    // v0.7.190-hotfix.2 — The renderer at L1435 sets font-size to a
+    // CSS clamp() expression as an inline style. p.style.fontSize
+    // returns the AUTHORED string ("clamp(1rem, min(7cqw,12cqh), 4rem)")
+    // which parseFloat cannot read (NaN -> baseSize=16). Use computed
+    // style instead — it RESOLVES clamp/cqw/cqh to actual pixels in
+    // the iframe's 1920x1080 viewport, which is what we need to seed
+    // the binary search. baseSize then properly reflects the operator's
+    // bucket pick (Small/Medium/Large/XL) because FS_MULT is baked into
+    // ltBand/ltCap upstream of the clamp.
+    var baseSize=parseFloat(window.getComputedStyle(p).fontSize)||16;
     __fitBase=baseSize;
     // Available height: parent.clientHeight minus sibling heights
     // (.slide-reference chyron sits above-or-below the verse inside
