@@ -1277,3 +1277,9 @@ id = "qzzG6Swf5zVUZnUEjV89w"
 uri = "file://screenshots/lt-proposed-fitted.jpg"
 type = "image"
 title = "Proposed LT — short verse autofit demo"
+
+[[outputs]]
+id = "6tGwnsILW-LcviuexL5ZX"
+uri = "file://screenshots/hotfix2-mockup.jpg"
+type = "image"
+title = "v0.7.192-hotfix.2 — visual proof (LT edge-to-edge + OBS auto-follow)"
