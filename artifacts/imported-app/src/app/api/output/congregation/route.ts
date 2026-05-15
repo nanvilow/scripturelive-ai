@@ -565,6 +565,53 @@ function dropLiveVideoCache(){
 // Hard-cut on URL change (operator-explicit choice — instant swap, no
 // fade). Pass '' to clear the layer (blanked / cleared / no bg).
 var __bgUrl='';
+// v0.7.189 — Persistent LT (lower-third) bg cache. Mirrors __bgUrl /
+// setBgVid for the fullscreen path but kept SEPARATE because the LT bg
+// lives INSIDE the chyron card (.lt-box), not behind the whole stage.
+// The cached element is MOVED into the freshly-rebuilt .lt-box on every
+// render via mountLtBg() so it survives the innerHTML rewrite — fixing
+// the t=0 restart-flash on every speech tick that the v0.7.187 #bgLayer
+// hoist missed for LT mode.
+var __ltBgUrl=''; var __ltBgEl=null; var __ltBgOverlay=null;
+function ensureLtBgEl(url){
+  var u=url||'';
+  if(u===__ltBgUrl && __ltBgEl) return {bg:__ltBgEl,ov:__ltBgOverlay};
+  // URL changed (or cleared) — release any prior element.
+  if(__ltBgEl){try{if(__ltBgEl.tagName==='VIDEO'){__ltBgEl.pause();__ltBgEl.removeAttribute('src');__ltBgEl.load();}}catch(e){}
+    if(__ltBgEl.parentNode) __ltBgEl.parentNode.removeChild(__ltBgEl);
+    __ltBgEl=null;}
+  if(__ltBgOverlay){if(__ltBgOverlay.parentNode) __ltBgOverlay.parentNode.removeChild(__ltBgOverlay); __ltBgOverlay=null;}
+  __ltBgUrl=u;
+  if(!u) return null;
+  if(isVideoBg(u)){
+    var v=document.createElement('video');
+    v.className='lt-bg'; v.src=u;
+    v.autoplay=true;v.loop=true;v.muted=true;v.playsInline=true;v.preload='auto';
+    try{v.setAttribute('crossorigin','anonymous');}catch(e){}
+    v.onerror=function(){try{v.style.display='none';}catch(_e){}};
+    __ltBgEl=v;
+  } else {
+    var im=document.createElement('img');
+    im.className='lt-bg'; im.src=u; im.alt='';
+    try{im.setAttribute('crossorigin','anonymous');}catch(e){}
+    im.onerror=function(){try{im.style.display='none';}catch(_e){}};
+    __ltBgEl=im;
+  }
+  var ov=document.createElement('div');
+  ov.className='lt-bg-overlay';
+  __ltBgOverlay=ov;
+  return {bg:__ltBgEl,ov:__ltBgOverlay};
+}
+function mountLtBg(box,url){
+  var pair=ensureLtBgEl(url);
+  if(!pair||!box) return;
+  // Insert bg + overlay at the FRONT of .lt-box (before .lt-content) so
+  // z-order matches the legacy inline pattern (bg behind text). insertBefore
+  // moves the existing node — does NOT clone — so decoder state is preserved.
+  box.insertBefore(pair.ov, box.firstChild);
+  box.insertBefore(pair.bg, pair.ov);
+  if(pair.bg.tagName==='VIDEO'){var pp=pair.bg.play();if(pp&&pp.catch)pp.catch(function(){});}
+}
 function setBgVid(url){
   var layer=document.getElementById('bgLayer');
   if(!layer) return;
@@ -1386,7 +1433,11 @@ function render(s){
     var boxThemeClass=(dm==='lower-third-black')?'':tc;
     var boxStyleExtra=(dm==='lower-third-black')?'background:#000;':'';
     var safeLtBg=safeBgUrl(st.customBackground);
-    var ltInnerBg=(dm==='lower-third-black')?'':(safeLtBg?(isVideoBg(safeLtBg)?'<video class="lt-bg" src="'+escAttr(safeLtBg)+'" autoplay loop muted playsinline crossorigin="anonymous" onerror="this.style.display=\\'none\\'"></video><div class="lt-bg-overlay"></div>':'<img class="lt-bg" src="'+escAttr(safeLtBg)+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="lt-bg-overlay"></div>'):'');
+    // v0.7.189 — LT bg is no longer inlined. The cached <video>/<img>
+    // element is moved into the freshly-built .lt-box AFTER innerHTML
+    // via mountLtBg() so the decoder survives the rewrite — no more
+    // t=0 restart-flash on every speech tick / SSE poll.
+    var ltInnerBg='';
     // v0.6.3 — Transparent NDI lower-third matte. When the operator
     // flips ndiLowerThirdTransparent ON the rounded card drops its
     // gradient + drop shadow so vMix/OBS receive a clean alpha matte
@@ -1445,6 +1496,14 @@ function render(s){
     }catch(e){}
     var ltOrdered=refOrderTop?(ref+ltTxt):(ltTxt+ref);
     $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:transparent;'+fontStyle+'"><div class="lower-third '+pos+ndiFullClass+'" style="'+ltStyle+'"><div class="lt-box '+boxThemeClass+ltTransparentClass+ndiFullClass+' '+alignClass+'" style="'+boxStyleExtra+fontStyle+'">'+ltInnerBg+'<div class="lt-content '+alignClass+'">'+ltOrdered+'</div></div></div></div>';
+    // v0.7.189 — Mount the persistent LT bg into the freshly-built .lt-box.
+    // Same URL as last render = element is MOVED (not recreated) so video
+    // decoder keeps running uninterrupted. URL change = old released, new
+    // built. lower-third-black or no bg = release any cached element.
+    setBgVid(''); // fullscreen #bgLayer is irrelevant in LT mode
+    var __ltBox=document.querySelector('#output .lt-box');
+    if(__ltBox && dm!=='lower-third-black' && safeLtBg){ mountLtBg(__ltBox, safeLtBg); }
+    else { ensureLtBgEl(''); }
   }else{
     var ta=st.textAlign||'center';
     var jc=ta==='left'?'flex-start':ta==='right'?'flex-end':'center';
