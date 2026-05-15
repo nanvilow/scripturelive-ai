@@ -2096,7 +2096,7 @@ export function AdminModal() {
                             />
                           </th>
                         )}
-                        <th className="text-left px-2 py-1.5">Ref</th><th className="text-left px-2 py-1.5">Plan</th><th className="text-left px-2 py-1.5">Amount</th><th className="text-left px-2 py-1.5">Customer</th><th className="text-left px-2 py-1.5">Status</th><th className="text-right px-2 py-1.5">Action</th>
+                        <th className="text-left px-2 py-1.5">Ref</th><th className="text-left px-2 py-1.5">Plan</th><th className="text-left px-2 py-1.5">Amount</th><th className="text-left px-2 py-1.5">Customer</th><th className="text-left px-2 py-1.5">Status</th><th className="text-left px-2 py-1.5">Date &amp; Time</th><th className="text-right px-2 py-1.5">Action</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2116,6 +2116,8 @@ export function AdminModal() {
                           <td className="px-2 py-1.5 font-mono">GHS {p.amountGhs}</td>
                           <td className="px-2 py-1.5"><div className="truncate max-w-[160px]">{p.email}</div><div className="text-muted-foreground font-mono text-[10px]">{p.whatsapp}</div></td>
                           <td className="px-2 py-1.5"><Badge className={cn('text-[9px]', p.status === 'WAITING_PAYMENT' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : p.status === 'PAID' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : p.status === 'CONSUMED' ? 'bg-sky-500/20 text-sky-300 border-sky-500/40' : 'bg-muted text-foreground border-border')}>{p.status}</Badge></td>
+                          {/* v0.7.190-hotfix.1 — operator request: date + time column for audit/record-keeping. */}
+                          <td className="px-2 py-1.5 font-mono text-[10px] text-muted-foreground whitespace-nowrap" title={p.createdAt}>{p.createdAt ? new Date(p.createdAt).toLocaleString() : '—'}</td>
                           <td className="px-2 py-1.5 text-right">
                             <div className="inline-flex items-center gap-1">
                               {p.status === 'WAITING_PAYMENT' && (
@@ -2214,6 +2216,7 @@ export function AdminModal() {
                         <th className="text-left px-2 py-1.5">Days</th>
                         <th className="text-left px-2 py-1.5">For</th>
                         <th className="text-left px-2 py-1.5">Used?</th>
+                        <th className="text-left px-2 py-1.5">Generated</th>
                         <th className="text-left px-2 py-1.5">Expires</th>
                         <th className="text-right px-2 py-1.5">Action</th>
                       </tr>
@@ -2244,6 +2247,8 @@ export function AdminModal() {
                             <td className="px-2 py-1.5">{a.days}</td>
                             <td className="px-2 py-1.5 max-w-[200px]"><div className="truncate" title={forLabel}>{forLabel}</div></td>
                             <td className="px-2 py-1.5">{a.isUsed ? <span className="text-emerald-400">Yes</span> : <span className="text-amber-400">No</span>}</td>
+                            {/* v0.7.190-hotfix.1 — operator request: date + time column for audit/record-keeping. */}
+                            <td className="px-2 py-1.5 font-mono text-[10px] text-muted-foreground whitespace-nowrap" title={a.generatedAt}>{a.generatedAt ? new Date(a.generatedAt).toLocaleString() : '—'}</td>
                             <td className="px-2 py-1.5 font-mono text-[10px] text-muted-foreground">{a.subscriptionExpiresAt ? new Date(a.subscriptionExpiresAt).toLocaleDateString() : '—'}</td>
                             <td className="px-2 py-1.5 text-right">
                               <div className="inline-flex items-center gap-1">
