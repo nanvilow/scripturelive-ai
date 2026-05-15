@@ -55,31 +55,42 @@
 Architecture: <b style="color:#fbbf24">Option C — Dual-Mode</b>. In-app Preview &amp; Live Display panels render a real React-managed <code>&lt;video&gt;</code> element so transport controls, mute, and the audio level meter all bind directly to the visible video. The unified renderer iframe stays exactly as-is for <b style="color:#fbbf24">NDI capture, OBS browser source, and the secondary congregation screen</b> — they all subscribe to the same store state via SSE, so the in-app video and the broadcast video stay frame-locked. Send-to-Live copies <code>currentTime</code> from preview ref to live ref + auto-plays.
 </div>
 
-<h2>Issue 1 — Audio level meter (vertical green bar to the left of preview)</h2>
+<h2>Issue 1 — Audio level meter (vertical green bar — must work on BOTH Preview AND Live Display)</h2>
 <div class="row">
   <div class="card">
-    <div class="card-hdr">BEFORE (current) <span class="badge-bad">FAKE animation</span></div>
-    <div class="panel" style="grid-template-columns:1fr">
+    <div class="card-hdr">BEFORE (current) <span class="badge-bad">FAKE on Preview · MISSING on Live</span></div>
+    <div class="panel">
       <div class="pane">
         <div class="pane-hdr"><span>PREVIEW</span><span style="color:#fbbf24">FAKE METER</span></div>
-        <div class="video-area has-vid">video plays inside iframe</div>
+        <div class="video-area has-vid">iframe video</div>
         <div class="meter"><div class="meter-fill fake"></div></div>
-        <div class="arrow" style="left:24px;top:80px">← oscillates regardless of audio</div>
+        <div class="arrow" style="left:22px;top:74px;font-size:10px">← fake bounce</div>
+      </div>
+      <div class="pane">
+        <div class="pane-hdr"><span>LIVE DISPLAY</span><span class="lbl-live">● LIVE</span></div>
+        <div class="video-area has-vid">iframe video</div>
+        <div class="arrow" style="left:8px;top:60px;font-size:10px">no meter at all</div>
       </div>
     </div>
-    <div class="ann">Meter is fed by a <b>second hidden &lt;video&gt;</b> off-screen, not the real iframe video. Hidden one stalls or never loads → meter shows fake bouncing.</div>
+    <div class="ann">Preview meter = <b>fake</b> (hidden video desync). Live Display meter = <b>doesn't exist</b> in the current code at all.</div>
   </div>
   <div class="card">
-    <div class="card-hdr">AFTER (v0.7.193) <span class="badge-good">REAL waveform</span></div>
-    <div class="panel" style="grid-template-columns:1fr">
+    <div class="card-hdr">AFTER (v0.7.193) <span class="badge-good">REAL on BOTH panels</span></div>
+    <div class="panel">
       <div class="pane">
         <div class="pane-hdr"><span>PREVIEW</span><span style="color:#86efac">LIVE METER</span></div>
-        <div class="video-area has-vid">React &lt;video&gt; — direct attach</div>
+        <div class="video-area has-vid">React &lt;video&gt; — direct</div>
         <div class="meter"><div class="meter-fill real"></div></div>
-        <div class="arrow" style="left:24px;top:80px;background:rgba(20,83,45,.95);border-color:#16a34a;color:#bbf7d0">← Web Audio analyser on real source</div>
+        <div class="arrow" style="left:22px;top:74px;background:rgba(20,83,45,.95);border-color:#16a34a;color:#bbf7d0;font-size:10px">← real audio</div>
+      </div>
+      <div class="pane">
+        <div class="pane-hdr"><span>LIVE DISPLAY</span><span class="lbl-live">● LIVE</span></div>
+        <div class="video-area has-vid">React &lt;video&gt; — direct</div>
+        <div class="meter"><div class="meter-fill real" style="height:54%"></div></div>
+        <div class="arrow" style="left:22px;top:74px;background:rgba(20,83,45,.95);border-color:#16a34a;color:#bbf7d0;font-size:10px">← real audio</div>
       </div>
     </div>
-    <div class="ann good">Web Audio <b>AnalyserNode</b> attached to the visible video via <b>MediaElementSource</b>. Hidden meter element <b>deleted</b>. Meter peaks match what you hear.</div>
+    <div class="ann good"><b>Each panel gets its own independent meter</b> wired to its own &lt;video&gt; via Web Audio AnalyserNode + MediaElementSource. Preview shows preview audio levels, Live shows the actually-broadcasting audio levels. Both stay in lockstep with their respective playheads. Old hidden-video meter <b>deleted</b>.</div>
   </div>
 </div>
 
@@ -172,7 +183,7 @@ Architecture: <b style="color:#fbbf24">Option C — Dual-Mode</b>. In-app Previe
   <b>Scope (~150 lines, single file):</b><br>
   ✓ <code>logos-shell.tsx</code> — PreviewCard &amp; LiveDisplayCard get a real <code>&lt;video&gt;</code> for media slides (scripture slides keep iframe path unchanged)<br>
   ✓ <code>logos-shell.tsx</code> — VideoTransport reads <code>previewVideoRef</code> / <code>liveVideoRef</code> directly (no more querySelector)<br>
-  ✓ <code>logos-shell.tsx</code> — AudioMeter uses Web Audio AnalyserNode on the visible video; HiddenMediaMeter <b>deleted</b><br>
+  ✓ <code>logos-shell.tsx</code> — <b>Two</b> independent AudioMeters (one per panel), each wired to its own &lt;video&gt; via AnalyserNode + MediaElementSource; HiddenMediaMeter <b>deleted</b><br>
   ✓ <code>logos-shell.tsx</code> — Send-to-Live: <code>liveRef.currentTime = previewRef.currentTime; liveRef.play();</code><br>
   ✓ <code>route.ts</code> — <b>UNCHANGED</b>. NDI/OBS/secondary screen iframe renderer keeps reading from store via SSE — same playhead state means same frame.<br>
   ✓ <code>electron/main.ts</code> — <b>UNCHANGED</b>. NDI capture window unaffected.<br>
