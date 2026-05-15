@@ -1253,3 +1253,9 @@ id = "WVgBVPGDvnLlFwfenruID"
 uri = "file://screenshots/lt-autofit-fill-proof.jpg"
 type = "image"
 title = "v0.7.187.1 NDI LT autofit fill proof"
+
+[[outputs]]
+id = "GEos2ARTjZ8Z2wnPp2hjs"
+uri = "file://screenshots/rementionlive-proof.jpg"
+type = "image"
+title = "v0.7.187.2 re-mention auto-live proof"

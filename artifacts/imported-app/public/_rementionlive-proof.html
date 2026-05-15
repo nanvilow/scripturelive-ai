@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>v0.7.187.2 — Re-mention auto-live</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0f0f10;color:#eee;font-family:-apple-system,system-ui,sans-serif;padding:24px;font-size:14px;line-height:1.5}
+  h1{font-size:22px;margin-bottom:6px;color:#fff}
+  h2{font-size:15px;margin:22px 0 10px;color:#9cf}
+  .sub{color:#aaa;font-size:12px;margin-bottom:18px}
+  .scenario{background:#1f2937;border:1px solid #374151;border-left:4px solid #facc15;border-radius:6px;padding:14px;margin-bottom:18px}
+  .scenario .title{color:#facc15;font-weight:600;margin-bottom:6px;font-size:13px}
+  .lane{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-bottom:18px}
+  .col{background:#1a1a1c;border:1px solid #2a2a2e;border-radius:10px;padding:14px}
+  .col h3{font-size:13px;margin-bottom:10px;letter-spacing:.5px}
+  .col h3.bad{color:#f87171}
+  .col h3.good{color:#4ade80}
+  .step{display:grid;grid-template-columns:28px 1fr;gap:10px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #2a2a2e}
+  .step:last-child{border-bottom:none}
+  .stepnum{width:24px;height:24px;border-radius:50%;background:#374151;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
+  .stepnum.s1{background:#1e40af}
+  .stepnum.s2{background:#9333ea}
+  .stepnum.s3{background:#dc2626}
+  .said{color:#9cf;font-size:11px;font-style:italic;margin-bottom:6px}
+  .said b{color:#fff;font-style:normal}
+  .panels{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:6px}
+  .panel{background:#0d0d0e;border:1px solid #2a2a2e;border-radius:4px;padding:6px;font-size:10px}
+  .panel .ph{font-size:9px;color:#888;letter-spacing:.05em;text-transform:uppercase;margin-bottom:4px;font-weight:600}
+  .panel .row{padding:3px 5px;border-radius:3px;margin-bottom:2px;background:#1a1a1c;color:#ccc;font-size:10px;line-height:1.3}
+  .panel .row.live{background:#7f1d1d;color:#fff;font-weight:600;border:1px solid #dc2626}
+  .panel .row.live::before{content:"● ON AIR  ";color:#fca5a5;font-size:8px}
+  .panel.live-out{background:#0a0a0a;min-height:64px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;color:#fff;font-size:11px;padding:8px;border:1px solid #444}
+  .panel.live-out .ref{color:#facc15;font-size:9px;font-weight:700;letter-spacing:.05em}
+  .panel.live-out .vt{margin-top:3px;font-family:Georgia,serif;font-size:11px;line-height:1.2}
+  .panel.live-out.empty{color:#666;font-style:italic}
+  .pill{display:inline-block;font-size:9px;padding:1px 6px;border-radius:8px;font-weight:600;margin-left:5px}
+  .pill.bad{background:rgba(220,38,38,.2);color:#f87171;border:1px solid #f87171}
+  .pill.good{background:rgba(16,185,129,.2);color:#4ade80;border:1px solid #4ade80}
+  .pill.warn{background:rgba(250,204,21,.15);color:#facc15;border:1px solid #facc15}
+  .arch{background:#0d0d0e;border:1px solid #2a2a2e;border-radius:8px;padding:14px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.6;color:#ddd;white-space:pre;margin-bottom:14px;overflow-x:auto}
+  .arch .add{color:#86efac}
+  .arch .marker{color:#9cf;font-weight:600}
+  .arch .red{color:#f87171}
+  .diag{background:#1a1a1c;border:1px solid #2a2a2e;border-left:4px solid #9cf;border-radius:6px;padding:14px;margin-bottom:14px;font-size:13px}
+  .diag .title{color:#9cf;font-weight:600;margin-bottom:6px}
+  .key{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#facc15}
+  .footer{font-size:11px;color:#666;text-align:center;margin-top:18px}
+</style></head><body>
+
+<h1>v0.7.187.2 — Re-mention auto-live to broadcast</h1>
+<p class="sub">Operator complaint, verbatim: <i>"speaker says a verse, example Amos 1:3, and the detector detects it and drops to the column; another verse John 3:4 also drops in the same column; speaker mentions the previous verse Amos 1:3 — the detector doesn't drop it again because it's in the column already and doesn't auto-send."</i></p>
+
+<div class="scenario">
+  <div class="title">ROOT CAUSE — one line</div>
+  <code>addDetectedVerse</code> in <code>store.ts</code> dedupe gate at L833 returned <code>{}</code> on re-mention (no state change). The auto-live <code>useEffect</code> in <code>logos-shell.tsx</code> watches the <code>detectedVerses</code> array — no array change → effect doesn't re-run → no go-live. <span class="key">requestNavigatorRef</span> already fired at the top of the reducer (v0.7.184), so the navigator opened correctly, but the broadcast never updated. Operator saw the column "ignore" the re-mention.
+</div>
+
+<h2>Three-step scenario · BEFORE vs AFTER</h2>
+
+<div class="lane">
+  <!-- BEFORE -->
+  <div class="col">
+    <h3 class="bad">v0.7.187.1 — re-mention is silently dropped · BEFORE</h3>
+
+    <div class="step">
+      <div class="stepnum s1">1</div>
+      <div>
+        <div class="said">Speaker says: <b>"…and Amos chapter one verse three says…"</b></div>
+        <div class="panels">
+          <div class="panel"><div class="ph">Detected column</div>
+            <div class="row live">Amos 1:3</div>
+          </div>
+          <div class="panel"><div class="ph">Navigator</div>
+            <div class="row" style="background:#1e3a5c;color:#fff">Amos 1</div>
+          </div>
+          <div class="panel live-out"><div class="ref">AMOS 1 : 3</div><div class="vt">For three transgressions of Damascus…</div></div>
+        </div>
+        <div style="margin-top:6px"><span class="pill good">live ✓</span></div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="stepnum s2">2</div>
+      <div>
+        <div class="said">Speaker says: <b>"…then John three four reminds us…"</b></div>
+        <div class="panels">
+          <div class="panel"><div class="ph">Detected column</div>
+            <div class="row live">John 3:4</div>
+            <div class="row">Amos 1:3</div>
+          </div>
+          <div class="panel"><div class="ph">Navigator</div>
+            <div class="row" style="background:#1e3a5c;color:#fff">John 3</div>
+          </div>
+          <div class="panel live-out"><div class="ref">JOHN 3 : 4</div><div class="vt">Nicodemus saith unto him…</div></div>
+        </div>
+        <div style="margin-top:6px"><span class="pill good">live ✓</span></div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="stepnum s3">3</div>
+      <div>
+        <div class="said">Speaker says again: <b>"…back to Amos one three…"</b></div>
+        <div class="panels">
+          <div class="panel"><div class="ph">Detected column</div>
+            <div class="row live">John 3:4</div>
+            <div class="row">Amos 1:3 <span style="color:#888">(unchanged)</span></div>
+          </div>
+          <div class="panel"><div class="ph">Navigator</div>
+            <div class="row" style="background:#1e3a5c;color:#fff">Amos 1</div>
+          </div>
+          <div class="panel live-out"><div class="ref">JOHN 3 : 4</div><div class="vt">Nicodemus saith unto him… <span style="color:#f87171">(stale)</span></div></div>
+        </div>
+        <div style="margin-top:6px"><span class="pill bad">stale on air ❌</span> <span style="color:#888;font-size:11px">addDetectedVerse returned <code>{}</code> · array unchanged · auto-live useEffect skipped</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- AFTER -->
+  <div class="col">
+    <h3 class="good">v0.7.187.2 — re-mention promoted &amp; re-fires · AFTER</h3>
+
+    <div class="step">
+      <div class="stepnum s1">1</div>
+      <div>
+        <div class="said">Speaker says: <b>"…and Amos chapter one verse three says…"</b></div>
+        <div class="panels">
+          <div class="panel"><div class="ph">Detected column</div>
+            <div class="row live">Amos 1:3</div>
+          </div>
+          <div class="panel"><div class="ph">Navigator</div>
+            <div class="row" style="background:#1e3a5c;color:#fff">Amos 1</div>
+          </div>
+          <div class="panel live-out"><div class="ref">AMOS 1 : 3</div><div class="vt">For three transgressions of Damascus…</div></div>
+        </div>
+        <div style="margin-top:6px"><span class="pill good">live ✓</span></div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="stepnum s2">2</div>
+      <div>
+        <div class="said">Speaker says: <b>"…then John three four reminds us…"</b></div>
+        <div class="panels">
+          <div class="panel"><div class="ph">Detected column</div>
+            <div class="row live">John 3:4</div>
+            <div class="row">Amos 1:3</div>
+          </div>
+          <div class="panel"><div class="ph">Navigator</div>
+            <div class="row" style="background:#1e3a5c;color:#fff">John 3</div>
+          </div>
+          <div class="panel live-out"><div class="ref">JOHN 3 : 4</div><div class="vt">Nicodemus saith unto him…</div></div>
+        </div>
+        <div style="margin-top:6px"><span class="pill good">live ✓</span></div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="stepnum s3">3</div>
+      <div>
+        <div class="said">Speaker says again: <b>"…back to Amos one three…"</b></div>
+        <div class="panels">
+          <div class="panel"><div class="ph">Detected column</div>
+            <div class="row live">Amos 1:3 <span style="color:#fca5a5;font-size:9px;font-style:italic">↑ promoted, fresh id</span></div>
+            <div class="row">John 3:4</div>
+          </div>
+          <div class="panel"><div class="ph">Navigator</div>
+            <div class="row" style="background:#1e3a5c;color:#fff">Amos 1</div>
+          </div>
+          <div class="panel live-out"><div class="ref">AMOS 1 : 3</div><div class="vt">For three transgressions of Damascus…</div></div>
+        </div>
+        <div style="margin-top:6px"><span class="pill good">re-LIVE ✓</span> <span style="color:#888;font-size:11px">existing entry moved to front · new id ≠ lastAutoVerseId · useEffect re-fires · sent to broadcast</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="diag">
+  <div class="title">What changed (single 6-line surgical edit in <code>store.ts</code> ~L836)</div>
+  <span class="key">BEFORE:</span>  <code>if (existingRank &gt;= incomingRank) return {}</code>  &nbsp;←  no state change → no useEffect → no go-live<br>
+  <span class="key">AFTER:</span>  &nbsp;promote existing entry to front of array, give it a fresh <code>id</code> + fresh <code>detectedAt</code>, preserve original <code>source</code> + <code>confidence</code>:
+</div>
+
+<div class="arch">  if (existingRank &gt;= incomingRank) {
+    <span class="add">// PROMOTE — keeps the higher-quality existing source/confidence,</span>
+    <span class="add">// but flushes through a NEW array reference + NEW id so:</span>
+    <span class="add">//   • detectedVerses array changes → auto-live useEffect re-runs</span>
+    <span class="add">//   • new id ≠ lastAutoVerseId.current → re-fire gate clears</span>
+    <span class="add">//   • shouldFireAutoLiveStable picks front-of-array → broadcast</span>
+    const promoted = {
+      ...existing,
+      id: `det-rementioned-${Date.now()}-${rand()}`,
+      detectedAt: new Date(),
+    }
+    const filtered = state.detectedVerses.filter(d =&gt; d.reference !== v.reference)
+    return { detectedVerses: [promoted, ...filtered].slice(0, 100) }
+  }</div>
+
+<div class="diag">
+  <div class="title">What does NOT regress</div>
+  • <b>requestNavigatorRef</b> still fires at the top of the reducer (v0.7.184 GR-A) — navigator updates whether the verse is new OR re-mentioned.<br>
+  • <b>addDetectedVerseCandidate</b> (speculative &lt;50% guesses) is intentionally unchanged — those don't go live and shouldn't thrash the broadcast on every speech tick.<br>
+  • <b>Cross-source rank protection</b> (semantic doesn't downgrade an explicit entry) preserved — promotion uses <code>...existing</code> spread so authoritative source/confidence survive.<br>
+  • <b>Stability gate</b> in <code>verse-auto-live.ts</code> still applies — re-mention has to clear the per-source stability counter (≥3 frames) and the 500 ms LIVE_HOLD_MS dwell, exactly like a fresh mention. So a single accidental tick won't snap-back; a real re-mention will.<br>
+  • <b>4 dedupe-gate navigator-fires</b> in <code>speech-provider.tsx</code> from v0.7.184.2 are unchanged — they still cover the upstream paths.<br>
+  • <b>Suggestion column</b> behaviour unchanged — promotion only triggers when source rank is equal-or-higher than existing.
+</div>
+
+<h2>Touched files</h2>
+<div class="arch">  <span class="add">M</span> src/lib/store.ts  (~28 lines incl ~22 lines of comment, ~6 lines of code)
+       The single dedupe branch at <span class="marker">addDetectedVerse</span> ~L836 changes
+       from <code>return {}</code> to <code>return { detectedVerses: [promoted, ...filtered]... }</code>.
+       Everything else in the reducer is byte-for-byte identical.
+
+  <span class="marker">No other files touched.</span>
+  <span class="marker">No version bump — folds into v0.7.187 (still in flight, not pushed).</span>
+  <span class="marker">tsc --noEmit clean.</span></div>
+
+<p class="footer">Awaiting "ship it" — joins the v0.7.187 push if approved.</p>
+
+</body></html>
