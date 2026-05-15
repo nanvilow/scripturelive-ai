@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>v0.7.194 — 3-Day Wall-Clock Trial Mockup</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  body { background: #0a0a0a; color: #e5e5e5; padding: 24px; min-height: 100vh; }
+  h1 { font-size: 22px; margin-bottom: 6px; color: #fff; }
+  .sub { font-size: 13px; color: #888; margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; max-width: 1400px; }
+  .card { background: #161616; border: 1px solid #2a2a2a; border-radius: 12px; overflow: hidden; }
+  .card-label { background: #1f1f1f; padding: 10px 14px; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: #999; border-bottom: 1px solid #2a2a2a; }
+  .card-body { padding: 18px; min-height: 380px; position: relative; }
+  .desc { font-size: 12px; color: #666; padding: 10px 14px; background: #0f0f0f; border-top: 1px solid #2a2a2a; line-height: 1.5; }
+
+  /* Mock app chrome */
+  .titlebar { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: #1a1a1a; border-radius: 8px; margin-bottom: 14px; border: 1px solid #2a2a2a; }
+  .titlebar-left { font-size: 12px; font-weight: 600; color: #fff; }
+
+  /* Trial pill (top bar) */
+  .trial-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .trial-active { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
+  .trial-low { background: rgba(251,146,60,0.15); color: #fb923c; border: 1px solid rgba(251,146,60,0.3); }
+  .trial-dead { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* AI Detection panel mock */
+  .panel { background: #1f1f1f; border: 1px solid #333; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+  .panel-title { font-size: 12px; font-weight: 600; color: #fff; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .icon { width: 14px; height: 14px; border-radius: 3px; background: linear-gradient(135deg, #6366f1, #8b5cf6); display: inline-block; }
+  .panel-row { font-size: 11px; color: #aaa; padding: 4px 0; }
+
+  /* Mic button */
+  .mic-btn { background: #6366f1; color: #fff; border: none; padding: 10px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; width: 100%; margin-top: 8px; }
+  .mic-btn:disabled { background: #333; color: #555; cursor: not-allowed; }
+
+  /* Lock overlay (state 3) */
+  .lock-overlay { position: absolute; inset: 0; background: rgba(10,10,10,0.92); backdrop-filter: blur(6px); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 30px; text-align: center; }
+  .lock-icon { font-size: 36px; margin-bottom: 12px; }
+  .lock-title { font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 8px; }
+  .lock-msg { font-size: 12px; color: #aaa; margin-bottom: 16px; line-height: 1.5; max-width: 280px; }
+  .lock-btn { background: #22c55e; color: #fff; border: none; padding: 9px 20px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
+
+  /* Countdown big numbers */
+  .countdown-big { display: flex; gap: 10px; margin: 14px 0; }
+  .cd-cell { flex: 1; background: #0f0f0f; border: 1px solid #2a2a2a; border-radius: 6px; padding: 10px 6px; text-align: center; }
+  .cd-num { font-size: 22px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums; }
+  .cd-low .cd-num { color: #fb923c; }
+  .cd-lbl { font-size: 9px; text-transform: uppercase; color: #777; letter-spacing: 1px; margin-top: 2px; }
+
+  /* Subtle changelog ribbon */
+  .ribbon { background: #1a3a5c; border: 1px solid #2563eb; padding: 10px 12px; border-radius: 6px; font-size: 11px; color: #93c5fd; margin-bottom: 14px; line-height: 1.5; }
+  .ribbon strong { color: #dbeafe; }
+
+  /* Always-free note */
+  .free-note { font-size: 10px; color: #4ade80; margin-top: 10px; padding: 8px; background: rgba(34,197,94,0.05); border-radius: 4px; border-left: 2px solid #22c55e; }
+
+  .summary { max-width: 1400px; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 16px; margin-top: 24px; font-size: 12px; line-height: 1.6; color: #bbb; }
+  .summary h2 { font-size: 13px; color: #fff; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+  .summary ul { padding-left: 20px; margin-top: 6px; }
+  .summary li { margin-bottom: 4px; }
+  .summary code { background: #0a0a0a; padding: 1px 5px; border-radius: 3px; font-size: 11px; color: #fb923c; }
+</style>
+</head>
+<body>
+
+<h1>v0.7.194 — 3-Day Wall-Clock Free Trial</h1>
+<p class="sub">Countdown runs continuously in real-world time. Server-validated. Pause-proof. Only AI Detection locks when expired — Bible reader stays free.</p>
+
+<div class="grid">
+
+  <!-- STATE 1: Active trial, plenty of time -->
+  <div class="card">
+    <div class="card-label">State 1 · Active trial · 2d 15h left</div>
+    <div class="card-body">
+      <div class="titlebar">
+        <div class="titlebar-left">ScriptureLive AI</div>
+        <span class="trial-pill trial-active"><span class="dot"></span> 2d 15h trial</span>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title"><span class="icon"></span> AI Detection · Live</div>
+        <div class="countdown-big">
+          <div class="cd-cell"><div class="cd-num">2</div><div class="cd-lbl">days</div></div>
+          <div class="cd-cell"><div class="cd-num">15</div><div class="cd-lbl">hours</div></div>
+          <div class="cd-cell"><div class="cd-num">04</div><div class="cd-lbl">minutes</div></div>
+        </div>
+        <div class="panel-row">Free trial expires Sun, May 18 at 10:04 AM</div>
+        <button class="mic-btn">▶ Start Live AI Detection</button>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title"><span class="icon" style="background:#22c55e"></span> Bible Reader</div>
+        <div class="panel-row">Esther 5:8 KJV · Search · Slides</div>
+        <div class="free-note">Bible reader, slides, NDI, and Settings stay free even after trial expires.</div>
+      </div>
+    </div>
+    <div class="desc">Countdown updates every 60 seconds. Closing the app, sleeping the PC, or never opening AI Detection does not pause the timer — it always reflects wall-clock time since activation.</div>
+  </div>
+
+  <!-- STATE 2: Low time warning -->
+  <div class="card">
+    <div class="card-label">State 2 · Low-time warning · 4h left</div>
+    <div class="card-body">
+      <div class="titlebar">
+        <div class="titlebar-left">ScriptureLive AI</div>
+        <span class="trial-pill trial-low"><span class="dot"></span> 4h 12m left</span>
+      </div>
+
+      <div class="ribbon"><strong>⏱ Trial expires in 4 hours.</strong> Activate a subscription now to keep AI Detection working through Sunday service.</div>
+
+      <div class="panel">
+        <div class="panel-title"><span class="icon"></span> AI Detection · Live</div>
+        <div class="countdown-big cd-low">
+          <div class="cd-cell"><div class="cd-num">0</div><div class="cd-lbl">days</div></div>
+          <div class="cd-cell"><div class="cd-num">04</div><div class="cd-lbl">hours</div></div>
+          <div class="cd-cell"><div class="cd-num">12</div><div class="cd-lbl">minutes</div></div>
+        </div>
+        <div class="panel-row">Trial expires today at 2:16 PM</div>
+        <button class="mic-btn">▶ Start Live AI Detection</button>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title"><span class="icon" style="background:#22c55e"></span> Bible Reader</div>
+        <div class="panel-row">Still works after trial ends.</div>
+      </div>
+    </div>
+    <div class="desc">When less than 6 hours remain, banner turns amber and the pulsing dot warns the operator before the next service. Bible reader still unaffected.</div>
+  </div>
+
+  <!-- STATE 3: Expired -->
+  <div class="card">
+    <div class="card-label">State 3 · Trial expired · AI Detection locked</div>
+    <div class="card-body">
+      <div class="titlebar">
+        <div class="titlebar-left">ScriptureLive AI</div>
+        <span class="trial-pill trial-dead">● Trial expired</span>
+      </div>
+
+      <div class="panel" style="position:relative; min-height: 200px;">
+        <div class="panel-title"><span class="icon"></span> AI Detection · Live</div>
+        <div class="panel-row" style="opacity: 0.3;">Live transcription · AI Search · Voice training</div>
+        <button class="mic-btn" disabled>▶ Start Live AI Detection</button>
+
+        <div class="lock-overlay">
+          <div class="lock-icon">🔒</div>
+          <div class="lock-title">Free trial expired</div>
+          <div class="lock-msg">Your 3-day free trial has expired. Please activate a subscription to continue using AI Detection.</div>
+          <button class="lock-btn">Activate Subscription</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title"><span class="icon" style="background:#22c55e"></span> Bible Reader</div>
+        <div class="panel-row">Esther 5:8 KJV · Search · Slides · NDI · Settings</div>
+        <div class="free-note">✓ Bible reader, slides, NDI Output, and all display settings remain fully usable.</div>
+      </div>
+    </div>
+    <div class="desc">Lock overlay covers ONLY the AI Detection panel. Live AI Detection, transcription, and AI Search are blocked. Bible reader, slides, NDI Output, and Settings remain free as a Bible-display tool.</div>
+  </div>
+
+</div>
+
+<div class="summary">
+  <h2>What changes vs today</h2>
+  <ul>
+    <li><strong>Trial model:</strong> activity-gated 30-minute mic budget → wall-clock <code>72 hours</code> from activation.</li>
+    <li><strong>Pause behavior:</strong> removed. Closing the app, sleeping the PC, or never opening AI Detection no longer pauses the countdown.</li>
+    <li><strong>Source of truth:</strong> server-side <code>computeStatus()</code> compares <code>Date.now()</code> against <code>firstLaunchAt + 72h</code>. Frontend only displays.</li>
+    <li><strong>Existing installs:</strong> reset to a fresh 3-day trial on v0.7.194 install (your pick — most generous).</li>
+    <li><strong>Lock scope:</strong> only AI Detection / Live transcription / AI Search lock when expired. Bible reader, slides, NDI Output, and Settings stay free.</li>
+    <li><strong>Clock manipulation:</strong> not blocked in v1 (local <code>Date.now()</code>). <code>everActivated</code> still blocks uninstall-reinstall reset.</li>
+    <li><strong>Files touched (4):</strong> <code>storage.ts</code>, <code>trial-tick/route.ts</code>, <code>license-provider.tsx</code>, <code>lock-overlay.tsx</code>+<code>low-time-warning.tsx</code>. Version bump <code>0.7.193-hotfix.4 → 0.7.194</code>.</li>
+  </ul>
+</div>
+
+</body>
+</html>

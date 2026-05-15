@@ -86,7 +86,7 @@ export function LiveTranscriptionLockOverlay() {
   // Activate modal (which the customer reaches via the button below).
   const subtitle = expired
     ? 'Your activation has expired. Tap Activate to enter your code.'
-    : 'Your 1-hour free trial has ended. Tap Activate to enter your code.'
+    : 'Your 3-day free trial has expired. Please activate a subscription to continue using AI Detection.'
 
   // v0.7.43 — Restore saved contact details whenever the dialog opens
   // (and only if the fields are blank — don't overwrite mid-edit
