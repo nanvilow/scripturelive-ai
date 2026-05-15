@@ -1371,7 +1371,7 @@ export function MediaLibraryCompact() {
                 <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-1">
                   <div className="flex justify-end">
                     <button
-                      onClick={() => removeItem(m.id)}
+                      onClick={(e) => { e.stopPropagation(); removeItem(m.id) }}
                       className="h-5 w-5 rounded bg-red-600/80 hover:bg-red-600 flex items-center justify-center"
                       aria-label="Delete"
                     >
@@ -1380,14 +1380,14 @@ export function MediaLibraryCompact() {
                   </div>
                   <div className="flex flex-col gap-0.5">
                     <button
-                      onClick={() => addToSchedule(m)}
+                      onClick={(e) => { e.stopPropagation(); addToSchedule(m) }}
                       className="text-[9px] py-0.5 rounded bg-amber-500 hover:bg-amber-400 text-black font-bold"
                     >
                       + Schedule
                     </button>
                     {m.kind === 'image' && (
                       <button
-                        onClick={() => useAsBackground(m)}
+                        onClick={(e) => { e.stopPropagation(); useAsBackground(m) }}
                         className="text-[9px] py-0.5 rounded bg-muted hover:bg-muted text-foreground"
                       >
                         Set BG
