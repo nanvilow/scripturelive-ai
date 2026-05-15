@@ -992,8 +992,18 @@ export function computeStatus(now = Date.now()): SubscriptionStatus {
   // do NOT pause it. trialMsUsed is no longer consulted (the field is
   // still present on LicenseFile for backward read compat with old
   // persisted state from v0.7.5–v0.7.193).
-  const startedAtMs = new Date(f.firstLaunchAt).getTime()
-  const trialEndMs = startedAtMs + f.trialDurationMs
+  //
+  // v0.7.194-hotfix.1 — Defensive NaN guards. If `firstLaunchAt` is
+  // malformed (corrupted JSON, hand-edited, or pre-schema state) or
+  // `trialDurationMs` is non-finite, `new Date(...).getTime()` returns
+  // NaN and any later `new Date(NaN).toISOString()` would throw
+  // RangeError, 500-ing /api/license/status. Fall back to safe defaults
+  // (now / TRIAL_DURATION_MS) so computeStatus() always returns a
+  // valid status object.
+  const rawStartedAt = new Date(f.firstLaunchAt).getTime()
+  const startedAtMs = Number.isFinite(rawStartedAt) ? rawStartedAt : now
+  const safeDuration = Number.isFinite(f.trialDurationMs) ? f.trialDurationMs : TRIAL_DURATION_MS
+  const trialEndMs = startedAtMs + safeDuration
   const trialMsLeft = Math.max(0, trialEndMs - now)
   const trialEnd = trialEndMs
   const trialExpired = trialMsLeft === 0

@@ -188,7 +188,7 @@ export function LicenseProvider({ children }: { children: React.ReactNode }) {
     setLicenseLocked(isLocked)
   }, [isLocked, setLicenseLocked])
 
-  // ─── v0.7.194 — Wall-clock trial countdown poller ────────────────
+  // ─── v0.7.194 — Wall-clock trial countdown ────────────────────────
   //
   // Pre-v0.7.194 we ran an activity-gated tick: every 5 seconds while
   // the mic was on we POSTed deltaMs to /api/license/trial-tick which
@@ -197,43 +197,19 @@ export function LicenseProvider({ children }: { children: React.ReactNode }) {
   // was actively detecting.
   //
   // v0.7.194 switches to wall-clock: the trial is 72 hours from
-  // firstLaunchAt regardless of usage. The server already computes
-  // the current msLeft from Date.now() vs firstLaunchAt + 72h on
-  // every /status call, so we just need a polling loop here to
-  // refresh the displayed countdown.
+  // firstLaunchAt regardless of usage. The existing 30-second status
+  // poller above (refresh useEffect at L117-128) is the ONLY polling
+  // loop — it already refreshes the displayed countdown often enough
+  // for D/H/M UI precision. We do NOT add a second poller here
+  // (v0.7.194-hotfix.1 removed a duplicate 60s loop that ran in
+  // parallel and caused redundant requests). The server is the
+  // source of truth for ALL transitions (trial→expired, expired→
+  // active after operator activates a code in another tab/window)
+  // via the existing 30s refresh + window-focus refresh.
   //
-  // Polling cadence: every 60 seconds. Why 60 and not e.g. 1s:
-  // the countdown UI shows D / H / M precision (not seconds), so
-  // anything finer would burn HTTP calls without changing what the
-  // operator sees. On expiry transition the next 60-second tick
-  // flips the lock-overlay; in the worst case the operator sees up
-  // to 60 seconds of stale "active trial" state past the true
-  // expiry moment, which is acceptable for a 72-hour budget.
-  //
-  // We poll regardless of trial / paid / expired state — the server
-  // is the source of truth for ALL transitions (trial→expired,
-  // active→expired, expired→active after operator activates a code
-  // in another tab/window) and the polling cost is negligible.
-  const trialActive = status.state === 'trial'
-  useEffect(() => {
-    let cancelled = false
-    const refresh = async () => {
-      try {
-        const r = await fetch('/api/license/status', { cache: 'no-store' })
-        if (!r.ok) return
-        const j = (await r.json()) as { status: LicenseStatus } | LicenseStatus
-        // /status route may return either the bare status or { status }
-        const next = (j as { status?: LicenseStatus }).status ?? (j as LicenseStatus)
-        if (!cancelled && next && typeof next === 'object' && 'state' in next) {
-          setStatus(next)
-        }
-      } catch {
-        // Offline / server restart — silently skip; next tick retries.
-      }
-    }
-    const id = setInterval(refresh, 60_000)
-    return () => { cancelled = true; clearInterval(id) }
-  }, [])
+  // No activity-tick effect lives here anymore — `isListening` is
+  // intentionally not consumed by the trial path (the timer must
+  // never pause; see the operator's v0.7.194 sign-off).
 
   const value: LicenseContextValue = {
     status,
