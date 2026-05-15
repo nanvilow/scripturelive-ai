@@ -1,3 +1,32 @@
+## v0.7.185 — Version-string hotfix (semver compliance for electron-builder + GitHub Actions upload glob)
+
+Code-identical re-tag of v0.7.184.2. Required because the `0.7.184.2` four-segment version string broke the GitHub Actions release pipeline.
+
+### Root cause
+
+electron-builder 25.1.8 normalizes `${version}` through a strict semver parser that only accepts `MAJOR.MINOR.PATCH[-prerelease]`. Feeding it `0.7.184.2` (four dotted segments) caused it to silently mangle the trailing `.2` into a prerelease tag, producing `ScriptureLive-AI-0.7.18-4.2-Setup-x64.exe` on disk. The `release-desktop.yml` upload step's glob `ScriptureLive-AI-0.7.184.2-Setup-*.exe` then found zero files and the workflow failed with `##[error]No files were found with the provided path`. The build itself succeeded — the installer was produced and signed; only the upload step broke. Cascade: Upload installer → failure → Upload latest.yml / blockmap → skipped → Verify macOS notarization → skipped → Publish GitHub Release → skipped.
+
+The same mangling also affected v0.7.184 + v0.7.184.1 in principle, but those tags happened to land on filename patterns where the upload glob's wildcards still matched. v0.7.184.2 is the first build where the mangled and unmangled forms diverge enough to miss the glob.
+
+### Fix
+
+Bumped to `0.7.185` (3-segment, valid semver). No code changes — all v0.7.184.2 fixes (4 nav-fires in `speech-provider.tsx` + autofit measurement fix in `route.ts`) ship verbatim under the new version tag.
+
+### Files
+
+- `artifacts/imported-app/package.json` → `0.7.185`
+- `artifacts/imported-app/BUILD.bat` → banner `0.7.185`
+- `artifacts/imported-app/CHANGELOG.md` → this entry prepended
+- `replit.md` → Recent rolled to 185 / 184.2 / 184.1; v0.7.184 demoted to one-liner
+
+### GUARD-RAIL — version strings MUST be 3-segment semver
+
+`package.json#version` MUST be exactly `MAJOR.MINOR.PATCH` (optional `-prerelease.N` suffix). NEVER use 4-segment forms like `0.7.184.2` or `0.7.184.2.1`. electron-builder, semver, and the `release-desktop.yml` upload glob all assume 3-segment compliance. For hotfixes, increment PATCH (`0.7.184` → `0.7.185`). If you absolutely need a "hotfix-of-hotfix" lineage marker, use prerelease syntax (`0.7.185-hotfix.1`) AND update the upload glob in `release-desktop.yml` in lockstep.
+
+Single grep to verify on every release: `node -e "const v=require('./artifacts/imported-app/package.json').version; if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(v)) { console.error('INVALID SEMVER:', v); process.exit(1); }"`.
+
+---
+
 ## v0.7.184.2 — Re-mention navigator-fire across ALL dedupe gates + NDI Lower-Third autofit measurement fix
 
 Two operator-driven fixes after v0.7.184.1's nav-fire-on-dedupe shipped but the operator reported "it doesn't work at all" — root-cause diagnosis revealed the store-level fix was unreachable on re-mention because four UPSTREAM dedupe gates in `speech-provider.tsx` were silently dropping the second mention before `addDetectedVerse` was ever called. Plus a separate operator request to fix NDI lower-third autofit which had never worked due to a flex-layout measurement bug.
