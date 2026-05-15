@@ -349,7 +349,18 @@ function storagePath(): string {
 // the new constant, so anyone who started a v0.7.19/v0.7.20/v0.7.21
 // trial keeps their already-allocated 180-minute budget rather than
 // having time yanked away mid-evaluation.
-const TRIAL_DURATION_MS = 70 * 60 * 1000 // 70 min
+// v0.7.194 — Trial model changed from activity-gated minutes to
+// wall-clock days. The countdown now runs continuously from
+// firstLaunchAt; closing the app, sleeping the PC, or never opening
+// AI Detection do NOT pause it. Server-side computeStatus() compares
+// Date.now() against firstLaunchAt + TRIAL_DURATION_MS on every call.
+// trialMsUsed is no longer consulted (kept on the LicenseFile interface
+// for backward read compat — old installs whose persisted JSON still
+// has it just ignore it). See computeStatus() below + load() migration
+// block which RESETS firstLaunchAt for any non-activated install on
+// upgrade so existing operators who installed weeks ago get a fresh
+// 3-day window starting from when they install v0.7.194.
+const TRIAL_DURATION_MS = 3 * 24 * 60 * 60 * 1000 // 72 hours
 // v0.7.3 — Bumped from 15 min → 7 days. Operator's bug report:
 // "Active subscriptions are killed... it deletes active codes by
 // itself while I didn't give that command." The 15-minute window
@@ -624,47 +635,56 @@ function load(): LicenseFile {
         persist(cache)
       }
     }
-    // v0.7.19 — Trial bump migration. If the persisted trial budget is
-    // smaller than the current TRIAL_DURATION_MS, AND the user has not
-    // yet activated a paid subscription, AND the trial they were on
-    // hadn't already expired, lift it. This ensures operators
-    // mid-trial when v0.7.19 lands get the full 180 min budget
-    // instead of being capped at the old (30 min) ceiling.
+    // v0.7.194 — Wall-clock trial migration. The trial model changed
+    // from activity-gated minutes (v0.7.5–v0.7.193: trialMsUsed
+    // accumulated only while the mic was on, refresh/overnight wait
+    // did not consume it) to wall-clock 72 hours from firstLaunchAt.
     //
-    // Guards we deliberately apply (each one is load-bearing):
-    //   (a) trialDurationMs < TRIAL_DURATION_MS — only need to act
-    //       when the persisted budget is actually smaller than the
-    //       new ceiling. Idempotent: once lifted, this branch never
-    //       runs again.
-    //   (b) everActivated !== true — never touch installs that have
-    //       ever been on a paid subscription. Sticky-lockdown after
-    //       paid-sub-ends is a separate post-paid behaviour and we
-    //       must not silently extend any window in that flow.
-    //   (c) !activeSubscription — defensive double-check; if a
-    //       subscription is somehow still flagged active, leave the
-    //       trial counter alone.
-    //   (d) trialMsUsed < cache.trialDurationMs — CRITICAL. The
-    //       activity-gated trial considers the user expired/locked
-    //       once trialMsUsed >= trialDurationMs. Without this guard,
-    //       a user whose 30-min trial already ran out (and who
-    //       therefore should be locked) would be silently re-opened
-    //       to a fresh 150 min when 0.7.19 first launches. We only
-    //       lift trials that are still in progress at migration time.
+    // Operator pick (most generous): every install that has NEVER
+    // activated a paid subscription gets a FRESH 3-day window starting
+    // from this v0.7.194 install moment. Without this reset, an
+    // operator whose firstLaunchAt was set weeks ago would land on
+    // v0.7.194 and immediately be expired (because Date.now() is
+    // already > firstLaunchAt + 72h), with no way to evaluate.
+    //
+    // Guards (each load-bearing):
+    //   (a) everActivated !== true — never touch installs that have
+    //       ever been on a paid subscription. Resetting firstLaunchAt
+    //       on a paid install would have no observable effect (the
+    //       paid subscription wins over trial in computeStatus()),
+    //       but we keep the guard so we don't silently rewrite a
+    //       provenance timestamp some downstream tooling might trust.
+    //   (b) !activeSubscription — defensive double-check.
+    //   (c) trialDurationMs < TRIAL_DURATION_MS — IDEMPOTENCY GATE.
+    //       Once we've lifted an install to the v0.7.194 budget the
+    //       persisted value already equals TRIAL_DURATION_MS, so this
+    //       branch will not run again on subsequent boots. Without
+    //       this guard the firstLaunchAt would get re-stamped on
+    //       every app start, infinitely extending the trial.
     if (
       cache.trialDurationMs < TRIAL_DURATION_MS &&
       cache.everActivated !== true &&
-      !cache.activeSubscription &&
-      (cache.trialMsUsed ?? 0) < cache.trialDurationMs
+      !cache.activeSubscription
     ) {
+      const newFirstLaunchAt = new Date().toISOString()
       // eslint-disable-next-line no-console
       console.log(
-        '[licensing] migrating trialDurationMs',
+        '[licensing] migrating to wall-clock trial: firstLaunchAt',
+        cache.firstLaunchAt,
+        '→',
+        newFirstLaunchAt,
+        '+ trialDurationMs',
         cache.trialDurationMs,
         '→',
         TRIAL_DURATION_MS,
-        '(v0.7.19 trial bump)',
+        '(v0.7.194 wall-clock 3-day reset)',
       )
+      cache.firstLaunchAt = newFirstLaunchAt
       cache.trialDurationMs = TRIAL_DURATION_MS
+      // Reset stale activity counter so any leftover read of the
+      // legacy field doesn't accidentally show "trial used" when we've
+      // just granted a fresh window.
+      cache.trialMsUsed = 0
       persist(cache)
     }
     return cache
@@ -965,16 +985,27 @@ export interface SubscriptionStatus {
 
 export function computeStatus(now = Date.now()): SubscriptionStatus {
   const f = sweepExpired(now)
-  // v0.7.5 — Activity-gated trial. The trial budget is `trialDurationMs`
-  // total LISTENING time (mic actually running). `trialMsUsed` accumulates
-  // only while the user is actively detecting; refresh / overnight wait
-  // do not consume it. We synthesise a startedAt/expiresAt pair so the
-  // existing UI countdown widget keeps rendering — expiresAt is just a
-  // projection of "if you started listening continuously RIGHT NOW, the
-  // trial would run out at..." (i.e. now + remaining budget).
-  const trialUsed = Math.max(0, Math.min(f.trialDurationMs, f.trialMsUsed ?? 0))
-  const trialMsLeft = Math.max(0, f.trialDurationMs - trialUsed)
-  const trialEnd = now + trialMsLeft
+  // v0.7.194 — Wall-clock trial. The trial budget is TRIAL_DURATION_MS
+  // (72 hours) of REAL-WORLD time from firstLaunchAt. The countdown
+  // runs continuously regardless of whether the user is using the app;
+  // closing the app, sleeping the PC, or never opening AI Detection
+  // do NOT pause it. trialMsUsed is no longer consulted (the field is
+  // still present on LicenseFile for backward read compat with old
+  // persisted state from v0.7.5–v0.7.193).
+  //
+  // v0.7.194-hotfix.1 — Defensive NaN guards. If `firstLaunchAt` is
+  // malformed (corrupted JSON, hand-edited, or pre-schema state) or
+  // `trialDurationMs` is non-finite, `new Date(...).getTime()` returns
+  // NaN and any later `new Date(NaN).toISOString()` would throw
+  // RangeError, 500-ing /api/license/status. Fall back to safe defaults
+  // (now / TRIAL_DURATION_MS) so computeStatus() always returns a
+  // valid status object.
+  const rawStartedAt = new Date(f.firstLaunchAt).getTime()
+  const startedAtMs = Number.isFinite(rawStartedAt) ? rawStartedAt : now
+  const safeDuration = Number.isFinite(f.trialDurationMs) ? f.trialDurationMs : TRIAL_DURATION_MS
+  const trialEndMs = startedAtMs + safeDuration
+  const trialMsLeft = Math.max(0, trialEndMs - now)
+  const trialEnd = trialEndMs
   const trialExpired = trialMsLeft === 0
 
   // Active subscription wins over trial.

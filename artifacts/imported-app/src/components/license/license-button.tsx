@@ -15,7 +15,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Sparkles, ShieldCheck, Lock } from 'lucide-react'
 import { useLicense } from './license-provider'
-import { useAppStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
 import {
   formatDaysHoursMinutes,
@@ -117,30 +116,34 @@ function formatSubCountdown(msLeft: number, isMaster: boolean): string {
   return `${mm}:${ss}`
 }
 
-function useTickingTrialMsLeft(serverMsLeft: number, isTrial: boolean, isListening: boolean): number | null {
+function useTickingTrialMsLeft(serverMsLeft: number, isTrial: boolean): number | null {
   const baseRef = useRef<number>(serverMsLeft)
   const [displayed, setDisplayed] = useState<number>(serverMsLeft)
 
   // Re-anchor on every server snapshot. Status polls land every 30 s
-  // and trial-tick responses land every 5 s while listening, so the
-  // displayed value never drifts more than a few seconds from disk.
+  // (license-provider refresh useEffect) so the displayed value never
+  // drifts more than a few seconds from the server's wall-clock value.
   useEffect(() => {
     baseRef.current = serverMsLeft
     setDisplayed(serverMsLeft)
   }, [serverMsLeft])
 
-  // Tick the displayed value down at 1 Hz, but only while the mic is
-  // actually running. When stopped, the last setDisplayed() call
-  // sticks and the badge freezes.
+  // v0.7.194 — Wall-clock trial: tick the displayed value down at 1 Hz
+  // CONTINUOUSLY whenever a trial is active, regardless of whether
+  // the mic is on. Pre-v0.7.194 the tick was gated on `isListening`
+  // (activity-gated trial), but the operator's v0.7.194 sign-off
+  // requires the timer to NEVER pause — the trial drains in real
+  // wall-clock time even when the app is closed, so the displayed
+  // countdown must mirror that and tick on every render path.
   useEffect(() => {
-    if (!isTrial || !isListening) return
+    if (!isTrial) return
     const start = Date.now()
     const id = setInterval(() => {
       const elapsed = Date.now() - start
       setDisplayed(Math.max(0, baseRef.current - elapsed))
     }, 1000)
     return () => clearInterval(id)
-  }, [isTrial, isListening, serverMsLeft])
+  }, [isTrial, serverMsLeft])
 
   if (!isTrial) return null
   return displayed
@@ -152,11 +155,13 @@ interface Props {
 
 export function LicenseTopBarButton({ variant = 'inline' }: Props) {
   const { status, isActive, isTrial, openSubscribe } = useLicense()
-  // v0.7.10 — Trial counter only ticks while mic is actively running.
-  // Pulls isListening from the global store (set by SpeechProvider on
-  // start/stop) so a stopped detection visibly freezes the badge.
-  const isListening = useAppStore((s) => s.isListening)
-  const tickingMsLeft = useTickingTrialMsLeft(status.trial?.msLeft ?? 0, isTrial, isListening)
+  // v0.7.194 — Trial is wall-clock; counter ticks continuously and is
+  // NOT gated on isListening (the operator's hard requirement: timer
+  // must NEVER pause, even when AI Detection is closed). Pre-v0.7.194
+  // this hook took an isListening flag that froze the badge when the
+  // mic was off; that gate has been removed along with the rest of
+  // the activity-gated trial machinery.
+  const tickingMsLeft = useTickingTrialMsLeft(status.trial?.msLeft ?? 0, isTrial)
   // v0.7.78 — Hook called unconditionally (Rules of Hooks). The
   // ticking value is only RENDERED in the active-subscription branch
   // below, but we must invoke the hook on every render or React
@@ -234,15 +239,10 @@ export function LicenseTopBarButton({ variant = 'inline' }: Props) {
           'border border-amber-300/60',
           'transition-colors shrink-0',
         )}
-        title={
-          isListening
-            ? "You're on the 1-hour free trial. Counter only runs while detecting. Click to activate a subscription."
-            : "Trial paused — counter is frozen until you start detecting. Click to activate a subscription."
-        }
+        title="You're on the 3-day free trial. The countdown runs continuously in real time — even when the app is closed. Click to activate a subscription."
       >
         <Sparkles className="h-3 w-3" />
-        Trial — {formatTrial(tickingMsLeft ?? status.trial.msLeft)}
-        {!isListening && ' (paused)'} · Activate
+        Trial — {formatTrial(tickingMsLeft ?? status.trial.msLeft)} · Activate
       </button>
     )
   }
