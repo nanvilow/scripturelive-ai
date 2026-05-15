@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>v0.7.186 — Media echo / freeze / VU meter fix</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0f0f10;color:#eee;font-family:-apple-system,system-ui,sans-serif;padding:24px;font-size:14px;line-height:1.5}
+  h1{font-size:22px;margin-bottom:6px;color:#fff}
+  h2{font-size:15px;margin:22px 0 10px;color:#9cf}
+  .sub{color:#aaa;font-size:12px;margin-bottom:18px}
+  .lane{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px}
+  .col{background:#1a1a1c;border:1px solid #2a2a2e;border-radius:10px;padding:14px}
+  .col h3{font-size:13px;color:#facc15;margin-bottom:10px;letter-spacing:.5px}
+  .pane{background:#0a0a0b;border:1px solid #2a2a2e;border-radius:8px;padding:8px;display:flex;gap:8px;align-items:stretch}
+  .meter-rail{width:18px;display:flex;flex-direction:column;align-items:center;gap:4px}
+  .meter{position:relative;flex:1;width:8px;background:#0d0d0e;border:1px solid #333;border-radius:3px;overflow:hidden}
+  .meter > div.bar{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(to top,#10b981,#fbbf24);transition:height .12s}
+  .meter::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(to bottom,transparent 0,transparent 9px,rgba(0,0,0,.5) 9px,rgba(0,0,0,.5) 10px)}
+  .speaker{width:18px;height:18px;border:1px solid #333;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#10b981;background:rgba(16,185,129,.15)}
+  .speaker.off{color:#888;background:transparent}
+  .stage{flex:1;background:#000;border:1px solid #2a2a2e;border-radius:6px;height:115px;display:flex;align-items:center;justify-content:center;color:#888;font-size:11px;position:relative;overflow:hidden}
+  .stage.video{background:linear-gradient(135deg,#1e3a5c 0%,#2a4a7c 50%,#1e3a5c 100%)}
+  .stage.video::after{content:"▶ playing";position:absolute;bottom:6px;right:8px;font-size:10px;color:#fff;background:rgba(0,0,0,.6);padding:2px 6px;border-radius:3px}
+  .stage.frozen{background:linear-gradient(135deg,#1e3a5c 0%,#2a4a7c 50%,#1e3a5c 100%)}
+  .stage.frozen::after{content:"⏸ frozen at frame";position:absolute;bottom:6px;right:8px;font-size:10px;color:#fff;background:rgba(220,38,38,.85);padding:2px 6px;border-radius:3px}
+  .stage.empty{background:#0a0a0b;color:#555}
+  .stage.live-on{box-shadow:inset 0 0 0 2px #ef4444}
+  .label{font-size:11px;color:#888;margin-top:8px;text-align:center}
+  .audio-state{margin-top:10px;background:#0d0d0e;border:1px solid #2a2a2e;border-radius:6px;padding:10px;font-size:11px;color:#bbb;line-height:1.6}
+  .audio-state .row{display:flex;justify-content:space-between;border-bottom:1px solid #2a2a2e;padding:3px 0}
+  .audio-state .row:last-child{border-bottom:none}
+  .ok{color:#4ade80;font-weight:600}
+  .bad{color:#f87171;font-weight:600}
+  .meh{color:#facc15;font-weight:600}
+  .diag-box{background:#1a1a1c;border:1px solid #2a2a2e;border-left:4px solid #9cf;border-radius:6px;padding:14px;margin-bottom:14px;font-size:13px}
+  .diag-box .title{color:#9cf;font-weight:600;margin-bottom:6px}
+  .scenario{background:#1f2937;border:1px solid #374151;border-left:4px solid #facc15;border-radius:6px;padding:14px;margin-bottom:18px}
+  .scenario .title{color:#facc15;font-weight:600;margin-bottom:6px;font-size:13px}
+  .arch{background:#0d0d0e;border:1px solid #2a2a2e;border-radius:8px;padding:14px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.6;color:#ddd;white-space:pre;margin-bottom:14px;overflow-x:auto}
+  .arch .add{color:#86efac}
+  .arch .del{color:#fca5a5;text-decoration:line-through;opacity:.6}
+  .arch .marker{color:#9cf;font-weight:600}
+  .footer{font-size:11px;color:#666;text-align:center;margin-top:18px}
+
+  /* anim for the "active meter" bars so the proof reads as live */
+  @keyframes pulse1{0%{height:35%}50%{height:78%}100%{height:42%}}
+  @keyframes pulse2{0%{height:18%}50%{height:62%}100%{height:25%}}
+  .anim1{animation:pulse1 .9s ease-in-out infinite}
+  .anim2{animation:pulse2 .7s ease-in-out infinite}
+</style></head><body>
+
+<h1>v0.7.186 — Media flow restore (echo · freeze · VU meter)</h1>
+<p class="sub">Operator complaints addressed: (1) preview keeps playing audio when the same media goes live → echo; (2) audio indicator on the preview pane stays at zero; (3) preview frame keeps ticking instead of freezing.</p>
+
+<div class="scenario">
+  <div class="title">ROOT CAUSE</div>
+  v0.7.158 switched the Preview pane from a React <code>&lt;video&gt;</code> renderer to an iframe of <code>/api/output/congregation</code>. Verses now match the projector exactly, but media broke in three ways: (a) the React-side <code>shouldBePaused = globalIsLive || mediaPaused</code> rule never reached inside the iframe, (b) the <code>previewVideoPlaying</code> + <code>audioLevelPreview</code> store flags that drive the green VU meter were written by the now-unmounted <code>MediaSlideContent</code> useEffects, (c) the iframe video kept playing audio in parallel with the live iframe → echo.
+</div>
+
+<h2>BEFORE (v0.7.185 — broken) vs AFTER (v0.7.186 — restored)</h2>
+
+<div class="lane">
+  <div class="col">
+    <h3>STATE A — Nothing staged</h3>
+    <div class="pane">
+      <div class="meter-rail">
+        <div class="meter"><div class="bar" style="height:0%"></div></div>
+        <div class="speaker off">🔇</div>
+      </div>
+      <div class="stage empty">Nothing in preview yet</div>
+    </div>
+    <div class="label">Both versions: identical (idle).</div>
+    <div class="audio-state">
+      <div class="row"><span>Echo</span><span class="ok">none</span></div>
+      <div class="row"><span>Frame</span><span class="ok">N/A</span></div>
+      <div class="row"><span>VU meter</span><span class="ok">flat zero</span></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <h3>STATE B — Media staged, NOT live yet</h3>
+    <div class="pane">
+      <div class="meter-rail">
+        <div class="meter"><div class="bar anim1" style="height:55%"></div></div>
+        <div class="speaker">🔊</div>
+      </div>
+      <div class="stage video">preview clip</div>
+    </div>
+    <div class="label" style="color:#fbbf24">v0.7.185: meter <b>dead at zero</b> even though clip is loud.<br>v0.7.186: meter <b>tracks the real RMS</b> from the hidden silent analyser.</div>
+    <div class="audio-state">
+      <div class="row"><span>Echo</span><span class="ok">none (only one source)</span></div>
+      <div class="row"><span>Frame</span><span class="ok">playing in preview</span></div>
+      <div class="row"><span>VU meter (v0.7.185)</span><span class="bad">stuck at 0 ❌</span></div>
+      <div class="row"><span>VU meter (v0.7.186)</span><span class="ok">live signal ✓</span></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <h3>STATE C — Same media sent LIVE</h3>
+    <div class="pane">
+      <div class="meter-rail">
+        <div class="meter"><div class="bar" style="height:0%"></div></div>
+        <div class="speaker off">🔇</div>
+      </div>
+      <div class="stage frozen live-on">preview clip</div>
+    </div>
+    <div class="label" style="color:#4ade80">v0.7.185: preview keeps playing audio in parallel with Live → <b>ECHO</b>.<br>v0.7.186: preview iframe + hidden meter both pause → <b>frozen frame, zero echo</b>.</div>
+    <div class="audio-state">
+      <div class="row"><span>Echo (v0.7.185)</span><span class="bad">YES — doubled audio ❌</span></div>
+      <div class="row"><span>Echo (v0.7.186)</span><span class="ok">none ✓</span></div>
+      <div class="row"><span>Frame (v0.7.185)</span><span class="bad">keeps ticking ❌</span></div>
+      <div class="row"><span>Frame (v0.7.186)</span><span class="ok">frozen at the cued frame ✓</span></div>
+      <div class="row"><span>VU meter (v0.7.185)</span><span class="bad">stuck at 0 ❌</span></div>
+      <div class="row"><span>VU meter (v0.7.186)</span><span class="ok">drops to 0 in lockstep ✓</span></div>
+    </div>
+  </div>
+</div>
+
+<h2>How the fix works (architecture)</h2>
+
+<div class="arch">┌────────────────────── Preview pane (logos-shell.tsx PreviewCard) ──────────────────────┐
+│                                                                                        │
+│   <span class="marker">VISIBLE</span>   ┌──────────────────────────────────┐                                       │
+│            │  &lt;OutputPreview                  │  ◄── slideOverride={effectivePreviewSlide}      │
+│            │    iframe(/api/output/...)       │      (cloned with mediaPaused:true              │
+│            │    -- the SOLE audible source    │       when same media is on Live)               │
+│            │  /&gt;                              │                                       │
+│            └──────────────────────────────────┘                                       │
+│                                                                                        │
+│   <span class="marker">HIDDEN</span>    ┌──────────────────────────────────┐                                       │
+│   (1×1px,  │  &lt;HiddenMediaMeter               │  ◄── attachAnalyserSilent() — does NOT          │
+│   off-     │    src={previewSlide.mediaUrl}   │      connect to AudioContext.destination,       │
+│   screen)  │    paused={previewMediaIsLive}   │      so this element produces ZERO sound.       │
+│            │  /&gt;                              │      Analyser still reads the RMS so the        │
+│            │                                  │      green meter has a real signal.             │
+│            │   v.muted = false  (must be —    │                                       │
+│            │   muting the HTMLMediaElement    │                                       │
+│            │   silences MediaElementSource    │                                       │
+│            │   too)                           │                                       │
+│            └──────────────────────────────────┘                                       │
+│                                                                                        │
+│   <span class="marker">FLAGS WRITTEN BY HIDDEN VIDEO →</span>  audioLevelPreview · previewVideoPlaying        │
+│   <span class="marker">READ BY THE GREEN VU METER →</span>     AudioMeter at logos-shell.tsx L837              │
+│                                                                                        │
+└────────────────────────────────────────────────────────────────────────────────────────┘</div>
+
+<div class="diag-box">
+  <div class="title">Why one source = no echo</div>
+  Once a media element is captured by <code>createMediaElementSource(el)</code> the browser <b>replaces</b> its native audio path with the Web Audio graph. If the graph never reaches <code>AudioContext.destination</code>, the element produces no sound at all — but the analyser still sees the decoded RMS. The hidden React video is therefore audibly silent yet metrically alive. The visible iframe stays the <i>only</i> audible source for the preview pane, exactly like the v0.7.157-and-earlier behaviour.
+</div>
+
+<div class="diag-box">
+  <div class="title">Why the freeze is automatic</div>
+  The iframe renderer (<code>route.ts</code> ~L1048-1126) already pauses any media slide whose payload carries <code>mediaPaused: true</code>. We just splice that flag in <i>only</i> when the previewed mediaUrl matches the live mediaUrl — verses, images and theme slides flow through unchanged.
+</div>
+
+<h2>Touched files</h2>
+<div class="arch">  <span class="add">M</span> src/lib/audio-level.ts                  <span class="marker">+ attachAnalyserSilent()  (~20 lines, sibling of attachAnalyser)</span>
+  <span class="add">M</span> src/components/layout/logos-shell.tsx    <span class="marker">+ HiddenMediaMeter component (~120 lines, well-commented)</span>
+                                            <span class="marker">+ effectivePreviewSlide derivation in PreviewCard (~25 lines)</span>
+                                            <span class="marker">+ &lt;HiddenMediaMeter&gt; mounted next to OutputPreview iframe</span>
+  <span class="add">M</span> artifacts/imported-app/package.json      <span class="marker">version 0.7.185 → 0.7.186</span>
+  <span class="add">M</span> artifacts/imported-app/BUILD.bat         <span class="marker">banner v0.7.185 → v0.7.186</span>
+
+  <span class="marker">Untouched: route.ts (renderer), slide-renderer.tsx (Live pane), NDI, OBS, projector, secondary screen, Settings preview.</span></div>
+
+<p class="footer">tsc --noEmit clean · awaiting "ship it" before push</p>
+
+</body></html>

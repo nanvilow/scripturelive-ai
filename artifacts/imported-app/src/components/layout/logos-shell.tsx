@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { StableStage } from '@/components/presenter/stable-stage'
 import { OutputPreview } from '@/components/settings/output-preview'
+import { attachAnalyserSilent, readLevel } from '@/lib/audio-level'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import {
@@ -208,6 +209,123 @@ function AudioMeter({
         ))}
       </div>
     </div>
+  )
+}
+
+// v0.7.186 — Hidden media meter for the Preview pane.
+//
+// Background: v0.7.158 switched the Preview pane from a React video
+// renderer to an iframe of /api/output/congregation. The iframe's
+// <video> element is unreachable from React, so the audio VU meter
+// (which used to read a Web Audio analyser attached to the React
+// <video>) had no signal source any more — the bar stayed at zero
+// even while the operator's preview was loudly playing a clip.
+//
+// Fix: mount a tiny, off-screen <video> here whose ONLY job is to
+// feed the analyser. The hidden element is unmuted (so its
+// MediaElementSource emits real audio data into the graph), but the
+// graph routes through `attachAnalyserSilent` which deliberately
+// does NOT connect to AudioContext.destination — once a media
+// element is captured by a MediaElementSource its native audio path
+// is replaced by the graph, and a graph that doesn't reach
+// destination produces no sound at all. So the visible iframe stays
+// the SOLE audible source for the preview pane (no echo, no double
+// audio), while this hidden element drives the meter signal.
+//
+// The `paused` prop mirrors the iframe's pause state — when the
+// operator sends the same media to Live, the iframe pauses (via
+// mediaPaused override) and so does this hidden video, so the meter
+// drops to dead-flat zero in lockstep with the frozen preview frame.
+function HiddenMediaMeter({
+  src,
+  paused,
+}: {
+  src: string
+  paused: boolean
+}) {
+  const setPreviewVideoPlaying = useAppStore((s) => s.setPreviewVideoPlaying)
+  const setAudioLevel = useAppStore((s) => s.setAudioLevel)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  // Honour the pause prop in real time. Same pattern as MediaSlideContent.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    if (paused) v.pause()
+    else v.play().catch(() => {})
+  }, [paused])
+  // Mirror the actual play/paused state of the hidden video onto the
+  // store flag the AudioMeter reads (`previewVideoPlaying`). The bar
+  // is only rendered active while a real signal is flowing.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    const onPlaying = () => setPreviewVideoPlaying(true)
+    const onPaused = () => setPreviewVideoPlaying(false)
+    v.addEventListener('playing', onPlaying)
+    v.addEventListener('pause', onPaused)
+    v.addEventListener('ended', onPaused)
+    v.addEventListener('stalled', onPaused)
+    v.addEventListener('emptied', onPaused)
+    setPreviewVideoPlaying(!v.paused && !v.ended && v.readyState > 2)
+    return () => {
+      v.removeEventListener('playing', onPlaying)
+      v.removeEventListener('pause', onPaused)
+      v.removeEventListener('ended', onPaused)
+      v.removeEventListener('stalled', onPaused)
+      v.removeEventListener('emptied', onPaused)
+      setPreviewVideoPlaying(false)
+    }
+  }, [setPreviewVideoPlaying, src])
+  // Drive the green VU meter at ~33 Hz from the analyser RMS.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    const an = attachAnalyserSilent(v)
+    if (!an) {
+      setAudioLevel('preview', 0)
+      return
+    }
+    let raf = 0
+    let lastWrite = 0
+    const tick = (t: number) => {
+      if (t - lastWrite >= 30) {
+        lastWrite = t
+        const stopped = v.paused || v.ended
+        setAudioLevel('preview', stopped ? 0 : readLevel(an))
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => {
+      cancelAnimationFrame(raf)
+      setAudioLevel('preview', 0)
+    }
+  }, [src, setAudioLevel])
+  return (
+    <video
+      ref={videoRef}
+      src={src}
+      autoPlay={!paused}
+      loop
+      playsInline
+      preload="auto"
+      // crossOrigin needed for createMediaElementSource on remote URLs;
+      // local /api/upload assets are same-origin so this is harmless.
+      crossOrigin="anonymous"
+      // Off-screen, zero footprint, fully removed from the layout.
+      // aria-hidden so screen readers ignore the silent meter source.
+      aria-hidden
+      tabIndex={-1}
+      style={{
+        position: 'absolute',
+        width: 1,
+        height: 1,
+        opacity: 0,
+        pointerEvents: 'none',
+        left: -9999,
+        top: -9999,
+      }}
+    />
   )
 }
 
@@ -737,7 +855,35 @@ function PreviewCard() {
     setPreviewAudio,
   } = useAppStore()
   const previewVideoPlaying = useAppStore((s) => s.previewVideoPlaying)
+  const isLive = useAppStore((s) => s.isLive)
   const previewSlide = slides[previewSlideIndex] || null
+  // v0.7.186 — Restore the v0.7.157-and-earlier behaviour where the
+  // Preview pane FREEZES on its current frame the moment the same
+  // media is sent to Live, so the operator never hears doubled audio
+  // (echo) and never sees two ticking copies of the same clip. The
+  // iframe renderer (route.ts) already pauses any media slide whose
+  // payload carries `mediaPaused:true`, so we splice that flag in
+  // here when the Preview slide and the Live slide point at the same
+  // mediaUrl. Verse / image / theme slides are passed through
+  // unchanged — the pause-on-promote rule is media-only.
+  const liveSlide = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
+  const previewMediaIsLive = !!(
+    isLive &&
+    previewSlide?.type === 'media' &&
+    liveSlide?.type === 'media' &&
+    previewSlide.mediaUrl &&
+    previewSlide.mediaUrl === liveSlide.mediaUrl
+  )
+  const effectivePreviewSlide = previewMediaIsLive && previewSlide
+    ? { ...previewSlide, mediaPaused: true }
+    : previewSlide
+  // Whether to mount the hidden meter video at all — only for video
+  // media slides (images have no audio + no need for a meter signal).
+  const previewIsVideoMedia = !!(
+    previewSlide?.type === 'media' &&
+    previewSlide.mediaKind === 'video' &&
+    previewSlide.mediaUrl
+  )
   const [navigating, setNavigating] = useState(false)
   // Transport bar was removed from Preview — see comment near the
   // bottom of this card. Playback for the live video is now driven
@@ -873,11 +1019,20 @@ function PreviewCard() {
             // against the same dimensions every frame.
             <StableStage isLive={false}>
               <OutputPreview
-                slideOverride={previewSlide}
+                slideOverride={effectivePreviewSlide}
                 hideModeBadge
                 className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
                 aspectOverride="16 / 9"
               />
+              {/* v0.7.186 — Hidden VU-meter signal source. See the
+                  HiddenMediaMeter comment block for why this is mounted
+                  off-screen and silent. Only present for video media. */}
+              {previewIsVideoMedia && previewSlide && (
+                <HiddenMediaMeter
+                  src={previewSlide.mediaUrl as string}
+                  paused={previewMediaIsLive}
+                />
+              )}
             </StableStage>
           ) : (
             <div className="text-center text-[11px] text-muted-foreground">

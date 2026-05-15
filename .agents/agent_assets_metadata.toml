@@ -1235,3 +1235,9 @@ id = "hqEHeBTUtZHAo_OwYrzmR"
 uri = "file://screenshots/remention-proof.jpg"
 type = "image"
 title = "Re-mention auto-live bug — diagnosis, trace, and proposed v0.7.186 fix"
+
+[[outputs]]
+id = "Hx4LPRczALJi7URfUSKWh"
+uri = "file://screenshots/media-fix-proof.jpg"
+type = "image"
+title = "v0.7.186 media-fix proof"
