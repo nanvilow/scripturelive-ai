@@ -1,0 +1,90 @@
+<!doctype html>
+<html><head><meta charset="utf-8"/><title>Video lag — diagnosis & proposed fixes</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:Inter,system-ui,sans-serif}
+body{background:#0a0e1a;color:#e5e7eb;padding:32px;min-height:100vh}
+h1{font-size:22px;margin-bottom:6px}
+.sub{color:#9ca3af;font-size:13px;margin-bottom:24px}
+.section{font-size:14px;color:#fbbf24;margin:24px 0 12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.panel{background:#0f1422;border:1px solid #1f2937;border-radius:10px;padding:18px}
+.panel.bad{border-color:#7f1d1d}
+.panel.ok{border-color:#14532d}
+.panel h2{font-size:13px;color:#9ca3af;text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.badge{font-size:10px;padding:2px 8px;border-radius:4px;letter-spacing:.05em}
+.badge.bad{background:#7f1d1d;color:#fecaca}
+.badge.ok{background:#14532d;color:#bbf7d0}
+.decoders{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.dec{background:#1f2937;border:1px solid #374151;border-radius:6px;padding:8px 12px;font-size:12px;display:flex;align-items:center;gap:8px}
+.dec .dot{width:8px;height:8px;border-radius:50%;background:#9ca3af}
+.dec.live .dot{background:#ef4444}
+.dec.live{border-color:#7f1d1d;color:#fca5a5}
+.dec.dead{opacity:.35;text-decoration:line-through;background:#0a0e1a}
+.note{color:#9ca3af;font-size:12px;line-height:1.6;margin-top:8px}
+.fix-list{list-style:none;margin:14px 0 0;padding:0}
+.fix-list li{padding:12px 14px;background:#0a1f2a;border:1px solid #0e7490;border-radius:8px;margin-bottom:10px;font-size:13px;line-height:1.6;color:#e0f2fe}
+.fix-list li b{color:#7dd3fc;font-weight:600}
+.fix-list li .impact{display:inline-block;background:#0c4a6e;color:#bae6fd;padding:1px 8px;border-radius:4px;font-size:10px;margin-left:8px;letter-spacing:.05em;text-transform:uppercase}
+.fix-list li .impact.high{background:#7c2d12;color:#fed7aa}
+.callout{background:#1a1208;border:1px solid #92400e;border-radius:8px;padding:12px 14px;margin-top:14px;font-size:12px;color:#fde68a;line-height:1.6}
+.q{background:#0a1f2a;border:1px solid #0e7490;border-radius:8px;padding:14px 16px;margin-top:18px;font-size:13px;color:#a5f3fc;line-height:1.6}
+.q b{color:#fff}
+</style></head><body>
+
+<h1>Why some videos lag — diagnosis</h1>
+<p class="sub">Same MP4 ends up decoded 4–6 times in parallel. Your GPU's hardware video decoder typically supports 2–4 concurrent streams. The 5th+ falls back to <b>software decode on the CPU</b> → that's where the stutter comes from.</p>
+
+<div class="row">
+  <div class="panel bad">
+    <h2>Now <span class="badge bad">5–6 concurrent decoders</span></h2>
+    <div class="decoders">
+      <div class="dec live"><span class="dot"></span>Preview &lt;video&gt;</div>
+      <div class="dec live"><span class="dot"></span>Live Display &lt;video&gt;</div>
+      <div class="dec live"><span class="dot"></span>NDI capture window</div>
+      <div class="dec live"><span class="dot"></span>NDI in-app preview</div>
+      <div class="dec live"><span class="dot"></span>OBS Browser Source</div>
+      <div class="dec live"><span class="dot"></span>2nd-monitor screen</div>
+    </div>
+    <p class="note">Plus a Web Audio analyser pinned to every visible &lt;video&gt; (4 of them) — it keeps decoding samples even when the audio is muted, just to draw the level meter.</p>
+    <p class="note">Plus the v0.7.193-hotfix.2 0.12s drift threshold makes the renderer seek several times per minute → each seek = key-frame decode = visible micro-stutter.</p>
+  </div>
+
+  <div class="panel ok">
+    <h2>After fixes <span class="badge ok">2–3 concurrent decoders</span></h2>
+    <div class="decoders">
+      <div class="dec dead"><span class="dot"></span>Preview &lt;video&gt;</div>
+      <div class="dec live"><span class="dot"></span>Live Display &lt;video&gt;</div>
+      <div class="dec live"><span class="dot"></span>NDI capture window</div>
+      <div class="dec dead"><span class="dot"></span>NDI in-app preview</div>
+      <div class="dec live"><span class="dot"></span>OBS Browser Source</div>
+      <div class="dec dead"><span class="dot"></span>2nd-monitor screen</div>
+    </div>
+    <p class="note">Stays inside hardware decoder budget on every machine — no software-decode fallback, no CPU spike, smooth playback start to finish.</p>
+  </div>
+</div>
+
+<p class="section">Proposed fixes (4 surgical changes)</p>
+<ul class="fix-list">
+  <li><b>1. Unmount Preview's video element when the same media is on Live.</b> <span class="impact high">Biggest win</span><br>
+    The Preview pane already auto-pauses (we just shipped that). Going one step further — replacing it with a static "ON AIR" card while Live owns the clip — frees an entire decoder. Operator gets the Preview back the moment they Stop Live or move to a different slide.</li>
+  <li><b>2. Don't run the Web Audio analyser on muted surfaces.</b> <span class="impact">Medium</span><br>
+    Preview's level meter doesn't need to decode audio samples when its speaker icon is off. Same for NDI capture (always silent). The meter just shows "0" — a Web Audio analyser per surface costs a few % CPU each that we don't need to spend.</li>
+  <li><b>3. Loosen output drift threshold from 0.12s back to 0.20s.</b> <span class="impact">Medium</span><br>
+    The 0.12s I shipped in hotfix.2 was too aggressive on slower machines — the renderer was seeking every couple of seconds, and each seek causes a tiny stutter. 0.20s still keeps the output close to your Live Display (humans don't notice <250ms drift in non-music video), but cuts the seek frequency dramatically.</li>
+  <li><b>4. Don't mount the in-app NDI preview iframe unless the NDI panel is open.</b> <span class="impact">Medium</span><br>
+    Right now that little NDI preview panel runs full-time even when collapsed, decoding the same clip in the background. Mount it only while the operator has the panel expanded.</li>
+</ul>
+
+<div class="callout">
+  <b>What this WON'T do:</b> if a single 4K clip is too heavy for your machine to decode at all (rare on the desktop you're using, but possible for very high-bitrate files), no amount of decoder-count reduction will help. Best case for those: re-encode them to 1080p H.264. I'll add a one-click "Optimize for ScriptureLive" button later if needed — separate task.
+</div>
+
+<div class="q">
+  <b>Before I ship:</b> can you tell me which clips lag (so I know if the fixes above are enough, or if we also need an encoder helper)? In particular:
+  <br>1. Is it ALL videos, or specific high-resolution ones (e.g. 4K, raw phone exports)?
+  <br>2. Does the lag start the moment you click Send to Live, or only after a few seconds?
+  <br>3. Does the in-app Live Display lag, or just the OBS / NDI / 2nd-monitor output?
+  <br><br>If you'd rather just ship the 4 fixes above and see if it's enough, say <b>"yes ship"</b> and I'll roll them out as v0.7.193-hotfix.2.
+</div>
+
+</body></html>

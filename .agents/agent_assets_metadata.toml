@@ -1313,3 +1313,9 @@ id = "HUe0rFmzJCTsc-jt21vmf"
 uri = "file://screenshots/v0193-hf2-mockup-v3.jpg"
 type = "image"
 title = "v0.7.193-hotfix.2 — Independence + auto-stop Preview + Output matches Live"
+
+[[outputs]]
+id = "YVBOPTlEXiPehpP4a8Rw4"
+uri = "file://screenshots/v0193-perf-diag.jpg"
+type = "image"
+title = "Why videos lag — diagnosis + 4 proposed fixes"
