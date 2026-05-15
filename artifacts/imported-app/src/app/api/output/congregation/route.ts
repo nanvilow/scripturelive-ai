@@ -1104,16 +1104,16 @@ function render(s){
   // "use NDI_DEFAULTS", not "copy from app".
   var NDI_DEFAULTS = {
     fontFamily: 'sans-serif',
-    fontSize: 'lg',
+    fontSize: 'xl',
     textShadow: true,
     textScale: 1.0,
     textAlign: 'center',
     bibleColor: '#FFFFFF',
     bibleLineHeight: 1.4,
-    refSize: 'md',
+    refSize: 'lg',
     refStyle: 'normal',
     refPosition: 'top',
-    refScale: 1.0,
+    refScale: 1.2,
     lowerThirdScale: 1.0
   };
   // v0.5.57 — NDI surface gets its own aspect ratio when set.

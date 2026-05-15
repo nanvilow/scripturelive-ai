@@ -668,7 +668,7 @@ const defaultSettings: AppSettings = {
   outputDestination: 'window',
   customBackground: null,
   lowerThirdPosition: 'bottom',
-  lowerThirdHeight: 'md',
+  lowerThirdHeight: 'lg',
   autoAdvanceSlides: false,
   slideTransitionDuration: 500,
   slideTransitionStyle: 'fade',
