@@ -260,12 +260,23 @@ function MediaVideoSurface({
   const setAudioLevel = useAppStore((s) => s.setAudioLevel)
   const setPreviewVideoPlaying = useAppStore((s) => s.setPreviewVideoPlaying)
   const setLiveVideoPlaying = useAppStore((s) => s.setLiveVideoPlaying)
-  const setMediaCurrentTime = useAppStore((s) => s.setMediaCurrentTime)
+  // v0.7.193-hotfix.2 — Per-surface state: each MediaVideoSurface
+  // listens ONLY to its own pair of fields so Preview transport never
+  // bleeds into Live transport (and vice versa).
+  const setOwnCurrentTime = useAppStore((s) =>
+    surface === 'preview' ? s.setPreviewMediaCurrentTime : s.setLiveMediaCurrentTime,
+  )
   const globalMuted = useAppStore((s) => s.globalMuted)
   const globalVolume = useAppStore((s) => s.globalVolume)
-  const mediaPaused = useAppStore((s) => s.mediaPaused)
-  const mediaCurrentTime = useAppStore((s) => s.mediaCurrentTime)
-  const mediaLoop = useAppStore((s) => s.mediaLoop)
+  const mediaPaused = useAppStore((s) =>
+    surface === 'preview' ? s.previewMediaPaused : s.liveMediaPaused,
+  )
+  const mediaCurrentTime = useAppStore((s) =>
+    surface === 'preview' ? s.previewMediaCurrentTime : s.liveMediaCurrentTime,
+  )
+  const mediaLoop = useAppStore((s) =>
+    surface === 'preview' ? s.previewMediaLoop : s.liveMediaLoop,
+  )
   const isLive = useAppStore((s) => s.isLive)
 
   // Mirror real play/paused state into the store flag the AudioMeter
@@ -337,12 +348,12 @@ function MediaVideoSurface({
     v.loop = mediaLoop
   }, [mediaLoop])
 
-  // LIVE surface: when the operator sends to live (isLive flips on)
-  // OR the master clock is seeked, sync currentTime + auto-play. Also
-  // honour the explicit mediaPaused store flag (the inline Pause
-  // button in the Live transport row).
+  // v0.7.193-hotfix.2 — Sync the element to OUR OWN per-surface clock
+  // (no cross-surface mirroring). On the LIVE surface this also honours
+  // the auto-play-on-go-live promotion; on the PREVIEW surface it
+  // honours the operator's preview transport without ever touching the
+  // live element.
   useEffect(() => {
-    if (surface !== 'live') return
     const v = videoRef.current
     if (!v) return
     if (
@@ -351,26 +362,27 @@ function MediaVideoSurface({
     ) {
       try { v.currentTime = mediaCurrentTime } catch { /* ignore */ }
     }
-    if (isLive && !mediaPaused) v.play().catch(() => {})
+    const shouldPlay = surface === 'live' ? (isLive && !mediaPaused) : !mediaPaused
+    if (shouldPlay) v.play().catch(() => {})
     else if (mediaPaused) v.pause()
   }, [surface, isLive, mediaPaused, mediaCurrentTime, src])
 
-  // PREVIEW surface: write currentTime into the master clock so that
-  // when the operator sends to live, the live <video> picks up at the
-  // exact frame the operator was scrubbed to. Throttled to ¼-second
-  // jumps so SSE doesn't thrash.
+  // Write the surface's current time back to its OWN clock so a remount
+  // (e.g. slide swap) restores the playhead. Throttled to ¼-second
+  // jumps to avoid feedback with the seek effect above.
   useEffect(() => {
-    if (surface !== 'preview') return
     const v = videoRef.current
     if (!v) return
     const onTimeUpdate = () => {
       const cur = v.currentTime
-      const stored = useAppStore.getState().mediaCurrentTime
-      if (Math.abs(cur - stored) > 0.25) setMediaCurrentTime(cur)
+      const stored = surface === 'preview'
+        ? useAppStore.getState().previewMediaCurrentTime
+        : useAppStore.getState().liveMediaCurrentTime
+      if (Math.abs(cur - stored) > 0.25) setOwnCurrentTime(cur)
     }
     v.addEventListener('timeupdate', onTimeUpdate)
     return () => v.removeEventListener('timeupdate', onTimeUpdate)
-  }, [surface, src, setMediaCurrentTime])
+  }, [surface, src, setOwnCurrentTime])
 
   const objectFit: 'contain' | 'cover' | 'fill' =
     fit === 'fill' ? 'cover' : fit === 'stretch' ? 'fill' : 'contain'
@@ -1156,11 +1168,23 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
   const [paused, setPaused] = useState(true)
   const [scrubbing, setScrubbing] = useState(false)
   const scrubValueRef = useRef(0)
-  // v0.7.193 — Loop is global (one toggle drives every surface) so a
-  // looped preview also loops on Live and on the iframe consumers.
-  const mediaLoop = useAppStore((s) => s.mediaLoop)
-  const setMediaLoop = useAppStore((s) => s.setMediaLoop)
-  const setMediaPaused = useAppStore((s) => s.setMediaPaused)
+  // v0.7.193-hotfix.2 — Per-surface state: each VideoTransport drives
+  // ONLY its own pair of store fields, so the Preview deck never moves
+  // the Live deck (and vice versa). Loop, pause and the master clock
+  // are all per-surface now. The SSE broadcast (NDI/OBS/secondary)
+  // follows the LIVE pair only.
+  const mediaLoop = useAppStore((s) =>
+    surface === 'preview' ? s.previewMediaLoop : s.liveMediaLoop,
+  )
+  const setMediaLoop = useAppStore((s) =>
+    surface === 'preview' ? s.setPreviewMediaLoop : s.setLiveMediaLoop,
+  )
+  const setMediaPaused = useAppStore((s) =>
+    surface === 'preview' ? s.setPreviewMediaPaused : s.setLiveMediaPaused,
+  )
+  const setOwnCurrentTime = useAppStore((s) =>
+    surface === 'preview' ? s.setPreviewMediaCurrentTime : s.setLiveMediaCurrentTime,
+  )
 
   // Find the live <video> element for this surface and poll its
   // playback state. We re-query on every tick because slides can swap
@@ -1216,7 +1240,7 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
       try { el.currentTime = 0 } catch { /* ignore */ }
       el.pause()
     }
-    try { useAppStore.getState().setMediaCurrentTime(0) } catch { /* ignore */ }
+    try { setOwnCurrentTime(0) } catch { /* ignore */ }
     setCurrent(0)
   }
   // v0.7.193 — Loop toggle. Writes to a global store flag the
@@ -1232,10 +1256,9 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
     const el = findVideo()
     if (el && Number.isFinite(scrubValueRef.current)) {
       el.currentTime = scrubValueRef.current
-      // Push the scrubbed timestamp into the master clock so the
-      // other surfaces (Live / congregation) seek to match — this is
-      // what makes scrubbing while paused stay in sync everywhere.
-      try { useAppStore.getState().setMediaCurrentTime(scrubValueRef.current) } catch { /* ignore */ }
+      // v0.7.193-hotfix.2 — Write to OUR OWN clock only. The other
+      // surface keeps its own playhead untouched.
+      try { setOwnCurrentTime(scrubValueRef.current) } catch { /* ignore */ }
     }
     setScrubbing(false)
   }
@@ -1615,8 +1638,8 @@ function LiveDisplayCard({
   const speakerFollowEnabled = useAppStore((s) => s.speakerFollowEnabled)
   const setSpeakerFollowEnabled = useAppStore((s) => s.setSpeakerFollowEnabled)
   const liveVideoPlaying = useAppStore((s) => s.liveVideoPlaying)
-  const mediaPaused = useAppStore((s) => s.mediaPaused)
-  const setMediaPaused = useAppStore((s) => s.setMediaPaused)
+  const mediaPaused = useAppStore((s) => s.liveMediaPaused)
+  const setMediaPaused = useAppStore((s) => s.setLiveMediaPaused)
   const liveSlide = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
   // Interactive Scale Control state. The slider / drag handle write
   // to `size` (the TARGET); the displayed transform uses `actualSize`,
@@ -3542,10 +3565,10 @@ export function LogosShell() {
     if (typeof document !== 'undefined') {
       const pv = document.querySelector<HTMLVideoElement>('video[data-surface="preview"]')
       if (pv && Number.isFinite(pv.currentTime)) {
-        try { useAppStore.getState().setMediaCurrentTime(pv.currentTime) } catch { /* ignore */ }
+        try { useAppStore.getState().setLiveMediaCurrentTime(pv.currentTime) } catch { /* ignore */ }
       }
     }
-    useAppStore.getState().setMediaPaused(false)
+    useAppStore.getState().setLiveMediaPaused(false)
     setLiveSlideIndex(previewSlideIndex)
     setIsLive(true)
     if (previewSlideIndex < slides.length - 1) setPreviewSlideIndex(previewSlideIndex + 1)

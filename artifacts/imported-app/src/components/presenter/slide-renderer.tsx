@@ -41,7 +41,12 @@ function MediaSlideContent({
   slide: Slide
   isLive?: boolean
 }) {
-  const mediaPaused = useAppStore((s) => s.mediaPaused)
+  // v0.7.193-hotfix.2 — Pull from the per-surface clock so the
+  // legacy slide renderer respects the same Preview/Live independence
+  // as MediaVideoSurface.
+  const mediaPaused = useAppStore((s) =>
+    isLive ? s.liveMediaPaused : s.previewMediaPaused,
+  )
   // When something is on air the Preview surface stops playing — the
   // operator's preview must never compete for audio or distract from
   // the Live Display. The Live surface is unaffected by this gate.
@@ -60,8 +65,12 @@ function MediaSlideContent({
   const liveMonitorAudio = useAppStore((s) => s.liveMonitorAudio)
   const globalVolume = useAppStore((s) => s.globalVolume)
   const globalMuted = useAppStore((s) => s.globalMuted)
-  const mediaCurrentTime = useAppStore((s) => s.mediaCurrentTime)
-  const setMediaCurrentTime = useAppStore((s) => s.setMediaCurrentTime)
+  const mediaCurrentTime = useAppStore((s) =>
+    isLive ? s.liveMediaCurrentTime : s.previewMediaCurrentTime,
+  )
+  const setMediaCurrentTime = useAppStore((s) =>
+    isLive ? s.setLiveMediaCurrentTime : s.setPreviewMediaCurrentTime,
+  )
   const audible = isLive ? liveMonitorAudio : previewAudio
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const { objectFit, aspect } = resolveMediaPresentation(slide.mediaFit)

@@ -24,8 +24,8 @@ export function buildOutputPayload(s: StoreState) {
   const cur = baseCur
     ? {
         ...baseCur,
-        mediaPaused: isMediaVideo ? !!s.mediaPaused : undefined,
-        mediaCurrentTime: isMediaVideo ? s.mediaCurrentTime : undefined,
+        mediaPaused: isMediaVideo ? !!s.liveMediaPaused : undefined,
+        mediaCurrentTime: isMediaVideo ? s.liveMediaCurrentTime : undefined,
       }
     : null
   const next =

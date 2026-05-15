@@ -1295,3 +1295,9 @@ id = "o-LUr7qc2W3R_WrCC9g9e"
 uri = "file://screenshots/v0193-media-mockup.jpg"
 type = "image"
 title = "v0.7.193 — updated: meter on BOTH Preview AND Live Display"
+
+[[outputs]]
+id = "VQ1IDagv88Usx0huPE2Ck"
+uri = "file://screenshots/v0193-hf2-mockup.jpg"
+type = "image"
+title = "v0.7.193-hotfix.2 — Preview/Live transport independence (proof)"
