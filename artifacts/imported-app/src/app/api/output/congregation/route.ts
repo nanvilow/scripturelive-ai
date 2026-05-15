@@ -62,7 +62,7 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    renders leave playback continuous. Sized identically to #output via the
    same ratio classes so the bg fills the same letterboxed inner area
    (no leaking into the black surround when viewport != displayRatio). */
-#bgLayer{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:0;overflow:hidden}
+#bgLayer{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:100%;height:100%;pointer-events:none;z-index:0;overflow:hidden}
 #bgLayer.ratio-16x9{aspect-ratio:16/9;width:min(100vw,calc(100vh*16/9));height:min(100vh,calc(100vw*9/16))}
 #bgLayer.ratio-4x3{aspect-ratio:4/3;width:min(100vw,calc(100vh*4/3));height:min(100vh,calc(100vw*3/4))}
 #bgLayer.ratio-21x9{aspect-ratio:21/9;width:min(100vw,calc(100vh*21/9));height:min(100vh,calc(100vw*9/21))}
@@ -839,11 +839,16 @@ function fitVerseText(){
       return;
     }
     __fitKey=key;
-    // Reset both legacy transform AND inline font-size so we measure
-    // against the CSS-declared baseline (T_FS in the renderer route).
     p.style.transform='';
-    p.style.fontSize='';
-    var baseStr=window.getComputedStyle(p).fontSize;
+    // v0.7.190 — CRITICAL: do NOT strip p.style.fontSize before
+    // measuring. The renderer at L1430 sets the operator's chosen
+    // ltFs/fsFs as an inline style on the <p>; stripping discards
+    // that pick and falls back to the body's 16px default, so the
+    // binary search shrinks every verse to 9.6-16px regardless of
+    // what Small/Medium/Large/Extra-Large the operator picked. Read
+    // the inline value FIRST, fall back to computed only if absent.
+    var inlineFs=p.style.fontSize;
+    var baseStr=inlineFs||window.getComputedStyle(p).fontSize;
     var baseSize=parseFloat(baseStr)||16;
     __fitBase=baseSize;
     // Available height: parent.clientHeight minus sibling heights
