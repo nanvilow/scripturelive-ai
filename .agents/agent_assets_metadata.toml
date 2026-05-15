@@ -1319,3 +1319,9 @@ id = "YVBOPTlEXiPehpP4a8Rw4"
 uri = "file://screenshots/v0193-perf-diag.jpg"
 type = "image"
 title = "Why videos lag — diagnosis + 4 proposed fixes"
+
+[[outputs]]
+id = "oWH6XkrrTwIk4JTgY471v"
+uri = "file://screenshots/v0193-shrink-fix.jpg"
+type = "image"
+title = "Settings round-trip text-shrink — diagnosis & fix (bundled into hotfix.2)"

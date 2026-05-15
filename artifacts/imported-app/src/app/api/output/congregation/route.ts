@@ -930,7 +930,51 @@ function fitVerseTextDebounced(){
   if(__fitTimer)return;
   __fitTimer=setTimeout(function(){__fitTimer=0;fitVerseText();},16);
 }
+function fitVerseTextForce(){__fitKey='';fitVerseTextDebounced();}
 window.addEventListener('resize',fitVerseTextDebounced);
+// v0.7.193-hotfix.2 — Settings round-trip text-shrink fix.
+//
+// Repro: operator on Live with a long verse, opens Settings, comes
+// back without touching anything → the same verse renders SMALLER
+// than before (image 2 in the report). Cause: the in-app Preview/
+// Live iframes remount when Settings is opened/closed (Settings is a
+// full-screen overlay that REPLACES the live-console shell). The
+// freshly-loaded iframe runs fitVerseText() on the FIRST paint —
+// before web fonts have finished loading — using fallback font
+// metrics that are wider per character than the eventual web font.
+// Autofit picks a smaller scale so the wider fallback fits, caches
+// it in __fitKey, then web font loads + reflows narrower → the verse
+// has lots of unused space but autofit never re-runs (cached key is
+// still valid). End result: persistent smaller text.
+//
+// Fix (3 belts):
+//   (a) Re-fit when web fonts finish loading (document.fonts.ready) —
+//       handles the FOIT/FOUT race directly.
+//   (b) ResizeObserver on the verse parent: any container-size change
+//       (Settings overlay closing, panel resize, dev-tools, etc.)
+//       triggers a forced re-fit. Window resize alone misses iframe-
+//       internal layout changes that don't bubble a window resize.
+//   (c) One extra forced re-fit after 250ms as a belt-and-braces for
+//       slow font CDNs / async layout settling on first paint.
+try{
+  if(document && document.fonts && document.fonts.ready && document.fonts.ready.then){
+    document.fonts.ready.then(function(){fitVerseTextForce();});
+  }
+}catch(fe){}
+try{
+  if(typeof ResizeObserver==='function'){
+    var __fitRO=new ResizeObserver(function(){fitVerseTextForce();});
+    var __fitROObserved=false;
+    function __ensureFitObserver(){
+      if(__fitROObserved)return;
+      var p=document.querySelector('#output .slide-paragraph');
+      if(p && p.parentElement){__fitRO.observe(p.parentElement);__fitROObserved=true;}
+    }
+    // Re-attempt on every render via the post-render hook below.
+    window.__ensureFitObserver=__ensureFitObserver;
+  }
+}catch(roe){}
+setTimeout(function(){fitVerseTextForce();},250);
 
 function render(s){
   if(!s){$('output').innerHTML='';$('output').classList.add('hidden');lastRenderKey='';dropLiveVideoCache();setBgVid('');return}
@@ -1324,18 +1368,18 @@ function render(s){
     if(slide.mediaKind==='video'&&canReuse){
       // Same source — just honour the transport flag, do not rebuild.
       try{
-        // v0.7.193-hotfix.2 — Tightened drift tolerance from 0.4s to
-        // 0.12s. The output (NDI / OBS / secondary screen) was running
-        // visibly AHEAD of the in-app Live Display because the iframe
-        // <video> auto-played from the seed-seek frame slightly faster
-        // than the in-app React <video> could mount + start, and the
-        // 0.4s tolerance never triggered a correction so the offset
-        // persisted for the entire clip. With 0.12s the renderer snaps
-        // back to the in-app Live's frame within ~3-4 frames at 30fps,
-        // so what the congregation sees matches what the operator sees.
+        // v0.7.193-hotfix.2 — Drift tolerance: 0.4s (pre-fix) was so
+        // loose the output drifted visibly ahead of the in-app Live
+        // Display and never corrected. We first tightened to 0.12s
+        // mid-hotfix.2, but on slower machines that triggered a
+        // correction-seek every couple of seconds — and each seek
+        // forces a key-frame decode pause that shows up as judder.
+        // 0.20s is the sweet spot: humans don't notice <250ms drift
+        // in non-music video, and seeks now fire only on real desyncs
+        // (operator scrub / pause / Stop) instead of routine playback.
         if(typeof slide.mediaCurrentTime==='number'&&slide.mediaCurrentTime>0){
           var drift=Math.abs((existingVid.currentTime||0)-slide.mediaCurrentTime);
-          if(drift>0.12){try{existingVid.currentTime=slide.mediaCurrentTime;}catch(e){}}
+          if(drift>0.20){try{existingVid.currentTime=slide.mediaCurrentTime;}catch(e){}}
         }
         if(slide.mediaPaused){existingVid.pause();}
         else{var p=existingVid.play();if(p&&p.catch)p.catch(function(){});}
@@ -1635,7 +1679,7 @@ function render(s){
   // we measure scrollHeight. Fallback to setTimeout(0) keeps the
   // call ordering identical when rAF is unavailable (extremely old
   // Electron / SSR test).
-  if(typeof requestAnimationFrame==='function'){requestAnimationFrame(fitVerseText);}else{setTimeout(fitVerseText,0);}
+  if(typeof requestAnimationFrame==='function'){requestAnimationFrame(function(){fitVerseText();try{if(window.__ensureFitObserver)window.__ensureFitObserver();}catch(e){}});}else{setTimeout(function(){fitVerseText();try{if(window.__ensureFitObserver)window.__ensureFitObserver();}catch(e){}},0);}
 }
 
 // Polling fallback. Server-Sent Events break when the deployment is

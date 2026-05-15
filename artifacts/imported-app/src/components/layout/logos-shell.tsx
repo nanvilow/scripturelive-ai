@@ -307,7 +307,20 @@ function MediaVideoSurface({
   // Drive the green VU meter at ~33 Hz from the analyser RMS. We use
   // the FULL `attachAnalyser` here (not the silent variant) so audio
   // actually reaches the speakers — this is the in-app audio source.
+  //
+  // v0.7.193-hotfix.2 — Skip the analyser entirely when the surface
+  // is muted (forceMute or globalMuted). The Web Audio analyser keeps
+  // decoding raw audio samples even when the speaker is silenced, just
+  // to compute an RMS that we never display. On a quiet preview that's
+  // a few % CPU per surface for nothing — multiplied across surfaces
+  // it adds up to visible playback judder. Meter shows 0 when muted,
+  // which is exactly what the operator expects from a muted source.
+  const muted = forceMute || globalMuted
   useEffect(() => {
+    if (muted) {
+      setAudioLevel(surface, 0)
+      return
+    }
     const v = videoRef.current
     if (!v) return
     const an = attachAnalyser(v)
@@ -330,7 +343,7 @@ function MediaVideoSurface({
       cancelAnimationFrame(raf)
       setAudioLevel(surface, 0)
     }
-  }, [src, surface, setAudioLevel])
+  }, [src, surface, setAudioLevel, muted])
 
   // Mute / volume — react to global mute toggle and to the
   // surface-specific monitor flag.
@@ -1094,15 +1107,40 @@ function PreviewCard() {
               // the audio analyser feeds the green VU bar; the visible
               // element is the SOLE preview audio source (iframe path
               // is bypassed entirely for media-video to avoid double-
-              // audio). When the same media is also Live, force-mute
-              // the preview so the operator never hears two copies.
+              // audio).
+              //
+              // v0.7.193-hotfix.2 — When the same media is on Live, do
+              // NOT mount a second <video> here. Most GPUs cap hardware
+              // video decode at 2-4 concurrent streams; the duplicate
+              // Preview decoder pushed total decoders into software-
+              // fallback territory and stuttered every other surface.
+              // Show a static "ON AIR" placard instead — the operator
+              // sees the same clip on the Live Display side anyway.
               <StableStage isLive={false}>
-                <MediaVideoSurface
-                  surface="preview"
-                  src={previewSlide.mediaUrl}
-                  fit={previewSlide.mediaFit ?? 'fit'}
-                  forceMute={previewMediaIsLive || !previewAudio}
-                />
+                {previewMediaIsLive ? (
+                  <div
+                    className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border flex flex-col items-center justify-center text-center"
+                    style={{ aspectRatio: '16 / 9' }}
+                  >
+                    <div className="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-0.5 rounded bg-red-600/90 text-white text-[10px] uppercase tracking-wider font-semibold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                      ON AIR
+                    </div>
+                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground/70 mb-1">
+                      Preview matches Live
+                    </div>
+                    <div className="text-[10px] text-muted-foreground/50 max-w-[80%]">
+                      This clip is on air — Preview is paused to keep playback smooth.
+                    </div>
+                  </div>
+                ) : (
+                  <MediaVideoSurface
+                    surface="preview"
+                    src={previewSlide.mediaUrl}
+                    fit={previewSlide.mediaFit ?? 'fit'}
+                    forceMute={!previewAudio}
+                  />
+                )}
               </StableStage>
             ) : (
               // v0.7.158 — single-renderer architecture for everything
