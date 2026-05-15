@@ -1289,3 +1289,9 @@ id = "kKFX1YZLy1iyEub6aAp1T"
 uri = "file://screenshots/hotfix2-after.jpg"
 type = "image"
 title = "v0.7.192-hotfix.2 — verse pulled up, tighter to ref"
+
+[[outputs]]
+id = "o-LUr7qc2W3R_WrCC9g9e"
+uri = "file://screenshots/v0193-media-mockup.jpg"
+type = "image"
+title = "v0.7.193 — Media Panel Restore (BEFORE/AFTER, 5 issues)"
