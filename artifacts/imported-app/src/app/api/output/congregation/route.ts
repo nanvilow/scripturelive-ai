@@ -1413,6 +1413,16 @@ function render(s){
     // NDI BrowserWindow's first paint before SSE arrives.
     var __lhKey='sm';
     var hPct=22;
+    // v0.7.192-hotfix.1 — Resolve the height bucket from live SSE state
+    // (st.lowerThirdHeight) with FORCE_LH (URL ?lh=) as the cold-start
+    // fallback. Pre-fix __lhKey/hPct were declared but NEVER reassigned,
+    // so hMap was dead code and every LT surface was pinned to sm/22%
+    // regardless of the operator's pick. v0.7.11 precedence: live SSE
+    // state wins; FORCE_LH only used when SSE has not arrived yet.
+    __lhKey=(st.lowerThirdHeight==='sm'||st.lowerThirdHeight==='md'||st.lowerThirdHeight==='lg')
+      ? st.lowerThirdHeight
+      : (FORCE_LH || 'sm');
+    hPct = hMap[__lhKey] || 22;
     // v0.7.0 — Compute the NDI lower-third size multiplier UP FRONT so
     // we can scale the BOX itself in lockstep with the verse text. Pre-
     // v0.7.0 only the font multiplied with ndiLtScale; the box height
