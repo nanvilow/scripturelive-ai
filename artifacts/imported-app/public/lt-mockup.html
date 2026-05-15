@@ -28,7 +28,10 @@
   /* PROPOSED — your red-box spec */
   .opt-new .ltbar { bottom:3%; height:35%; left:1%; right:1%; border-radius:.5rem; padding:1.2% 2%; }
   .opt-new .ltref { font-size:14px; margin-bottom:6px; }
-  .opt-new .lttext { font-size:38px; font-weight:700; }
+  .opt-new .lttext { font-size:28px; font-weight:700; }
+  .opt-short .ltbar { bottom:3%; height:35%; left:1%; right:1%; border-radius:.5rem; padding:1.2% 2%; }
+  .opt-short .ltref { font-size:14px; margin-bottom:6px; font-weight:700; opacity:.95; }
+  .opt-short .lttext { font-size:64px; font-weight:700; line-height:1.1; color:#fff; text-shadow:0 2px 12px rgba(0,0,0,.4); text-align:center; }
 
   /* outer red box = bar target */
   .redbox-outer { position:absolute; left:1%; right:1%; bottom:3%; height:35%;
@@ -45,6 +48,15 @@
 <h1>Proposed Lower-Third spec — confirm before I ship</h1>
 <div class="sub">Left = how it looks today on "Large". Right = the proposed change matching your red-box marks.</div>
 <div class="grid">
+
+  <div class="card opt-short">
+    <h2>AFTER — short verse ("Jesus wept") · autofit grows toward 3.50× cap</h2>
+    <div class="meta">same bar geometry · text auto-grows to fill bold</div>
+    <div class="frame">
+      <div class="ltbar"><div class="ltref">John 11:35 — KJV</div><div class="lttext">Jesus wept.</div></div>
+    </div>
+    <div class="legend">Short verses fill the bar boldly.</div>
+  </div>
 
   <div class="card opt-current">
     <h2>BEFORE — current "Large" (lh=lg)</h2>

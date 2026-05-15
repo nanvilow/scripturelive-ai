@@ -1271,3 +1271,9 @@ id = "tTiJ7JwkkuiYZz76rvNS4"
 uri = "file://screenshots/lt-proposed.jpg"
 type = "image"
 title = "Proposed LT spec — BEFORE vs AFTER"
+
+[[outputs]]
+id = "qzzG6Swf5zVUZnUEjV89w"
+uri = "file://screenshots/lt-proposed-fitted.jpg"
+type = "image"
+title = "Proposed LT — short verse autofit demo"
