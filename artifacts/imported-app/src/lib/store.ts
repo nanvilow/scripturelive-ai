@@ -643,6 +643,15 @@ interface AppState {
   mediaCurrentTime: number
   setMediaCurrentTime: (t: number) => void
 
+  // v0.7.193 — Loop toggle for media-video transport. Persists per-
+  // session. The in-app React <video> elements (Preview + Live
+  // Display) and the iframe-renderer's <video> all read this and
+  // mirror it onto their `loop` attribute, so a clip loops on every
+  // surface (NDI / OBS / secondary screen too) as long as it's
+  // playing.
+  mediaLoop: boolean
+  setMediaLoop: (b: boolean) => void
+
   // Media library view mode. Mirrors the Windows Explorer "View"
   // menu options the user requested: Large Icons / Medium Icons /
   // Small Icons / List / Details / Tiles. Persisted so each operator
@@ -1209,6 +1218,8 @@ export const useAppStore = create<AppState>()(
 
       mediaCurrentTime: 0,
       setMediaCurrentTime: (t) => set({ mediaCurrentTime: Math.max(0, t) }),
+      mediaLoop: false,
+      setMediaLoop: (b) => set({ mediaLoop: b }),
 
       // Media library view density. Defaults to a comfortable middle
       // ground; user pick is persisted via partialize below.

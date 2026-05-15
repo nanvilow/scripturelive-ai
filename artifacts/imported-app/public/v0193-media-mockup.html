@@ -1,0 +1,193 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>v0.7.193 — Media Panel Proposal</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,sans-serif;background:#0a0a0a;color:#fff;padding:24px}
+  h1{font-size:18px;color:#fbbf24;margin-bottom:6px}
+  h2{font-size:13px;color:#9ca3af;font-weight:600;letter-spacing:.08em;margin:18px 0 10px;text-transform:uppercase}
+  .sub{font-size:12px;color:#9ca3af;margin-bottom:16px;line-height:1.5;max-width:1200px}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:18px}
+  .card{background:#171717;border:1px solid #262626;border-radius:10px;overflow:hidden}
+  .card-hdr{padding:10px 14px;font-size:11px;font-weight:700;letter-spacing:.06em;border-bottom:1px solid #262626;display:flex;justify-content:space-between;align-items:center}
+  .badge-bad{background:#7f1d1d;color:#fecaca;padding:3px 8px;border-radius:4px;font-size:10px}
+  .badge-good{background:#14532d;color:#bbf7d0;padding:3px 8px;border-radius:4px;font-size:10px}
+  /* media panel mock */
+  .panel{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px;background:#000}
+  .pane{position:relative;background:#000;border-radius:6px;overflow:hidden;aspect-ratio:16/9}
+  .pane-hdr{position:absolute;top:0;left:0;right:0;padding:6px 10px;font-size:10px;font-weight:700;letter-spacing:.06em;background:linear-gradient(180deg,rgba(0,0,0,.7),transparent);z-index:5;display:flex;justify-content:space-between}
+  .pane-hdr .lbl-live{color:#ef4444}
+  .video-area{position:absolute;inset:0;background:linear-gradient(135deg,#1e1b4b 0%,#831843 50%,#7f1d1d 100%);display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px}
+  .video-area.has-vid{background:radial-gradient(circle at 50% 40%,#fbbf24,transparent 40%),linear-gradient(135deg,#1e1b4b,#7f1d1d)}
+  .video-area.dark{background:#0a0a0a;color:#525252}
+  /* controls bar */
+  .ctrl-bar{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(0deg,rgba(0,0,0,.85),transparent);padding:14px 10px 8px;z-index:6;display:flex;flex-direction:column;gap:6px}
+  .scrub{height:4px;background:#262626;border-radius:2px;position:relative;overflow:hidden}
+  .scrub-fill{position:absolute;left:0;top:0;bottom:0;width:42%;background:#fbbf24;border-radius:2px}
+  .ctrl-btns{display:flex;align-items:center;gap:6px;font-size:11px}
+  .btn{background:#262626;border:1px solid #404040;color:#e5e5e5;padding:5px 9px;border-radius:5px;cursor:pointer;font-size:10px;display:inline-flex;align-items:center;gap:4px}
+  .btn.primary{background:#dc2626;border-color:#dc2626;color:#fff;font-weight:700}
+  .btn.live{background:#16a34a;border-color:#16a34a;color:#fff;font-weight:700}
+  .btn.muted{background:#7f1d1d;border-color:#7f1d1d}
+  .btn.dead{opacity:.35;cursor:not-allowed;color:#525252}
+  .time{font-size:10px;color:#9ca3af;margin-left:auto;font-variant-numeric:tabular-nums}
+  /* level meter */
+  .meter{position:absolute;left:6px;top:30px;bottom:50px;width:8px;background:rgba(0,0,0,.5);border-radius:3px;overflow:hidden;border:1px solid #262626}
+  .meter-fill{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(0deg,#16a34a,#fbbf24 70%,#dc2626 100%);border-radius:2px;transition:height .08s}
+  .meter-fill.fake{height:38%;animation:fake 1.2s ease-in-out infinite alternate}
+  .meter-fill.real{height:62%}
+  @keyframes fake{0%{height:18%}100%{height:48%}}
+  .arrow{position:absolute;color:#ef4444;font-size:11px;font-weight:700;background:rgba(127,29,29,.95);padding:3px 8px;border-radius:4px;border:1px solid #ef4444;z-index:10;white-space:nowrap;pointer-events:none}
+  .ann{font-size:11px;color:#9ca3af;padding:8px 14px;background:#0a0a0a;border-top:1px solid #262626;line-height:1.5}
+  .ann b{color:#fbbf24}
+  .ann.good b{color:#86efac}
+  .key{margin-top:18px;padding:12px 16px;background:#1c1917;border:1px solid #292524;border-radius:8px;font-size:11px;line-height:1.7;color:#d6d3d1}
+  .key b{color:#fbbf24}
+  .legend{display:flex;gap:14px;margin-top:8px;font-size:11px;color:#a3a3a3;flex-wrap:wrap}
+  .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle;margin-right:4px}
+  /* speaker icon mock */
+  .spk{display:inline-block;width:14px;height:14px;background:currentColor;clip-path:polygon(0 35%,30% 35%,55% 10%,55% 90%,30% 65%,0 65%);position:relative}
+  .spk.muted{color:#dc2626}
+  .spk.on{color:#86efac}
+</style></head><body>
+
+<h1>v0.7.193 — Media Panel Restore (Proposal)</h1>
+<div class="sub">
+Architecture: <b style="color:#fbbf24">Option C — Dual-Mode</b>. In-app Preview &amp; Live Display panels render a real React-managed <code>&lt;video&gt;</code> element so transport controls, mute, and the audio level meter all bind directly to the visible video. The unified renderer iframe stays exactly as-is for <b style="color:#fbbf24">NDI capture, OBS browser source, and the secondary congregation screen</b> — they all subscribe to the same store state via SSE, so the in-app video and the broadcast video stay frame-locked. Send-to-Live copies <code>currentTime</code> from preview ref to live ref + auto-plays.
+</div>
+
+<h2>Issue 1 — Audio level meter (vertical green bar — must work on BOTH Preview AND Live Display)</h2>
+<div class="row">
+  <div class="card">
+    <div class="card-hdr">BEFORE (current) <span class="badge-bad">FAKE on Preview · MISSING on Live</span></div>
+    <div class="panel">
+      <div class="pane">
+        <div class="pane-hdr"><span>PREVIEW</span><span style="color:#fbbf24">FAKE METER</span></div>
+        <div class="video-area has-vid">iframe video</div>
+        <div class="meter"><div class="meter-fill fake"></div></div>
+        <div class="arrow" style="left:22px;top:74px;font-size:10px">← fake bounce</div>
+      </div>
+      <div class="pane">
+        <div class="pane-hdr"><span>LIVE DISPLAY</span><span class="lbl-live">● LIVE</span></div>
+        <div class="video-area has-vid">iframe video</div>
+        <div class="arrow" style="left:8px;top:60px;font-size:10px">no meter at all</div>
+      </div>
+    </div>
+    <div class="ann">Preview meter = <b>fake</b> (hidden video desync). Live Display meter = <b>doesn't exist</b> in the current code at all.</div>
+  </div>
+  <div class="card">
+    <div class="card-hdr">AFTER (v0.7.193) <span class="badge-good">REAL on BOTH panels</span></div>
+    <div class="panel">
+      <div class="pane">
+        <div class="pane-hdr"><span>PREVIEW</span><span style="color:#86efac">LIVE METER</span></div>
+        <div class="video-area has-vid">React &lt;video&gt; — direct</div>
+        <div class="meter"><div class="meter-fill real"></div></div>
+        <div class="arrow" style="left:22px;top:74px;background:rgba(20,83,45,.95);border-color:#16a34a;color:#bbf7d0;font-size:10px">← real audio</div>
+      </div>
+      <div class="pane">
+        <div class="pane-hdr"><span>LIVE DISPLAY</span><span class="lbl-live">● LIVE</span></div>
+        <div class="video-area has-vid">React &lt;video&gt; — direct</div>
+        <div class="meter"><div class="meter-fill real" style="height:54%"></div></div>
+        <div class="arrow" style="left:22px;top:74px;background:rgba(20,83,45,.95);border-color:#16a34a;color:#bbf7d0;font-size:10px">← real audio</div>
+      </div>
+    </div>
+    <div class="ann good"><b>Each panel gets its own independent meter</b> wired to its own &lt;video&gt; via Web Audio AnalyserNode + MediaElementSource. Preview shows preview audio levels, Live shows the actually-broadcasting audio levels. Both stay in lockstep with their respective playheads. Old hidden-video meter <b>deleted</b>.</div>
+  </div>
+</div>
+
+<h2>Issue 2 — Live Display blank when media is in Preview</h2>
+<div class="row">
+  <div class="card">
+    <div class="card-hdr">BEFORE (current) <span class="badge-bad">BLANK</span></div>
+    <div class="panel">
+      <div class="pane"><div class="pane-hdr"><span>PREVIEW</span></div><div class="video-area has-vid">media playing</div></div>
+      <div class="pane"><div class="pane-hdr"><span>LIVE DISPLAY</span><span class="lbl-live">● LIVE</span></div><div class="video-area dark">— nothing —</div></div>
+    </div>
+    <div class="ann">"Send to Live" sets <code>isLive=true</code> but the iframe re-mounts and never auto-plays the video → black until manual click inside the iframe (which is impossible).</div>
+  </div>
+  <div class="card">
+    <div class="card-hdr">AFTER (v0.7.193) <span class="badge-good">INSTANT MIRROR</span></div>
+    <div class="panel">
+      <div class="pane"><div class="pane-hdr"><span>PREVIEW</span></div><div class="video-area has-vid">media playing @ 0:42</div></div>
+      <div class="pane"><div class="pane-hdr"><span>LIVE DISPLAY</span><span class="lbl-live">● LIVE</span></div><div class="video-area has-vid">same media @ 0:42</div></div>
+    </div>
+    <div class="ann good">Send-to-Live copies <b>currentTime</b> from preview ref → live ref, calls <b>.play()</b> immediately. Live picks up exactly where preview was. NDI/OBS/secondary mirror via SSE in &lt;200 ms.</div>
+  </div>
+</div>
+
+<h2>Issue 3 — Speaker icon doesn't mute · Issue 4 — Play/Pause/Stop/Loop dead</h2>
+<div class="row">
+  <div class="card">
+    <div class="card-hdr">BEFORE (current) <span class="badge-bad">ALL NO-OPS</span></div>
+    <div class="panel" style="grid-template-columns:1fr">
+      <div class="pane">
+        <div class="pane-hdr"><span>PREVIEW</span></div>
+        <div class="video-area has-vid">iframe video (unreachable)</div>
+        <div class="ctrl-bar">
+          <div class="scrub"><div class="scrub-fill"></div></div>
+          <div class="ctrl-btns">
+            <button class="btn dead">▶ PLAY</button>
+            <button class="btn dead">⏸ PAUSE</button>
+            <button class="btn dead">⏹ STOP</button>
+            <button class="btn dead">🔁 LOOP</button>
+            <button class="btn dead"><span class="spk on"></span> MUTE</button>
+            <span class="time">— : — / — : —</span>
+          </div>
+        </div>
+        <div class="arrow" style="left:90px;bottom:42px">all click handlers fire — but query selector returns null</div>
+      </div>
+    </div>
+    <div class="ann"><code>document.querySelector('video[data-surface=...]')</code> returns <b>null</b> because the video is inside the iframe → every button is a silent no-op.</div>
+  </div>
+  <div class="card">
+    <div class="card-hdr">AFTER (v0.7.193) <span class="badge-good">ALL WIRED</span></div>
+    <div class="panel" style="grid-template-columns:1fr">
+      <div class="pane">
+        <div class="pane-hdr"><span>PREVIEW</span></div>
+        <div class="video-area has-vid">React videoRef — directly bound</div>
+        <div class="ctrl-bar">
+          <div class="scrub"><div class="scrub-fill" style="width:35%"></div></div>
+          <div class="ctrl-btns">
+            <button class="btn primary">⏸ PAUSE</button>
+            <button class="btn">⏹ STOP</button>
+            <button class="btn">🔁 LOOP</button>
+            <button class="btn muted"><span class="spk muted"></span> UNMUTE</button>
+            <button class="btn">🔊 VOL</button>
+            <span class="time">0:42 / 2:18</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="ann good">Each button → <code>previewVideoRef.current.play() / .pause() / .muted=… / .loop=…</code>. Scrub bar is a real <code>seek()</code>. Time display reads <code>currentTime</code> + <code>duration</code> live.</div>
+  </div>
+</div>
+
+<h2>Issue 5 — Smooth handoff Preview → Live (auto-play on Send-to-Live)</h2>
+<div class="row">
+  <div class="card" style="grid-column:span 2">
+    <div class="card-hdr">AFTER (v0.7.193) <span class="badge-good">FRAME-LOCKED</span></div>
+    <div class="panel">
+      <div class="pane">
+        <div class="pane-hdr"><span>1. STAGED IN PREVIEW</span><span style="color:#fbbf24">scrub freely</span></div>
+        <div class="video-area has-vid">funeral video @ 0:42</div>
+      </div>
+      <div class="pane">
+        <div class="pane-hdr"><span>2. CLICK "SEND TO LIVE"</span><span class="lbl-live">● handoff</span></div>
+        <div class="video-area has-vid">Live ref ← copy currentTime, .play()<br>NDI/OBS ← SSE push (≤200ms)</div>
+      </div>
+    </div>
+    <div class="ann good"><b>One click, three surfaces in sync:</b> in-app Live Display picks up at 0:42 and plays · NDI capture window broadcasts to OBS at 0:42 · secondary congregation screen displays at 0:42. No black flash, no manual play needed inside the iframe.</div>
+  </div>
+</div>
+
+<div class="key">
+  <b>Scope (~150 lines, single file):</b><br>
+  ✓ <code>logos-shell.tsx</code> — PreviewCard &amp; LiveDisplayCard get a real <code>&lt;video&gt;</code> for media slides (scripture slides keep iframe path unchanged)<br>
+  ✓ <code>logos-shell.tsx</code> — VideoTransport reads <code>previewVideoRef</code> / <code>liveVideoRef</code> directly (no more querySelector)<br>
+  ✓ <code>logos-shell.tsx</code> — <b>Two</b> independent AudioMeters (one per panel), each wired to its own &lt;video&gt; via AnalyserNode + MediaElementSource; HiddenMediaMeter <b>deleted</b><br>
+  ✓ <code>logos-shell.tsx</code> — Send-to-Live: <code>liveRef.currentTime = previewRef.currentTime; liveRef.play();</code><br>
+  ✓ <code>route.ts</code> — <b>UNCHANGED</b>. NDI/OBS/secondary screen iframe renderer keeps reading from store via SSE — same playhead state means same frame.<br>
+  ✓ <code>electron/main.ts</code> — <b>UNCHANGED</b>. NDI capture window unaffected.<br>
+  Bumps to <b>v0.7.193</b> (feature work, not a hotfix). <code>tsc --noEmit</code> clean before ship. Architect code review post-build.
+</div>
+
+</body></html>

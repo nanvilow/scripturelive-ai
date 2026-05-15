@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { StableStage } from '@/components/presenter/stable-stage'
 import { OutputPreview } from '@/components/settings/output-preview'
-import { attachAnalyserSilent, readLevel } from '@/lib/audio-level'
+import { attachAnalyser, readLevel } from '@/lib/audio-level'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import {
@@ -26,6 +26,7 @@ import {
   Send,
   CircleSlash,
   Square,
+  Repeat,
   Image as LogoIcon,
   History,
   ListOrdered,
@@ -212,77 +213,95 @@ function AudioMeter({
   )
 }
 
-// v0.7.186 — Hidden media meter for the Preview pane.
+// v0.7.193 — In-app media-video surface (REPLACES v0.7.186 HiddenMediaMeter).
 //
-// Background: v0.7.158 switched the Preview pane from a React video
-// renderer to an iframe of /api/output/congregation. The iframe's
-// <video> element is unreachable from React, so the audio VU meter
-// (which used to read a Web Audio analyser attached to the React
-// <video>) had no signal source any more — the bar stayed at zero
-// even while the operator's preview was loudly playing a clip.
+// Background: v0.7.158 hid every media-video <video> behind an
+// iframe of /api/output/congregation, which made it unreachable from
+// React. v0.7.186 papered over the audio-meter half of the problem
+// by mounting a hidden parallel <video> just for the analyser, but
+// EVERY operator-facing control on top of the iframe was effectively
+// dead — VideoTransport's `document.querySelector` returned null
+// because the iframe DOM is not part of the parent document, the
+// global mute icon could not reach into the iframe to mute audio,
+// and the Live Display panel painted a black frame because the
+// iframe instance there was decoupled from any operator
+// interaction. Auto-play after Send-to-Live also broke because
+// nothing in-app actually held a reference to the live <video>.
 //
-// Fix: mount a tiny, off-screen <video> here whose ONLY job is to
-// feed the analyser. The hidden element is unmuted (so its
-// MediaElementSource emits real audio data into the graph), but the
-// graph routes through `attachAnalyserSilent` which deliberately
-// does NOT connect to AudioContext.destination — once a media
-// element is captured by a MediaElementSource its native audio path
-// is replaced by the graph, and a graph that doesn't reach
-// destination produces no sound at all. So the visible iframe stays
-// the SOLE audible source for the preview pane (no echo, no double
-// audio), while this hidden element drives the meter signal.
+// Fix: mount a REAL React-managed <video> for the operator's in-app
+// Preview AND Live Display panels whenever the slide is media-video.
+// The iframe path stays for scripture / title / image slides AND
+// for every external surface (NDI capture window, OBS browser
+// source, secondary screen) — those each load the renderer route in
+// their own browser context and play media autonomously based on
+// store-pushed SSE state. The in-app React videos and the iframe-
+// rendered videos all read the same store fields (mediaCurrentTime,
+// mediaPaused, mediaLoop, globalMuted) so the four surfaces stay in
+// lockstep within ~SSE latency for normal cue-and-play workflows.
 //
-// The `paused` prop mirrors the iframe's pause state — when the
-// operator sends the same media to Live, the iframe pauses (via
-// mediaPaused override) and so does this hidden video, so the meter
-// drops to dead-flat zero in lockstep with the frozen preview frame.
-function HiddenMediaMeter({
+// `data-surface` is set so the existing VideoTransport's
+// querySelector continues to find these elements unchanged. The
+// audio analyser uses `attachAnalyser` (NOT the silent variant) so
+// the audio actually plays — the visible video is now the SOLE
+// in-app audio source for its surface (no double-audio because the
+// iframe overlay is no longer rendered for media-video slides).
+function MediaVideoSurface({
+  surface,
   src,
-  paused,
+  fit = 'fit',
+  forceMute = false,
 }: {
+  surface: 'preview' | 'live'
   src: string
-  paused: boolean
+  fit?: string
+  forceMute?: boolean
 }) {
-  const setPreviewVideoPlaying = useAppStore((s) => s.setPreviewVideoPlaying)
-  const setAudioLevel = useAppStore((s) => s.setAudioLevel)
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  // Honour the pause prop in real time. Same pattern as MediaSlideContent.
+  const setAudioLevel = useAppStore((s) => s.setAudioLevel)
+  const setPreviewVideoPlaying = useAppStore((s) => s.setPreviewVideoPlaying)
+  const setLiveVideoPlaying = useAppStore((s) => s.setLiveVideoPlaying)
+  const setMediaCurrentTime = useAppStore((s) => s.setMediaCurrentTime)
+  const globalMuted = useAppStore((s) => s.globalMuted)
+  const globalVolume = useAppStore((s) => s.globalVolume)
+  const mediaPaused = useAppStore((s) => s.mediaPaused)
+  const mediaCurrentTime = useAppStore((s) => s.mediaCurrentTime)
+  const mediaLoop = useAppStore((s) => s.mediaLoop)
+  const isLive = useAppStore((s) => s.isLive)
+
+  // Mirror real play/paused state into the store flag the AudioMeter
+  // (and the rest of the UI) keys off. Bar is only "active" while a
+  // real signal is flowing.
   useEffect(() => {
     const v = videoRef.current
     if (!v) return
-    if (paused) v.pause()
-    else v.play().catch(() => {})
-  }, [paused])
-  // Mirror the actual play/paused state of the hidden video onto the
-  // store flag the AudioMeter reads (`previewVideoPlaying`). The bar
-  // is only rendered active while a real signal is flowing.
-  useEffect(() => {
-    const v = videoRef.current
-    if (!v) return
-    const onPlaying = () => setPreviewVideoPlaying(true)
-    const onPaused = () => setPreviewVideoPlaying(false)
+    const setter = surface === 'preview' ? setPreviewVideoPlaying : setLiveVideoPlaying
+    const onPlaying = () => setter(true)
+    const onPaused = () => setter(false)
     v.addEventListener('playing', onPlaying)
     v.addEventListener('pause', onPaused)
     v.addEventListener('ended', onPaused)
     v.addEventListener('stalled', onPaused)
     v.addEventListener('emptied', onPaused)
-    setPreviewVideoPlaying(!v.paused && !v.ended && v.readyState > 2)
+    setter(!v.paused && !v.ended && v.readyState > 2)
     return () => {
       v.removeEventListener('playing', onPlaying)
       v.removeEventListener('pause', onPaused)
       v.removeEventListener('ended', onPaused)
       v.removeEventListener('stalled', onPaused)
       v.removeEventListener('emptied', onPaused)
-      setPreviewVideoPlaying(false)
+      setter(false)
     }
-  }, [setPreviewVideoPlaying, src])
-  // Drive the green VU meter at ~33 Hz from the analyser RMS.
+  }, [surface, src, setPreviewVideoPlaying, setLiveVideoPlaying])
+
+  // Drive the green VU meter at ~33 Hz from the analyser RMS. We use
+  // the FULL `attachAnalyser` here (not the silent variant) so audio
+  // actually reaches the speakers — this is the in-app audio source.
   useEffect(() => {
     const v = videoRef.current
     if (!v) return
-    const an = attachAnalyserSilent(v)
+    const an = attachAnalyser(v)
     if (!an) {
-      setAudioLevel('preview', 0)
+      setAudioLevel(surface, 0)
       return
     }
     let raf = 0
@@ -290,42 +309,92 @@ function HiddenMediaMeter({
     const tick = (t: number) => {
       if (t - lastWrite >= 30) {
         lastWrite = t
-        const stopped = v.paused || v.ended
-        setAudioLevel('preview', stopped ? 0 : readLevel(an))
+        const stopped = v.paused || v.ended || v.muted
+        setAudioLevel(surface, stopped ? 0 : readLevel(an))
       }
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
     return () => {
       cancelAnimationFrame(raf)
-      setAudioLevel('preview', 0)
+      setAudioLevel(surface, 0)
     }
-  }, [src, setAudioLevel])
+  }, [src, surface, setAudioLevel])
+
+  // Mute / volume — react to global mute toggle and to the
+  // surface-specific monitor flag.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    v.muted = forceMute || globalMuted
+    v.volume = Math.max(0, Math.min(1, globalVolume))
+  }, [forceMute, globalMuted, globalVolume])
+
+  // Loop — mirror the store flag onto the element.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    v.loop = mediaLoop
+  }, [mediaLoop])
+
+  // LIVE surface: when the operator sends to live (isLive flips on)
+  // OR the master clock is seeked, sync currentTime + auto-play. Also
+  // honour the explicit mediaPaused store flag (the inline Pause
+  // button in the Live transport row).
+  useEffect(() => {
+    if (surface !== 'live') return
+    const v = videoRef.current
+    if (!v) return
+    if (
+      Number.isFinite(mediaCurrentTime) &&
+      Math.abs(v.currentTime - mediaCurrentTime) > 0.5
+    ) {
+      try { v.currentTime = mediaCurrentTime } catch { /* ignore */ }
+    }
+    if (isLive && !mediaPaused) v.play().catch(() => {})
+    else if (mediaPaused) v.pause()
+  }, [surface, isLive, mediaPaused, mediaCurrentTime, src])
+
+  // PREVIEW surface: write currentTime into the master clock so that
+  // when the operator sends to live, the live <video> picks up at the
+  // exact frame the operator was scrubbed to. Throttled to ¼-second
+  // jumps so SSE doesn't thrash.
+  useEffect(() => {
+    if (surface !== 'preview') return
+    const v = videoRef.current
+    if (!v) return
+    const onTimeUpdate = () => {
+      const cur = v.currentTime
+      const stored = useAppStore.getState().mediaCurrentTime
+      if (Math.abs(cur - stored) > 0.25) setMediaCurrentTime(cur)
+    }
+    v.addEventListener('timeupdate', onTimeUpdate)
+    return () => v.removeEventListener('timeupdate', onTimeUpdate)
+  }, [surface, src, setMediaCurrentTime])
+
+  const objectFit: 'contain' | 'cover' | 'fill' =
+    fit === 'fill' ? 'cover' : fit === 'stretch' ? 'fill' : 'contain'
+
   return (
-    <video
-      ref={videoRef}
-      src={src}
-      autoPlay={!paused}
-      loop
-      playsInline
-      preload="auto"
-      // crossOrigin needed for createMediaElementSource on remote URLs;
-      // local /api/upload assets are same-origin so this is harmless.
-      crossOrigin="anonymous"
-      // Off-screen, zero footprint, fully removed from the layout.
-      // aria-hidden so screen readers ignore the silent meter source.
-      aria-hidden
-      tabIndex={-1}
-      style={{
-        position: 'absolute',
-        width: 1,
-        height: 1,
-        opacity: 0,
-        pointerEvents: 'none',
-        left: -9999,
-        top: -9999,
-      }}
-    />
+    <div
+      className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
+      style={{ aspectRatio: '16 / 9' }}
+    >
+      <video
+        ref={videoRef}
+        data-surface={surface}
+        src={src}
+        // Preview auto-plays on mount so the operator hears/sees the
+        // clip immediately on first click. Live auto-plays via the
+        // isLive effect above (only after Send-to-Live).
+        autoPlay={surface === 'preview'}
+        playsInline
+        preload="auto"
+        crossOrigin="anonymous"
+        className="absolute inset-0 w-full h-full"
+        style={{ objectFit }}
+      />
+    </div>
   )
 }
 
@@ -1002,38 +1071,37 @@ function PreviewCard() {
         </div>
         <div className="flex-1 min-w-0 flex items-center justify-center">
           {previewSlide ? (
-            // v0.7.158 — single-renderer architecture. The Preview
-            // pane now embeds the SAME `/api/output/congregation`
-            // iframe as Settings PREVIEW, NDI Live Preview, the
-            // browser-source URL and the secondary screen. The queued
-            // `previewSlide` is spliced into the broadcaster payload
-            // via `slideOverride`, so every typography / lower-third
-            // / background / display-mode setting flows through the
-            // identical pipeline. There is no parallel React mockup
-            // left to drift from the projector output.
-            // v0.7.159 — wrap in StableStage so column-resize drags
-            // don't reflow the iframe's vw/cqw-based typography on
-            // every tick (architect concern C). StableStage freezes
-            // the inner stage at a fixed pixel viewport and CSS-
-            // scales it down — the iframe inside computes layout
-            // against the same dimensions every frame.
-            <StableStage isLive={false}>
-              <OutputPreview
-                slideOverride={effectivePreviewSlide}
-                hideModeBadge
-                className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
-                aspectOverride="16 / 9"
-              />
-              {/* v0.7.186 — Hidden VU-meter signal source. See the
-                  HiddenMediaMeter comment block for why this is mounted
-                  off-screen and silent. Only present for video media. */}
-              {previewIsVideoMedia && previewSlide && (
-                <HiddenMediaMeter
-                  src={previewSlide.mediaUrl as string}
-                  paused={previewMediaIsLive}
+            previewIsVideoMedia && previewSlide.mediaUrl ? (
+              // v0.7.193 — Real React <video> for media-video preview.
+              // Operator can play/pause/scrub/loop/mute it directly;
+              // the audio analyser feeds the green VU bar; the visible
+              // element is the SOLE preview audio source (iframe path
+              // is bypassed entirely for media-video to avoid double-
+              // audio). When the same media is also Live, force-mute
+              // the preview so the operator never hears two copies.
+              <StableStage isLive={false}>
+                <MediaVideoSurface
+                  surface="preview"
+                  src={previewSlide.mediaUrl}
+                  fit={previewSlide.mediaFit ?? 'fit'}
+                  forceMute={previewMediaIsLive || !previewAudio}
                 />
-              )}
-            </StableStage>
+              </StableStage>
+            ) : (
+              // v0.7.158 — single-renderer architecture for everything
+              // else (scripture, title, image, theme). The iframe path
+              // keeps every typography / lower-third / background axis
+              // in lockstep with the projector via the canonical
+              // /api/output/congregation route.
+              <StableStage isLive={false}>
+                <OutputPreview
+                  slideOverride={effectivePreviewSlide}
+                  hideModeBadge
+                  className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
+                  aspectOverride="16 / 9"
+                />
+              </StableStage>
+            )
           ) : (
             <div className="text-center text-[11px] text-muted-foreground">
               <BookOpen className="h-8 w-8 mx-auto opacity-30 mb-2" />
@@ -1088,6 +1156,11 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
   const [paused, setPaused] = useState(true)
   const [scrubbing, setScrubbing] = useState(false)
   const scrubValueRef = useRef(0)
+  // v0.7.193 — Loop is global (one toggle drives every surface) so a
+  // looped preview also loops on Live and on the iframe consumers.
+  const mediaLoop = useAppStore((s) => s.mediaLoop)
+  const setMediaLoop = useAppStore((s) => s.setMediaLoop)
+  const setMediaPaused = useAppStore((s) => s.setMediaPaused)
 
   // Find the live <video> element for this surface and poll its
   // playback state. We re-query on every tick because slides can swap
@@ -1120,13 +1193,37 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
   const onPlay = () => {
     const el = findVideo()
     if (!el) return
+    // Mirror to the master mediaPaused flag so iframe consumers (NDI,
+    // OBS, secondary screen) follow the operator's play/pause from
+    // either Preview or Live transport.
+    setMediaPaused(false)
     el.play().catch(() => {})
   }
   const onPause = () => {
     const el = findVideo()
     if (!el) return
+    setMediaPaused(true)
     el.pause()
   }
+  // v0.7.193 — Stop = pause + reset to 0. Operators expect this from
+  // every other broadcast tool they've used (EasyWorship / ProPresenter
+  // / vMix). Mirrors the timestamp into the master clock so every
+  // surface rewinds together.
+  const onStop = () => {
+    const el = findVideo()
+    setMediaPaused(true)
+    if (el) {
+      try { el.currentTime = 0 } catch { /* ignore */ }
+      el.pause()
+    }
+    try { useAppStore.getState().setMediaCurrentTime(0) } catch { /* ignore */ }
+    setCurrent(0)
+  }
+  // v0.7.193 — Loop toggle. Writes to a global store flag the
+  // MediaVideoSurface (in-app) AND the iframe renderer both honour, so
+  // a looped preview also loops on Live, NDI, OBS and the secondary
+  // screen.
+  const onToggleLoop = () => setMediaLoop(!mediaLoop)
   const onScrubInput = (v: number) => {
     scrubValueRef.current = v
     setCurrent(v)
@@ -1160,6 +1257,27 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
         title={paused ? 'Play' : 'Pause'}
       >
         {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+      </Button>
+      <Button
+        size="sm"
+        variant="secondary"
+        className="h-7 w-7 p-0 shrink-0"
+        onClick={onStop}
+        title="Stop (rewind to 0)"
+      >
+        <Square className="h-3 w-3 fill-current" />
+      </Button>
+      <Button
+        size="sm"
+        variant="secondary"
+        className={cn(
+          'h-7 w-7 p-0 shrink-0',
+          mediaLoop && 'bg-sky-500/20 border border-sky-500/40 text-sky-300',
+        )}
+        onClick={onToggleLoop}
+        title={mediaLoop ? 'Loop ON — click to disable' : 'Loop OFF — click to enable'}
+      >
+        <Repeat className="h-3.5 w-3.5" />
       </Button>
       <span className="text-[10px] font-mono text-muted-foreground w-9 text-right tabular-nums">
         {fmt(current)}
@@ -1634,26 +1752,38 @@ function LiveDisplayCard({
             same styling — and updates in real time as the operator
             tweaks lower-third position / height in Settings. */}
         {!hidden && (
-          // v0.7.158 — single-renderer architecture. The Live Display
-          // pane is now an iframe of `/api/output/congregation`, the
-          // SAME route that drives the secondary screen, NDI capture
-          // and browser-source URL. `mirrorLive` makes the iframe a
-          // faithful mirror of what the projector sees (respects
-          // `blanked`, renders the startup splash from real state).
-          // The `actualSize` SIZE slider wraps the iframe in a CSS
-          // transform so the operator's stage-zoom still works.
-          // Every render-affecting Settings axis (typography, lower-
-          // third position/height, background, etc.) flows through
-          // `buildOutputPayload()` automatically — there is no
-          // parallel React mockup left to drift.
-          <StableStage scale={actualSize} isLive={!!liveSlide}>
-            <OutputPreview
-              mirrorLive
-              hideModeBadge
-              aspectOverride="16 / 9"
-              className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
-            />
-          </StableStage>
+          liveIsMediaVideo && liveSlide?.mediaUrl ? (
+            // v0.7.193 — Real React <video> for media-video on Live.
+            // The iframe path was returning a black frame for media-
+            // video on Live Display because no operator-side React
+            // tree was mounting a video element. Now the operator sees
+            // the actual clip play, hears it (via globalMuted/monitor
+            // toggles), and the green VU meter has a real signal. The
+            // separate iframe consumers (NDI capture window, OBS
+            // browser source, secondary screen) keep playing the same
+            // media independently from store-pushed SSE state.
+            <StableStage scale={actualSize} isLive={!!liveSlide}>
+              <MediaVideoSurface
+                surface="live"
+                src={liveSlide.mediaUrl}
+                fit={liveSlide.mediaFit ?? 'fit'}
+              />
+            </StableStage>
+          ) : (
+            // v0.7.158 — single-renderer architecture. Iframe path for
+            // every non-media-video slide (scripture / title / image /
+            // theme) so typography, lower-third position/height, and
+            // background flow through buildOutputPayload() in lockstep
+            // with the projector / NDI feed.
+            <StableStage scale={actualSize} isLive={!!liveSlide}>
+              <OutputPreview
+                mirrorLive
+                hideModeBadge
+                aspectOverride="16 / 9"
+                className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
+              />
+            </StableStage>
+          )
         )}
         {hidden && (
           <div className="text-center text-[11px] text-muted-foreground">
@@ -1754,37 +1884,12 @@ function LiveDisplayCard({
           </Button>
         </div>
       </div>
-      {/* Live transport row — Pause/Play for the currently-on-air
-          video. Lives BELOW the Live Display body so the operator
-          interrupts the live feed from the same column they sent it
-          from. Hidden for non-video slides. */}
-      {liveIsMediaVideo && (
-        <div className="flex items-center justify-center gap-2 border-t border-border/70 px-2 py-1.5 shrink-0">
-          {mediaPaused ? (
-            <Button
-              size="sm"
-              variant="secondary"
-              className="h-7 px-3 gap-1.5"
-              onClick={() => setMediaPaused(false)}
-              title="Resume live video"
-            >
-              <Play className="h-3.5 w-3.5" />
-              <span className="text-[10px] uppercase tracking-wider font-semibold">Play</span>
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant="secondary"
-              className="h-7 px-3 gap-1.5"
-              onClick={() => setMediaPaused(true)}
-              title="Pause live video"
-            >
-              <Pause className="h-3.5 w-3.5" />
-              <span className="text-[10px] uppercase tracking-wider font-semibold">Pause</span>
-            </Button>
-          )}
-        </div>
-      )}
+      {/* v0.7.193 — Full Live transport (Play/Pause/Stop/Loop + scrub
+          bar) instead of the v0.7.186 single Pause button. Operator
+          asked for parity with EasyWorship/ProPresenter — full deck
+          of broadcast-style controls reachable from the same column
+          the cue was sent from. */}
+      {liveIsMediaVideo && <VideoTransport surface="live" />}
     </Card>
   )
 }
@@ -3425,20 +3530,24 @@ export function LogosShell() {
       toast.info('Add something to the schedule first')
       return
     }
+    // v0.7.193 — Smooth Preview→Live handoff with auto-play. Capture
+    // the preview <video>'s current timestamp BEFORE flipping isLive
+    // so the live element seeks to the same frame and resumes
+    // seamlessly. The MediaVideoSurface(surface='live') effect picks
+    // up isLive=true + mediaCurrentTime + mediaPaused=false and calls
+    // .play() automatically. We do NOT force-pause the preview here
+    // — the preview's `forceMute` (computed from previewMediaIsLive)
+    // silences it once isLive flips, so no double-audio. Frames keep
+    // ticking on preview so the operator can still see/scrub it.
+    if (typeof document !== 'undefined') {
+      const pv = document.querySelector<HTMLVideoElement>('video[data-surface="preview"]')
+      if (pv && Number.isFinite(pv.currentTime)) {
+        try { useAppStore.getState().setMediaCurrentTime(pv.currentTime) } catch { /* ignore */ }
+      }
+    }
+    useAppStore.getState().setMediaPaused(false)
     setLiveSlideIndex(previewSlideIndex)
     setIsLive(true)
-    // Force-stop every Preview-surface video the instant we send to
-    // air. Without this the preview <video> may keep playing for a
-    // beat before React's render commits the new isLive state, and
-    // the operator hears the same audio out of two surfaces. Pausing
-    // the DOM directly closes that window.
-    if (typeof document !== 'undefined') {
-      document.querySelectorAll<HTMLVideoElement>('video[data-surface="preview"]').forEach((v) => {
-        try {
-          v.pause()
-        } catch { /* ignore */ }
-      })
-    }
     if (previewSlideIndex < slides.length - 1) setPreviewSlideIndex(previewSlideIndex + 1)
   }, [slides.length, previewSlideIndex, setLiveSlideIndex, setIsLive, setPreviewSlideIndex])
 
