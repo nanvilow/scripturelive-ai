@@ -185,7 +185,7 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 /* v0.6.3 — lower-third reference: same bold default as full-screen so
    broadcast viewers see the chapter clearly even at lower-third sizes. */
 .lt-box .slide-reference{font-size:clamp(.7rem,min(2cqw,4cqh),1.4rem);opacity:1;font-weight:700;line-height:1.2;margin-bottom:.6cqh}
-.lt-box .slide-text,.lt-box .slide-title{font-weight:600;line-height:1.25}
+.lt-box .slide-text,.lt-box .slide-title{font-weight:700;line-height:1.25}
 .align-left{text-align:left;align-items:flex-start}
 .align-right{text-align:right;align-items:flex-end}
 .align-center{text-align:center;align-items:center}
@@ -869,7 +869,7 @@ function fitVerseText(){
     // any .lt-box ancestor reliably.
     var isLT=!!(parent.closest && (parent.closest('.lt-content')||parent.closest('.lt-box')));
     var minK=0.60;
-    var maxK=isLT?2.50:1.00;
+    var maxK=isLT?3.50:1.00;
     // Binary search the largest scale factor where BOTH dimensions
     // fit. 10 iterations gives ~0.001 precision on [0.60, 2.50] which
     // is well below a single-pixel rounding error at typical sizes.
@@ -1386,7 +1386,7 @@ function render(s){
     // Map the lowerThirdHeight enum ('sm'|'md'|'lg') to the same
     // percentage the operator preview uses so all three surfaces
     // (preview, secondary screen, NDI) render identical bar heights.
-    var hMap={sm:22,md:33,lg:45};
+    var hMap={sm:22,md:33,lg:35};
     // v0.7.5.1 — FORCE_LH (URL ?lh=sm|md|lg) wins over SSE state so the
     // captured NDI BrowserWindow paints the operator's exact bucket on
     // its very first frame. Pre-fix it always rendered with the default
@@ -1451,7 +1451,7 @@ function render(s){
     // The upper area outside the bar must always be transparent
     // (#000), per spec. Theme colour and custom background image
     // both render *inside* the rounded card only.
-    var ltStyle='position:absolute;left:0;right:0;height:'+hPctScaled+'%;'+(pos==='top'?'top:6%;':'bottom:6%;');
+    var ltStyle='position:absolute;left:1%;right:1%;height:'+hPctScaled+'%;border-radius:.5rem;'+(pos==='top'?'top:3%;':'bottom:3%;');
     var alignClass='align-'+(st.textAlign||'center');
     // Re-size body text inside the bar based on character density so
     // long verses shrink to fit. We also bake in the operator's
