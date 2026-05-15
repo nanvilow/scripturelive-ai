@@ -46,7 +46,28 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 #output.ratio-4x3{aspect-ratio:4/3;width:min(100vw,calc(100vh*4/3));height:min(100vh,calc(100vw*3/4))}
 #output.ratio-21x9{aspect-ratio:21/9;width:min(100vw,calc(100vh*21/9));height:min(100vh,calc(100vw*9/21))}
 .bg-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;pointer-events:none}
-.bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);pointer-events:none}
+.bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);pointer-events:none;z-index:1}
+/* v0.7.187 — Persistent BG VIDEO layer (PERFORMANCE FIX). Pre-fix, the
+   verse-background <video> was inlined into #output's innerHTML on every
+   render. Because the renderer reassigns $('output').innerHTML on every
+   SSE/poll tick (see L665-696 lifecycle note), the <video> was destroyed
+   and recreated several times per second — restarting from t=0 each time,
+   which the operator perceived as constant judder/freezing across all 6
+   surfaces (preview iframe, Live Display, secondary screen, NDI, projector,
+   OBS browser source). The setVid() cache pattern below (~L1062) protects
+   FOREGROUND media but never covered BG.
+   Fix: a sibling layer #bgLayer that is NEVER touched by output.innerHTML.
+   setBgVid(url) (defined just above render()) rebuilds the cached <video>
+   ONLY when the URL changes — same-URL calls are no-op, so successive
+   renders leave playback continuous. Sized identically to #output via the
+   same ratio classes so the bg fills the same letterboxed inner area
+   (no leaking into the black surround when viewport != displayRatio). */
+#bgLayer{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:0;overflow:hidden}
+#bgLayer.ratio-16x9{aspect-ratio:16/9;width:min(100vw,calc(100vh*16/9));height:min(100vh,calc(100vw*9/16))}
+#bgLayer.ratio-4x3{aspect-ratio:4/3;width:min(100vw,calc(100vh*4/3));height:min(100vh,calc(100vw*3/4))}
+#bgLayer.ratio-21x9{aspect-ratio:21/9;width:min(100vw,calc(100vh*21/9));height:min(100vh,calc(100vw*9/21))}
+#bgLayer > video, #bgLayer > img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;display:block}
+#output{position:relative;z-index:1}
 .slide-content{position:relative;z-index:1;text-align:center;width:90%;max-width:90vw;padding:4vh 3vw;display:flex;flex-direction:column;align-items:center;justify-content:center}
 /* v0.6.3 — Bible reference text: BOLD by default + full opacity. The
    previous .55 opacity + default 500 weight made the chapter / verse
@@ -193,7 +214,7 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 <!-- v0.5.33 — bake the splash watermark into the initial body so the
      surface is NEVER visually blank, even before SSE connects or the
      first poll lands. The renderer replaces this on first state. -->
-<div id="stage"><div id="output"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;color:#fff;text-align:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif"><div style="font-size:clamp(2rem,7vmin,7rem);font-weight:600;letter-spacing:-.01em;line-height:1.05;opacity:.4">Scripture AI</div><div style="margin-top:1.4vmin;font-size:clamp(.85rem,1.8vmin,1.6rem);opacity:.3;font-weight:500">Powered By WassMedia (+233246798526)</div></div></div></div>
+<div id="stage"><div id="bgLayer"></div><div id="output"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;color:#fff;text-align:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif"><div style="font-size:clamp(2rem,7vmin,7rem);font-weight:600;letter-spacing:-.01em;line-height:1.05;opacity:.4">Scripture AI</div><div style="margin-top:1.4vmin;font-size:clamp(.85rem,1.8vmin,1.6rem);opacity:.3;font-weight:500">Powered By WassMedia (+233246798526)</div></div></div></div>
 <script>
 // Surface any uncaught script error as a visible red banner instead of
 // silently leaving the splash up forever (which is exactly how the
@@ -512,6 +533,17 @@ function applyRatio(r){
   if(r==='16:9')o.classList.add('ratio-16x9');
   else if(r==='4:3')o.classList.add('ratio-4x3');
   else if(r==='21:9')o.classList.add('ratio-21x9');
+  // v0.7.187 — mirror the ratio onto #bgLayer so the persistent BG
+  // video/image fills the same letterboxed inner area as #output. If
+  // they diverged, a 4:3 projector with a 16:9 viewport would show the
+  // bg leaking past the slide content into the black surround.
+  var bl=document.getElementById('bgLayer');
+  if(bl){
+    bl.classList.remove('ratio-16x9','ratio-4x3','ratio-21x9');
+    if(r==='16:9')bl.classList.add('ratio-16x9');
+    else if(r==='4:3')bl.classList.add('ratio-4x3');
+    else if(r==='21:9')bl.classList.add('ratio-21x9');
+  }
 }
 
 // Drop the cached live <video> reference whenever the renderer is
@@ -522,6 +554,46 @@ function applyRatio(r){
 function dropLiveVideoCache(){
   window.__liveVideoEl=null;
   window.__liveVideoKey='';
+}
+
+// v0.7.187 — Persistent BG video/image cache (PERFORMANCE FIX for
+// Bible-verse video backgrounds). See the CSS comment at #bgLayer
+// (~L53) for the full rationale. Sibling layer #bgLayer holds a
+// long-lived <video> or <img> element that survives every #output
+// innerHTML rewrite. setBgVid(url) is keyed by URL: same URL on
+// successive renders is a no-op so playback stays continuous.
+// Hard-cut on URL change (operator-explicit choice — instant swap, no
+// fade). Pass '' to clear the layer (blanked / cleared / no bg).
+var __bgUrl='';
+function setBgVid(url){
+  var layer=document.getElementById('bgLayer');
+  if(!layer) return;
+  var u=url||'';
+  if(u===__bgUrl) return; // already mounted with this URL — no-op
+  __bgUrl=u;
+  // Stop & detach old element (release decoder + network buffer)
+  while(layer.firstChild){
+    var old=layer.firstChild;
+    if(old.tagName==='VIDEO'){try{old.pause();old.removeAttribute('src');old.load();}catch(e){}}
+    layer.removeChild(old);
+  }
+  if(!u) return;
+  if(isVideoBg(u)){
+    var v=document.createElement('video');
+    v.src=u;
+    v.autoplay=true;v.loop=true;v.muted=true;v.playsInline=true;
+    v.preload='auto';
+    try{v.setAttribute('crossorigin','anonymous');}catch(e){}
+    v.onerror=function(){try{v.style.display='none';}catch(_e){}};
+    layer.appendChild(v);
+    var pp=v.play();if(pp&&pp.catch)pp.catch(function(){});
+  } else {
+    var img=document.createElement('img');
+    img.src=u;img.alt='';
+    try{img.setAttribute('crossorigin','anonymous');}catch(e){}
+    img.onerror=function(){try{img.style.display='none';}catch(_e){}};
+    layer.appendChild(img);
+  }
 }
 
 // applyAudio — pushes the operator's audio toggles down to the live
@@ -681,7 +753,29 @@ function applyRender(s){
 // in 99.9% of cases; in the rare collision the worst outcome is the
 // new verse renders at the previous verse's scale until the next
 // genuine slide change corrects it).
-var __fitKey='', __fitScale=1;
+// v0.7.187.1 — autofit now SCALES TO FILL on the NDI lower-third
+// surface (operator complaint: "autofit shrinks but text is too small
+// to read; let it spread across the whole lower-third frame"). The
+// fullscreen branch keeps shrink-only behaviour (no balloon for short
+// verses on the main display).
+//
+// Implementation: binary search on font-size rather than transform-
+// scale. Reasons:
+//   (1) transform: scale(k>1) doesn't change the layout box, so the
+//       wrap width stays at clientWidth and the visual width spills
+//       horizontally. Font-size growth re-flows correctly inside
+//       clientWidth — which is what we want for "fill the bar".
+//   (2) Both height AND width constraints are honoured naturally
+//       (search rejects any size where scrollHeight>avail OR
+//       scrollWidth>clientWidth) — fullscreen branch already cared
+//       about width too (long single-line refs).
+//   (3) Cache key includes parent dimensions so a re-render at the
+//       same key reapplies the cached pixel size without re-searching.
+//
+// Bounds:
+//   isLT  → [0.60, 2.50]  (grow short verses up to 2.5× the CSS base)
+//   else  → [0.60, 1.00]  (shrink-only, identical to v0.7.184.2)
+var __fitKey='', __fitScale=1, __fitBase=0;
 function fitVerseText(){
   try{
     var p=document.querySelector('#output .slide-paragraph');
@@ -689,59 +783,62 @@ function fitVerseText(){
     var parent=p.parentElement;
     if(!parent)return;
     var key=(p.textContent||'').length+'|'+parent.clientWidth+'x'+parent.clientHeight;
-    if(key===__fitKey){
-      // LOCKED — same verse + same frame. Reapply cached scale directly
-      // without re-measuring (avoids the rounding-flip micro-flash).
-      // We still have to write the transform because the <p> was just
-      // recreated by the latest innerHTML assignment.
-      p.style.transformOrigin='top center';
-      if(__fitScale<1) p.style.transform='scale('+__fitScale.toFixed(3)+')';
+    if(key===__fitKey && __fitBase>0){
+      // LOCKED — same verse + same frame. Reapply cached pixel size
+      // directly without re-searching. Must rewrite because the <p>
+      // was just recreated by the latest innerHTML assignment.
+      p.style.transform='';
+      p.style.fontSize=(__fitBase*__fitScale).toFixed(2)+'px';
       return;
     }
-    // New key → measure + recompute.
     __fitKey=key;
+    // Reset both legacy transform AND inline font-size so we measure
+    // against the CSS-declared baseline (T_FS in the renderer route).
     p.style.transform='';
-    p.style.transformOrigin='top center';
-    // v0.7.184.2 — Measure the VERSE PARAGRAPH'S OWN scrollHeight, not
-    // parent.scrollHeight. Operator-reported bug: NDI lower-third
-    // surface never auto-fit (verse text overflowed and got clipped by
-    // the bar's overflow:hidden). Root cause: in the LT branch, the
-    // verse <p>'s parent is .lt-content which is
-    //   display:flex; flex-direction:column; overflow:hidden;
-    // Under flex-shrink, the <p> child's LAYOUT BOX (offsetHeight)
-    // collapses to its min-content size (~1 line). parent.scrollHeight
-    // sums children's layout-box heights, not their internal overflow,
-    // so parent.scrollHeight ≈ parent.clientHeight even when the verse
-    // text inside <p> is overflowing massively. Result: actual<=avail
-    // always → bail at scale(1) → no autofit. The fullscreen branch
-    // worked because .slide-content has no overflow:hidden, so flex
-    // didn't shrink the <p>, so parent.scrollHeight included the
-    // overflow.
-    //
-    // p.scrollHeight is unaffected by the parent's flex-shrink because
-    // <p> itself has overflow:visible — its scrollHeight reports the
-    // full wrapped text height even when its layout box is collapsed.
-    // This single measurement now works for BOTH surfaces (LT + full).
-    //
-    // We also subtract sibling heights (the .slide-reference chyron
-    // that sits above or below the verse inside the same parent) from
-    // the available space, so the shrink target is "what the verse can
-    // actually use" rather than "the whole parent including the ref".
-    // This is also a strict improvement for the fullscreen path: the
-    // old math k=clientH/(verse+ref) under-corrected because applying
-    // scale to the verse alone doesn't shrink the ref's reserved space
-    // — new math k=(clientH-ref)/verse is exact.
+    p.style.fontSize='';
+    var baseStr=window.getComputedStyle(p).fontSize;
+    var baseSize=parseFloat(baseStr)||16;
+    __fitBase=baseSize;
+    // Available height: parent.clientHeight minus sibling heights
+    // (.slide-reference chyron sits above-or-below the verse inside
+    // the same flex container; its layout box is fixed even when we
+    // grow the verse). Width bound is parent.clientWidth — both LT
+    // and fullscreen wrap at parent width.
     var avail=parent.clientHeight;
     for(var i=0;i<parent.children.length;i++){
       if(parent.children[i]!==p) avail-=parent.children[i].offsetHeight;
     }
-    var actual=p.scrollHeight;
-    if(!avail||!actual||actual<=avail){ __fitScale=1; return; }
-    var k=(avail/actual)*0.98;
-    if(k<0.60)k=0.60;
-    __fitScale=k;
-    if(k>=1)return;
-    p.style.transform='scale('+k.toFixed(3)+')';
+    var availW=parent.clientWidth;
+    if(avail<=0||availW<=0){ __fitScale=1; return; }
+    // Detect LT context. The verse <p>'s parent is .lt-content (flex
+    // column, overflow:hidden) when rendered through the LT branch in
+    // route.ts ~L1359. Fullscreen verses live inside .slide-content.
+    // closest() includes self so this catches both .lt-content and
+    // any .lt-box ancestor reliably.
+    var isLT=!!(parent.closest && (parent.closest('.lt-content')||parent.closest('.lt-box')));
+    var minK=0.60;
+    var maxK=isLT?2.50:1.00;
+    // Binary search the largest scale factor where BOTH dimensions
+    // fit. 10 iterations gives ~0.001 precision on [0.60, 2.50] which
+    // is well below a single-pixel rounding error at typical sizes.
+    // Each iteration writes fontSize and reads scrollHeight/Width —
+    // forces one layout pass on this <p> only, ~0.05 ms per pass on
+    // the secondary screen. Total work per verse change: ~0.5 ms.
+    var lo=minK, hi=maxK, best=minK;
+    var safety=0.98;
+    for(var j=0;j<10;j++){
+      var mid=(lo+hi)/2;
+      p.style.fontSize=(baseSize*mid).toFixed(2)+'px';
+      var h=p.scrollHeight;
+      var w=p.scrollWidth;
+      if(h<=avail*safety && w<=availW){
+        best=mid; lo=mid;
+      } else {
+        hi=mid;
+      }
+    }
+    __fitScale=best;
+    p.style.fontSize=(baseSize*best).toFixed(2)+'px';
   }catch(e){}
 }
 // Resize is throttled to 16 ms (one frame) — fitVerseText itself is
@@ -755,7 +852,7 @@ function fitVerseTextDebounced(){
 window.addEventListener('resize',fitVerseTextDebounced);
 
 function render(s){
-  if(!s){$('output').innerHTML='';$('output').classList.add('hidden');lastRenderKey='';dropLiveVideoCache();return}
+  if(!s){$('output').innerHTML='';$('output').classList.add('hidden');lastRenderKey='';dropLiveVideoCache();setBgVid('');return}
   // BLACK / HIDDEN — operator has hit the "Black" transport button or
   // toggled the Live Display HIDDEN switch. We paint a solid black
   // frame while keeping the NDI connection alive, so vMix/OBS don't
@@ -767,6 +864,7 @@ function render(s){
     if(bkey===lastRenderKey)return;
     lastRenderKey=bkey;
     dropLiveVideoCache();
+    setBgVid(''); // v0.7.187 — clear persistent BG layer when blanked
     $('output').innerHTML='';
     $('output').style.background='#000';
     $('output').classList.remove('hidden');
@@ -782,6 +880,7 @@ function render(s){
     // The flag flips false the first time a slide is broadcast and
     // never comes back.
     dropLiveVideoCache();
+    setBgVid(''); // v0.7.187 — clear persistent BG layer on type:'clear'
     // v0.5.33 — same change as the fingerprint above. We now show the
     // splash watermark on every clear state UNLESS the operator
     // explicitly disabled it via showStartupLogo===false.
@@ -915,6 +1014,7 @@ function render(s){
     // on air so vMix/OBS sees a clean alpha frame instead of a themed
     // gradient panel covering its program output.
     if(FORCE_TRANSPARENT){
+      setBgVid(''); // v0.7.187 — clear persistent BG layer for NDI alpha-key path
       $('output').innerHTML='';
       $('output').classList.remove('hidden');
       return;
@@ -923,8 +1023,15 @@ function render(s){
     var tkE=(st.congregationScreenTheme||'minimal');
     var tcE=themes[tkE]||'theme-minimal';
     var safeBgE=safeBgUrl(st.customBackground);
-    var bgE=safeBgE?(isVideoBg(safeBgE)?'<video class="bg-image" src="'+escAttr(safeBgE)+'" autoplay loop muted playsinline crossorigin="anonymous" onerror="this.style.display=\\'none\\'"></video><div class="bg-overlay"></div>':'<img class="bg-image" src="'+escAttr(safeBgE)+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>'):'';
-    $('output').innerHTML='<div class="'+tcE+'" style="width:100%;height:100%;position:relative;">'+bgE+'</div>';
+    // v0.7.187 — BG video/image now lives in the persistent #bgLayer
+    // (sibling of #output). We only emit the dim .bg-overlay inline so
+    // the slide content reads against any custom bg. When a bg is set,
+    // the theme gradient is forced transparent so the bgLayer beneath
+    // shows through; otherwise the theme gradient remains visible.
+    var bgOverlayE=safeBgE?'<div class="bg-overlay"></div>':'';
+    var themeBgE=safeBgE?'background:transparent;':'';
+    setBgVid(safeBgE);
+    $('output').innerHTML='<div class="'+tcE+'" style="'+themeBgE+'width:100%;height:100%;position:relative;">'+bgOverlayE+'</div>';
     $('output').classList.remove('hidden');
     return;
   }
@@ -983,7 +1090,15 @@ function render(s){
   var bibleExtra=(T_COLOR?'color:'+T_COLOR+';':'')+(T_LH?'line-height:'+T_LH+';':'');
   var sh=T_SH_BOOL?'text-shadow:0 2px 12px rgba(0,0,0,.4);':'';
   var safeBg=safeBgUrl(st.customBackground);
-  var bg=safeBg?(isVideoBg(safeBg)?'<video class="bg-image" src="'+escAttr(safeBg)+'" autoplay loop muted playsinline crossorigin="anonymous" onerror="this.style.display=\\'none\\'"></video><div class="bg-overlay"></div>':'<img class="bg-image" src="'+escAttr(safeBg)+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>'):'';
+  // v0.7.187 — BG image/video moved to persistent #bgLayer (see ~L562
+  // setBgVid). Only the dim overlay is emitted inline so the slide
+  // content stays readable against custom backgrounds. setBgVid is
+  // invoked at every render exit so the layer always matches the
+  // currently-rendered bg URL. The .lt-bg path below (LT branch) keeps
+  // its OWN inline tag — it sits inside the chyron card, not behind it,
+  // so the persistent-layer architecture does not apply.
+  var bg=safeBg?'<div class="bg-overlay"></div>':'';
+  var themeBg=safeBg?'background:transparent;':'';
   // Reference typography (Bug #5): the operator now has independent
   // controls for the reference label. Each field falls back to the
   // body equivalent when unset so persisted settings keep working.
@@ -1111,6 +1226,7 @@ function render(s){
     var inner=ar
       ? '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#000"><div style="aspect-ratio:'+ar+';max-width:100%;max-height:100%;width:100%">'+mediaTag+'</div></div>'
       : mediaTag;
+    setBgVid(''); // v0.7.187 — foreground media owns the surface; hide BG layer
     $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:#000">'+inner+'</div>';
     $('output').classList.remove('hidden');
     if(slide.mediaKind==='video'){
@@ -1350,7 +1466,8 @@ function render(s){
     var fsTheme=tc;
     var fsBg=bg;
     var fsOrdered=refOrderTop?(ref+txt):(txt+ref);
-    $('output').innerHTML='<div class="'+fsTheme+'" style="width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';'+fontStyle+'">'+fsBg+'<div class="slide-content" style="text-align:'+ta+';'+fontStyle+'">'+fsOrdered+'</div></div>';
+    setBgVid(safeBg);
+    $('output').innerHTML='<div class="'+fsTheme+'" style="'+themeBg+'width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';'+fontStyle+'">'+fsBg+'<div class="slide-content" style="text-align:'+ta+';'+fontStyle+'">'+fsOrdered+'</div></div>';
   }
   $('output').classList.remove('hidden');
   // v0.7.182 — fire autofit AFTER layout settles. rAF guarantees the

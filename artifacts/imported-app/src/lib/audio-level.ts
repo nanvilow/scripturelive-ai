@@ -35,6 +35,22 @@ function getCtx(): AudioContext | null {
 }
 
 export function attachAnalyser(el: HTMLMediaElement): AnalyserNode | null {
+  return attachAnalyserInternal(el, true)
+}
+
+// v0.7.186 — Silent variant for the Preview pane's hidden meter
+// video. Once an element is routed through a MediaElementSource its
+// native audio path is REPLACED by the graph; if we don't connect to
+// destination the element produces no sound at all. That's exactly
+// what we want for the hidden meter — the visible iframe stays the
+// sole audio source for the preview pane (no double-audio / echo),
+// while this hidden element's MediaElementSource still feeds the
+// analyser so the green VU meter has a real signal to draw.
+export function attachAnalyserSilent(el: HTMLMediaElement): AnalyserNode | null {
+  return attachAnalyserInternal(el, false)
+}
+
+function attachAnalyserInternal(el: HTMLMediaElement, pipeToSpeakers: boolean): AnalyserNode | null {
   const existing = analysers.get(el)
   if (existing) return existing
   const c = getCtx()
@@ -46,11 +62,7 @@ export function attachAnalyser(el: HTMLMediaElement): AnalyserNode | null {
     an.fftSize = 512
     an.smoothingTimeConstant = 0.6
     src.connect(an)
-    // Pipe back to speakers — once an element is routed through a
-    // MediaElementSource its native audio path is replaced by the
-    // graph, so we have to reconnect to destination or audio goes
-    // silent.
-    an.connect(c.destination)
+    if (pipeToSpeakers) an.connect(c.destination)
     analysers.set(el, an)
     return an
   } catch {

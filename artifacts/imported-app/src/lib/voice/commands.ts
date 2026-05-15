@@ -475,6 +475,15 @@ const TRANSLATION_ALIASES: Record<string, string> = {
   'qui version': 'TWIASANTE',
   'key version': 'TWIASANTE',
   'she version': 'TWIASANTE',
+  // v0.7.186 — Operator-supplied homophones from real-world mishears.
+  // ASR routinely mangles "Twi Asante" into these phrases; alias-routing
+  // to TWIASANTE so a switch still fires. No LLM/classifier changes.
+  'p version': 'TWIASANTE',
+  'fee vision': 'TWIASANTE',
+  'tea vision': 'TWIASANTE',
+  'key vaccine': 'TWIASANTE',
+  'key vessel': 'TWIASANTE',
+  'account version': 'TWIASANTE',
   'twi v': 'TWIASANTE',
   'tw version': 'TWIASANTE',
   'ghanaian version': 'TWIASANTE',

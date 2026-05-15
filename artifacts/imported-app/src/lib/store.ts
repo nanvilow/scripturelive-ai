@@ -831,8 +831,37 @@ export const useAppStore = create<AppState>()(
           if (existing) {
             const existingRank = rank[(existing as { source?: string }).source ?? 'semantic'] ?? 2
             if (existingRank >= incomingRank) {
-              // Authoritative entry already present — skip duplicate.
-              return {}
+              // v0.7.187.2 — RE-MENTION AUTO-LIVE. Operator: "speaker
+              // says Amos 1:3 → drops to column → speaker says John 3:4
+              // → drops to column → speaker says Amos 1:3 again →
+              // detector doesn't drop it again because it's in the
+              // column already, so it doesn't auto-send." Pre-fix this
+              // branch returned {} (no state change) → the auto-live
+              // useEffect in logos-shell.tsx watching `detectedVerses`
+              // never re-ran → the re-mentioned verse stayed off air.
+              //
+              // Fix: PROMOTE the existing entry to the front of the
+              // array with a fresh `detectedAt` AND a NEW `id`, so:
+              //   (1) array reference changes → useEffect re-fires
+              //   (2) new id ≠ lastAutoVerseId.current (the gate at
+              //       logos-shell.tsx:3360 that prevents re-firing the
+              //       same verse twice in a row) → auto-live actually
+              //       sends to broadcast on re-mention
+              //   (3) authoritative `source` + `confidence` from the
+              //       existing entry are preserved so the column UI +
+              //       stability gate still see the higher-quality data
+              //   (4) shouldFireAutoLiveStable picks the front-of-array
+              //       entry as the live winner, so the re-mentioned
+              //       verse goes live exactly as the original mention
+              //       did. requestNavigatorRef already fired at the top
+              //       of this reducer so the navigator updates too.
+              const promoted = {
+                ...existing,
+                id: `det-rementioned-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                detectedAt: new Date(),
+              }
+              const filtered = state.detectedVerses.filter((d) => d.reference !== v.reference)
+              return { detectedVerses: [promoted, ...filtered].slice(0, 100) }
             }
             // Incoming wins — evict the lower-ranked one(s) for this ref.
             const filtered = state.detectedVerses.filter((d) => d.reference !== v.reference)
