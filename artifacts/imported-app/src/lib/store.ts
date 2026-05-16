@@ -276,6 +276,16 @@ export interface AppSettings {
    *  persisted profiles) we fall back to 1.0 in the renderer too. */
   ndiLowerThirdScale?: number
 
+  /** v0.7.194-hotfix.2 — NDI capture frame rate. The offscreen Electron
+   *  capture window uses SOFTWARE video decode (Chromium's offscreen
+   *  rendering path has no GPU video decode on Windows) which struggles
+   *  to keep a 1080p video playing in real time at 60fps capture. Drop
+   *  to 30 (default), 25, or 20 to give the software decoder more
+   *  headroom and stop the background-video judder operators reported.
+   *  Changing this restarts NDI (handled via the restart guard in
+   *  ndi-output-panel.tsx). 60 stays available for high-end machines. */
+  ndiCaptureFps?: 60 | 30 | 25 | 20
+
   // Item #15 follow-up — when the SSE link to the secondary screen
   // drops, the page used to slam a full-screen "Reconnecting…"
   // overlay over the broadcast. Useful for debugging, ugly during a
@@ -778,6 +788,14 @@ const defaultSettings: AppSettings = {
   // to 1.0× to match (see ndi-output-panel.tsx). Pre-v0.7.0 shipped
   // undefined (effective 1.0) so this matches the original safe default.
   ndiLowerThirdScale: 1,
+  // v0.7.194-hotfix.2 — Default 30 fps. 60 was the pre-fix hardcoded
+  // value but software-decoded HD video on the offscreen capture window
+  // can't sustain it on most operator machines, causing visible judder
+  // on bg/foreground videos. 30 is the broadcast-standard cadence that
+  // vMix/OBS happily ingest and that gives the software decoder ~2× the
+  // per-frame budget. Operators on high-end machines can opt back into
+  // 60 via the dropdown in NDI Output → Source.
+  ndiCaptureFps: 30,
   ndiBibleLineHeight: undefined,
   ndiRefSize: undefined,
   ndiRefStyle: undefined,
