@@ -196,6 +196,10 @@ export function NdiOutputPanel() {
   // broadcast feed can be tuned (smaller for vMix overlays, bigger for
   // full-screen NDI) without disturbing the in-room projection.
   const ndiLowerThirdScale = useAppStore((s) => s.settings.ndiLowerThirdScale)
+  // v0.7.194-hotfix.2 — Operator-tunable NDI capture frame rate.
+  // Defaults to 30 (see store.ts DEFAULT_SETTINGS). Changing it bumps
+  // restartGuardRef so the running NDI capture restarts at the new fps.
+  const ndiCaptureFps = useAppStore((s) => s.settings.ndiCaptureFps) ?? 30
 
   const ndiHasOverrides =
     ndiFontFamily !== undefined ||
@@ -269,7 +273,7 @@ export function NdiOutputPanel() {
   const lowerThirdHeightSetting = useAppStore((s) => s.settings.lowerThirdHeight)
   useEffect(() => {
     if (!isRunningForEffect || !desktop) return
-    const want = `${ndiDisplayMode}:${lowerThirdPosition}:${sourceName.trim()}`
+    const want = `${ndiDisplayMode}:${lowerThirdPosition}:${sourceName.trim()}:${ndiCaptureFps}`
     if (restartGuardRef.current === want) return
     if (restartGuardRef.current === '') {
       // First settle — record what's already on the wire so the next
@@ -283,7 +287,7 @@ export function NdiOutputPanel() {
       name: sourceName.trim() || 'ScriptureLive AI',
       width: 1920,
       height: 1080,
-      fps: 60,
+      fps: ndiCaptureFps,
       layout: 'ndi',
       // v0.6.8 — ALWAYS broadcast NDI as alpha-keyed (transparent
       // surrounding area). NDI is fundamentally an overlay format
@@ -312,7 +316,7 @@ export function NdiOutputPanel() {
       },
     }).catch(() => { /* surfaced by the ndi:status broadcast */ })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName])
+  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName, ndiCaptureFps])
 
   // Reset the guard when NDI stops so the first toggle after the next
   // Start does the right thing (record-then-skip).
@@ -374,7 +378,7 @@ export function NdiOutputPanel() {
           name: sourceName.trim() || 'ScriptureLive AI',
           width: 1920,
           height: 1080,
-          fps: 60,
+          fps: ndiCaptureFps,
           layout: 'ndi',
           transparent: true,
           lowerThird: {
@@ -894,6 +898,36 @@ export function NdiOutputPanel() {
                   field is SHARED between Live Display and NDI (per
                   hotfix.1 GR-B), so this writes the shared key directly
                   with no Mirror Live option. */}
+              {/* v0.7.194-hotfix.2 — NDI capture frame rate. The offscreen
+                  Electron capture window uses SOFTWARE video decode (no
+                  GPU offscreen path on Windows), which can't sustain
+                  60fps capture while also decoding 1080p video — operator
+                  reported visible lag/freeze on both foreground media and
+                  background videos. Defaulting to 30 gives the software
+                  decoder ~2× the per-frame budget. 60 stays available for
+                  high-end machines; 25/20 for older boxes. Changing this
+                  restarts NDI via the restartGuard above. */}
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Capture frame rate
+                </label>
+                <select
+                  value={String(ndiCaptureFps)}
+                  onChange={(e) => {
+                    const v = Number(e.target.value) as 60 | 30 | 25 | 20
+                    updateSettings({ ndiCaptureFps: v })
+                  }}
+                  className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                >
+                  <option value="30">30 fps — recommended (smooth video)</option>
+                  <option value="60">60 fps — high-end PC only</option>
+                  <option value="25">25 fps — older PC / EU broadcast</option>
+                  <option value="20">20 fps — minimum / very old PC</option>
+                </select>
+                <p className="text-[10px] text-muted-foreground leading-snug">
+                  If video media or background videos lag/freeze on NDI, lower this. NDI capture is software-decoded — 30fps is the sweet spot for almost every PC.
+                </p>
+              </div>
               <div className="space-y-1">
                 <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
                   Bar height (Live Display + NDI)

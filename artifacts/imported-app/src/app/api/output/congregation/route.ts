@@ -1373,7 +1373,20 @@ function render(s){
         // 0.20s is the sweet spot: humans don't notice <250ms drift
         // in non-music video, and seeks now fire only on real desyncs
         // (operator scrub / pause / Stop) instead of routine playback.
-        if(typeof slide.mediaCurrentTime==='number'&&slide.mediaCurrentTime>0){
+        // v0.7.194-hotfix.2 — Skip drift correction on the NDI capture
+        // surface. The offscreen Electron window uses SOFTWARE video
+        // decode (no GPU offscreen path on Windows), which runs slower
+        // than wall-clock; currentTime drifts past 0.20s within ~1s and
+        // every drift-seek flushes the decode pipeline → keyframe re-
+        // decode → 100-300ms freeze. Repeated 10×/sec (Live writeback
+        // throttle) this manifests as the "constant lag and freeze on
+        // NDI video media" the operator reported. NDI is the SOURCE for
+        // vMix/OBS — there is no other surface it needs to stay in sync
+        // with — so the seedSeek on initial mount (below ~L1415) is
+        // sufficient. Real transport events (operator scrub, pause/
+        // resume, source change) still apply because they go through
+        // the rebuild path or mediaPaused branch, not this drift check.
+        if(!IS_NDI&&typeof slide.mediaCurrentTime==='number'&&slide.mediaCurrentTime>0){
           var drift=Math.abs((existingVid.currentTime||0)-slide.mediaCurrentTime);
           if(drift>0.20){try{existingVid.currentTime=slide.mediaCurrentTime;}catch(e){}}
         }
