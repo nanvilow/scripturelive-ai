@@ -307,9 +307,19 @@ export function NdiOutputPanel() {
   // flipped (route.ts lines 854 / 871) so live SSE state always wins
   // over the now-stale URL params after first arrival.
   const lowerThirdHeightSetting = useAppStore((s) => s.settings.lowerThirdHeight)
+  // v0.7.194-hotfix.7 — wantTransparent gates the Electron BrowserWindow's
+  // `transparent:true` flag. LT mode is ALWAYS alpha-keyed (the LT bar is
+  // an overlay by design). FULL mode is alpha-keyed only when the operator
+  // picked Background = Transparent; otherwise (default = Themed) the
+  // BrowserWindow is opaque so vMix/OBS/Wirecast receive a fully painted
+  // frame matching the in-app NDI Live Preview. Pre-fix this was hardcoded
+  // `true` so Wirecast saw see-through even when operator picked Themed.
+  const wantTransparent =
+    ndiDisplayMode === 'lower-third' ||
+    (ndiDisplayMode === 'full' && ndiFullScreenBackground === 'transparent')
   useEffect(() => {
     if (!isRunningForEffect || !desktop) return
-    const want = `${ndiDisplayMode}:${lowerThirdPosition}:${sourceName.trim()}:${ndiCaptureFps}:${ndiCaptureResolution}`
+    const want = `${ndiDisplayMode}:${lowerThirdPosition}:${sourceName.trim()}:${ndiCaptureFps}:${ndiCaptureResolution}:${ndiFullScreenBackground}`
     if (restartGuardRef.current === want) return
     if (restartGuardRef.current === '') {
       // First settle — record what's already on the wire so the next
@@ -338,7 +348,10 @@ export function NdiOutputPanel() {
       // that decision is now read from the store directly by the
       // renderer (see route.ts line 845) so the toggle no longer
       // needs to be plumbed through to the BrowserWindow URL.
-      transparent: true,
+      // v0.7.194-hotfix.7 — `transparent` now follows wantTransparent
+      // (see definition above). Themed default → opaque BrowserWindow
+      // → Wirecast sees fully painted frame matching in-app preview.
+      transparent: wantTransparent,
       lowerThird: {
         // v0.6.8 — Honour the operator's display-mode pick. When they
         // choose Full Screen the renderer now actually renders
@@ -356,7 +369,7 @@ export function NdiOutputPanel() {
       },
     }).catch(() => { /* surfaced by the ndi:status broadcast */ })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName, ndiCaptureFps, ndiCaptureResolution, ndiCaptureWidth, ndiCaptureHeight])
+  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName, ndiCaptureFps, ndiCaptureResolution, ndiCaptureWidth, ndiCaptureHeight, ndiFullScreenBackground, wantTransparent])
 
   // Reset the guard when NDI stops so the first toggle after the next
   // Start does the right thing (record-then-skip).
@@ -424,7 +437,8 @@ export function NdiOutputPanel() {
           height: ndiCaptureHeight,
           fps: ndiCaptureFps,
           layout: 'ndi',
-          transparent: true,
+          // v0.7.194-hotfix.7 — see wantTransparent definition above.
+          transparent: wantTransparent,
           lowerThird: {
             enabled: ndiDisplayMode === 'lower-third',
             position: lowerThirdPosition === 'top' ? 'top' : 'bottom',
