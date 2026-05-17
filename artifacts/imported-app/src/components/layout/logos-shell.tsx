@@ -26,6 +26,7 @@ import {
   Send,
   CircleSlash,
   Square,
+  CheckSquare,
   Repeat,
   Image as LogoIcon,
   History,
@@ -1965,19 +1966,61 @@ function LiveDisplayCard({
 // ──────────────────────────────────────────────────────────────────────
 function ScriptureFeedCard() {
   const [tab, setTab] = useState<'history' | 'queue'>('history')
+  // v0.7.194-hotfix.7 — Select-to-delete mode. While ON, row clicks
+  // toggle the checkbox instead of firing Preview/Live, and the card
+  // header swaps to a red action bar (Cancel + Delete N). Selection
+  // is reset whenever the tab switches so we never carry History
+  // indices into Queue land or vice versa.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set())
+  useEffect(() => {
+    setSelectedKeys(new Set())
+  }, [tab])
   const {
     verseHistory,
     schedule,
     selectedScheduleItemId,
     selectScheduleItem,
     removeScheduleItem,
+    removeVerseHistoryByIndices,
+    removeScheduleItemsByIds,
     setSlides,
     setPreviewSlideIndex,
     setLiveSlideIndex,
     setIsLive,
+    stageVersePreviewOnly,
     settings,
     addScheduleItem,
   } = useAppStore()
+  const currentTabEmpty = tab === 'history' ? verseHistory.length === 0 : schedule.length === 0
+  const toggleKey = (k: string) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(k)) next.delete(k)
+      else next.add(k)
+      return next
+    })
+  }
+  const exitSelectMode = () => {
+    setSelectMode(false)
+    setSelectedKeys(new Set())
+  }
+  const deleteSelected = () => {
+    if (tab === 'history') {
+      const indices = Array.from(selectedKeys)
+        .filter((k) => k.startsWith('h:'))
+        .map((k) => Number(k.slice(2)))
+        .filter((n) => Number.isFinite(n))
+      if (indices.length) removeVerseHistoryByIndices(indices)
+    } else {
+      const ids = Array.from(selectedKeys)
+        .filter((k) => k.startsWith('q:'))
+        .map((k) => k.slice(2))
+      if (ids.length) removeScheduleItemsByIds(ids)
+    }
+    exitSelectMode()
+  }
+  const selectedCount = selectedKeys.size
 
   // v0.7.194-hotfix.4 — Single-click is now PREVIEW-ONLY everywhere.
   // The `live` parameter is retained for future use but no caller in
@@ -1986,8 +2029,10 @@ function ScriptureFeedCard() {
   // Preview card) rather than accidental on-air pushes from a stray
   // double-click in the Scripture Feed list.
   const sendVerseFromHistory = (v: typeof verseHistory[number], live: boolean) => {
+    // v0.7.194-hotfix.7 — STABLE id + preview-preserves-live for single-click.
+    const slideId = `verse-${(v.book || v.reference).replace(/\s+/g, '-')}-${v.chapter ?? 0}-${v.verseStart ?? 0}-${v.translation}`
     const slide: Slide = {
-      id: `slide-${Date.now()}`,
+      id: slideId,
       type: 'verse',
       title: v.reference,
       subtitle: v.translation,
@@ -2000,22 +2045,68 @@ function ScriptureFeedCard() {
       subtitle: v.translation,
       slides: [slide],
     })
-    setSlides([slide])
-    setPreviewSlideIndex(0)
     if (live) {
+      setSlides([slide])
+      setPreviewSlideIndex(0)
       setLiveSlideIndex(0)
       setIsLive(true)
+    } else {
+      stageVersePreviewOnly(slide)
     }
   }
 
   return (
     <Card
-      title="Scripture Feed"
+      title={selectMode && selectedCount > 0 ? `${selectedCount} selected` : 'Scripture Feed'}
       actions={
-        <div className="flex items-center gap-1">
-          <Tab active={tab === 'history'} onClick={() => setTab('history')} icon={History} label="History" />
-          <Tab active={tab === 'queue'} onClick={() => setTab('queue')} icon={ListOrdered} label="Queue" />
-        </div>
+        selectMode && selectedCount > 0 ? (
+          // v0.7.194-hotfix.7 — Red action bar replaces the tab row
+          // when ≥1 row is selected. Tabs are not reachable in this
+          // state (matches operator mockup); Cancel returns to the
+          // normal Select-on header with checkboxes still visible.
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={exitSelectMode}
+              className="h-6 px-2 inline-flex items-center rounded text-[10px] font-semibold text-muted-foreground hover:text-foreground hover:bg-muted/40 border border-border/60"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={deleteSelected}
+              className="h-6 px-2 inline-flex items-center gap-1 rounded text-[10px] font-semibold text-white bg-rose-600 hover:bg-rose-500 border border-rose-500/60"
+            >
+              <Trash2 className="h-3 w-3" />
+              Delete ({selectedCount})
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1">
+            <Tab active={tab === 'history'} onClick={() => setTab('history')} icon={History} label="History" />
+            <Tab active={tab === 'queue'} onClick={() => setTab('queue')} icon={ListOrdered} label="Queue" />
+            <button
+              type="button"
+              onClick={() => {
+                if (currentTabEmpty && !selectMode) return
+                if (selectMode) exitSelectMode()
+                else setSelectMode(true)
+              }}
+              disabled={currentTabEmpty && !selectMode}
+              className={cn(
+                'h-6 px-2 ml-1 inline-flex items-center gap-1 rounded text-[10px] font-semibold border transition-colors',
+                selectMode
+                  ? 'bg-sky-600/20 border-sky-500/60 text-sky-100'
+                  : 'border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/40',
+                currentTabEmpty && !selectMode && 'opacity-40 cursor-not-allowed',
+              )}
+              title={selectMode ? 'Exit select mode' : 'Select rows to delete'}
+            >
+              <CheckSquare className="h-3 w-3" />
+              {selectMode ? 'Done' : 'Select'}
+            </button>
+          </div>
+        )
       }
     >
       <div className="flex-1 min-h-0 overflow-y-auto">
@@ -2027,40 +2118,65 @@ function ScriptureFeedCard() {
                 Verses you look up or detect will show here.
               </div>
             ) : (
-              verseHistory.map((v, i) => (
-                // v0.7.194-hotfix.4 — Row is now a div with an inner
-                // click target + an inline × delete button. Removed
-                // onDoubleClick → no accidental Go Live.
-                <div
-                  key={`${v.reference}-${i}`}
-                  className="group/row relative rounded border border-border/70 bg-card/40 hover:border-sky-500/40 hover:bg-card transition-colors flex items-stretch"
-                >
-                  <button
-                    type="button"
-                    onClick={() => sendVerseFromHistory(v, false)}
-                    className="flex-1 min-w-0 text-left px-2 py-1.5 select-none"
-                    title="Click → Preview"
+              verseHistory.map((v, i) => {
+                const key = `h:${i}`
+                const checked = selectedKeys.has(key)
+                return (
+                  <div
+                    key={`${v.reference}-${i}`}
+                    className={cn(
+                      'group/row relative rounded border bg-card/40 transition-colors flex items-stretch',
+                      checked
+                        ? 'border-rose-500/70 bg-rose-500/10'
+                        : 'border-border/70 hover:border-sky-500/40 hover:bg-card',
+                    )}
                   >
-                    <div className="flex items-center justify-between gap-2 mb-0.5 pr-5">
-                      <span className="text-[10px] font-semibold text-sky-300 truncate">{v.reference}</span>
-                      <span className="text-[9px] text-muted-foreground uppercase">{v.translation}</span>
-                    </div>
-                    <p className="text-[11px] text-foreground line-clamp-2 leading-snug">{v.text}</p>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      useAppStore.getState().removeVerseFromHistoryAt(i)
-                    }}
-                    className="absolute top-1 right-1 h-5 w-5 inline-flex items-center justify-center rounded text-muted-foreground hover:text-rose-300 hover:bg-rose-500/10 opacity-0 group-hover/row:opacity-100 transition-opacity text-[12px] leading-none"
-                    title="Remove from history"
-                    aria-label="Remove from history"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))
+                    {selectMode && (
+                      <button
+                        type="button"
+                        onClick={() => toggleKey(key)}
+                        className="flex items-center justify-center pl-2 pr-1 select-none"
+                        aria-label={checked ? 'Deselect row' : 'Select row'}
+                      >
+                        {checked ? (
+                          <CheckSquare className="h-4 w-4 text-rose-300" />
+                        ) : (
+                          <Square className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectMode) toggleKey(key)
+                        else sendVerseFromHistory(v, false)
+                      }}
+                      className="flex-1 min-w-0 text-left px-2 py-1.5 select-none"
+                      title={selectMode ? 'Click → toggle selection' : 'Click → Preview'}
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-0.5 pr-5">
+                        <span className="text-[10px] font-semibold text-sky-300 truncate">{v.reference}</span>
+                        <span className="text-[9px] text-muted-foreground uppercase">{v.translation}</span>
+                      </div>
+                      <p className="text-[11px] text-foreground line-clamp-2 leading-snug">{v.text}</p>
+                    </button>
+                    {!selectMode && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          useAppStore.getState().removeVerseFromHistoryAt(i)
+                        }}
+                        className="absolute top-1 right-1 h-5 w-5 inline-flex items-center justify-center rounded text-muted-foreground hover:text-rose-300 hover:bg-rose-500/10 opacity-0 group-hover/row:opacity-100 transition-opacity text-[12px] leading-none"
+                        title="Remove from history"
+                        aria-label="Remove from history"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                )
+              })
             )
           ) : schedule.length === 0 ? (
             <div className="text-center py-6 text-[11px] text-muted-foreground">
@@ -2070,22 +2186,40 @@ function ScriptureFeedCard() {
           ) : (
             schedule.map((item, i) => {
               const selected = item.id === selectedScheduleItemId
+              const key = `q:${item.id}`
+              const checked = selectedKeys.has(key)
               return (
                 <div
                   key={item.id}
                   className={cn(
                     'rounded border px-2 py-1.5 transition-colors flex items-center gap-2',
-                    selected
+                    checked
+                      ? 'border-rose-500/70 bg-rose-500/10'
+                      : selected
                       ? 'border-amber-500/60 bg-amber-500/10'
                       : 'border-border/70 bg-card/40 hover:border-border',
                   )}
                 >
+                  {selectMode && (
+                    <button
+                      type="button"
+                      onClick={() => toggleKey(key)}
+                      className="flex items-center justify-center select-none"
+                      aria-label={checked ? 'Deselect row' : 'Select row'}
+                    >
+                      {checked ? (
+                        <CheckSquare className="h-4 w-4 text-rose-300" />
+                      ) : (
+                        <Square className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </button>
+                  )}
                   <button
                     onClick={() => {
-                      // v0.7.194-hotfix.4 — Single-click loads the
-                      // queued item into the PREVIEW deck (no Go Live).
-                      // Removed onDoubleClick → no accidental on-air
-                      // push; operator uses the dedicated Live toggle.
+                      if (selectMode) {
+                        toggleKey(key)
+                        return
+                      }
                       selectScheduleItem(item.id)
                       if (item.slides.length) {
                         setSlides(item.slides)
@@ -2093,7 +2227,7 @@ function ScriptureFeedCard() {
                       }
                     }}
                     className="flex-1 min-w-0 text-left"
-                    title="Click → Preview"
+                    title={selectMode ? 'Click → toggle selection' : 'Click → Preview'}
                   >
                     <div className="flex items-center gap-1.5 mb-0.5">
                       <span
@@ -2110,13 +2244,15 @@ function ScriptureFeedCard() {
                       {item.title}
                     </p>
                   </button>
-                  <button
-                    onClick={() => removeScheduleItem(item.id)}
-                    className="text-muted-foreground hover:text-rose-400 p-1"
-                    title="Remove"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
+                  {!selectMode && (
+                    <button
+                      onClick={() => removeScheduleItem(item.id)}
+                      className="text-muted-foreground hover:text-rose-400 p-1"
+                      title="Remove"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  )}
                 </div>
               )
             })

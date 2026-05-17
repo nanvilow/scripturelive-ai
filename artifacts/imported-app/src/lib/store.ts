@@ -344,6 +344,7 @@ interface AppState {
    *  key in the list is `${reference}-${i}` which is stable for
    *  the render. */
   removeVerseFromHistoryAt: (index: number) => void
+  removeVerseHistoryByIndices: (indices: number[]) => void
   searchQuery: string
   setSearchQuery: (q: string) => void
 
@@ -495,6 +496,14 @@ interface AppState {
   // swap a verse slide's text in place without yanking the slide off
   // air mid-service.
   replaceSlide: (index: number, patch: Partial<Slide>) => void
+  // v0.7.194-hotfix.7 — single-click previews a verse WITHOUT
+  // yanking the current Live slide. If Live is airing, keeps the
+  // current live slide at index 0 and appends the previewed slide
+  // at index 1 (previewSlideIndex=1, liveSlideIndex=0, isLive
+  // untouched). If not airing, behaves like setSlides([slide]).
+  // De-dupes when the previewed slide has the same stable id as
+  // the live slide (just points preview at the live index).
+  stageVersePreviewOnly: (slide: Slide) => void
   previewSlideIndex: number
   setPreviewSlideIndex: (i: number) => void
   liveSlideIndex: number
@@ -590,6 +599,7 @@ interface AppState {
   setActiveLibraryTab: (t: LibraryTab) => void
   addScheduleItem: (item: Omit<ScheduleItem, 'id' | 'addedAt'>) => string
   removeScheduleItem: (id: string) => void
+  removeScheduleItemsByIds: (ids: string[]) => void
   selectScheduleItem: (id: string | null) => void
   moveScheduleItem: (id: string, direction: 'up' | 'down') => void
   clearSchedule: () => void
@@ -881,6 +891,14 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           verseHistory: state.verseHistory.filter((_, i) => i !== index),
         })),
+      // v0.7.194-hotfix.7 — Bulk delete for Select-to-delete mode in the
+      // Scripture Feed. Set lookup avoids O(N×M) and the index-shift bug
+      // that comes from looping single-index deletes from the front.
+      removeVerseHistoryByIndices: (indices: number[]) =>
+        set((state) => {
+          const drop = new Set(indices)
+          return { verseHistory: state.verseHistory.filter((_, i) => !drop.has(i)) }
+        }),
       searchQuery: '',
       setSearchQuery: (q) => set({ searchQuery: q }),
 
@@ -1099,6 +1117,21 @@ export const useAppStore = create<AppState>()(
       // Slides
       slides: [],
       setSlides: (s) => set({ slides: s, previewSlideIndex: 0, liveSlideIndex: -1 }),
+      // v0.7.194-hotfix.7 — see interface comment above.
+      stageVersePreviewOnly: (slide) =>
+        set((state) => {
+          const cur =
+            state.isLive && state.liveSlideIndex >= 0
+              ? state.slides[state.liveSlideIndex]
+              : null
+          if (cur && cur.id === slide.id) {
+            return { previewSlideIndex: state.liveSlideIndex }
+          }
+          if (cur) {
+            return { slides: [cur, slide], previewSlideIndex: 1, liveSlideIndex: 0 }
+          }
+          return { slides: [slide], previewSlideIndex: 0, liveSlideIndex: -1 }
+        }),
       replaceSlide: (index, patch) =>
         set((state) => {
           if (index < 0 || index >= state.slides.length) return {}
@@ -1198,6 +1231,22 @@ export const useAppStore = create<AppState>()(
         set((state) => {
           const next = state.schedule.filter((s) => s.id !== id)
           const wasSelected = state.selectedScheduleItemId === id
+          return {
+            schedule: next,
+            selectedScheduleItemId: wasSelected ? next[0]?.id ?? null : state.selectedScheduleItemId,
+            slides: wasSelected ? next[0]?.slides ?? [] : state.slides,
+            previewSlideIndex: wasSelected ? 0 : state.previewSlideIndex,
+            liveSlideIndex: wasSelected ? -1 : state.liveSlideIndex,
+          }
+        }),
+      // v0.7.194-hotfix.7 — Bulk delete for Select-to-delete mode in the
+      // Scripture Feed Queue tab. Currently-live item is preserved on
+      // air; only schedule references are removed.
+      removeScheduleItemsByIds: (ids) =>
+        set((state) => {
+          const drop = new Set(ids)
+          const next = state.schedule.filter((s) => !drop.has(s.id))
+          const wasSelected = state.selectedScheduleItemId && drop.has(state.selectedScheduleItemId)
           return {
             schedule: next,
             selectedScheduleItemId: wasSelected ? next[0]?.id ?? null : state.selectedScheduleItemId,
