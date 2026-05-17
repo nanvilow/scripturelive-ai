@@ -132,8 +132,12 @@ export function BibleLookupCompact() {
       const v = chap.verses.find((x) => x.verse === verseNum)
       if (!v) return
       const reference = `${chap.book} ${chap.chapter}:${verseNum}`
+      // v0.7.194-hotfix.7 — STABLE slide id (book-ch-v-tr) so re-clicking
+      // the same verse reconciles the existing React element instead of
+      // remounting → no black flash. `Date.now()` was the flash source.
+      const slideId = `verse-${chap.book.replace(/\s+/g, '-')}-${chap.chapter}-${verseNum}-${chap.translation}`
       const slide: Slide = {
-        id: `slide-${Date.now()}`,
+        id: slideId,
         type: 'verse',
         title: reference,
         subtitle: chap.translation,
@@ -147,11 +151,16 @@ export function BibleLookupCompact() {
         slides: [slide],
       })
       const s = useAppStore.getState()
-      s.setSlides([slide])
-      s.setPreviewSlideIndex(0)
       if (live) {
+        // Double-click / Enter-twice → go live immediately.
+        s.setSlides([slide])
+        s.setPreviewSlideIndex(0)
         s.setLiveSlideIndex(0)
         s.setIsLive(true)
+      } else {
+        // Single-click → preview only. Preserves current Live slide
+        // when airing (stageVersePreviewOnly appends at index 1).
+        s.stageVersePreviewOnly(slide)
       }
     },
     [addScheduleItem, settings.congregationScreenTheme],
@@ -224,8 +233,11 @@ export function BibleLookupCompact() {
       const v = chap.verses.find((x) => x.verse === verseNum)
       if (!v) return
       const reference = `${chap.book} ${chap.chapter}:${verseNum}`
+      // v0.7.194-hotfix.7 — STABLE id (see stageVerse) eliminates flash
+      // on ◀ ▶ navigation. v0.5.57 live-follow semantics preserved.
+      const slideId = `verse-${chap.book.replace(/\s+/g, '-')}-${chap.chapter}-${verseNum}-${chap.translation}`
       const slide: Slide = {
-        id: `slide-${Date.now()}`,
+        id: slideId,
         type: 'verse',
         title: reference,
         subtitle: chap.translation,

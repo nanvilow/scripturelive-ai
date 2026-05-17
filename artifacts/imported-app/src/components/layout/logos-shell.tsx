@@ -1975,6 +1975,7 @@ function ScriptureFeedCard() {
     setPreviewSlideIndex,
     setLiveSlideIndex,
     setIsLive,
+    stageVersePreviewOnly,
     settings,
     addScheduleItem,
   } = useAppStore()
@@ -1986,8 +1987,10 @@ function ScriptureFeedCard() {
   // Preview card) rather than accidental on-air pushes from a stray
   // double-click in the Scripture Feed list.
   const sendVerseFromHistory = (v: typeof verseHistory[number], live: boolean) => {
+    // v0.7.194-hotfix.7 — STABLE id + preview-preserves-live for single-click.
+    const slideId = `verse-${(v.book || v.reference).replace(/\s+/g, '-')}-${v.chapter ?? 0}-${v.verseStart ?? 0}-${v.translation}`
     const slide: Slide = {
-      id: `slide-${Date.now()}`,
+      id: slideId,
       type: 'verse',
       title: v.reference,
       subtitle: v.translation,
@@ -2000,11 +2003,13 @@ function ScriptureFeedCard() {
       subtitle: v.translation,
       slides: [slide],
     })
-    setSlides([slide])
-    setPreviewSlideIndex(0)
     if (live) {
+      setSlides([slide])
+      setPreviewSlideIndex(0)
       setLiveSlideIndex(0)
       setIsLive(true)
+    } else {
+      stageVersePreviewOnly(slide)
     }
   }
 
