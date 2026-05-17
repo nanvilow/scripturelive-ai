@@ -303,6 +303,16 @@ export interface AppSettings {
    *  restart guard in ndi-output-panel.tsx. */
   ndiCaptureResolution?: '1080p' | '720p'
 
+  /** v0.7.194-hotfix.4 — NDI Full-Screen background mode. When
+   *  'themed' (default) the full-screen NDI surface renders with the
+   *  themed gradient + custom background — identical to the secondary
+   *  screen (v0.6.9 behaviour). When 'transparent' it strips both so
+   *  vMix/OBS/Wirecast receive only the verse text on a clean alpha
+   *  matte, useful when the production switcher already has its own
+   *  program-output background. Lower-third has the per-box equivalent
+   *  via `ndiLowerThirdTransparent`. */
+  ndiFullScreenBackground?: 'themed' | 'transparent'
+
   // Item #15 follow-up — when the SSE link to the secondary screen
   // drops, the page used to slam a full-screen "Reconnecting…"
   // overlay over the broadcast. Useful for debugging, ugly during a
@@ -329,6 +339,11 @@ interface AppState {
   // the Chapter Navigator / Detected Verses panels can offer a
   // one-click "Clear History" per the v0.5.5 spec.
   clearVerseHistory: () => void
+  /** v0.7.194-hotfix.4 — Remove a single entry from the Scripture
+   *  Feed history pane (per-row × button). Index-based; the React
+   *  key in the list is `${reference}-${i}` which is stable for
+   *  the render. */
+  removeVerseFromHistoryAt: (index: number) => void
   searchQuery: string
   setSearchQuery: (q: string) => void
 
@@ -799,6 +814,16 @@ const defaultSettings: AppSettings = {
   ndiAspectRatio: undefined,
   ndiBibleColor: undefined,
   ndiLowerThirdTransparent: false,
+  // v0.7.194-hotfix.4 — NDI Full-Screen background mode. 'themed'
+  // (default) keeps the v0.6.9 behaviour: full-screen NDI renders
+  // identically to the secondary screen (themed gradient + custom
+  // background visible). 'transparent' strips theme + custom bg so
+  // vMix/OBS/Wirecast receive only the verse text on a clean alpha
+  // matte — useful when the production switcher already has its
+  // own program-output background that the operator wants the NDI
+  // verse to key over. Lower-third has its own per-box toggle
+  // (ndiLowerThirdTransparent); this is the full-screen equivalent.
+  ndiFullScreenBackground: 'themed',
   // v0.7.3 — Reverted to 1.0× (was 2.0× in v0.7.0). Operator's
   // broadcast frame showed 2.0× was way too large; their lower-third
   // was covering the preacher. The slider Reset button also returns
@@ -848,6 +873,14 @@ export const useAppStore = create<AppState>()(
           verseHistory: [v, ...state.verseHistory].slice(0, 50),
         })),
       clearVerseHistory: () => set({ verseHistory: [] }),
+      // v0.7.194-hotfix.4 — Per-row delete for the Scripture Feed
+      // History pane. Index-based because verseHistory items don't
+      // carry a unique ID; the index is stable for the lifetime of
+      // the rendered list (React key is `${reference}-${i}`).
+      removeVerseFromHistoryAt: (index: number) =>
+        set((state) => ({
+          verseHistory: state.verseHistory.filter((_, i) => i !== index),
+        })),
       searchQuery: '',
       setSearchQuery: (q) => set({ searchQuery: q }),
 

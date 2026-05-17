@@ -802,35 +802,16 @@ export function SettingsView() {
               visible "Lower Third Settings" card placed directly after
               this Card closes. See the comment above. */}
 
-          <Separator />
-
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">Output Destination</Label>
-            <div className="flex flex-wrap gap-2">
-              {([
-                { value: 'window' as OutputDestination, label: 'Window', desc: 'New browser window', icon: <Monitor className="h-3.5 w-3.5" /> },
-                { value: 'ndi' as OutputDestination, label: 'NDI / Wireless', desc: 'Share display wirelessly', icon: <Wifi className="h-3.5 w-3.5" /> },
-                { value: 'both' as OutputDestination, label: 'Both', desc: 'Window + wireless', icon: <Layers className="h-3.5 w-3.5" /> },
-              ]).map((dest) => (
-                <button
-                  key={dest.value}
-                  onClick={() => updateSettings({ outputDestination: dest.value })}
-                  className={cn(
-                    'flex items-center gap-2 rounded-lg px-3 py-2.5 transition-colors border min-w-[140px]',
-                    settings.outputDestination === dest.value
-                      ? 'bg-primary/10 border-primary/30'
-                      : 'bg-muted/30 border-border hover:bg-muted/50'
-                  )}
-                >
-                  {dest.icon}
-                  <div className="text-left">
-                    <span className="text-xs font-medium block">{dest.label}</span>
-                    <span className="text-[10px] text-muted-foreground">{dest.desc}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
+          {/* v0.7.194-hotfix.4 — Output Destination trio (Window /
+              NDI / Both) removed from this Settings card. Operators
+              now choose the destination contextually from the Live
+              Presenter (the Output button + the NDI Output panel)
+              rather than via a global toggle that frequently caused
+              "I picked NDI here but nothing's coming out" confusion
+              when they'd forgotten the NDI Output panel was the
+              actual source of truth. Field kept in the store +
+              consumers untouched so existing workflows keep working
+              — this just hides the duplicate, conflicting UI. */}
 
           <Separator />
 
@@ -961,27 +942,12 @@ export function SettingsView() {
             </p>
           </div>
 
-          <Separator />
-
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">Congregation Screen Theme</Label>
-            <div className="flex flex-wrap gap-2">
-              {['minimal', 'worship', 'sermon', 'easter', 'christmas', 'praise'].map((theme) => (
-                <button
-                  key={theme}
-                  onClick={() => updateSettings({ congregationScreenTheme: theme })}
-                  className={cn(
-                    'px-3 py-1.5 rounded-md text-xs font-medium transition-colors border capitalize',
-                    settings.congregationScreenTheme === theme
-                      ? 'bg-primary/15 border-primary/30 text-primary'
-                      : 'bg-muted border-border text-muted-foreground hover:bg-muted/80'
-                  )}
-                >
-                  {theme}
-                </button>
-              ))}
-            </div>
-          </div>
+          {/* v0.7.194-hotfix.4 — Standalone "Congregation Screen
+              Theme" picker removed. Theme is now chosen via the
+              Theme Designer card below (with live preview + preset
+              thumbnails) so operators have ONE place to set the
+              look of the projection screen. Field + consumers
+              untouched; this just hides the duplicate UI. */}
             </div>{/* end LEFT COLUMN */}
 
             {/* ── RIGHT COLUMN — sticky compact preview ─────────── */}
@@ -2399,9 +2365,11 @@ function ThemeDesignerCard({ updateSettings, settings }: {
 }) {
   const customThemes = useAppStore((s) => s.customThemes)
   const setCustomThemes = useAppStore((s) => s.setCustomThemes)
-  const highlightColor = useAppStore((s) => s.highlightColor)
-  const setHighlightColor = useAppStore((s) => s.setHighlightColor)
   const [newName, setNewName] = useState('')
+  // v0.7.194-hotfix.4 — `highlightColor` picker removed (it was a dead
+  // control with no operator-visible effect anywhere in the projection
+  // path). Hooks intentionally not consumed here so the lint/tsc audit
+  // catches any accidental re-introduction.
 
   const HARD_PRESETS: Array<{ id: string; name: string; settings: Partial<AppSettings> }> = [
     {
@@ -2439,7 +2407,34 @@ function ThemeDesignerCard({ updateSettings, settings }: {
     },
   ]
 
-  const HIGHLIGHTS = ['amber', 'red', 'emerald', 'sky', 'violet', 'rose']
+  // v0.7.194-hotfix.4 — Mini preview swatch shared by built-in presets
+  // and saved-custom-themes rows. Uses the same theme gradient + font
+  // sample the projector will render, so operators recognise the look
+  // before applying. Pure-render — no store reads, no side effects.
+  const ThemeSwatch = ({ s }: { s: Partial<AppSettings> }) => {
+    const themeBg: Record<string, string> = {
+      worship: 'linear-gradient(135deg,#1e0a3c,#1e1b4b)',
+      sermon: 'linear-gradient(135deg,#3c1a0a,#451a03)',
+      easter: 'linear-gradient(135deg,#0a3c2a,#042f2e)',
+      christmas: 'linear-gradient(135deg,#3c0a0a,#4c0519)',
+      praise: 'linear-gradient(135deg,#3c3a0a,#451a03)',
+      minimal: 'linear-gradient(135deg,#0a0a0a,#171717)',
+    }
+    const fontStack =
+      s.fontFamily === 'serif' ? 'Georgia, serif'
+      : s.fontFamily === 'mono' ? 'ui-monospace, Menlo, monospace'
+      : 'ui-sans-serif, system-ui, sans-serif'
+    const bg = themeBg[(s.congregationScreenTheme as string) ?? 'minimal'] ?? themeBg.minimal
+    return (
+      <div
+        className="w-full h-14 rounded-md border border-border overflow-hidden flex flex-col items-center justify-center px-2 text-white"
+        style={{ background: bg, textShadow: s.textShadow ? '0 1px 6px rgba(0,0,0,0.5)' : 'none', fontFamily: fontStack }}
+      >
+        <span className="text-[8px] opacity-70 leading-tight">John 3:16</span>
+        <span className="text-[11px] font-semibold leading-tight truncate w-full text-center">For God so loved</span>
+      </div>
+    )
+  }
 
   const saveCurrent = () => {
     const name = newName.trim()
@@ -2454,12 +2449,24 @@ function ThemeDesignerCard({ updateSettings, settings }: {
         id,
         name,
         settings: {
+          // v0.7.194-hotfix.4 — Capture the full caption + subtitle
+          // typography surface so re-applying a saved theme produces
+          // a pixel-identical projection screen. Pre-fix this only
+          // saved 6 fields and operators reported "I saved my theme
+          // but the reference alignment / line height didn't come
+          // back when I re-applied it."
           congregationScreenTheme: settings.congregationScreenTheme,
           fontSize: settings.fontSize,
           fontFamily: settings.fontFamily,
           textShadow: settings.textShadow,
-          showReferenceOnOutput: settings.showReferenceOnOutput,
+          textAlign: settings.textAlign,
           textScale: settings.textScale,
+          bibleLineHeight: settings.bibleLineHeight,
+          showReferenceOnOutput: settings.showReferenceOnOutput,
+          referenceFontSize: settings.referenceFontSize,
+          referenceTextAlign: settings.referenceTextAlign,
+          referenceTextShadow: settings.referenceTextShadow,
+          referenceTextScale: settings.referenceTextScale,
         } as Partial<AppSettings>,
       },
     ]
@@ -2482,40 +2489,29 @@ function ThemeDesignerCard({ updateSettings, settings }: {
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Theme Designer</CardTitle>
         <CardDescription>
-          Highlight colour, presets, and save / load your own themes.
+          Pick a preset or save your own — each thumbnail shows the actual look.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
-        <div className="space-y-2">
-          <Label className="text-sm font-medium">Active-verse highlight color</Label>
-          <div className="flex flex-wrap gap-2">
-            {HIGHLIGHTS.map((c) => (
-              <button
-                key={c}
-                onClick={() => setHighlightColor(c)}
-                className={cn(
-                  'px-3 py-1.5 rounded-md text-xs font-medium transition-colors border capitalize flex items-center gap-2',
-                  highlightColor === c
-                    ? 'bg-primary/15 border-primary/30 text-primary'
-                    : 'bg-muted border-border text-muted-foreground hover:bg-muted/80',
-                )}
-              >
-                <span className={cn('inline-block h-3 w-3 rounded-full',
-                  c === 'amber' && 'bg-amber-400',
-                  c === 'red' && 'bg-red-400',
-                  c === 'emerald' && 'bg-emerald-400',
-                  c === 'sky' && 'bg-sky-400',
-                  c === 'violet' && 'bg-violet-400',
-                  c === 'rose' && 'bg-rose-400',
-                )} />
-                {c}
-              </button>
-            ))}
-          </div>
+        {/* v0.7.194-hotfix.4 — Live preview of the operator's CURRENT
+            settings, sitting at the top of the card so every change
+            elsewhere on the page is reflected here in real time. */}
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Live preview (current settings)</Label>
+          <ThemeSwatch s={{
+            congregationScreenTheme: settings.congregationScreenTheme,
+            fontFamily: settings.fontFamily,
+            fontSize: settings.fontSize,
+            textShadow: settings.textShadow,
+          }} />
         </div>
 
         <Separator />
 
+        {/* v0.7.194-hotfix.4 — Preset thumbnails replace the old text-
+            only buttons. Each preset renders ThemeSwatch with its own
+            settings so operators see the bg + font + shadow combination
+            before they click Apply. */}
         <div className="space-y-2">
           <Label className="text-sm font-medium">Built-in presets</Label>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -2523,12 +2519,15 @@ function ThemeDesignerCard({ updateSettings, settings }: {
               <button
                 key={p.id}
                 onClick={() => applyTheme(p.settings, p.name)}
-                className="px-3 py-2 rounded-md border border-border bg-muted text-left hover:bg-muted/80 transition-colors"
+                className="rounded-md border border-border bg-muted text-left hover:bg-muted/80 transition-colors p-2 space-y-1.5"
               >
-                <p className="text-sm font-medium">{p.name}</p>
-                <p className="text-[10px] text-muted-foreground capitalize">
-                  {(p.settings.congregationScreenTheme as string) ?? 'minimal'} · {p.settings.fontFamily as string} · {p.settings.fontSize as string}
-                </p>
+                <ThemeSwatch s={p.settings} />
+                <div className="px-1 pb-0.5">
+                  <p className="text-xs font-medium">{p.name}</p>
+                  <p className="text-[10px] text-muted-foreground capitalize">
+                    {(p.settings.congregationScreenTheme as string) ?? 'minimal'} · {p.settings.fontFamily as string} · {p.settings.fontSize as string}
+                  </p>
+                </div>
               </button>
             ))}
           </div>
@@ -2550,15 +2549,18 @@ function ThemeDesignerCard({ updateSettings, settings }: {
           {customThemes.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
               {customThemes.map((t) => (
-                <div key={t.id} className="flex items-center gap-2 px-3 py-2 rounded-md border border-border bg-muted/30">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{t.name}</p>
-                    <p className="text-[10px] text-muted-foreground capitalize truncate">
-                      {(t.settings.congregationScreenTheme as string) ?? 'minimal'} · {t.settings.fontFamily as string} · {t.settings.fontSize as string}
-                    </p>
+                <div key={t.id} className="rounded-md border border-border bg-muted/30 p-2 space-y-1.5">
+                  <ThemeSwatch s={t.settings} />
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium truncate">{t.name}</p>
+                      <p className="text-[10px] text-muted-foreground capitalize truncate">
+                        {(t.settings.congregationScreenTheme as string) ?? 'minimal'} · {t.settings.fontFamily as string} · {t.settings.fontSize as string}
+                      </p>
+                    </div>
+                    <Button size="sm" variant="ghost" onClick={() => applyTheme(t.settings, t.name)}>Apply</Button>
+                    <Button size="sm" variant="ghost" onClick={() => deleteTheme(t.id)}>Delete</Button>
                   </div>
-                  <Button size="sm" variant="ghost" onClick={() => applyTheme(t.settings, t.name)}>Apply</Button>
-                  <Button size="sm" variant="ghost" onClick={() => deleteTheme(t.id)}>Delete</Button>
                 </div>
               ))}
             </div>
