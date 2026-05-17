@@ -200,6 +200,14 @@ export function NdiOutputPanel() {
   // Defaults to 30 (see store.ts DEFAULT_SETTINGS). Changing it bumps
   // restartGuardRef so the running NDI capture restarts at the new fps.
   const ndiCaptureFps = useAppStore((s) => s.settings.ndiCaptureFps) ?? 30
+  // v0.7.194-hotfix.3 — Operator-tunable NDI capture resolution. Defaults
+  // to 1080p (matches typical vMix/OBS/Wirecast scene config). Operators
+  // on older hardware flip to 720p for ~56% per-frame CPU relief.
+  // `?? '1080p'` covers existing-install state where the field is
+  // undefined after persist hydration — same pattern as ndiCaptureFps.
+  const ndiCaptureResolution = useAppStore((s) => s.settings.ndiCaptureResolution) ?? '1080p'
+  const ndiCaptureWidth = ndiCaptureResolution === '720p' ? 1280 : 1920
+  const ndiCaptureHeight = ndiCaptureResolution === '720p' ? 720 : 1080
 
   const ndiHasOverrides =
     ndiFontFamily !== undefined ||
@@ -273,7 +281,7 @@ export function NdiOutputPanel() {
   const lowerThirdHeightSetting = useAppStore((s) => s.settings.lowerThirdHeight)
   useEffect(() => {
     if (!isRunningForEffect || !desktop) return
-    const want = `${ndiDisplayMode}:${lowerThirdPosition}:${sourceName.trim()}:${ndiCaptureFps}`
+    const want = `${ndiDisplayMode}:${lowerThirdPosition}:${sourceName.trim()}:${ndiCaptureFps}:${ndiCaptureResolution}`
     if (restartGuardRef.current === want) return
     if (restartGuardRef.current === '') {
       // First settle — record what's already on the wire so the next
@@ -285,8 +293,12 @@ export function NdiOutputPanel() {
     restartGuardRef.current = want
     void desktop.ndi.start({
       name: sourceName.trim() || 'ScriptureLive AI',
-      width: 1920,
-      height: 1080,
+      // v0.7.194-hotfix.3 — width/height now driven by ndiCaptureResolution
+      // setting. main.ts equality check (L2281-2282) includes width/height so
+      // flipping the dropdown tears down the BrowserWindow and rebuilds at
+      // the new resolution. MUST be in restartGuardRef token + deps below.
+      width: ndiCaptureWidth,
+      height: ndiCaptureHeight,
       fps: ndiCaptureFps,
       layout: 'ndi',
       // v0.6.8 — ALWAYS broadcast NDI as alpha-keyed (transparent
@@ -316,7 +328,7 @@ export function NdiOutputPanel() {
       },
     }).catch(() => { /* surfaced by the ndi:status broadcast */ })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName, ndiCaptureFps])
+  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName, ndiCaptureFps, ndiCaptureResolution, ndiCaptureWidth, ndiCaptureHeight])
 
   // Reset the guard when NDI stops so the first toggle after the next
   // Start does the right thing (record-then-skip).
@@ -376,8 +388,12 @@ export function NdiOutputPanel() {
         // full rationale.
         const res = await desktop.ndi.start({
           name: sourceName.trim() || 'ScriptureLive AI',
-          width: 1920,
-          height: 1080,
+          // v0.7.194-hotfix.3 — see comment in the persistent restart effect
+          // above for width/height rationale. Both ndi.start callers MUST
+          // read the same ndiCaptureWidth/Height derived from the setting,
+          // otherwise the initial Start and the restart paths would diverge.
+          width: ndiCaptureWidth,
+          height: ndiCaptureHeight,
           fps: ndiCaptureFps,
           layout: 'ndi',
           transparent: true,
@@ -898,6 +914,48 @@ export function NdiOutputPanel() {
                   field is SHARED between Live Display and NDI (per
                   hotfix.1 GR-B), so this writes the shared key directly
                   with no Mirror Live option. */}
+              {/* v0.7.194-hotfix.3 — Hardware-tip banner for operators on
+                  older PCs. The 720p + lower-fps fallback is invisible
+                  unless surfaced; this banner makes the relief path
+                  discoverable without forcing it on operators whose
+                  hardware can handle 1080p/30fps cleanly. */}
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-[10px] leading-snug text-amber-200">
+                <strong className="font-semibold">Hardware tip:</strong> on older PCs (Ivy
+                Bridge mobile, pre-2015 laptops, integrated graphics) NDI video
+                media or background videos can freeze because Windows can't
+                hardware-decode video on the NDI capture window. If you see
+                stutter in vMix / Wirecast / OBS, switch <strong>Capture resolution</strong> to
+                720p first; if it still lags, drop <strong>Capture frame rate</strong> to 15 fps.
+                Receivers upscale 720→1080 automatically.
+              </div>
+              {/* v0.7.194-hotfix.3 — NDI capture resolution. 720p cuts
+                  per-frame work by ~56% (8.3MB → 3.7MB BGRA buffer,
+                  encoding + memory bandwidth drop in step). Default stays
+                  1080p (no migration; existing installs keep 1080p; the
+                  `?? '1080p'` hook fallback covers undefined persisted
+                  state). Changing this restarts NDI via the restartGuard
+                  above — `ndiCaptureResolution` is in the want token,
+                  effect deps, and both ndi.start callers (see audit
+                  pattern from hotfix.2 GR-C). */}
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Capture resolution
+                </label>
+                <select
+                  value={ndiCaptureResolution}
+                  onChange={(e) => {
+                    const v = e.target.value as '1080p' | '720p'
+                    updateSettings({ ndiCaptureResolution: v })
+                  }}
+                  className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                >
+                  <option value="1080p">1080p (1920×1080) — broadcast standard</option>
+                  <option value="720p">720p (1280×720) — older PC, vMix/OBS upscale</option>
+                </select>
+                <p className="text-[10px] text-muted-foreground leading-snug">
+                  Single biggest relief if NDI video freezes. 720p cuts CPU work in half. vMix/Wirecast/OBS upscale to 1080p — chyron text and Bible verses look identical; full-bleed video is slightly softer but smooth.
+                </p>
+              </div>
               {/* v0.7.194-hotfix.2 — NDI capture frame rate. The offscreen
                   Electron capture window uses SOFTWARE video decode (no
                   GPU offscreen path on Windows), which can't sustain
@@ -905,8 +963,10 @@ export function NdiOutputPanel() {
                   reported visible lag/freeze on both foreground media and
                   background videos. Defaulting to 30 gives the software
                   decoder ~2× the per-frame budget. 60 stays available for
-                  high-end machines; 25/20 for older boxes. Changing this
-                  restarts NDI via the restartGuard above. */}
+                  high-end machines; 25/20/15 for older boxes. Changing
+                  this restarts NDI via the restartGuard above.
+                  v0.7.194-hotfix.3 — 15fps added as the deepest relief
+                  option for very old hardware (Ivy Bridge mobile etc). */}
               <div className="space-y-1">
                 <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
                   Capture frame rate
@@ -914,7 +974,7 @@ export function NdiOutputPanel() {
                 <select
                   value={String(ndiCaptureFps)}
                   onChange={(e) => {
-                    const v = Number(e.target.value) as 60 | 30 | 25 | 20
+                    const v = Number(e.target.value) as 60 | 30 | 25 | 20 | 15
                     updateSettings({ ndiCaptureFps: v })
                   }}
                   className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
@@ -923,9 +983,10 @@ export function NdiOutputPanel() {
                   <option value="60">60 fps — high-end PC only</option>
                   <option value="25">25 fps — older PC / EU broadcast</option>
                   <option value="20">20 fps — minimum / very old PC</option>
+                  <option value="15">15 fps — deepest relief / 2012-era laptops</option>
                 </select>
                 <p className="text-[10px] text-muted-foreground leading-snug">
-                  If video media or background videos lag/freeze on NDI, lower this. NDI capture is software-decoded — 30fps is the sweet spot for almost every PC.
+                  If video media or background videos still lag/freeze on NDI after switching to 720p above, drop this. NDI capture is software-decoded — 30fps is the sweet spot for almost every PC; 15fps is the floor.
                 </p>
               </div>
               <div className="space-y-1">

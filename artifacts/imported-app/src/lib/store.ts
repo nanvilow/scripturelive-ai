@@ -280,11 +280,28 @@ export interface AppSettings {
    *  capture window uses SOFTWARE video decode (Chromium's offscreen
    *  rendering path has no GPU video decode on Windows) which struggles
    *  to keep a 1080p video playing in real time at 60fps capture. Drop
-   *  to 30 (default), 25, or 20 to give the software decoder more
+   *  to 30 (default), 25, 20, or 15 to give the software decoder more
    *  headroom and stop the background-video judder operators reported.
    *  Changing this restarts NDI (handled via the restart guard in
-   *  ndi-output-panel.tsx). 60 stays available for high-end machines. */
-  ndiCaptureFps?: 60 | 30 | 25 | 20
+   *  ndi-output-panel.tsx). 60 stays available for high-end machines.
+   *  v0.7.194-hotfix.3 — 15fps added as a deeper relief option for very
+   *  old hardware (Ivy Bridge / pre-2015 mobile chips). */
+  ndiCaptureFps?: 60 | 30 | 25 | 20 | 15
+
+  /** v0.7.194-hotfix.3 — NDI capture resolution. The offscreen capture
+   *  window is created at this resolution. 1080p (1920×1080) is the
+   *  default and matches what vMix/OBS/Wirecast scenes are usually
+   *  configured for. 720p (1280×720) cuts per-frame work by ~56% (BGRA
+   *  buffer 8.3 MB → 3.7 MB, encoding + memory bandwidth drop in step)
+   *  which is the single biggest CPU relief for operators on older
+   *  hardware (Ivy Bridge mobile, pre-2015 laptops, integrated graphics)
+   *  where software HD video decode saturates the CPU. Downstream
+   *  vMix/Wirecast/OBS upscale 720→1080 in their program output with
+   *  hardware-accelerated bicubic; the visible quality drop on chyron
+   *  text + Bible verses is zero, and full-bleed video media is only
+   *  slightly softer but smooth. Changing this restarts NDI via the
+   *  restart guard in ndi-output-panel.tsx. */
+  ndiCaptureResolution?: '1080p' | '720p'
 
   // Item #15 follow-up — when the SSE link to the secondary screen
   // drops, the page used to slam a full-screen "Reconnecting…"
@@ -796,6 +813,12 @@ const defaultSettings: AppSettings = {
   // per-frame budget. Operators on high-end machines can opt back into
   // 60 via the dropdown in NDI Output → Source.
   ndiCaptureFps: 30,
+  // v0.7.194-hotfix.3 — Default 1080p (no migration for existing installs;
+  // matches what vMix/OBS/Wirecast scenes are usually configured for).
+  // Operators on older hardware (Ivy Bridge mobile, pre-2015 laptops,
+  // integrated graphics) flip to 720p via the dropdown in NDI Output →
+  // "NDI Layout & Bible Body" to eliminate software-decode CPU saturation.
+  ndiCaptureResolution: '1080p',
   ndiBibleLineHeight: undefined,
   ndiRefSize: undefined,
   ndiRefStyle: undefined,
