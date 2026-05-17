@@ -831,7 +831,7 @@ function applyRender(s){
 // Bounds:
 //   isLT  → [0.60, 2.50]  (grow short verses up to 2.5× the CSS base)
 //   else  → [0.60, 1.00]  (shrink-only, identical to v0.7.184.2)
-var __fitKey='', __fitScale=1, __fitBase=0;
+var __fitKey='', __fitScale=1, __fitBase=0, __lastIsLT=null;
 function fitVerseText(){
   try{
     // v0.7.192-hotfix.2 Fix 3 — Reference autofit (LT only).
@@ -906,6 +906,24 @@ function fitVerseText(){
     // closest() includes self so this catches both .lt-content and
     // any .lt-box ancestor reliably.
     var isLT=!!(parent.closest && (parent.closest('.lt-content')||parent.closest('.lt-box')));
+    // v0.7.194-hotfix.6 — Force cache invalidation on layout-context flip.
+    // Pre-fix: operator flips NDI Full→Lower-Third in the panel, the
+    // SSE state push rebuilds DOM, but the first rAF pass measures the
+    // freshly-injected .lt-box BEFORE the Electron offscreen surface
+    // has settled the container-query units (.lt-box uses cqw/cqh and
+    // has a sibling bg-video <div> that re-flows on mount). The ref
+    // binary search at L851-857 then picks rBest=2.0 against an
+    // inflated rPar.clientWidth, "NKJV" renders huge, body fit locks
+    // against that bad reference height → operator-visible disorganised
+    // text until they nudge the LT scale slider (which mutates
+    // parent.clientHeight → cache key differs → re-runs full search
+    // against the now-settled layout). __lastIsLT tracks the previous
+    // pass's context; on flip we force ALL caches clear so the next
+    // pass re-measures from scratch instead of trusting stale numbers.
+    if(__lastIsLT!==null && __lastIsLT!==isLT){
+      __fitKey=''; __fitBase=0; __fitScale=1;
+    }
+    __lastIsLT=isLT;
     var minK=0.60;
     var maxK=isLT?3.50:1.00;
     // Binary search the largest scale factor where BOTH dimensions
@@ -1718,14 +1736,26 @@ function render(s){
   // catches video-decoder ready + Chromium offscreen compositor pass
   // (the NDI capture surface in particular needs that extra beat).
   // fitVerseText itself is idempotent so triple-firing is safe.
+  // v0.7.194-hotfix.6 — Added 4th pass at 350ms specifically for the
+  // Full↔Lower-Third mode flip case on the Electron offscreen NDI
+  // surface. The .lt-box container-query units (cqw/cqh) and its
+  // sibling bg-video <div> can take ~250-300ms to settle their
+  // measured dimensions on the offscreen compositor (longer than the
+  // 120ms 3rd pass covers). The __lastIsLT cache-invalidator in
+  // fitVerseText (L926-928) ensures this final pass re-measures from
+  // scratch against the now-stable layout. fitVerseText is idempotent
+  // so the 4th firing is free if the layout had already settled by
+  // the 120ms pass on faster machines.
   if(typeof requestAnimationFrame==='function'){
     requestAnimationFrame(function(){
       requestAnimationFrame(fitVerseText);
       setTimeout(fitVerseText,120);
+      setTimeout(fitVerseText,350);
     });
   }else{
     setTimeout(fitVerseText,0);
     setTimeout(fitVerseText,120);
+    setTimeout(fitVerseText,350);
   }
 }
 
