@@ -1349,3 +1349,9 @@ id = "mKEWWdvjovE9sCM_gxydP"
 uri = "file://screenshots/hotfix4-ndi-background-mockup.jpg"
 type = "image"
 title = "NDI Background opaque/transparent fix — BEFORE/AFTER + control mockup"
+
+[[outputs]]
+id = "tzryyaXQcBC5Jsda4tGvG"
+uri = "file://screenshots/hotfix4-ndi-typography-mockup.jpg"
+type = "image"
+title = "Disconnect NDI Typography from app Typography — BEFORE/AFTER + 3-step scene"

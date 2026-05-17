@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>v0.7.194-hotfix.4 — Disconnect NDI Typography from app Typography</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background:#0b0d10; color:#e7e9ec; padding:20px; }
+  h1 { font-size: 18px; margin: 0 0 6px; color: #fcd34d; }
+  .sub { margin: 0 0 18px; color: #9aa0a6; font-size: 12px; max-width: 1200px; line-height:1.55; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 24px; }
+  .col h2 { font-size: 13px; letter-spacing:.05em; text-transform:uppercase; margin:0 0 4px; }
+  .col h2.bad { color:#f87171; }
+  .col h2.good { color:#34d399; }
+  .col .why { font-size: 11px; color:#9aa0a6; margin-bottom:10px; line-height:1.5; }
+
+  .panel { background:#11151a; border:1px solid #1f242b; border-radius:8px; padding:14px; }
+  .panel h3 { font-size:11px; letter-spacing:.05em; color:#e7e9ec; margin:0 0 4px; font-weight:700; }
+  .panel .panel-sub { font-size:10px; color:#9aa0a6; margin: 0 0 12px; line-height:1.5; }
+  .panel .panel-sub.bad { color:#fca5a5; }
+  .panel .panel-sub.good { color:#86efac; }
+
+  .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+  .field label { display:block; font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:#9aa0a6; margin-bottom:4px; }
+  .select { width:100%; height:30px; border:1px solid #2a3038; background:#0b0d10; color:#e7e9ec; border-radius:5px; padding:0 8px; font-size:11px; }
+  .select.bad { border-color:#7f1d1d; }
+  .select.good { border-color:#14532d; }
+
+  .reset { font-size:10px; color:#9aa0a6; text-decoration:underline; background:transparent; border:0; cursor:pointer; }
+
+  .scene { background:#0b0d10; border:1px solid #1f242b; border-radius:6px; padding:12px; margin-top:14px; }
+  .scene .step { font-size:10px; color:#9aa0a6; margin-bottom:6px; }
+  .scene .step strong { color:#fbbf24; }
+  .scene .demo { display:flex; gap:8px; align-items:center; font-size:11px; }
+  .arrow { color:#f87171; font-weight:700; }
+  .arrow.good { color:#34d399; }
+
+  .filebox { background:#0b0d10; border:1px solid #1f242b; border-radius:6px; padding:14px; font-size:11px; line-height:1.6; color:#cbd5e1; }
+  .filebox strong { color:#fcd34d; }
+  .filebox code { background:#1f2937; padding:1px 4px; border-radius:3px; color:#fbbf24; font-size:10px; }
+  .filebox ol { margin:6px 0 0; padding-left:18px; }
+</style>
+</head>
+<body>
+  <h1>v0.7.194-hotfix.4 — Disconnect NDI Typography from app Typography panel</h1>
+  <p class="sub">
+    Operator changes app-wide <strong>Font Size on Output → Large</strong> (or Text Alignment, Text Shadow, Font Family) and the NDI Typography panel's "Mirror Live" dropdown <em>label</em> updates accordingly — so it looks like body settings just bled into the NDI Lower Third. <strong>The actual NDI feed Wirecast receives is already isolated</strong> (route.ts uses hardcoded NDI defaults when fields are undefined), but the misleading "Mirror Live" UI promise was the source of every "NDI is following Live again" report. Fix: remove the inherit option entirely, label the panel as fully independent, and make the dropdowns show the concrete NDI default (sans / xl / on / center) when the operator hasn't customized them.
+  </p>
+
+  <div class="row">
+    <!-- BEFORE -->
+    <div class="col">
+      <h2 class="bad">BEFORE — current NDI Typography panel</h2>
+      <div class="why">Every dropdown offers a "Mirror Live (X)" option as the default. The label updates the moment the operator changes the app-wide Typography panel — so it looks like the body settings just changed the NDI feed. They didn't (route.ts falls back to hardcoded NDI defaults), but the UI promise of "Mirror Live" is a lie.</div>
+      <div class="panel">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">
+          <div>
+            <h3>NDI Typography</h3>
+            <div class="panel-sub bad">Independent of Live Display. Leave a control on "Mirror Live" to inherit.</div>
+          </div>
+          <button class="reset">Reset all</button>
+        </div>
+        <div class="grid2">
+          <div class="field">
+            <label>Font</label>
+            <select class="select bad"><option>Mirror Live (system sans-serif)</option></select>
+          </div>
+          <div class="field">
+            <label>Size</label>
+            <select class="select bad"><option>Mirror Live (large)</option></select>
+          </div>
+          <div class="field">
+            <label>Drop shadow</label>
+            <select class="select bad"><option>Mirror Live (On)</option></select>
+          </div>
+          <div class="field">
+            <label>Align</label>
+            <select class="select bad"><option>Mirror Live (left)</option></select>
+          </div>
+        </div>
+
+        <div class="scene">
+          <div class="step"><strong>STEP 1.</strong> Operator picks <strong>Font Size on Output → Extra Large</strong> in app Typography panel.</div>
+          <div class="step"><strong>STEP 2.</strong> NDI Size dropdown above silently changes to <span class="arrow">Mirror Live (extra large)</span></div>
+          <div class="step"><strong>STEP 3.</strong> Operator concludes: "the app Typography is interfering with NDI Lower Third."</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AFTER -->
+    <div class="col">
+      <h2 class="good">AFTER — fully disconnected NDI Typography panel</h2>
+      <div class="why">"Mirror Live" option removed from every dropdown. Each field starts at the concrete NDI default (sans / xl / On / center). App-wide Typography changes never touch any label in this panel. Help copy updated to be honest about the isolation.</div>
+      <div class="panel">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">
+          <div>
+            <h3>NDI Typography</h3>
+            <div class="panel-sub good">Independent of Live Display. App Typography settings do not affect NDI Lower Third — these controls are the only source.</div>
+          </div>
+          <button class="reset">Reset to NDI defaults</button>
+        </div>
+        <div class="grid2">
+          <div class="field">
+            <label>Font</label>
+            <select class="select good"><option>Sans-serif</option></select>
+          </div>
+          <div class="field">
+            <label>Size</label>
+            <select class="select good"><option>Extra Large</option></select>
+          </div>
+          <div class="field">
+            <label>Drop shadow</label>
+            <select class="select good"><option>On</option></select>
+          </div>
+          <div class="field">
+            <label>Align</label>
+            <select class="select good"><option>Center</option></select>
+          </div>
+        </div>
+
+        <div class="scene">
+          <div class="step"><strong>STEP 1.</strong> Operator picks <strong>Font Size on Output → Extra Large</strong> in app Typography panel.</div>
+          <div class="step"><strong>STEP 2.</strong> NDI Size dropdown stays at <span class="arrow good">Extra Large</span> (the operator's NDI choice, unchanged).</div>
+          <div class="step"><strong>STEP 3.</strong> NDI Lower Third in Wirecast looks identical before/after. No interference.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="filebox">
+    <strong>Files (2, ~25 lines net)</strong>
+    <ol>
+      <li><code>ndi-output-panel.tsx</code> — (a) Remove the 4 <code>&lt;option value="__inherit__"&gt;Mirror Live (...)&lt;/option&gt;</code> entries at L837 / L859 / L878 / L895. (b) Change each dropdown's <code>value</code> from <code>... ?? '__inherit__'</code> to <code>... ?? '&lt;default&gt;'</code> (sans / xl / on / center — matching <code>NDI_DEFAULTS</code> in route.ts L1145-1158). (c) Remove the now-unused <code>liveFontFamily / liveFontSize / liveTextShadow / liveTextAlign</code> hooks at L168-171. (d) Rewrite the panel-sub copy at L813 from "Leave a control on Mirror Live to inherit" to "App Typography settings do not affect NDI Lower Third — these controls are the only source." (e) Rename "Reset all" → "Reset to NDI defaults" so it's clear what the reset target is. The onChange handlers don't need to change (picking a concrete value writes a concrete value; picking "Sans-serif" sets <code>ndiFontFamily: 'sans'</code> — same as today).</li>
+      <li><code>route.ts</code> — <strong>no change.</strong> The NDI render path at L1205-1219 already uses <code>NDI_DEFAULTS</code> when ndi* fields are undefined. Existing installs with persisted undefined values continue to render with sans / xl / on / center — exact same NDI feed as today. Only the PANEL changes.</li>
+    </ol>
+    <div style="margin-top:10px; padding-top:10px; border-top:1px solid #1f242b;">
+      <strong>Why this is risk-free:</strong>
+      <ul style="margin:6px 0 0; padding-left:18px;">
+        <li>The actual NDI feed Wirecast receives is byte-identical before/after (route.ts unchanged).</li>
+        <li>Operators with persisted ndi* overrides keep their customizations — the panel still reads/writes the same store fields.</li>
+        <li>The only behavior change is the panel <em>display</em>: dropdowns no longer claim to "Mirror Live" and the help copy now matches the architecture truth.</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>
