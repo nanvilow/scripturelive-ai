@@ -2876,6 +2876,14 @@ app.whenReady().then(async () => {
           },
           cancel() { try { stream.destroy() } catch { /* ignore */ } },
         })
+        // v0.7.196 — Diagnostic log every successful 200 full-file serve so
+        // a future debug session can see exactly which files the renderer
+        // requested, in what order, and at what time. Range (206) responses
+        // are NOT logged to avoid flooding the log on long-running videos
+        // that fire 50+ range requests per playback. The 200 path only
+        // fires on first probe or small files (images), so 1 log line per
+        // media-asset load is the expected volume.
+        console.log('[scripturelive-media] 200 serve', filename, 'size=', total)
         return new Response(webStream, {
           status: 200,
           headers: { ...baseHeaders, 'Content-Length': String(total) },

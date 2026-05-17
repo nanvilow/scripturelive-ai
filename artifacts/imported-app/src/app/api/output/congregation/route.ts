@@ -603,17 +603,29 @@ var __ltBgUrl=''; var __ltBgEl=null; var __ltBgOverlay=null;
 // Browser-based remote OBS Browser Sources (pasted URLs from before this
 // hotfix) have neither scriptureLive nor "Electron" in their UA → fall
 // through to HTTP, preserving backward compat.
+// v0.7.196 ROLLBACK: this helper is now a pass-through no-op. The prior
+// regex literal embedded inside the outer const-html template-literal
+// got its escaped slashes stripped by Next.js/SWC, producing an invalid
+// regex at runtime. Chromium threw an Unterminated-group SyntaxError at
+// script-parse time on every congregation BrowserWindow (NDI in-app
+// preview, NDI offscreen capture, secondary-screen kiosk, Display and
+// Output Live preview, Typography preview), which killed the ENTIRE
+// inline render script and left every surface showing the empty
+// Scripture AI brand placeholder. The operator DevTools Network tab
+// confirmed the underlying media file IS served correctly by the
+// pre-existing /api/upload route (206 from disk cache), so this rollback
+// restores the proven pre-hotfix.10 path: videos render through the
+// upload route, slower because 5 surfaces share one Node event loop,
+// but FUNCTIONAL. Mirrors the no-op in src/lib/utils.ts.
+// GUARD-RAIL A: do NOT re-introduce a regex literal inside this
+// template-literal-embedded function. Any future re-enable of the
+// scripturelive-media protocol rewrite MUST use indexOf/substring
+// string ops and ship behind diagnostic logging.
+// GUARD-RAIL B: do NOT put backtick characters in comments inside this
+// template literal — even inside JS line comments, a stray backtick
+// terminates the outer const-html template and breaks TS parsing.
 function __scrMedia(u){
-  if(!u) return u||'';
-  try{
-    var sl=window.scriptureLive;
-    var inElectron=(sl&&sl.isDesktop)||(typeof navigator!=='undefined'&&/Electron/i.test(navigator.userAgent||''));
-    if(!inElectron) return u;
-    if(u.indexOf('data:')===0||u.indexOf('scripturelive-media://')===0) return u;
-    var m=/^(?:https?:\/\/[^/]+)?\/api\/upload\?file=([^&#]+)/.exec(u);
-    if(!m) return u;
-    return 'scripturelive-media://uploads/'+m[1];
-  }catch(e){return u;}
+  return u||'';
 }
 function ensureLtBgEl(url){
   var u=url||'';
