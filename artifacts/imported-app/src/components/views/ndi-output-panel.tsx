@@ -97,16 +97,28 @@ export function NdiOutputPanel() {
   // — invisibly faster than any OBS render). Keeping them in the
   // URL caused the displayed URL string + QR code to flicker on
   // every slider tick, confusing operators into thinking they
-  // needed to re-paste. lowerThird=1 stays so cold-start renders
-  // the correct layout immediately without a Full→LT flash.
+  // needed to re-paste.
+  // v0.7.194-hotfix.5 — Operator reported the QR code visibly changed
+  // every time they flipped Full↔Lower-Third. Cause: `lowerThird=1`
+  // was the last live-control param still baked into the URL (kept
+  // since v0.7.11 to avoid a one-frame cold-start flash). The cost
+  // was wrong: OBS/vMix/Wirecast scenes pinned to the OLD URL would
+  // keep showing the old mode forever, and any phone/PC that scanned
+  // the QR before the operator flipped modes ended up with a stale
+  // URL. Route.ts L1103 already prefers the live SSE `ndiDisplayMode`
+  // over `FORCE_LT` on every NDI surface (`?ndi=1`), so removing it
+  // here has zero functional impact during normal operation — the
+  // SSE state push arrives within ~16ms of page load (faster than
+  // any OBS scene render). Cold-start trade-off: one ~16ms frame
+  // of Full layout before SSE swaps to LT — invisible at 30fps.
+  // FORCE_LT remains supported in route.ts for anyone who pasted
+  // an older URL with `?lowerThird=1` still in it (backward compat).
   const buildCongregationParams = (): string => {
     const s = useAppStore.getState().settings
     const p = new URLSearchParams()
     p.set('ndi', '1')
     p.set('transparent', '1')
-    if (s.ndiDisplayMode === 'lower-third') {
-      p.set('lowerThird', '1')
-    }
+    void s.ndiDisplayMode // referenced for clarity; live mode flows via SSE, not URL
     // v0.7.194-hotfix.4 — Operator's per-feed full-screen background
     // choice. Default 'themed' is omitted from the URL so the existing
     // OBS Browser-Source URLs operators have pasted don't change shape
