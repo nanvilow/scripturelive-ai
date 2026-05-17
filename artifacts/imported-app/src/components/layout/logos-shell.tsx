@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/badge'
 import { StableStage } from '@/components/presenter/stable-stage'
 import { OutputPreview } from '@/components/settings/output-preview'
 import { attachAnalyser, readLevel } from '@/lib/audio-level'
-import { cn } from '@/lib/utils'
+import { cn, resolveMediaUrl } from '@/lib/utils'
 import { toast } from 'sonner'
 import {
   Mic,
@@ -3643,6 +3643,78 @@ function MediaCard() {
 // ──────────────────────────────────────────────────────────────────────
 // MAIN SHELL
 // ──────────────────────────────────────────────────────────────────────
+// v0.7.194-hotfix.10 — MediaPreheat: invisible "warm-up" <video> elements
+// that pre-fetch + pre-decode any video media currently in the Preview slot
+// AND the live slot's neighbours (next/previous schedule entries that
+// contain media). When Go Live promotes the preview slide, the real Live
+// <video> element mounts to a URL whose bytes are ALREADY in the OS file
+// cache + Chromium net-cache — Promotion startup time drops from "seconds
+// of buffering then maybe-plays" to <100 ms decoder init. This is the
+// pragmatic Path-D win: we can't physically share one <video> element
+// across Preview / Live / NDI offscreen / secondary-screen BrowserWindows
+// (Chromium doesn't allow transplanting a MediaElement across documents),
+// but we CAN guarantee every surface that mounts a new <video> finds the
+// file already-buffered. Combined with scripturelive-media:// (disk reads,
+// no HTTP) this delivers EasyWorship-class hand-off latency.
+//
+// GUARD-RAIL: keep the element style absolutely OFF-VIEWPORT (left:-9999px)
+// — display:none would cause Chromium to skip the preload entirely. The
+// element MUST be in the layout tree and "visible" to the browser, just
+// not visible to the operator. muted+playsInline ensures the autoplay
+// policy never blocks the warm-up fetch.
+function MediaPreheat() {
+  const slides = useAppStore((s) => s.slides)
+  const previewIdx = useAppStore((s) => s.previewSlideIndex)
+  const liveIdx = useAppStore((s) => s.liveSlideIndex)
+  const schedule = useAppStore((s) => s.schedule)
+  const selectedId = useAppStore((s) => s.selectedScheduleItemId)
+
+  const urls = new Set<string>()
+  const addIfVideo = (s: { mediaKind?: string; mediaUrl?: string } | undefined | null) => {
+    if (s && s.mediaKind === 'video' && s.mediaUrl) urls.add(s.mediaUrl)
+  }
+  if (previewIdx >= 0) addIfVideo(slides[previewIdx])
+  if (liveIdx >= 0) addIfVideo(slides[liveIdx])
+  // Look one ahead in the schedule so when the operator drags the next
+  // item forward, its first media slide is already half-decoded.
+  if (selectedId) {
+    const i = schedule.findIndex((it) => it.id === selectedId)
+    const next = i >= 0 ? schedule[i + 1] : null
+    const nextSlides = (next && (next as { slides?: Array<{ mediaKind?: string; mediaUrl?: string }> }).slides) || []
+    for (const s of nextSlides) addIfVideo(s)
+  }
+
+  if (urls.size === 0) return null
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        position: 'fixed',
+        left: -9999,
+        top: -9999,
+        width: 1,
+        height: 1,
+        pointerEvents: 'none',
+        opacity: 0,
+        overflow: 'hidden',
+      }}
+    >
+      {Array.from(urls).map((u) => (
+        <video
+          key={u}
+          src={resolveMediaUrl(u)}
+          muted
+          playsInline
+          preload="auto"
+          // No autoPlay — we only need the file fetched + decoder warm, not
+          // running. autoPlay would also count against Chromium's "video
+          // playing" counter and could trigger battery-saver throttling.
+        />
+      ))}
+    </div>
+  )
+}
+
 export function LogosShell() {
   const {
     slides,
@@ -3995,6 +4067,7 @@ export function LogosShell() {
   // next-themes class on <html> cascades correctly into both themes.
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-background text-foreground">
+      <MediaPreheat />
       <TopToolbar outputActive={outputActive} toggleOutput={toggleOutput} />
 
       {/* Main workspace — broadcast-style draggable dividers between every

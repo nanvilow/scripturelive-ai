@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, MenuItemConstructorOptions, Tray, nativeImage, ipcMain, shell, screen, dialog, session, Notification } from 'electron'
+import { app, BrowserWindow, Menu, MenuItemConstructorOptions, Tray, nativeImage, ipcMain, shell, screen, dialog, session, Notification, protocol, net } from 'electron'
 import path from 'node:path'
 import { spawn, ChildProcess } from 'node:child_process'
 import { createServer } from 'node:net'
@@ -1136,6 +1136,14 @@ async function createMainWindow(url: string, opts: { show?: boolean } = {}) {
       // session denies the request silently and the transcription panel
       // sits idle even when the user grants OS-level mic permission.
       webSecurity: true,
+      // v0.7.194-hotfix.10 — Chromium throttles timers + requestAnimationFrame
+      // by default on unfocused windows. The operator console drives the
+      // Preview + Live <video> elements AND the MediaPreheat hidden warm-up
+      // video; if the operator alt-tabs to OBS/Wirecast/PowerPoint mid-service
+      // the throttle would freeze decoder warm-up and stall the Preview→Live
+      // hand-off the moment they alt-tab back. Disable to match native-app
+      // expectations (EasyWorship, ProPresenter never throttle).
+      backgroundThrottling: false,
     },
     title: 'ScriptureLive AI',
     autoHideMenuBar: true,
@@ -2516,6 +2524,13 @@ function setupIpc() {
         nodeIntegration: false,
         // Disable devtools entirely on production output windows.
         devTools: false,
+        // v0.7.194-hotfix.10 — Secondary-screen kiosk MUST decode video
+        // at full framerate even when the operator's main console takes
+        // focus. Without this, alt-tabbing from the kiosk to the operator
+        // UI mid-service causes the projected output to drop frames /
+        // stutter — exactly the lag operators report when "the second
+        // screen freezes for a second every time I click in the app."
+        backgroundThrottling: false,
       },
     })
     win.removeMenu()
@@ -2673,6 +2688,38 @@ function setupIpc() {
 // `whenReady`'s heavy startup path — startNextServer, NDI probe,
 // updater init are all expensive and pointless in a doomed second
 // instance).
+// v0.7.194-hotfix.10 — Register the `scripturelive-media://` privileged
+// scheme BEFORE app.whenReady so the renderer-side <video> / <img>
+// elements can use it from the very first paint. The actual handler is
+// installed inside whenReady (below). See guard-rails A/C in CHANGELOG.
+// PRIVILEGES rationale:
+//   - secure: treated as https-equivalent so it survives mixed-content,
+//     CSP "media-src 'self'", and credentialed contexts inside the
+//     congregation/NDI BrowserWindows.
+//   - supportFetchAPI + stream: enables byte-range fetch() and the
+//     streaming Response body the handler returns.
+//   - bypassCSP: NDI offscreen + secondary-screen BrowserWindows load
+//     /api/output/congregation which sets its own CSP via Next; the
+//     custom protocol must not be blocked by the page's media-src.
+//   - corsEnabled: lets the HTMLMediaElement do credentialed range
+//     requests against the protocol without an Origin mismatch.
+//   - standard: makes URLs parse with hostname/pathname semantics so
+//     `new URL('scripturelive-media://uploads/<uuid>.mp4').pathname`
+//     gives us `/<uuid>.mp4` for the disk-path join below.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'scripturelive-media',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      bypassCSP: true,
+      corsEnabled: true,
+    },
+  },
+])
+
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   // The other (primary) instance will receive a `second-instance`
@@ -2701,6 +2748,128 @@ app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
 
   setupFileLogging()
+
+  // v0.7.194-hotfix.10 — Install the `scripturelive-media://` handler.
+  // Reads operator-uploaded media DIRECTLY from `userData/uploads/` via
+  // Node's streaming fs.createReadStream with proper byte-range support,
+  // bypassing the Next.js single-threaded /api/upload route. This kills
+  // the lag class where 3-5 concurrent <video> decoders (Preview, Live,
+  // NDI in-app preview, NDI offscreen capture window, secondary-screen
+  // kiosk) were each pulling the SAME local mp4 over HTTP through one
+  // Node event loop — every range request stalled every other range
+  // request. With this protocol, each surface reads straight off disk
+  // and the OS file cache de-dupes the bytes for free, just like every
+  // native player on Windows. The legacy /api/upload HTTP route stays
+  // alive for backward compat with operator-pasted OBS Browser-Source
+  // URLs from before this hotfix.
+  // SECURITY: refuse any path that escapes uploads/ (path traversal).
+  // The renderer is sandboxed and we control every call site, but a
+  // future maintainer who lets operator-typed text into mediaUrl would
+  // otherwise expose the entire userData directory.
+  try {
+    const uploadsDir = path.join(app.getPath('userData'), 'uploads')
+    protocol.handle('scripturelive-media', async (req) => {
+      try {
+        const u = new URL(req.url)
+        // URL shape: scripturelive-media://uploads/<filename>
+        // hostname = 'uploads', pathname = '/<filename>'
+        const filename = decodeURIComponent(u.pathname.replace(/^\/+/, ''))
+        // Reject anything that could escape uploadsDir.
+        if (!filename || filename.includes('..') || filename.includes('/') || filename.includes('\\') || filename.startsWith('.')) {
+          return new Response('forbidden', { status: 403 })
+        }
+        const full = path.join(uploadsDir, filename)
+        let stat: fs.Stats
+        try {
+          stat = await fs.promises.stat(full)
+        } catch {
+          return new Response('not found', { status: 404 })
+        }
+        if (!stat.isFile()) return new Response('not a file', { status: 404 })
+
+        const ext = path.extname(filename).toLowerCase()
+        const mime =
+          ext === '.mp4' || ext === '.m4v' ? 'video/mp4' :
+          ext === '.webm' ? 'video/webm' :
+          ext === '.mov' ? 'video/quicktime' :
+          ext === '.mkv' ? 'video/x-matroska' :
+          ext === '.avi' ? 'video/x-msvideo' :
+          ext === '.ogv' ? 'video/ogg' :
+          ext === '.png' ? 'image/png' :
+          ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
+          ext === '.gif' ? 'image/gif' :
+          ext === '.webp' ? 'image/webp' :
+          ext === '.svg' ? 'image/svg+xml' :
+          'application/octet-stream'
+
+        const total = stat.size
+        const range = req.headers.get('range') || ''
+        const m = /bytes=(\d*)-(\d*)/.exec(range)
+        const baseHeaders: Record<string, string> = {
+          'Content-Type': mime,
+          'Accept-Ranges': 'bytes',
+          // Operator uploads are content-addressed by uuid filename, so
+          // bytes never change for a given URL — immutable + 1-year max-age
+          // lets the Chromium net-cache aggressively reuse decoded frames.
+          'Cache-Control': 'public, max-age=31536000, immutable',
+        }
+        if (m) {
+          const start = m[1] ? parseInt(m[1], 10) : 0
+          let end = m[2] ? parseInt(m[2], 10) : total - 1
+          if (end >= total) end = total - 1
+          if (start > end || start < 0) {
+            return new Response('range not satisfiable', {
+              status: 416,
+              headers: { 'Content-Range': `bytes */${total}` },
+            })
+          }
+          const stream = fs.createReadStream(full, { start, end })
+          const webStream = new ReadableStream({
+            start(controller) {
+              stream.on('data', (chunk) => controller.enqueue(
+                typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk)
+              ))
+              stream.on('end', () => controller.close())
+              stream.on('error', (err) => controller.error(err))
+            },
+            cancel() { try { stream.destroy() } catch { /* ignore */ } },
+          })
+          return new Response(webStream, {
+            status: 206,
+            headers: {
+              ...baseHeaders,
+              'Content-Range': `bytes ${start}-${end}/${total}`,
+              'Content-Length': String(end - start + 1),
+            },
+          })
+        }
+        const stream = fs.createReadStream(full)
+        const webStream = new ReadableStream({
+          start(controller) {
+            stream.on('data', (chunk) => controller.enqueue(
+              typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk)
+            ))
+            stream.on('end', () => controller.close())
+            stream.on('error', (err) => controller.error(err))
+          },
+          cancel() { try { stream.destroy() } catch { /* ignore */ } },
+        })
+        return new Response(webStream, {
+          status: 200,
+          headers: { ...baseHeaders, 'Content-Length': String(total) },
+        })
+      } catch (err) {
+        console.error('[scripturelive-media] handler error:', err)
+        return new Response('internal error', { status: 500 })
+      }
+    })
+    console.log('[boot] scripturelive-media:// protocol handler registered, uploadsDir=', uploadsDir)
+  } catch (err) {
+    console.error('[boot] failed to register scripturelive-media:// handler:', err)
+  }
+  // Reference `net` so the import isn't tree-shaken — currently unused
+  // but kept available for a future fetch-from-disk fallback path.
+  void net
 
   // v0.7.79 — Boot splash. Show ASAP (before any heavy work) so the
   // operator gets instant visual feedback that the click on the icon

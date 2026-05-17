@@ -582,6 +582,39 @@ var __bgUrl='';
 // the t=0 restart-flash on every speech tick that the v0.7.187 #bgLayer
 // hoist missed for LT mode.
 var __ltBgUrl=''; var __ltBgEl=null; var __ltBgOverlay=null;
+// v0.7.194-hotfix.10 — Rewrite legacy /api/upload?file=<uuid> URLs to the
+// scripturelive-media:// custom protocol when running inside Electron.
+// Mirrors resolveMediaUrl() in src/lib/utils.ts. Bypasses the Next.js
+// single-threaded /api/upload route so 5 concurrent <video> decoders
+// (Preview, Live, NDI preview, NDI capture, secondary kiosk) read straight
+// off disk via the OS file cache. Gates on window.scriptureLive.isDesktop
+// so the browser dev-preview pane (no protocol handler) keeps using HTTP.
+// v0.7.194-hotfix.10 GR — Detection MUST tolerate BOTH "has scriptureLive
+// preload" (mainWindow) AND "Electron UA, no preload" (frame-capture NDI
+// offscreen window + createKioskOutput secondary screen). Pre-fix this
+// helper only checked window.scriptureLive — the NDI/kiosk windows have
+// no preload script (verified electron/frame-capture.ts L66-91 +
+// electron/main.ts L2525-2537 — no preload: key), so window.scriptureLive
+// was undefined and the rewrite was silently skipped on the two surfaces
+// operators care MOST about (NDI to OBS/vMix + projector). UA sniff via
+// /Electron/i is the safe additional signal because the global protocol
+// handler is registered in main.ts whenReady and is available to every
+// BrowserWindow in the app session — not just the ones with preload.
+// Browser-based remote OBS Browser Sources (pasted URLs from before this
+// hotfix) have neither scriptureLive nor "Electron" in their UA → fall
+// through to HTTP, preserving backward compat.
+function __scrMedia(u){
+  if(!u) return u||'';
+  try{
+    var sl=window.scriptureLive;
+    var inElectron=(sl&&sl.isDesktop)||(typeof navigator!=='undefined'&&/Electron/i.test(navigator.userAgent||''));
+    if(!inElectron) return u;
+    if(u.indexOf('data:')===0||u.indexOf('scripturelive-media://')===0) return u;
+    var m=/^(?:https?:\/\/[^/]+)?\/api\/upload\?file=([^&#]+)/.exec(u);
+    if(!m) return u;
+    return 'scripturelive-media://uploads/'+m[1];
+  }catch(e){return u;}
+}
 function ensureLtBgEl(url){
   var u=url||'';
   if(u===__ltBgUrl && __ltBgEl) return {bg:__ltBgEl,ov:__ltBgOverlay};
@@ -594,14 +627,14 @@ function ensureLtBgEl(url){
   if(!u) return null;
   if(isVideoBg(u)){
     var v=document.createElement('video');
-    v.className='lt-bg'; v.src=u;
+    v.className='lt-bg'; v.src=__scrMedia(u);
     v.autoplay=true;v.loop=true;v.muted=true;v.playsInline=true;v.preload='auto';
     try{v.setAttribute('crossorigin','anonymous');}catch(e){}
     v.onerror=function(){try{v.style.display='none';}catch(_e){}};
     __ltBgEl=v;
   } else {
     var im=document.createElement('img');
-    im.className='lt-bg'; im.src=u; im.alt='';
+    im.className='lt-bg'; im.src=__scrMedia(u); im.alt='';
     try{im.setAttribute('crossorigin','anonymous');}catch(e){}
     im.onerror=function(){try{im.style.display='none';}catch(_e){}};
     __ltBgEl=im;
@@ -636,7 +669,7 @@ function setBgVid(url){
   if(!u) return;
   if(isVideoBg(u)){
     var v=document.createElement('video');
-    v.src=u;
+    v.src=__scrMedia(u);
     v.autoplay=true;v.loop=true;v.muted=true;v.playsInline=true;
     v.preload='auto';
     try{v.setAttribute('crossorigin','anonymous');}catch(e){}
@@ -645,7 +678,7 @@ function setBgVid(url){
     var pp=v.play();if(pp&&pp.catch)pp.catch(function(){});
   } else {
     var img=document.createElement('img');
-    img.src=u;img.alt='';
+    img.src=__scrMedia(u);img.alt='';
     try{img.setAttribute('crossorigin','anonymous');}catch(e){}
     img.onerror=function(){try{img.style.display='none';}catch(_e){}};
     layer.appendChild(img);
@@ -1447,9 +1480,10 @@ function render(s){
     // post-render applyAudio() step then honours the operator's
     // broadcast/volume/mute toggles and drops the mute on the next
     // tick once the operator's gesture (Go Live) has flowed through.
+    var __slMU=__scrMedia(slide.mediaUrl);
     var mediaTag=slide.mediaKind==='video'
-      ? '<video id="liveVideo" src="'+slide.mediaUrl+'" '+(slide.mediaPaused?'':'autoplay ')+'loop muted playsinline preload="auto" style="'+mediaStyle+'"></video>'
-      : '<img src="'+slide.mediaUrl+'" alt="" style="'+mediaStyle+'">';
+      ? '<video id="liveVideo" src="'+__slMU+'" '+(slide.mediaPaused?'':'autoplay ')+'loop muted playsinline preload="auto" style="'+mediaStyle+'"></video>'
+      : '<img src="'+__slMU+'" alt="" style="'+mediaStyle+'">';
     var inner=ar
       ? '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#000"><div style="aspect-ratio:'+ar+';max-width:100%;max-height:100%;width:100%">'+mediaTag+'</div></div>'
       : mediaTag;
