@@ -1373,3 +1373,9 @@ id = "l7wxSP3GMJ6RnFKhvln1Y"
 uri = "file://screenshots/hotfix4-remove-output-destination-mockup.jpg"
 type = "image"
 title = "Remove Output Destination trio — BEFORE/AFTER + safety trace"
+
+[[outputs]]
+id = "d6j0XcMptHSxXdq7nMrec"
+uri = "file://screenshots/hotfix4-remove-theme-picker-mockup.jpg"
+type = "image"
+title = "Remove Congregation Screen Theme picker — BEFORE/AFTER + safety trace"

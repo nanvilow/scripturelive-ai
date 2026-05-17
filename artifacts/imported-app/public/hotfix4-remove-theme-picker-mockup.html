@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>v0.7.194-hotfix.4 — Remove Congregation Screen Theme picker</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background:#0b0d10; color:#e7e9ec; padding:20px; }
+  h1 { font-size: 18px; margin: 0 0 6px; color: #fcd34d; }
+  .sub { margin: 0 0 18px; color: #9aa0a6; font-size: 12px; max-width: 1200px; line-height:1.55; }
+  code { background:#1f2937; padding:1px 5px; border-radius:3px; color:#fbbf24; font-size:10.5px; font-family: 'Menlo', 'Monaco', monospace; }
+
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 18px; }
+  .col h2 { font-size: 13px; letter-spacing:.05em; text-transform:uppercase; margin:0 0 4px; }
+  .col h2.bad { color:#f87171; }
+  .col h2.good { color:#34d399; }
+  .col .why { font-size: 11px; color:#9aa0a6; margin-bottom:10px; line-height:1.5; }
+
+  .panel { background: #14181f; border: 1px solid #1f242b; border-radius: 8px; padding: 16px; }
+  .group-label { font-size: 12px; font-weight: 600; color: #e5e7eb; margin-bottom: 8px; }
+  .sep { height: 1px; background: #232830; margin: 14px 0; }
+
+  .help { font-size: 10px; color: #9aa0a6; line-height: 1.5; margin-top: 6px; }
+
+  .slider-row { display:flex; align-items:center; justify-content:space-between; }
+  .slider-row .label { font-size: 12px; font-weight: 600; color: #f3f4f6; }
+  .slider-row .val { font-size: 11px; color: #fbbf24; font-weight: 700; }
+  .slider { height: 4px; background: #2a313a; border-radius: 999px; margin-top: 6px; position: relative; }
+  .slider .fill { position:absolute; left:0; top:0; bottom:0; width: 50%; background:#fbbf24; border-radius:999px; }
+  .slider .knob { position:absolute; left: 50%; top:50%; transform: translate(-50%, -50%); width: 12px; height: 12px; border-radius: 50%; background:#fbbf24; }
+  .slider-ends { display:flex; justify-content:space-between; font-size: 9.5px; color:#9aa0a6; margin-top: 4px; }
+
+  .pill-row { display:flex; gap:8px; flex-wrap:wrap; }
+  .pill { padding:6px 12px; border-radius:6px; font-size:11px; font-weight:600; text-transform:capitalize; border:1px solid #2a313a; background:#1d232b; color:#9aa0a6; }
+  .pill.active { background: rgba(252,191,36,.12); border-color: rgba(252,191,36,.35); color:#fcd34d; }
+
+  .strike-overlay { position:relative; }
+  .strike-overlay::after {
+    content: ''; position: absolute; inset: -8px;
+    border: 2px dashed rgba(248,113,113,.7); border-radius: 10px; pointer-events: none;
+  }
+  .strike-overlay::before {
+    content: 'REMOVE'; position: absolute; top: -16px; right: -8px;
+    background: rgba(248,113,113,.92); color: #1a0808;
+    font-size: 9px; font-weight: 800; letter-spacing:.08em;
+    padding: 2px 6px; border-radius: 3px; z-index: 5;
+  }
+
+  .info-panel { background:#11151a; border:1px solid #1f242b; border-radius:8px; padding:14px; }
+  .info-panel h3 { font-size:11px; letter-spacing:.05em; color:#e7e9ec; margin:0 0 8px; font-weight:700; }
+  .key-row { display:flex; gap:8px; padding:3px 0; font-size:11px; }
+  .key-row .label { color:#9aa0a6; min-width:210px; }
+  .key-row .val { color:#fbbf24; font-family: 'Menlo', 'Monaco', monospace; }
+  .key-row .good { color:#34d399; }
+
+  pre { background:#0a0d11; border:1px solid #1f242b; border-radius:5px; padding:10px; font-size:10.5px; color:#cbd5e1; overflow:auto; margin:6px 0; }
+  pre .minus { color:#f87171; }
+  pre .plus { color:#34d399; }
+  pre .note { color:#9aa0a6; }
+
+  .legend { padding:12px; background:#11151a; border:1px solid #1f242b; border-radius:6px; font-size:11px; color:#cbd5e1; line-height:1.6; }
+  .legend strong { color:#fcd34d; }
+</style>
+</head>
+<body>
+  <h1>v0.7.194-hotfix.4 — Hide Congregation Screen Theme picker</h1>
+  <p class="sub">
+    Operator wants the 6-button theme picker (<strong>Minimal / Worship / Sermon / Easter / Christmas / Praise</strong>) gone from the Display &amp; Output settings. We delete the UI block but keep <code>settings.congregationScreenTheme</code> in the store at its default <code>'minimal'</code> — so every consumer (output-payload, broadcaster, logos-shell, easyworship-shell, library-compact, slide-renderer, panel presets) keeps working without modification. Operators with a persisted custom theme keep their persisted value too.
+  </p>
+
+  <div class="row">
+    <div class="col">
+      <h2 class="bad">BEFORE — 6-button picker sits below Bible Line-Height</h2>
+      <div class="why">Cluttered row of theme pills the operator never uses; the panel preset cards already pick a theme automatically.</div>
+      <div class="panel">
+        <div class="slider-row"><span class="label">Bible Line-Height</span><span class="val">1.40</span></div>
+        <div class="slider"><div class="fill"></div><div class="knob"></div></div>
+        <div class="slider-ends"><span>Tight</span><span>Default (1.40)</span><span>Airy</span></div>
+        <div class="help">Vertical spacing of the verse body. Applies to the secondary screen and the NDI feed.</div>
+        <div class="sep"></div>
+        <div class="strike-overlay">
+          <div class="group-label">Congregation Screen Theme</div>
+          <div class="pill-row">
+            <div class="pill active">Minimal</div>
+            <div class="pill">Worship</div>
+            <div class="pill">Sermon</div>
+            <div class="pill">Easter</div>
+            <div class="pill">Christmas</div>
+            <div class="pill">Praise</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <h2 class="good">AFTER — picker gone, panel ends at Bible Line-Height</h2>
+      <div class="why">Cleaner. Theme defaults to <code>'minimal'</code> under the hood; persisted operator choices stay persisted.</div>
+      <div class="panel">
+        <div class="slider-row"><span class="label">Bible Line-Height</span><span class="val">1.40</span></div>
+        <div class="slider"><div class="fill"></div><div class="knob"></div></div>
+        <div class="slider-ends"><span>Tight</span><span>Default (1.40)</span><span>Airy</span></div>
+        <div class="help">Vertical spacing of the verse body. Applies to the secondary screen and the NDI feed.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col">
+      <div class="info-panel">
+        <h3>The change (1 file, ~21 lines deleted)</h3>
+        <div style="font-size:11px; color:#cbd5e1; line-height:1.7;">
+          <strong style="color:#fcd34d;"><code>settings.tsx</code> L964-984</strong> — delete the Separator + theme picker block in one piece. The card above (Bible Line-Height) becomes the last item before the column closes at L985.
+        </div>
+<pre><span class="minus">- &lt;Separator /&gt;
+-
+- &lt;div className="space-y-2"&gt;
+-   &lt;Label&gt;Congregation Screen Theme&lt;/Label&gt;
+-   &lt;div className="flex flex-wrap gap-2"&gt;
+-     {['minimal','worship','sermon','easter','christmas','praise'].map((theme) =&gt; (
+-       &lt;button onClick={() =&gt; updateSettings({ congregationScreenTheme: theme })}&gt;
+-         {theme}
+-       &lt;/button&gt;
+-     ))}
+-   &lt;/div&gt;
+- &lt;/div&gt;</span>
+<span class="note">// Nothing replaces it — the column ends at the Bible Line-Height card.</span></pre>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="info-panel">
+        <h3>What we don't touch (15+ consumers untouched)</h3>
+        <div class="key-row"><span class="label">Store field:</span><span class="val">settings.congregationScreenTheme</span> <span class="good">kept</span></div>
+        <div class="key-row"><span class="label">Default for new installs:</span><span class="val">'minimal'</span> <span class="good">kept</span></div>
+        <div class="key-row"><span class="label">Persisted operator value:</span><span class="val">whatever they had</span> <span class="good">unchanged</span></div>
+        <div class="key-row"><span class="label">output-payload.ts L45:</span><span class="val">passes theme to broadcaster</span> <span class="good">kept</span></div>
+        <div class="key-row"><span class="label">output-broadcast.ts L131:</span><span class="val">SSE default 'minimal'</span> <span class="good">kept</span></div>
+        <div class="key-row"><span class="label">route.ts theme rendering:</span><span class="val">themes[k] gradient</span> <span class="good">kept</span></div>
+        <div class="key-row"><span class="label">slide-renderer.tsx L453:</span><span class="val">slideThemes[themeKey]</span> <span class="good">kept</span></div>
+        <div class="key-row"><span class="label">logos-shell.tsx (4 spots):</span><span class="val">slide.background = theme</span> <span class="good">kept</span></div>
+        <div class="key-row"><span class="label">easyworship-shell.tsx (5 spots):</span><span class="val">themeKey prop</span> <span class="good">kept</span></div>
+        <div class="key-row"><span class="label">library-compact.tsx (9 spots):</span><span class="val">background: theme</span> <span class="good">kept</span></div>
+        <div class="key-row"><span class="label">Panel presets (L2411/2422/2433):</span><span class="val">sermon / minimal / worship</span> <span class="good">still write theme</span></div>
+        <div class="key-row"><span class="label">Reset-all (L410):</span><span class="val">restores 'minimal'</span> <span class="good">kept</span></div>
+
+        <div style="font-size:11px; color:#cbd5e1; line-height:1.6; margin-top:12px; padding-top:12px; border-top:1px solid #1f242b;">
+          <strong style="color:#fcd34d;">Why it's safe:</strong> The picker was just one of several writers to <code>settings.congregationScreenTheme</code>. The Panel preset cards in this same settings view (Sermon Mode / Minimal Stage / Worship Set) still write theme values via their preset apply handlers (L2411/2422/2433). Operators who want to change theme can keep using those presets; everyone else gets the safe 'minimal' default. Zero risk to rendering — every consumer reads from the store, not the picker.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <strong>Net change:</strong> 1 file (<code>settings.tsx</code>), ~21 lines deleted (the Separator + the theme picker block). Zero changes to the store, broadcaster, route renderer, or any of the 15+ consumer call sites. The picker disappears; theme rendering keeps working with whatever value is already persisted.
+  </div>
+</body>
+</html>
