@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
-import { cn, isVideoBackground } from '@/lib/utils'
+import { cn, isVideoBackground, resolveMediaUrl } from '@/lib/utils'
 import type { Slide, AppSettings } from '@/lib/store'
 import { useAppStore } from '@/lib/store'
 import { getFontStack, resolveReferenceTypography } from '@/lib/fonts'
@@ -215,7 +215,7 @@ function MediaSlideContent({
       <video
         ref={videoRef}
         data-surface={isLive ? 'live' : 'preview'}
-        src={slide.mediaUrl}
+        src={resolveMediaUrl(slide.mediaUrl)}
         autoPlay={!shouldBePaused}
         loop
         // Audibility is now driven entirely by the useEffect above
@@ -233,7 +233,7 @@ function MediaSlideContent({
     ) : (
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={slide.mediaUrl}
+        src={resolveMediaUrl(slide.mediaUrl)}
         alt={slide.title || 'media'}
         className="w-full h-full bg-black"
         style={{ objectFit }}

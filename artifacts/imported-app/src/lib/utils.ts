@@ -22,3 +22,33 @@ export function isVideoBackground(url: string | null | undefined): boolean {
   // boundary, so query strings like ?file=foo.mp4 are caught too).
   return /\.(mp4|webm|mov|mkv|avi|m4v|ogv)(?:$|[?#])/.test(lower)
 }
+
+// v0.7.194-hotfix.10 — Rewrite legacy `/api/upload?file=<uuid>` URLs to
+// the Electron custom protocol `scripturelive-media://uploads/<uuid>` so
+// the renderer's <video>/<img> elements read straight off disk via
+// Node's fs.createReadStream instead of round-tripping through Next.js
+// single-threaded /api/upload route. Eliminates the lag class where
+// 3-5 concurrent <video> decoders (Preview, Live, NDI in-app preview,
+// NDI offscreen capture window, secondary-screen kiosk) starved each
+// other's range requests over one Node event loop.
+//
+// Detection MUST gate on `window.scriptureLive?.isDesktop` so we
+// only rewrite inside Electron — the dev/browser preview pane has no
+// custom protocol handler and would 404. Data-URIs are passed through
+// unchanged (the media library uses them for in-memory entries).
+//
+// SECURITY: the renderer-side rewrite is purely cosmetic — the actual
+// path-traversal guard lives in the protocol handler (electron/main.ts)
+// which refuses any filename containing `..` / `/` / `\`. Do not skip
+// that guard by trusting this rewrite as the only sanitiser.
+export function resolveMediaUrl(url: string | null | undefined): string {
+  if (!url) return url || ''
+  if (typeof window === 'undefined') return url // SSR — leave HTTP shape
+  const sl = (window as unknown as { scriptureLive?: { isDesktop?: boolean } }).scriptureLive
+  if (!sl?.isDesktop) return url
+  // Data URIs and already-rewritten URLs pass through.
+  if (url.startsWith('data:') || url.startsWith('scripturelive-media://')) return url
+  const m = /^(?:https?:\/\/[^/]+)?\/api\/upload\?file=([^&#]+)/.exec(url)
+  if (!m) return url
+  return `scripturelive-media://uploads/${m[1]}`
+}
