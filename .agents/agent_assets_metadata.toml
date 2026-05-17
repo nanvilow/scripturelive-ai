@@ -1355,3 +1355,9 @@ id = "tzryyaXQcBC5Jsda4tGvG"
 uri = "file://screenshots/hotfix4-ndi-typography-mockup.jpg"
 type = "image"
 title = "Disconnect NDI Typography from app Typography — BEFORE/AFTER + 3-step scene"
+
+[[outputs]]
+id = "IwaA4oGcx2MT84Jtyxdw7"
+uri = "file://screenshots/hotfix4-reference-alignment-mockup.jpg"
+type = "image"
+title = "Reference Alignment fix — BEFORE/AFTER + DOM trace"
