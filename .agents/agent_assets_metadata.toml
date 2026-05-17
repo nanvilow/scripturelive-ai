@@ -1331,3 +1331,9 @@ id = "DRHMToLeShVQzrqt6DnyK"
 uri = "file://screenshots/v0194-trial-mockup.jpg"
 type = "image"
 title = "v0.7.194 — 3-Day Wall-Clock Trial (3 states)"
+
+[[outputs]]
+id = "rH3wKFPFogiOU2B7sYbYf"
+uri = "file://screenshots/hotfix4-preview-live-mockup.jpg"
+type = "image"
+title = "v0.7.194-hotfix.4 — Single-click → Preview only, Live untouched, no flash"
