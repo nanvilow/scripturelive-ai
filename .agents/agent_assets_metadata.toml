@@ -1343,3 +1343,9 @@ id = "vrvanSwW0BDcbi8gqholE"
 uri = "file://screenshots/hotfix4-select-delete-mockup.jpg"
 type = "image"
 title = "Select-to-delete on Scripture Feed (History + Queue) — mockup"
+
+[[outputs]]
+id = "mKEWWdvjovE9sCM_gxydP"
+uri = "file://screenshots/hotfix4-ndi-background-mockup.jpg"
+type = "image"
+title = "NDI Background opaque/transparent fix — BEFORE/AFTER + control mockup"
