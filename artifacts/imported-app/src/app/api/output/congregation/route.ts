@@ -603,29 +603,56 @@ var __ltBgUrl=''; var __ltBgEl=null; var __ltBgOverlay=null;
 // Browser-based remote OBS Browser Sources (pasted URLs from before this
 // hotfix) have neither scriptureLive nor "Electron" in their UA → fall
 // through to HTTP, preserving backward compat.
-// v0.7.196 ROLLBACK: this helper is now a pass-through no-op. The prior
-// regex literal embedded inside the outer const-html template-literal
-// got its escaped slashes stripped by Next.js/SWC, producing an invalid
-// regex at runtime. Chromium threw an Unterminated-group SyntaxError at
-// script-parse time on every congregation BrowserWindow (NDI in-app
-// preview, NDI offscreen capture, secondary-screen kiosk, Display and
-// Output Live preview, Typography preview), which killed the ENTIRE
-// inline render script and left every surface showing the empty
-// Scripture AI brand placeholder. The operator DevTools Network tab
-// confirmed the underlying media file IS served correctly by the
-// pre-existing /api/upload route (206 from disk cache), so this rollback
-// restores the proven pre-hotfix.10 path: videos render through the
-// upload route, slower because 5 surfaces share one Node event loop,
-// but FUNCTIONAL. Mirrors the no-op in src/lib/utils.ts.
+// v0.7.196 — Re-enabled scripturelive-media protocol rewrite using ONLY
+// string ops (indexOf/substring). The previous regex-literal version
+// (hotfix.10) had its escaped slashes stripped by Next.js/SWC when this
+// helper lives inside the outer const-html template literal, producing
+// an invalid regex at runtime that threw Unterminated-group at parse
+// time and killed the ENTIRE inline render script on every congregation
+// BrowserWindow. String operations are immune to template-literal
+// escape mangling because there are no escapes to mangle.
+//
+// Detection MUST tolerate BOTH window.scriptureLive (preload-script flag
+// on mainWindow) AND Electron in navigator.userAgent (NDI offscreen
+// capture and secondary-screen kiosk BrowserWindows have no preload, so
+// scriptureLive is undefined there). Without the UA fallback the rewrite
+// silently skips exactly the two surfaces operators care MOST about.
+//
+// DIAGNOSTIC: first successful rewrite per page logs once to console so
+// any future regression where rewrite silently stops happening is
+// immediately visible in DevTools.
+//
 // GUARD-RAIL A: do NOT re-introduce a regex literal inside this
-// template-literal-embedded function. Any future re-enable of the
-// scripturelive-media protocol rewrite MUST use indexOf/substring
-// string ops and ship behind diagnostic logging.
+// template-literal-embedded helper. String ops only.
 // GUARD-RAIL B: do NOT put backtick characters in comments inside this
 // template literal — even inside JS line comments, a stray backtick
 // terminates the outer const-html template and breaks TS parsing.
+var __scrMediaLogged=false;
 function __scrMedia(u){
-  return u||'';
+  if(!u) return u||'';
+  try{
+    var sl=window.scriptureLive;
+    var ua=(typeof navigator!=='undefined')?(navigator.userAgent||''):'';
+    var inElectron=(sl&&sl.isDesktop)||(ua.indexOf('Electron')>=0);
+    if(!inElectron) return u;
+    if(u.indexOf('data:')===0) return u;
+    if(u.indexOf('scripturelive-media://')===0) return u;
+    var key='/api/upload?file=';
+    var idx=u.indexOf(key);
+    if(idx<0) return u;
+    var rest=u.substring(idx+key.length);
+    var amp=rest.indexOf('&');
+    var hash=rest.indexOf('#');
+    var end=-1;
+    if(amp>=0&&hash>=0) end=Math.min(amp,hash);
+    else if(amp>=0) end=amp;
+    else if(hash>=0) end=hash;
+    var fn=(end<0)?rest:rest.substring(0,end);
+    if(!fn) return u;
+    var out='scripturelive-media://uploads/'+fn;
+    if(!__scrMediaLogged){__scrMediaLogged=true;try{console.log('[__scrMedia] first rewrite:',u,'->',out);}catch(e){}}
+    return out;
+  }catch(e){return u;}
 }
 function ensureLtBgEl(url){
   var u=url||'';
