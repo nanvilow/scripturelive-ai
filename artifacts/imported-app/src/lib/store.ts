@@ -598,6 +598,11 @@ interface AppState {
   activeLibraryTab: LibraryTab
   setActiveLibraryTab: (t: LibraryTab) => void
   addScheduleItem: (item: Omit<ScheduleItem, 'id' | 'addedAt'>) => string
+  // v0.7.194-hotfix.8 — Same as addScheduleItem but DOES NOT mutate
+  // slides/previewSlideIndex/liveSlideIndex. Used by the single-click
+  // preview-only path so the currently-airing slide is not yanked
+  // when a verse is appended to the schedule for history/queue.
+  addScheduleItemQuiet: (item: Omit<ScheduleItem, 'id' | 'addedAt'>) => string
   removeScheduleItem: (id: string) => void
   removeScheduleItemsByIds: (ids: string[]) => void
   selectScheduleItem: (id: string | null) => void
@@ -1224,6 +1229,20 @@ export const useAppStore = create<AppState>()(
           slides: full.slides,
           previewSlideIndex: 0,
           liveSlideIndex: -1,
+        }))
+        return id
+      },
+      // v0.7.194-hotfix.8 — Schedule-only mutation; does NOT touch
+      // slides/previewSlideIndex/liveSlideIndex. Pairs with
+      // stageVersePreviewOnly so single-click append-to-history can run
+      // without yanking the on-air slide. selectedScheduleItemId is
+      // ALSO preserved (not switched to the new id) so the live
+      // operator stays anchored to whatever they were broadcasting.
+      addScheduleItemQuiet: (item) => {
+        const id = `sch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+        const full: ScheduleItem = { ...item, id, addedAt: Date.now() }
+        set((state) => ({
+          schedule: [...state.schedule, full],
         }))
         return id
       },

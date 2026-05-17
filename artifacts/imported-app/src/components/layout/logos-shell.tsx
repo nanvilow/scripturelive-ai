@@ -1989,6 +1989,7 @@ function ScriptureFeedCard() {
     setLiveSlideIndex,
     setIsLive,
     stageVersePreviewOnly,
+    addScheduleItemQuiet,
     settings,
     addScheduleItem,
   } = useAppStore()
@@ -2039,18 +2040,28 @@ function ScriptureFeedCard() {
       content: (v.text || '').split('\n').filter(Boolean),
       background: settings.congregationScreenTheme,
     }
-    addScheduleItem({
-      type: 'verse',
-      title: v.reference,
-      subtitle: v.translation,
-      slides: [slide],
-    })
+    // v0.7.194-hotfix.8 — Quiet schedule mutation on preview path so
+    // the on-air slide is preserved by the subsequent
+    // stageVersePreviewOnly. Live path keeps regular addScheduleItem
+    // because going-live intentionally resets slides/live index.
     if (live) {
+      addScheduleItem({
+        type: 'verse',
+        title: v.reference,
+        subtitle: v.translation,
+        slides: [slide],
+      })
       setSlides([slide])
       setPreviewSlideIndex(0)
       setLiveSlideIndex(0)
       setIsLive(true)
     } else {
+      addScheduleItemQuiet({
+        type: 'verse',
+        title: v.reference,
+        subtitle: v.translation,
+        slides: [slide],
+      })
       stageVersePreviewOnly(slide)
     }
   }
@@ -2296,6 +2307,7 @@ function DetectedVersesCard() {
     clearDetectedVerseCandidates,
     promoteDetectedVerseCandidate,
     addScheduleItem,
+    addScheduleItemQuiet,
     setSlides,
     setPreviewSlideIndex,
     setLiveSlideIndex,
@@ -2347,20 +2359,34 @@ function DetectedVersesCard() {
       content,
       background: settings.congregationScreenTheme,
     }))
-    addScheduleItem({
-      type: 'verse',
-      title: v.reference,
-      subtitle: v.translation,
-      slides,
-    })
-    if (mode === 'preview' || mode === 'live') {
+    // v0.7.194-hotfix.8 — Preview mode uses Quiet schedule append so
+    // the on-air slide is preserved; live/schedule modes keep the
+    // existing addScheduleItem semantics (live intentionally resets;
+    // schedule keeps legacy behaviour from pre-hotfix.8 detected-row
+    // clicks until operator explicitly asks for a change).
+    if (mode === 'preview') {
+      addScheduleItemQuiet({
+        type: 'verse',
+        title: v.reference,
+        subtitle: v.translation,
+        slides,
+      })
       setSlides(slides)
       setPreviewSlideIndex(0)
-    }
-    if (mode === 'live') {
-      setLiveSlideIndex(0)
-      setIsLive(true)
-      // Toast suppressed per FRS — output actions stay silent.
+    } else {
+      addScheduleItem({
+        type: 'verse',
+        title: v.reference,
+        subtitle: v.translation,
+        slides,
+      })
+      if (mode === 'live') {
+        setSlides(slides)
+        setPreviewSlideIndex(0)
+        setLiveSlideIndex(0)
+        setIsLive(true)
+        // Toast suppressed per FRS — output actions stay silent.
+      }
     }
   }
 
