@@ -1361,3 +1361,9 @@ id = "IwaA4oGcx2MT84Jtyxdw7"
 uri = "file://screenshots/hotfix4-reference-alignment-mockup.jpg"
 type = "image"
 title = "Reference Alignment fix — BEFORE/AFTER + DOM trace"
+
+[[outputs]]
+id = "Jjyr2Yq7SYliJbuzvBIva"
+uri = "file://screenshots/hotfix4-ndi-align-mockup.jpg"
+type = "image"
+title = "NDI Align dropdown fix — BEFORE/AFTER + 2-line patch"
