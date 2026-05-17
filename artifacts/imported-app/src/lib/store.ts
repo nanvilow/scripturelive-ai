@@ -345,6 +345,9 @@ interface AppState {
    *  the render. */
   removeVerseFromHistoryAt: (index: number) => void
   removeVerseHistoryByIndices: (indices: number[]) => void
+  /** v0.7.194-hotfix.9 Item C — Wipe the entire Scripture Feed
+   *  History pane in one shot. Used by the new Delete All button. */
+  removeAllVerseHistory: () => void
   searchQuery: string
   setSearchQuery: (q: string) => void
 
@@ -605,6 +608,17 @@ interface AppState {
   addScheduleItemQuiet: (item: Omit<ScheduleItem, 'id' | 'addedAt'>) => string
   removeScheduleItem: (id: string) => void
   removeScheduleItemsByIds: (ids: string[]) => void
+  /** v0.7.194-hotfix.9 Item C — Wipe the entire Queue pane in one
+   *  shot. When `preserveLive=true` the currently-on-air schedule
+   *  item (selectedScheduleItemId AND isLive) is kept so the live
+   *  broadcast does not get yanked. */
+  removeAllScheduleItems: (preserveLive?: boolean) => void
+  /** v0.7.194-hotfix.9 Item B — Multi-slide preview-only stage.
+   *  Like stageVersePreviewOnly but accepts an array of slides
+   *  (for verses split across multiple slides). Preserves whatever
+   *  is currently live by prepending the live slide at index 0
+   *  and pointing the live cursor at it. */
+  stageSlidesPreviewOnly: (slides: Slide[]) => void
   selectScheduleItem: (id: string | null) => void
   moveScheduleItem: (id: string, direction: 'up' | 'down') => void
   clearSchedule: () => void
@@ -904,6 +918,10 @@ export const useAppStore = create<AppState>()(
           const drop = new Set(indices)
           return { verseHistory: state.verseHistory.filter((_, i) => !drop.has(i)) }
         }),
+      // v0.7.194-hotfix.9 Item C — Delete All button on the Scripture
+      // Feed History pane. Pure history wipe; never touches slides/
+      // live state (verseHistory is operator scrubback memory only).
+      removeAllVerseHistory: () => set({ verseHistory: [] }),
       searchQuery: '',
       setSearchQuery: (q) => set({ searchQuery: q }),
 
@@ -1137,6 +1155,30 @@ export const useAppStore = create<AppState>()(
           }
           return { slides: [slide], previewSlideIndex: 0, liveSlideIndex: -1 }
         }),
+      // v0.7.194-hotfix.9 Item B — Multi-slide preview-only. Same
+      // contract as stageVersePreviewOnly (preserve live, only
+      // change preview) but for verses split into 2+ slides by
+      // splitForSlides(). When live, the live slide is preserved
+      // at index 0 with liveSlideIndex=0 and the preview slides
+      // follow at indices 1..N; previewSlideIndex points at 1.
+      stageSlidesPreviewOnly: (slides) =>
+        set((state) => {
+          if (!slides.length) return {}
+          const cur =
+            state.isLive && state.liveSlideIndex >= 0
+              ? state.slides[state.liveSlideIndex]
+              : null
+          if (cur) {
+            const sameAsLive = slides.length === 1 && slides[0].id === cur.id
+            if (sameAsLive) return { previewSlideIndex: state.liveSlideIndex }
+            return {
+              slides: [cur, ...slides],
+              previewSlideIndex: 1,
+              liveSlideIndex: 0,
+            }
+          }
+          return { slides, previewSlideIndex: 0, liveSlideIndex: -1 }
+        }),
       replaceSlide: (index, patch) =>
         set((state) => {
           if (index < 0 || index >= state.slides.length) return {}
@@ -1246,6 +1288,39 @@ export const useAppStore = create<AppState>()(
         }))
         return id
       },
+      // v0.7.194-hotfix.9 Item C — Delete All on the Queue pane.
+      // preserveLive (default true) keeps the currently-selected
+      // schedule item if it is on air, so the wipe does NOT yank
+      // the live broadcast. When false (operator confirmation
+      // dialog could override), the entire queue is cleared and
+      // the slide stage is reset.
+      removeAllScheduleItems: (preserveLive = true) =>
+        set((state) => {
+          if (!preserveLive) {
+            return {
+              schedule: [],
+              selectedScheduleItemId: null,
+              slides: [],
+              previewSlideIndex: 0,
+              liveSlideIndex: -1,
+            }
+          }
+          const liveId =
+            state.isLive && state.selectedScheduleItemId
+              ? state.selectedScheduleItemId
+              : null
+          if (!liveId) {
+            return {
+              schedule: [],
+              selectedScheduleItemId: null,
+            }
+          }
+          const liveItem = state.schedule.find((s) => s.id === liveId)
+          return {
+            schedule: liveItem ? [liveItem] : [],
+            selectedScheduleItemId: liveItem ? liveId : null,
+          }
+        }),
       removeScheduleItem: (id) =>
         set((state) => {
           const next = state.schedule.filter((s) => s.id !== id)

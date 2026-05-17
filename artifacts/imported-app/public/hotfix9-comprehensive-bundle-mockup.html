@@ -1,0 +1,244 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Hotfix.9 — Comprehensive Bundle Mock (A + B + C + D + E)</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system,sans-serif}
+  body{background:#0a0a0a;color:#fff;padding:18px}
+  h1{font-size:20px;margin-bottom:6px}
+  .lede{font-size:13px;color:#9ca3af;margin-bottom:22px;line-height:1.5}
+  .section{margin-bottom:36px;border:1px solid #1f2937;border-radius:8px;padding:16px;background:#0f172a}
+  .section h2{font-size:16px;margin-bottom:4px;color:#fbbf24}
+  .section .desc{font-size:12px;color:#9ca3af;margin-bottom:14px;line-height:1.5}
+  .row{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+  .col{flex:1;min-width:460px}
+  .label{font-size:13px;margin-bottom:6px;display:flex;align-items:center;gap:8px;font-weight:600}
+  .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+  .bad{background:#7f1d1d;color:#fecaca}
+  .good{background:#14532d;color:#bbf7d0}
+  .footnote{font-size:11px;color:#9ca3af;margin-top:6px;line-height:1.4}
+  .codepatch{margin-top:10px;padding:10px;background:#020617;border-left:3px solid #14532d;border-radius:4px;font-family:'SF Mono',Consolas,monospace;font-size:11px;line-height:1.5;color:#bbf7d0;white-space:pre-wrap}
+
+  /* === STAGES === */
+  .stage{width:540px;height:304px;background:#1e3a5f;position:relative;overflow:hidden;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.5)}
+  .stage::before{content:'1920\00d71080 (1/3.55)';position:absolute;top:4px;right:6px;font-size:9px;color:rgba(255,255,255,.4);z-index:5}
+  .slide-content{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 6%;text-align:center}
+  .slide-reference{font-family:Georgia,serif;color:#fbbf24;margin-bottom:10px;font-size:13px}
+  .slide-text{font-family:Georgia,serif;color:#fff;line-height:1.15;text-shadow:0 2px 8px rgba(0,0,0,.4);text-align:center;width:100%}
+
+  /* === Lower-third stages === */
+  .lt-stage{width:540px;height:304px;background:linear-gradient(120deg,#3a2c20,#1a1410);position:relative;overflow:hidden;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.5)}
+  .lt-box{position:absolute;left:5%;right:5%;bottom:8%;height:30%;background:linear-gradient(135deg,#0a0a0a,#171717);border-radius:10px;padding:8px 14px;overflow:hidden;display:flex;flex-direction:column;justify-content:center}
+  .lt-bad-text{font-family:Georgia,serif;color:#fff;line-height:1.05;font-size:56px;font-weight:700;text-align:center;text-shadow:0 2px 8px rgba(0,0,0,.4);white-space:nowrap;overflow:visible}
+  .lt-ref{font-family:Georgia,serif;color:#fbbf24;font-size:10px;text-align:center;margin-bottom:4px}
+  .lt-good-text{font-family:Georgia,serif;color:#fff;line-height:1.15;font-size:14px;font-weight:600;text-align:center;text-shadow:0 2px 8px rgba(0,0,0,.4)}
+
+  /* === Operator UI mocks === */
+  .ui-stack{display:flex;flex-direction:column;gap:6px;background:#111827;border:1px solid #1f2937;border-radius:6px;padding:10px;width:540px}
+  .ui-row{display:flex;align-items:center;gap:8px;padding:6px 8px;background:#0a0a0a;border:1px solid #1f2937;border-radius:4px;font-size:12px}
+  .ui-row.live{border-color:#dc2626;background:rgba(220,38,38,.08)}
+  .ui-row.preview{border-color:#facc15;background:rgba(250,204,21,.06)}
+  .ui-tag{padding:1px 6px;border-radius:3px;font-size:9px;font-weight:700;text-transform:uppercase}
+  .ui-tag.live{background:#dc2626;color:#fff}
+  .ui-tag.preview{background:#facc15;color:#000}
+  .ui-tag.muted{background:#374151;color:#9ca3af}
+  .arrow{font-size:11px;color:#9ca3af}
+
+  /* Scripture Feed mock */
+  .sf-card{background:#111827;border:1px solid #1f2937;border-radius:6px;padding:10px;width:540px}
+  .sf-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:12px;font-weight:700}
+  .sf-btn{padding:3px 8px;border:1px solid #374151;border-radius:3px;background:#1f2937;color:#fff;font-size:10px;cursor:pointer}
+  .sf-btn.danger{background:#7f1d1d;border-color:#dc2626;color:#fecaca}
+  .sf-btn.primary{background:#0c4a6e;border-color:#0284c7;color:#bae6fd}
+  .sf-row{display:flex;gap:6px;align-items:center;padding:5px 6px;border:1px solid #1f2937;border-radius:3px;margin-bottom:4px;font-size:11px}
+  .sf-check{width:14px;height:14px;border:1px solid #475569;border-radius:2px;flex-shrink:0}
+  .sf-check.on{background:#0284c7;border-color:#0284c7}
+
+  /* NDI panel sketch */
+  .ndi-panel{background:#111827;border:1px solid #1f2937;border-radius:6px;padding:10px;width:540px;font-size:11px}
+  .ndi-panel .label{font-size:11px;margin-bottom:4px;color:#9ca3af}
+  .source-pill{display:inline-block;padding:3px 8px;border-radius:3px;background:#1f2937;color:#10b981;font-family:monospace;font-size:11px;border:1px solid #14532d}
+
+  .legend-box{background:#1f2937;padding:12px;border-radius:6px;font-size:12px;line-height:1.6;width:540px}
+  .legend-box ul{margin-left:18px;margin-top:4px}
+  .legend-box code{background:#020617;padding:1px 5px;border-radius:2px;font-size:11px;color:#bbf7d0}
+</style></head>
+<body>
+
+<h1>Hotfix.9 — Comprehensive Bundle Mock (A + B + C + D + E)</h1>
+<div class="lede">Each item shows the BEFORE you reported vs the AFTER hotfix.9 will ship. Approve the whole bundle (or call out any item to drop) and I'll push to GitHub + bump <b>0.7.194-hotfix.8 → hotfix.9</b>.</div>
+
+<!-- ═══════════════════════ ITEM A ═══════════════════════ -->
+<div class="section">
+  <h2>A — Autofit shrink-only (Bible text size matches your 60% slider)</h2>
+  <div class="desc">Today the autofit binary search GROWS text to fill the screen, ignoring your Text Size 60%. After fix: autofit only intervenes when text would overflow; never grows past the natural clamp size.</div>
+  <div class="row">
+    <div class="col">
+      <div class="label"><span class="pill bad">BEFORE</span> John 3:16 at Text Size 60%, Full+Themed</div>
+      <div class="stage"><div class="slide-content">
+        <div class="slide-reference">John 3:16 — KJV</div>
+        <div class="slide-text" style="font-size:46px">For God so loved the world, that he gave his only begotten Son, that whosoever believeth on him should not perish, but have everlasting life.</div>
+      </div></div>
+      <div class="footnote">Text fills ~90% of screen; your 60% slider has no effect.</div>
+    </div>
+    <div class="col">
+      <div class="label"><span class="pill good">AFTER hotfix.9</span> Same verse, same 60%</div>
+      <div class="stage"><div class="slide-content">
+        <div class="slide-reference">John 3:16 — KJV</div>
+        <div class="slide-text" style="font-size:16px">For God so loved the world, that he gave his only begotten Son, that whosoever believeth on him should not perish, but have everlasting life.</div>
+      </div></div>
+      <div class="footnote">Renders at the natural size your 60% slider produces — matches Live Preview.</div>
+    </div>
+  </div>
+  <div class="codepatch">// route.ts L928 — one-line change
+- var maxK = isLT ? 3.50 : 1.00;
++ var maxK = 1.00;</div>
+</div>
+
+<!-- ═══════════════════════ ITEM B ═══════════════════════ -->
+<div class="section">
+  <h2>B — Single-click preview that DOESN'T snap back (5 columns)</h2>
+  <div class="desc">Today single-clicking verse 19 briefly previews then snaps back to verse 18 (the live one). After fix: single-click always previews; live stays anchored until you double-click.</div>
+  <div class="row">
+    <div class="col">
+      <div class="label"><span class="pill bad">BEFORE</span> Click verse 19 in any of the 5 columns</div>
+      <div class="ui-stack">
+        <div class="ui-row preview"><span class="ui-tag preview">PREVIEW</span><span>John 3:18 (after snap-back, NOT 3:19!)</span></div>
+        <div class="ui-row live"><span class="ui-tag live">LIVE</span><span>John 3:18 (correct)</span></div>
+        <div style="font-size:11px;color:#fca5a5;padding:4px 8px">⚠ Verse 19 flashes in preview for ~50ms then disappears.<br>Caller does <code style="font-family:monospace;font-size:10px">setSlides()</code> which resets <code style="font-family:monospace;font-size:10px">liveSlideIndex=-1</code> → live yanked → re-snap.</div>
+      </div>
+      <div class="footnote">Affects: Auto Verse Match · Bible Reference Quoted · Suggested Verses (Chapter Navigator + Scripture Feed already work per hotfix.7/8).</div>
+    </div>
+    <div class="col">
+      <div class="label"><span class="pill good">AFTER hotfix.9</span> Same click, all 5 columns</div>
+      <div class="ui-stack">
+        <div class="ui-row preview"><span class="ui-tag preview">PREVIEW</span><span>John 3:19 ✓ (held until you double-click)</span></div>
+        <div class="ui-row live"><span class="ui-tag live">LIVE</span><span>John 3:18 ✓ (stays anchored)</span></div>
+        <div style="font-size:11px;color:#86efac;padding:4px 8px">✓ Single-click → preview only. Double-click → swap to live.<br>All preview-mode paths route through <code style="font-family:monospace;font-size:10px">stageVersePreviewOnly</code>.</div>
+      </div>
+      <div class="footnote">Behaviour identical in every column — operator's mental model unified.</div>
+    </div>
+  </div>
+  <div class="codepatch">// logos-shell.tsx — sendDetected('preview') branch + live-column single-click
+- if (mode === 'preview') { addScheduleItemQuiet(...); setSlides(slides); setPreviewSlideIndex(0); }
++ if (mode === 'preview') { addScheduleItemQuiet(...); stageVersePreviewOnly(slides[0]); }
+
+// Live-column single-click (Auto Verse Match + Bible Reference Quoted)
+- onClick: sendDetected(v, 'schedule')   // schedule-only, no preview
++ onClick: sendDetected(v, 'preview')    // preview without yanking live</div>
+</div>
+
+<!-- ═══════════════════════ ITEM C ═══════════════════════ -->
+<div class="section">
+  <h2>C — Scripture Feed: Select All + Delete All</h2>
+  <div class="desc">Today Select mode has only per-row toggles + Delete + Cancel. Adding Select All (in Select mode) + Delete All (one-click, with confirm) at the top of the card.</div>
+  <div class="row">
+    <div class="col">
+      <div class="label"><span class="pill bad">BEFORE</span> Scripture Feed → Select mode</div>
+      <div class="sf-card">
+        <div class="sf-header"><span>3 selected</span><span style="display:flex;gap:6px"><button class="sf-btn danger">Delete</button><button class="sf-btn">Cancel</button></span></div>
+        <div class="sf-row"><div class="sf-check on"></div>John 3:16 · KJV</div>
+        <div class="sf-row"><div class="sf-check on"></div>John 3:17 · KJV</div>
+        <div class="sf-row"><div class="sf-check on"></div>John 3:18 · KJV</div>
+        <div class="sf-row"><div class="sf-check"></div>John 3:19 · KJV</div>
+        <div class="sf-row"><div class="sf-check"></div>Psalm 23:1 · KJV</div>
+      </div>
+      <div class="footnote">To wipe the whole tab you have to click every row, then Delete. Tedious with 30+ entries.</div>
+    </div>
+    <div class="col">
+      <div class="label"><span class="pill good">AFTER hotfix.9</span> Two new buttons</div>
+      <div class="sf-card">
+        <div class="sf-header"><span>3 selected</span><span style="display:flex;gap:6px"><button class="sf-btn primary">Select All</button><button class="sf-btn danger">Delete</button><button class="sf-btn">Cancel</button></span></div>
+        <div class="sf-row"><div class="sf-check on"></div>John 3:16 · KJV</div>
+        <div class="sf-row"><div class="sf-check on"></div>John 3:17 · KJV</div>
+        <div class="sf-row"><div class="sf-check on"></div>John 3:18 · KJV</div>
+        <div class="sf-row"><div class="sf-check"></div>John 3:19 · KJV</div>
+        <div class="sf-row"><div class="sf-check"></div>Psalm 23:1 · KJV</div>
+        <div style="margin-top:8px;padding-top:8px;border-top:1px solid #1f2937;display:flex;justify-content:flex-end">
+          <button class="sf-btn danger" style="padding:5px 12px">🗑 Delete All in this tab</button>
+        </div>
+      </div>
+      <div class="footnote">Select All ticks every visible row in the active tab. Delete All wipes the active tab (History or Queue) in one click — currently-live item preserved on-air.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════ ITEM D ═══════════════════════ -->
+<div class="section">
+  <h2>D — NDI Lower-Third bug (garbled text + inert settings)</h2>
+  <div class="desc">Today the LT chyron shows overflowing garbled text behind the subtitle and the LT scale slider does nothing. Two root causes — both fixed in hotfix.9.</div>
+  <div class="row">
+    <div class="col">
+      <div class="label"><span class="pill bad">BEFORE</span> NDI LT — your screenshot</div>
+      <div class="lt-stage">
+        <div class="lt-box">
+          <div class="lt-ref">John 3:16 — ASV</div>
+          <div class="lt-bad-text">For God so loved</div>
+        </div>
+      </div>
+      <div class="footnote">Verse body grown to 3.5× of baseSize → overflows the chyron, gets cropped left/right, looks like garbled fragments behind "ASV".</div>
+    </div>
+    <div class="col">
+      <div class="label"><span class="pill good">AFTER hotfix.9</span> Same verse, LT scale 1.05×</div>
+      <div class="lt-stage">
+        <div class="lt-box">
+          <div class="lt-ref">John 3:16 — ASV</div>
+          <div class="lt-good-text">For God so loved the world, that he gave his only begotten Son, that whosoever believeth on him should not perish.</div>
+        </div>
+      </div>
+      <div class="footnote">Autofit shrink-only fix (Item A) eliminates the overflow. LT scale slider now correctly remeasures via the existing <code style="font-family:monospace;font-size:10px">restartGuard</code> + <code style="font-family:monospace;font-size:10px">__lastIsLT</code> invalidator paired with a NEW <code style="font-family:monospace;font-size:10px">lowerThirdScale</code> dep in the SSE state hash.</div>
+    </div>
+  </div>
+  <div class="codepatch">// Root cause #1: same as Item A — LT branch grew 3.5× → overflowed chyron
+// Root cause #2: lowerThirdScale + ndi typography fields missing from SSE renderKey hash
+// route.ts settingsRenderKey(s):
++ lts: s.lowerThirdScale,
++ ndts: s.ndiTextScale, ndff: s.ndiFontFamily, ndfs: s.ndiFontSize, ...
+// → operator-drag of LT slider now flows through SSE tick → renderer remeasures</div>
+</div>
+
+<!-- ═══════════════════════ ITEM E ═══════════════════════ -->
+<div class="section">
+  <h2>E — OBS sees one stable NDI source for both Full + Lower-Third modes</h2>
+  <div class="desc">Today flipping NDI mode rebuilds the Electron BrowserWindow (per hotfix.7's <code>wantTransparent</code> gate) → NDI sender drops for ~600ms → OBS loses the source binding → "No Source" until operator re-picks. Fix: keep the NDI source NAME stable across rebuilds so OBS auto-reconnects on the same handle.</div>
+  <div class="row">
+    <div class="col">
+      <div class="label"><span class="pill bad">BEFORE</span> Flip Full → LT in NDI panel</div>
+      <div class="ndi-panel">
+        <div class="label">OBS Browser Source list</div>
+        <div class="source-pill" style="color:#dc2626;border-color:#7f1d1d">⚠ ScriptureLive AI — DISCONNECTED</div>
+        <div style="margin-top:8px;font-size:11px;color:#fca5a5">Source dropped during mode-flip BrowserWindow rebuild.<br>Operator must re-select source from list.</div>
+      </div>
+      <div class="footnote">Visible in your Wirecast screenshot — Live and Preview show stale frame.</div>
+    </div>
+    <div class="col">
+      <div class="label"><span class="pill good">AFTER hotfix.9</span> Same flip</div>
+      <div class="ndi-panel">
+        <div class="label">OBS Browser Source list</div>
+        <div class="source-pill">✓ ScriptureLive AI — CONNECTED</div>
+        <div style="margin-top:8px;font-size:11px;color:#86efac">Source name stays bound; OBS auto-reconnects to the rebuilt sender within ~200ms.<br>Mode flip is now visually seamless in OBS / vMix / Wirecast.</div>
+      </div>
+      <div class="footnote">NDI sender keeps the same source-id across BrowserWindow rebuilds. OBS/vMix/Wirecast pick up the new frames automatically.</div>
+    </div>
+  </div>
+  <div class="codepatch">// ndi-output-panel.tsx wantTransparent rebuild
+// Currently destroys + recreates BrowserWindow → NDI sender id changes
+// Fix: persist NDI sender across BrowserWindow rebuilds, only swap the
+// page-frame source. NDI source NAME (settings.ndiSourceName) is the
+// stable identity OBS/vMix/Wirecast bind to.
++ keepNdiSenderAlive = true  // recycled across mode flips
++ on BrowserWindow rebuild → call sender.send(blankFrame) instead of destroy()</div>
+</div>
+
+<!-- ═══════════════════════ LEGEND ═══════════════════════ -->
+<div class="legend-box">
+  <b>Bundle summary — v0.7.194-hotfix.9</b>
+  <ul>
+    <li><b>A</b> route.ts L928 — autofit shrink-only (one-line)</li>
+    <li><b>B</b> logos-shell.tsx — 5-column preview routing through <code>stageVersePreviewOnly</code></li>
+    <li><b>C</b> ScriptureFeedCard — Select All + Delete All buttons + store action <code>removeAllVerseHistory()</code> / <code>removeAllScheduleItems(preserveLive=true)</code></li>
+    <li><b>D</b> route.ts settingsRenderKey — add <code>lowerThirdScale</code> + NDI typography deps + Item A inherited</li>
+    <li><b>E</b> ndi-output-panel.tsx — persistent NDI sender across BrowserWindow rebuilds</li>
+  </ul>
+  <div style="margin-top:10px;padding-top:8px;border-top:1px solid #374151">Architect pre-push review mandatory (per hotfix.7/8 process guard-rail). <code>tsc --noEmit</code> clean. Push via <code>.local/push-r.mjs</code> on your "ship" word.</div>
+</div>
+
+</body></html>

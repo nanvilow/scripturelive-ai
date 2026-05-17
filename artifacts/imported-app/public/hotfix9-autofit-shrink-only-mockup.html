@@ -1,0 +1,83 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Hotfix.9 — Autofit Shrink-Only vs Current (Grow-to-Fill)</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0a0a0a;color:#fff;font-family:system-ui,sans-serif;padding:16px}
+  h1{font-size:18px;margin-bottom:8px}
+  .sub{font-size:13px;color:#9ca3af;margin-bottom:18px;line-height:1.5}
+  .row{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
+  .col{flex:1;min-width:480px}
+  .label{font-size:14px;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+  .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+  .bad{background:#7f1d1d;color:#fecaca}
+  .good{background:#14532d;color:#bbf7d0}
+  /* 1920x1080 scaled to 640x360 (1/3 scale) so two fit side-by-side */
+  .stage{width:640px;height:360px;background:#1e3a5f;position:relative;overflow:hidden;border-radius:6px;box-shadow:0 4px 24px rgba(0,0,0,.5)}
+  .stage::before{content:'1920 \00d7 1080 (scaled 1/3)';position:absolute;top:6px;right:8px;font-size:10px;color:rgba(255,255,255,.5);z-index:5}
+  .slide-content{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 6%;text-align:center}
+  .slide-reference{font-family:Georgia,serif;color:#fbbf24;margin-bottom:14px;font-size:18px}
+  .slide-text{font-family:Georgia,serif;color:#fff;line-height:1.15;text-shadow:0 2px 8px rgba(0,0,0,.4);text-align:center;width:100%}
+  .live-preview{width:640px;height:360px;background:#1e3a5f;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 6%;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.5)}
+  .live-preview .slide-reference{color:#fbbf24;font-family:Georgia,serif;margin-bottom:10px;font-size:14px}
+  .live-preview .slide-text{font-family:Georgia,serif;color:#fff;line-height:1.15;text-shadow:0 2px 8px rgba(0,0,0,.4)}
+  .footnote{font-size:12px;color:#9ca3af;margin-top:8px;line-height:1.4}
+  .legend{margin-top:24px;padding:14px;background:#1f2937;border-radius:6px;font-size:13px;line-height:1.6}
+  .legend code{background:#111827;padding:2px 6px;border-radius:3px;font-size:12px}
+</style></head>
+<body>
+<h1>Hotfix.9 mock — Bible verse output at <b>Text Size 60%</b>, John 3:16, Full-Screen + Themed</h1>
+<div class="sub">Each "stage" is a 1920×1080 output frame scaled to 1/3 so two fit side-by-side. The Live Preview thumbnail at right is what you see in Settings today.</div>
+
+<div class="row">
+  <div class="col">
+    <div class="label"><span class="pill bad">BEFORE (current / image 2)</span> Autofit GROWS text to fill — binary search picks largest scale ≤ <code>maxK</code></div>
+    <div class="stage">
+      <div class="slide-content">
+        <div class="slide-reference" style="font-size:14px">John 3:16 — KJV</div>
+        <!-- Simulating the grow-to-fill bug: text inflated to ~maxK=3.5 of baseSize. baseSize at 1920×1080 / textScale 0.6 = ~53px. 3.5× = ~185px. Scaled 1/3 = ~62px. -->
+        <div class="slide-text" style="font-size:54px;line-height:1.15">For God so loved the world, that he gave his only begotten Son, that whosoever believeth on him should not perish, but have everlasting life.</div>
+      </div>
+    </div>
+    <div class="footnote">Text fills ~90% of screen height regardless of your 60% slider. Autofit grew it to fit available space.</div>
+  </div>
+
+  <div class="col">
+    <div class="label"><span class="pill good">AFTER (hotfix.9)</span> Autofit SHRINKS only — your 60% slider is the sole control</div>
+    <div class="stage">
+      <div class="slide-content">
+        <div class="slide-reference" style="font-size:14px">John 3:16 — KJV</div>
+        <!-- Shrink-only: text rendered at clamp's natural baseSize (~53px) scaled 1/3 = ~18px. -->
+        <div class="slide-text" style="font-size:18px;line-height:1.15">For God so loved the world, that he gave his only begotten Son, that whosoever believeth on him should not perish, but have everlasting life.</div>
+      </div>
+    </div>
+    <div class="footnote">Text renders at the natural size your 60% slider produces. Autofit only intervenes if it would overflow.</div>
+  </div>
+</div>
+
+<div class="row" style="margin-top:28px">
+  <div class="col">
+    <div class="label">For reference — your <b>Settings Live Preview</b> (image 1) at the same 60%</div>
+    <div class="live-preview" style="height:240px">
+      <div class="slide-reference">John 3:16 — KJV</div>
+      <div class="slide-text" style="font-size:13px">For God so loved the world, that he gave his only begotten Son, that whosoever believeth on him should not perish, but have everlasting life.</div>
+    </div>
+    <div class="footnote">After hotfix.9, the actual output (middle) will look proportionally identical to this — just bigger because the monitor is bigger.</div>
+  </div>
+  <div class="col">
+    <div class="legend">
+      <b>The one-line code change:</b><br>
+      <code>route.ts L928</code> &nbsp;<code>var maxK=isLT?3.50:1.00;</code> → <code>var maxK=1.00;</code><br><br>
+      <b>What's preserved:</b><br>
+      • Overflow protection (shrinks down to 60% of baseSize floor when text is too long)<br>
+      • Triple+4th pass timing (rAF+rAF+120ms+350ms) from hotfix.6<br>
+      • <code>__lastIsLT</code> cache invalidator from hotfix.6<br>
+      • Your <code>lowerThirdTextScale</code> + <code>ndiTextScale</code> sliders still work — they just no longer fight with auto-grow<br><br>
+      <b>What changes:</b><br>
+      • Short verses (John 3:16, Psalm 23) no longer blow up to fill screen<br>
+      • Long passages (Romans 8 paragraph) still auto-shrink to fit — same as today<br>
+      • LT chyron text honors your slider exactly instead of auto-filling the bar
+    </div>
+  </div>
+</div>
+
+</body></html>
