@@ -145,6 +145,7 @@ A Next.js application providing scripture-related services for web and desktop, 
 -   Bump the `BUILD.bat` banner version string to match the current `package.json` version on every release.
 -   Push to GitHub via REST API after each release: OWNER=`nanvilow`, REPO=`scripturelive-ai`, BRANCH=`main`, token from `GH_PAT` env. Tag every release `v<version>`.
 -   When `replit.md` gets long, archive older Architecture-decisions entries to `artifacts/imported-app/CHANGELOG.md` and leave one-line guard-rails behind. **Do this automatically without asking** — at every release bump, keep only the LAST 3 versions in "Recent (full detail)" and demote everything below into one-line guard-rails / move full text to CHANGELOG.
+-   **SCREENSHOT BEFORE SHIPPING (added v0.7.194-hotfix.7+)**: from now on, for every fix or change, show the operator a screenshot of the work (Replit preview pane via `screenshot` tool on `artifacts/imported-app` web service, or a code-diff screenshot when UI is not visually testable) BEFORE running the push script. WAIT for the operator's explicit "ship"/"yes ship"/"go" before invoking `.local/push-r.mjs`. Do NOT push proactively even after typecheck-clean. This overrides any prior "fix and push" interpretation.
 
 ## Gotchas
 
