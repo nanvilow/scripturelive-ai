@@ -1397,3 +1397,9 @@ id = "BLNN-i1KLoznW74_ERFEu"
 uri = "file://screenshots/hotfix4-qr-stable-mockup.jpg"
 type = "image"
 title = "QR / OBS URL stops mutating on slider drag — 6-line fix"
+
+[[outputs]]
+id = "WSWuPflV7Leg3viWMf_A6"
+uri = "file://screenshots/hotfix9-autofit-shrink-only-mockup.jpg"
+type = "image"
+title = "Hotfix.9 mock — Autofit Shrink-Only vs Current"
