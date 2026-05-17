@@ -1391,3 +1391,9 @@ id = "wDW88E1lYVeq3yqZDQEsb"
 uri = "file://screenshots/hotfix4-lt-autofit-mockup.jpg"
 type = "image"
 title = "LT mode-switch autofit race — root cause + double-rAF fix"
+
+[[outputs]]
+id = "BLNN-i1KLoznW74_ERFEu"
+uri = "file://screenshots/hotfix4-qr-stable-mockup.jpg"
+type = "image"
+title = "QR / OBS URL stops mutating on slider drag — 6-line fix"
