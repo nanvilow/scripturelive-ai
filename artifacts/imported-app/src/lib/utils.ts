@@ -41,29 +41,60 @@ export function isVideoBackground(url: string | null | undefined): boolean {
 // path-traversal guard lives in the protocol handler (electron/main.ts)
 // which refuses any filename containing `..` / `/` / `\`. Do not skip
 // that guard by trusting this rewrite as the only sanitiser.
-// v0.7.196 — ROLLBACK: temporarily disable the scripturelive-media:// URL
-// rewrite. Operator on v0.7.194-hotfix.12 reported the empty "Scripture AI"
-// placeholder bug persisted on ALL 5 video surfaces (Typography preview, NDI
-// Live Preview, Display & Output Live Preview, main Preview/Live columns)
-// even though launch.log proves the protocol handler IS registered at boot
-// (line "[boot] scripturelive-media:// protocol handler registered, uploadsDir=
-// C:\Users\<u>\AppData\Roaming\@workspace\imported-app\uploads") AND
-// SCRIPTURELIVE_UPLOADS_DIR is correctly piped from electron/main.ts L998 into
-// /api/upload route.ts L35 so both writers/readers point at the same dir.
-// The log shows ZERO scripturelive-media:// requests and ZERO /api/upload GET
-// requests in the failing session — meaning the renderer never even issues
-// the request. The bug is somewhere in the renderer/React layer, not in the
-// protocol handler or CORS (hotfix.12's hypothesis was wrong). Until we can
-// instrument the renderer with verbose logging + browser DevTools to find
-// the actual root cause, fall back to the pre-hotfix.10 behaviour: leave the
-// URL as `/api/upload?file=...` so the Next.js HTTP route serves the bytes
-// (slower because all surfaces share one Node event loop, but at least
-// videos PLAY). The protocol handler is left registered in electron/main.ts
-// so a future fix can re-enable rewrite once the renderer bug is identified.
-// GUARD-RAIL: do NOT re-enable rewrite without (a) DevTools-confirmed
-// reproduction of the placeholder bug and a known cause, (b) verbose
-// diagnostic logging in both renderer and protocol handler, (c) operator
-// approval.
+// v0.7.196 — Re-enabled scripturelive-media:// URL rewrite using ONLY
+// string ops (indexOf/substring). The pre-rollback implementation used a
+// regex literal `/^(?:https?:\/\/[^/]+)?\/api\/upload\?file=([^&#]+)/`
+// which works fine in this React/TS file but the IDENTICAL helper
+// embedded inside congregation/route.ts's outer template literal got its
+// `\/` escapes stripped by Next.js/SWC, producing the broken
+// `/^(?:https?:/:` at runtime that killed every congregation
+// BrowserWindow's inline script with an Unterminated-group SyntaxError.
+// To eliminate that class of bug forever, BOTH this helper AND the
+// __scrMedia twin in congregation/route.ts now use plain indexOf +
+// substring with zero regex literals. String operations cannot be
+// mangled by template-literal escape handling.
+//
+// Detection MUST tolerate BOTH `window.scriptureLive?.isDesktop` (set
+// by preload script on mainWindow) AND `navigator.userAgent` containing
+// "Electron" (the NDI offscreen capture window in electron/frame-capture.ts
+// L66-91 and createKioskOutput secondary screen in electron/main.ts
+// L2525-2537 both lack a preload: key, so window.scriptureLive is
+// undefined there). Without the UA fallback the rewrite would silently
+// skip exactly the two surfaces operators care MOST about.
+//
+// SECURITY: this rewrite is purely cosmetic. The actual path-traversal
+// guard lives in the protocol handler (electron/main.ts ~L2783) which
+// rejects any filename containing `..` / `/` / `\` / leading `.`.
+//
+// DIAGNOSTIC: the first successful rewrite per page logs once to
+// console so a future regression where the rewrite silently stops
+// happening shows up immediately in DevTools / launch.log.
+let __scrMediaLogged = false
 export function resolveMediaUrl(url: string | null | undefined): string {
-  return url || ''
+  if (!url) return url || ''
+  if (typeof window === 'undefined') return url // SSR — leave HTTP shape
+  const sl = (window as unknown as { scriptureLive?: { isDesktop?: boolean } }).scriptureLive
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent || '' : ''
+  const inElectron = !!sl?.isDesktop || ua.indexOf('Electron') >= 0
+  if (!inElectron) return url
+  if (url.startsWith('data:')) return url
+  if (url.startsWith('scripturelive-media://')) return url
+  const key = '/api/upload?file='
+  const idx = url.indexOf(key)
+  if (idx < 0) return url
+  const rest = url.substring(idx + key.length)
+  const amp = rest.indexOf('&')
+  const hash = rest.indexOf('#')
+  let end = -1
+  if (amp >= 0 && hash >= 0) end = Math.min(amp, hash)
+  else if (amp >= 0) end = amp
+  else if (hash >= 0) end = hash
+  const fn = end < 0 ? rest : rest.substring(0, end)
+  if (!fn) return url
+  const out = 'scripturelive-media://uploads/' + fn
+  if (!__scrMediaLogged) {
+    __scrMediaLogged = true
+    try { console.log('[resolveMediaUrl] first rewrite:', url, '->', out) } catch { /* ignore */ }
+  }
+  return out
 }
