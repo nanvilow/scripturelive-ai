@@ -1403,3 +1403,9 @@ id = "WSWuPflV7Leg3viWMf_A6"
 uri = "file://screenshots/hotfix9-autofit-shrink-only-mockup.jpg"
 type = "image"
 title = "Hotfix.9 mock — Autofit Shrink-Only vs Current"
+
+[[outputs]]
+id = "fa1g2hxKK5ffTbV9Jp1L7"
+uri = "file://screenshots/hotfix9-comprehensive-bundle-mockup.jpg"
+type = "image"
+title = "Hotfix.9 — Comprehensive Bundle Mock (A+B+C+D+E)"
