@@ -881,7 +881,15 @@ function fitVerseText(){
         var rPar=rEl.parentElement;
         var rBase=parseFloat(window.getComputedStyle(rEl).fontSize)||14;
         var rAvailW=rPar.clientWidth;
-        var rLo=0.60, rHi=2.0, rBest=1.0;
+        // v0.7.194-hotfix.11 Item #2 — reference autofit upper bound
+        // dropped from 2.0× → 1.10× so the reference cannot eat the LT
+        // box and collide with the body text (operator screenshot:
+        // "COMP OVE / ASV" fragments behind the verse). The body
+        // autofit is capped at 1.00× per hotfix.9; allowing the
+        // reference to grow to 2× broke the "verse is the visual
+        // anchor" contract. 1.10× = small allowance to recover from
+        // the CSS clamp() floor (~14–15px) without ever ballooning.
+        var rLo=0.60, rHi=1.10, rBest=1.0;
         rEl.style.transform='';
         for(var ri=0;ri<10;ri++){
           var rMid=(rLo+rHi)/2;
@@ -1622,7 +1630,13 @@ function render(s){
     // shrink to fit INSIDE that fixed frame, never expand it. The
     // text-band auto-fit math (ltFs clamp + line-clamp below) does
     // the shrinking; we just pin the box height here.
-    var hPctScaled = hPct;
+    // v0.7.194-hotfix.11 Item #1 — Apply the operator's LT Height
+    // slider (ndiLtScale) to the BAR HEIGHT itself, not just the
+    // text band below. Pre-fix this line was a plain passthrough
+    // (hPctScaled = hPct) so the bar stayed at the bucket default
+    // (sm 22% / md 33% / lg 45%) regardless of slider position.
+    // Capped at 85% so the bar can never eat the whole frame.
+    var hPctScaled = Math.min(85, hPct * ndiLtScale);
     // The upper area outside the bar must always be transparent
     // (#000), per spec. Theme colour and custom background image
     // both render *inside* the rounded card only.

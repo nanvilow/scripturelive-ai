@@ -2299,6 +2299,11 @@ function setupIpc() {
           broadcastNdiStatus(cur)
           return { ok: true, status: cur }
         }
+        // v0.7.194-hotfix.11 Item #3 — Arm NDI frame bridge BEFORE the
+        // BrowserWindow destroy+create await chain so Wirecast/OBS/vMix
+        // see continuous frames through the rebuild gap. armBridge is
+        // a no-op when no sender exists yet (first start of a session).
+        ndi.armBridge(3000)
         if (frameCapture) { await frameCapture.stop(); frameCapture = null }
         await ndi.start(opts)
         frameCapture = new FrameCapture({

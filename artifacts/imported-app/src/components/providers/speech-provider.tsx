@@ -685,6 +685,22 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   content: textOut.split('\n').filter(Boolean),
                   background: s.settings.congregationScreenTheme,
                 }
+                // v0.7.194-hotfix.11 Item #4 — preserve manual preview.
+                // If operator has staged something in preview that isn't
+                // live (previewSlideIndex >= 0 && != liveSlideIndex), the
+                // AI-driven advance MUST NOT yank it. Quiet-append to
+                // schedule + toast instead. Operator keeps control.
+                const __st0 = useAppStore.getState()
+                if (__st0.previewSlideIndex >= 0 && __st0.previewSlideIndex !== __st0.liveSlideIndex) {
+                  __st0.addScheduleItemQuiet({
+                    type: 'verse',
+                    title: slideNew.title,
+                    subtitle: slideNew.subtitle,
+                    slides: [slideNew],
+                  })
+                  toast(`AI: staged ${slideNew.title} (preview preserved)`, { duration: 2200, position: 'bottom-right' })
+                  break
+                }
                 const curSlides = useAppStore.getState().slides
                 const nextSlides = curSlides.length > 0 ? [...curSlides, slideNew] : [slideNew]
                 const idx = nextSlides.length - 1
@@ -752,6 +768,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             subtitle: tx,
             content: textOut.split('\n').filter(Boolean),
             background: s.settings.congregationScreenTheme,
+          }
+          // v0.7.194-hotfix.11 Item #4 — preserve manual preview (see L691).
+          const __st1 = useAppStore.getState()
+          if (__st1.previewSlideIndex >= 0 && __st1.previewSlideIndex !== __st1.liveSlideIndex) {
+            __st1.addScheduleItemQuiet({ type: 'verse', title: slide.title, subtitle: slide.subtitle, slides: [slide] })
+            toast(`AI: staged ${slide.title} (preview preserved)`, { duration: 2200, position: 'bottom-right' })
+            break
           }
           const cur = useAppStore.getState().slides
           const next = cur.length > 0 ? [...cur, slide] : [slide]
@@ -887,6 +910,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           content: textOut.split('\n').filter(Boolean),
           background: s.settings.congregationScreenTheme,
         }
+        // v0.7.194-hotfix.11 Item #4 — preserve manual preview (see L691).
+        const __st2 = useAppStore.getState()
+        if (__st2.previewSlideIndex >= 0 && __st2.previewSlideIndex !== __st2.liveSlideIndex) {
+          __st2.addScheduleItemQuiet({ type: 'verse', title: slide.title, subtitle: slide.subtitle, slides: [slide] })
+          toast(`AI: staged ${slide.title} (preview preserved)`, { duration: 2200, position: 'bottom-right' })
+          break
+        }
         const cur = useAppStore.getState().slides
         const next = cur.length > 0 ? [...cur, slide] : [slide]
         const idx = next.length - 1
@@ -969,6 +999,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           subtitle: tx,
           content: textOut.split('\n').filter(Boolean),
           background: s.settings.congregationScreenTheme,
+        }
+        // v0.7.194-hotfix.11 Item #4 — preserve manual preview (see L691).
+        const __st3 = useAppStore.getState()
+        if (__st3.previewSlideIndex >= 0 && __st3.previewSlideIndex !== __st3.liveSlideIndex) {
+          __st3.addScheduleItemQuiet({ type: 'verse', title: slideNew.title, subtitle: slideNew.subtitle, slides: [slideNew] })
+          toast(`AI: staged ${slideNew.title} (preview preserved)`, { duration: 2200, position: 'bottom-right' })
+          break
         }
         const cur = useAppStore.getState().slides
         const next = cur.length > 0 ? [...cur, slideNew] : [slideNew]
@@ -1177,6 +1214,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           subtitle: tx,
           content: textOut.split('\n').filter(Boolean),
           background: s.settings.congregationScreenTheme,
+        }
+        // v0.7.194-hotfix.11 Item #4 — preserve manual preview (see L691).
+        const __st4 = useAppStore.getState()
+        if (__st4.previewSlideIndex >= 0 && __st4.previewSlideIndex !== __st4.liveSlideIndex) {
+          __st4.addScheduleItemQuiet({ type: 'verse', title: slideNew.title, subtitle: slideNew.subtitle, slides: [slideNew] })
+          toast(`AI: staged ${slideNew.title} (preview preserved)`, { duration: 2200, position: 'bottom-right' })
+          break
         }
         const cur = useAppStore.getState().slides
         const next = cur.length > 0 ? [...cur, slideNew] : [slideNew]
