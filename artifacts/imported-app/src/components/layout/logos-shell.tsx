@@ -2157,20 +2157,23 @@ function ScriptureFeedCard() {
           <div className="flex items-center gap-1">
             <Tab active={tab === 'history'} onClick={() => setTab('history')} icon={History} label="History" />
             <Tab active={tab === 'queue'} onClick={() => setTab('queue')} icon={ListOrdered} label="Queue" />
+            {/* v0.7.194-hotfix.11 Item #5 — Select toggle always enabled.
+                Pre-fix this button was disabled when the current tab was
+                empty, hiding the entry point to Select mode entirely.
+                Operator now enters Select mode regardless of current
+                tab state; Select All / Delete All inside Select mode
+                still self-disable per-tab via currentTabEmpty. */}
             <button
               type="button"
               onClick={() => {
-                if (currentTabEmpty && !selectMode) return
                 if (selectMode) exitSelectMode()
                 else setSelectMode(true)
               }}
-              disabled={currentTabEmpty && !selectMode}
               className={cn(
                 'h-6 px-2 ml-1 inline-flex items-center gap-1 rounded text-[10px] font-semibold border transition-colors',
                 selectMode
                   ? 'bg-sky-600/20 border-sky-500/60 text-sky-100'
                   : 'border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/40',
-                currentTabEmpty && !selectMode && 'opacity-40 cursor-not-allowed',
               )}
               title={selectMode ? 'Exit select mode' : 'Select rows to delete'}
             >

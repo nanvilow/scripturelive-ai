@@ -164,6 +164,9 @@ export class NdiService extends EventEmitter {
   //                          before we re-publish.
   private lastFrame: { buffer: Buffer; width: number; height: number; ts: number } | null = null
   private keepAliveTimer: NodeJS.Timeout | null = null
+  // v0.7.194-hotfix.11 Item #3 — frame-bridge state (see armBridge).
+  private bridgeTimer: NodeJS.Timeout | null = null
+  private bridgeDeadline = 0
   private sendBusy = false
   private lastDestroyAt = 0
   // v0.7.56 — Tracks whether NDIlib_initialize() is currently active.
@@ -567,6 +570,9 @@ export class NdiService extends EventEmitter {
     // race with send_destroy and crash the native runtime by writing
     // into a freed sender pointer.
     this.stopKeepAlive()
+    // v0.7.194-hotfix.11 Item #3 — Same race applies to the bridge
+    // timer; disarm before sender teardown.
+    this.disarmBridge()
     if (this.senderInstance && this.bindings) {
       try {
         this.bindings.send_destroy(this.senderInstance)
@@ -791,6 +797,56 @@ export class NdiService extends EventEmitter {
       }
       this.bindings = null
     }
+  }
+
+  /**
+   * v0.7.194-hotfix.11 Item #3 — Frame bridge for Wirecast/OBS/vMix
+   * continuity across FrameCapture rebuilds.
+   *
+   * Called by main.ts BEFORE the await chain that destroys the old
+   * BrowserWindow and constructs a new one (Full↔LT flip, transparent
+   * toggle, etc.). During that window, no fresh frames arrive at
+   * sendFrame() so receivers normally see the cached lastFrame held
+   * by the keep-alive ticker — BUT clock_video=true blocks
+   * send_send_video_v2 to the wire cadence, and any sub-second event-
+   * loop hiccup during BrowserWindow.destroy() / create / loadURL
+   * can stretch the gap past Wirecast's 1s "no signal" detector. The
+   * bridge spawns a SEPARATE tight setInterval (16 ms) that re-emits
+   * lastFrame ignoring the keep-alive's stale-window check, so even
+   * if the keep-alive timer is starved by GC or sync work, the bridge
+   * timer keeps the wire alive. Self-disarms after armBridge's ms
+   * window OR on disarmBridge(), whichever comes first.
+   *
+   * Safe to call when no sender exists: no-op. Safe to call when
+   * already armed: extends the window to the new deadline.
+   */
+  armBridge(ms = 3000): void {
+    if (!this.senderInstance || !this.bindings) return
+    const deadline = Date.now() + Math.max(100, Math.min(10_000, ms))
+    if (deadline > this.bridgeDeadline) this.bridgeDeadline = deadline
+    if (this.bridgeTimer) return
+    this.bridgeTimer = setInterval(() => {
+      if (!this.senderInstance || !this.bindings) {
+        this.disarmBridge()
+        return
+      }
+      if (Date.now() >= this.bridgeDeadline) {
+        this.disarmBridge()
+        return
+      }
+      if (this.sendBusy) return
+      const last = this.lastFrame
+      if (!last) return
+      this.nativeSendFrame(last.buffer, last.width, last.height)
+    }, 16)
+  }
+
+  disarmBridge(): void {
+    if (this.bridgeTimer) {
+      clearInterval(this.bridgeTimer)
+      this.bridgeTimer = null
+    }
+    this.bridgeDeadline = 0
   }
 
   sendFrame(bgraBuffer: Buffer, width: number, height: number): void {
