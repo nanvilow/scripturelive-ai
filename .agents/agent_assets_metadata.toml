@@ -1385,3 +1385,9 @@ id = "2BlJOXGg2kMtHoODBw8wf"
 uri = "file://screenshots/hotfix4-theme-designer-mockup.jpg"
 type = "image"
 title = "Theme Designer — audit (1 dead / 2 work), proposed fix"
+
+[[outputs]]
+id = "wDW88E1lYVeq3yqZDQEsb"
+uri = "file://screenshots/hotfix4-lt-autofit-mockup.jpg"
+type = "image"
+title = "LT mode-switch autofit race — root cause + double-rAF fix"
