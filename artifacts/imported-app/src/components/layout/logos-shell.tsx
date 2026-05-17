@@ -1979,12 +1979,12 @@ function ScriptureFeedCard() {
     addScheduleItem,
   } = useAppStore()
 
-  // Build the slide for a history verse and load it into the deck.
-  // `live=false` → only the preview cursor moves (operator stages).
-  // `live=true`  → also flips the live cursor + Live mode (on air).
-  // The verse is also recorded in the schedule for later recall, so
-  // we don't lose history just because the operator clicked through
-  // it from the History pane.
+  // v0.7.194-hotfix.4 — Single-click is now PREVIEW-ONLY everywhere.
+  // The `live` parameter is retained for future use but no caller in
+  // the History/Queue tabs passes `true` anymore — operators wanted
+  // explicit "Go Live" actions (the dedicated Live toggle on the
+  // Preview card) rather than accidental on-air pushes from a stray
+  // double-click in the Scripture Feed list.
   const sendVerseFromHistory = (v: typeof verseHistory[number], live: boolean) => {
     const slide: Slide = {
       id: `slide-${Date.now()}`,
@@ -2028,19 +2028,38 @@ function ScriptureFeedCard() {
               </div>
             ) : (
               verseHistory.map((v, i) => (
-                <button
+                // v0.7.194-hotfix.4 — Row is now a div with an inner
+                // click target + an inline × delete button. Removed
+                // onDoubleClick → no accidental Go Live.
+                <div
                   key={`${v.reference}-${i}`}
-                  onClick={() => sendVerseFromHistory(v, false)}
-                  onDoubleClick={() => sendVerseFromHistory(v, true)}
-                  className="w-full text-left rounded border border-border/70 bg-card/40 hover:border-sky-500/40 hover:bg-card px-2 py-1.5 transition-colors group select-none"
-                  title="Click → Preview · Double-click → Go Live"
+                  className="group/row relative rounded border border-border/70 bg-card/40 hover:border-sky-500/40 hover:bg-card transition-colors flex items-stretch"
                 >
-                  <div className="flex items-center justify-between gap-2 mb-0.5">
-                    <span className="text-[10px] font-semibold text-sky-300 truncate">{v.reference}</span>
-                    <span className="text-[9px] text-muted-foreground uppercase">{v.translation}</span>
-                  </div>
-                  <p className="text-[11px] text-foreground line-clamp-2 leading-snug">{v.text}</p>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => sendVerseFromHistory(v, false)}
+                    className="flex-1 min-w-0 text-left px-2 py-1.5 select-none"
+                    title="Click → Preview"
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-0.5 pr-5">
+                      <span className="text-[10px] font-semibold text-sky-300 truncate">{v.reference}</span>
+                      <span className="text-[9px] text-muted-foreground uppercase">{v.translation}</span>
+                    </div>
+                    <p className="text-[11px] text-foreground line-clamp-2 leading-snug">{v.text}</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      useAppStore.getState().removeVerseFromHistoryAt(i)
+                    }}
+                    className="absolute top-1 right-1 h-5 w-5 inline-flex items-center justify-center rounded text-muted-foreground hover:text-rose-300 hover:bg-rose-500/10 opacity-0 group-hover/row:opacity-100 transition-opacity text-[12px] leading-none"
+                    title="Remove from history"
+                    aria-label="Remove from history"
+                  >
+                    ×
+                  </button>
+                </div>
               ))
             )
           ) : schedule.length === 0 ? (
@@ -2062,19 +2081,19 @@ function ScriptureFeedCard() {
                   )}
                 >
                   <button
-                    onClick={() => selectScheduleItem(item.id)}
-                    onDoubleClick={() => {
+                    onClick={() => {
+                      // v0.7.194-hotfix.4 — Single-click loads the
+                      // queued item into the PREVIEW deck (no Go Live).
+                      // Removed onDoubleClick → no accidental on-air
+                      // push; operator uses the dedicated Live toggle.
                       selectScheduleItem(item.id)
                       if (item.slides.length) {
                         setSlides(item.slides)
                         setPreviewSlideIndex(0)
-                        setLiveSlideIndex(0)
-                        setIsLive(true)
-                        /* Toast suppressed per FRS — output actions stay silent. */
                       }
                     }}
                     className="flex-1 min-w-0 text-left"
-                    title="Click to select · Double-click to send live"
+                    title="Click → Preview"
                   >
                     <div className="flex items-center gap-1.5 mb-0.5">
                       <span

@@ -90,6 +90,15 @@ export function NdiOutputPanel() {
   // lowerThirdHeight line 245) so any change re-renders this component,
   // re-runs the URL builders, re-reads getState() — fresh values every
   // render with zero TDZ risk.
+  // v0.7.194-hotfix.4 — Stripped live-mutable lower-third params
+  // (sc, lh, position) from the OBS URL. They were cold-start
+  // fallbacks added in v0.7.5.1, then made functionally redundant
+  // by v0.7.11 (SSE owns slider updates within ~16ms of page load
+  // — invisibly faster than any OBS render). Keeping them in the
+  // URL caused the displayed URL string + QR code to flicker on
+  // every slider tick, confusing operators into thinking they
+  // needed to re-paste. lowerThird=1 stays so cold-start renders
+  // the correct layout immediately without a Full→LT flash.
   const buildCongregationParams = (): string => {
     const s = useAppStore.getState().settings
     const p = new URLSearchParams()
@@ -97,13 +106,14 @@ export function NdiOutputPanel() {
     p.set('transparent', '1')
     if (s.ndiDisplayMode === 'lower-third') {
       p.set('lowerThird', '1')
-      if (s.lowerThirdPosition === 'top') p.set('position', 'top')
-      const lh = s.lowerThirdHeight
-      if (lh === 'sm' || lh === 'md' || lh === 'lg') p.set('lh', lh)
-      const sc = s.ndiLowerThirdScale
-      if (typeof sc === 'number' && sc >= 0.5 && sc <= 2) {
-        p.set('sc', String(sc))
-      }
+    }
+    // v0.7.194-hotfix.4 — Operator's per-feed full-screen background
+    // choice. Default 'themed' is omitted from the URL so the existing
+    // OBS Browser-Source URLs operators have pasted don't change shape
+    // (no card-flicker, no "did I re-paste" confusion). Only the opt-in
+    // 'transparent' adds the param. route.ts reads `fsbg=transparent`.
+    if (s.ndiFullScreenBackground === 'transparent') {
+      p.set('fsbg', 'transparent')
     }
     return p.toString()
   }
@@ -186,6 +196,12 @@ export function NdiOutputPanel() {
   const ndiRefScale = useAppStore((s) => s.settings.ndiRefScale)
   const ndiTranslation = useAppStore((s) => s.settings.ndiTranslation)
   const ndiLowerThirdTransparent = useAppStore((s) => s.settings.ndiLowerThirdTransparent)
+  // v0.7.194-hotfix.4 — Full-screen NDI background mode. 'themed'
+  // (default) preserves v0.6.9 behaviour (themed gradient + custom
+  // bg). 'transparent' strips both so vMix/OBS/Wirecast receive
+  // verse text on a clean alpha matte. SSE pushes the field via
+  // buildCongregationParams so route.ts can branch fsTheme/fsBg.
+  const ndiFullScreenBackground = useAppStore((s) => s.settings.ndiFullScreenBackground ?? 'themed')
   // v0.6.6 — share the projector's lowerThirdPosition for the NDI band
   // too. There is no separate ndiLowerThirdPosition in the store; the
   // projector and NDI feed have always rendered the band at the same
@@ -200,6 +216,14 @@ export function NdiOutputPanel() {
   // Defaults to 30 (see store.ts DEFAULT_SETTINGS). Changing it bumps
   // restartGuardRef so the running NDI capture restarts at the new fps.
   const ndiCaptureFps = useAppStore((s) => s.settings.ndiCaptureFps) ?? 30
+  // v0.7.194-hotfix.3 — Operator-tunable NDI capture resolution. Defaults
+  // to 1080p (matches typical vMix/OBS/Wirecast scene config). Operators
+  // on older hardware flip to 720p for ~56% per-frame CPU relief.
+  // `?? '1080p'` covers existing-install state where the field is
+  // undefined after persist hydration — same pattern as ndiCaptureFps.
+  const ndiCaptureResolution = useAppStore((s) => s.settings.ndiCaptureResolution) ?? '1080p'
+  const ndiCaptureWidth = ndiCaptureResolution === '720p' ? 1280 : 1920
+  const ndiCaptureHeight = ndiCaptureResolution === '720p' ? 720 : 1080
 
   const ndiHasOverrides =
     ndiFontFamily !== undefined ||
@@ -273,7 +297,7 @@ export function NdiOutputPanel() {
   const lowerThirdHeightSetting = useAppStore((s) => s.settings.lowerThirdHeight)
   useEffect(() => {
     if (!isRunningForEffect || !desktop) return
-    const want = `${ndiDisplayMode}:${lowerThirdPosition}:${sourceName.trim()}:${ndiCaptureFps}`
+    const want = `${ndiDisplayMode}:${lowerThirdPosition}:${sourceName.trim()}:${ndiCaptureFps}:${ndiCaptureResolution}`
     if (restartGuardRef.current === want) return
     if (restartGuardRef.current === '') {
       // First settle — record what's already on the wire so the next
@@ -285,8 +309,12 @@ export function NdiOutputPanel() {
     restartGuardRef.current = want
     void desktop.ndi.start({
       name: sourceName.trim() || 'ScriptureLive AI',
-      width: 1920,
-      height: 1080,
+      // v0.7.194-hotfix.3 — width/height now driven by ndiCaptureResolution
+      // setting. main.ts equality check (L2281-2282) includes width/height so
+      // flipping the dropdown tears down the BrowserWindow and rebuilds at
+      // the new resolution. MUST be in restartGuardRef token + deps below.
+      width: ndiCaptureWidth,
+      height: ndiCaptureHeight,
       fps: ndiCaptureFps,
       layout: 'ndi',
       // v0.6.8 — ALWAYS broadcast NDI as alpha-keyed (transparent
@@ -316,7 +344,7 @@ export function NdiOutputPanel() {
       },
     }).catch(() => { /* surfaced by the ndi:status broadcast */ })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName, ndiCaptureFps])
+  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName, ndiCaptureFps, ndiCaptureResolution, ndiCaptureWidth, ndiCaptureHeight])
 
   // Reset the guard when NDI stops so the first toggle after the next
   // Start does the right thing (record-then-skip).
@@ -376,8 +404,12 @@ export function NdiOutputPanel() {
         // full rationale.
         const res = await desktop.ndi.start({
           name: sourceName.trim() || 'ScriptureLive AI',
-          width: 1920,
-          height: 1080,
+          // v0.7.194-hotfix.3 — see comment in the persistent restart effect
+          // above for width/height rationale. Both ndi.start callers MUST
+          // read the same ndiCaptureWidth/Height derived from the setting,
+          // otherwise the initial Start and the restart paths would diverge.
+          width: ndiCaptureWidth,
+          height: ndiCaptureHeight,
           fps: ndiCaptureFps,
           layout: 'ndi',
           transparent: true,
@@ -697,6 +729,49 @@ export function NdiOutputPanel() {
                 </div>
               </div>
 
+              {/* v0.7.194-hotfix.4 — Full-screen NDI background mode.
+                  Only meaningful when Display Mode above = Full Screen.
+                  Themed (default) preserves v0.6.9 — themed gradient +
+                  custom bg render on the NDI feed, identical to the
+                  in-room projector. Transparent strips both so the
+                  switcher receives only the verse text on a clean
+                  alpha matte — same idea as the per-box transparent
+                  toggle for Lower Third mode below. */}
+              {ndiDisplayMode === 'full' && (
+                <div className="flex items-center justify-between gap-3 mt-2 pt-2 border-t border-border/40">
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold text-foreground">Full-screen background</div>
+                    <p className="text-[10px] text-muted-foreground leading-snug">
+                      Themed = render the gradient + custom background on the NDI feed (matches the projector). Transparent = strip both so vMix/OBS/Wirecast receive verse text on a clean alpha matte.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 rounded-md border border-border bg-background overflow-hidden">
+                    <button
+                      onClick={() => updateSettings({ ndiFullScreenBackground: 'themed' })}
+                      className={cn(
+                        'h-7 px-2.5 text-[10px] uppercase tracking-wider transition-colors',
+                        ndiFullScreenBackground === 'themed'
+                          ? 'bg-emerald-500/15 text-emerald-200'
+                          : 'text-muted-foreground hover:bg-muted/40',
+                      )}
+                    >
+                      Themed
+                    </button>
+                    <button
+                      onClick={() => updateSettings({ ndiFullScreenBackground: 'transparent' })}
+                      className={cn(
+                        'h-7 px-2.5 text-[10px] uppercase tracking-wider transition-colors border-l border-border',
+                        ndiFullScreenBackground === 'transparent'
+                          ? 'bg-emerald-500/15 text-emerald-200'
+                          : 'text-muted-foreground hover:bg-muted/40',
+                      )}
+                    >
+                      Transparent
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* v0.6.3 — Transparent lower-third toggle. Only meaningful
                   when the NDI Display Mode above is set to Lower Third.
                   When ON: vMix / OBS receive a clean alpha matte (text
@@ -788,13 +863,24 @@ export function NdiOutputPanel() {
               )}
             </div>
 
-            {/* NDI Typography (always visible — no more Advanced) */}
+            {/* v0.7.194-hotfix.4 — NDI Typography is now FULLY
+                disconnected from Live Display. Pre-fix each control had
+                a "Mirror Live (X)" first option that resolved to the
+                Live Display setting if left unset; operators reported
+                this as confusing ("why does my NDI font change when I
+                touch the projector font?"). Post-fix the dropdowns show
+                concrete NDI defaults from route.ts NDI_DEFAULTS
+                (sans-serif / xl / on / center) and "Reset all" returns
+                to those defaults explicitly. The underlying store still
+                accepts `undefined` (which route.ts resolves to NDI
+                defaults) so persisted state from older installs migrates
+                with zero behaviour change. */}
             <div className="rounded-md border border-border bg-muted/10 p-3 space-y-3">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <div className="text-[11px] font-semibold text-foreground">NDI Typography</div>
                   <p className="text-[10px] text-muted-foreground leading-snug">
-                    Independent of Live Display. Leave a control on &ldquo;Mirror Live&rdquo; to inherit.
+                    Independent of Live Display. These controls affect the NDI broadcast feed only.
                   </p>
                 </div>
                 {ndiHasOverrides && (
@@ -802,7 +888,7 @@ export function NdiOutputPanel() {
                     onClick={handleResetAllOverrides}
                     className="text-[10px] text-muted-foreground hover:text-foreground underline"
                   >
-                    Reset all
+                    Reset to NDI defaults
                   </button>
                 )}
               </div>
@@ -811,15 +897,11 @@ export function NdiOutputPanel() {
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Font</label>
                   <select
-                    value={ndiFontFamily ?? '__inherit__'}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      updateSettings({ ndiFontFamily: v === '__inherit__' ? undefined : v })
-                    }}
+                    value={ndiFontFamily ?? 'sans'}
+                    onChange={(e) => updateSettings({ ndiFontFamily: e.target.value })}
                     className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
                   >
-                    <option value="__inherit__">Mirror Live ({liveFontFamily})</option>
-                    <option value="sans">Sans-serif</option>
+                    <option value="sans">Sans-serif (NDI default)</option>
                     <option value="serif">Serif</option>
                     <option value="mono">Monospace</option>
                     <option value="playfair">Playfair</option>
@@ -833,52 +915,36 @@ export function NdiOutputPanel() {
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Size</label>
                   <select
-                    value={ndiFontSize ?? '__inherit__'}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      updateSettings({ ndiFontSize: v === '__inherit__' ? undefined : (v as 'sm' | 'md' | 'lg' | 'xl') })
-                    }}
+                    value={ndiFontSize ?? 'xl'}
+                    onChange={(e) => updateSettings({ ndiFontSize: e.target.value as 'sm' | 'md' | 'lg' | 'xl' })}
                     className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
                   >
-                    <option value="__inherit__">Mirror Live ({liveFontSize})</option>
                     <option value="sm">Small</option>
                     <option value="md">Medium</option>
                     <option value="lg">Large</option>
-                    <option value="xl">Extra Large</option>
+                    <option value="xl">Extra Large (NDI default)</option>
                   </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Drop shadow</label>
                   <select
-                    value={ndiTextShadow === undefined ? '__inherit__' : ndiTextShadow ? 'on' : 'off'}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      updateSettings({
-                        ndiTextShadow: v === '__inherit__' ? undefined : v === 'on',
-                      })
-                    }}
+                    value={ndiTextShadow === undefined ? 'on' : ndiTextShadow ? 'on' : 'off'}
+                    onChange={(e) => updateSettings({ ndiTextShadow: e.target.value === 'on' })}
                     className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
                   >
-                    <option value="__inherit__">Mirror Live ({liveTextShadow ? 'On' : 'Off'})</option>
-                    <option value="on">On</option>
+                    <option value="on">On (NDI default)</option>
                     <option value="off">Off</option>
                   </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Align</label>
                   <select
-                    value={ndiTextAlign ?? '__inherit__'}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      updateSettings({
-                        ndiTextAlign: v === '__inherit__' ? undefined : (v as 'left' | 'center' | 'right' | 'justify'),
-                      })
-                    }}
+                    value={ndiTextAlign ?? 'center'}
+                    onChange={(e) => updateSettings({ ndiTextAlign: e.target.value as 'left' | 'center' | 'right' | 'justify' })}
                     className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
                   >
-                    <option value="__inherit__">Mirror Live ({liveTextAlign})</option>
                     <option value="left">Left</option>
-                    <option value="center">Center</option>
+                    <option value="center">Center (NDI default)</option>
                     <option value="right">Right</option>
                     <option value="justify">Justify</option>
                   </select>
@@ -898,6 +964,48 @@ export function NdiOutputPanel() {
                   field is SHARED between Live Display and NDI (per
                   hotfix.1 GR-B), so this writes the shared key directly
                   with no Mirror Live option. */}
+              {/* v0.7.194-hotfix.3 — Hardware-tip banner for operators on
+                  older PCs. The 720p + lower-fps fallback is invisible
+                  unless surfaced; this banner makes the relief path
+                  discoverable without forcing it on operators whose
+                  hardware can handle 1080p/30fps cleanly. */}
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-[10px] leading-snug text-amber-200">
+                <strong className="font-semibold">Hardware tip:</strong> on older PCs (Ivy
+                Bridge mobile, pre-2015 laptops, integrated graphics) NDI video
+                media or background videos can freeze because Windows can't
+                hardware-decode video on the NDI capture window. If you see
+                stutter in vMix / Wirecast / OBS, switch <strong>Capture resolution</strong> to
+                720p first; if it still lags, drop <strong>Capture frame rate</strong> to 15 fps.
+                Receivers upscale 720→1080 automatically.
+              </div>
+              {/* v0.7.194-hotfix.3 — NDI capture resolution. 720p cuts
+                  per-frame work by ~56% (8.3MB → 3.7MB BGRA buffer,
+                  encoding + memory bandwidth drop in step). Default stays
+                  1080p (no migration; existing installs keep 1080p; the
+                  `?? '1080p'` hook fallback covers undefined persisted
+                  state). Changing this restarts NDI via the restartGuard
+                  above — `ndiCaptureResolution` is in the want token,
+                  effect deps, and both ndi.start callers (see audit
+                  pattern from hotfix.2 GR-C). */}
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Capture resolution
+                </label>
+                <select
+                  value={ndiCaptureResolution}
+                  onChange={(e) => {
+                    const v = e.target.value as '1080p' | '720p'
+                    updateSettings({ ndiCaptureResolution: v })
+                  }}
+                  className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                >
+                  <option value="1080p">1080p (1920×1080) — broadcast standard</option>
+                  <option value="720p">720p (1280×720) — older PC, vMix/OBS upscale</option>
+                </select>
+                <p className="text-[10px] text-muted-foreground leading-snug">
+                  Single biggest relief if NDI video freezes. 720p cuts CPU work in half. vMix/Wirecast/OBS upscale to 1080p — chyron text and Bible verses look identical; full-bleed video is slightly softer but smooth.
+                </p>
+              </div>
               {/* v0.7.194-hotfix.2 — NDI capture frame rate. The offscreen
                   Electron capture window uses SOFTWARE video decode (no
                   GPU offscreen path on Windows), which can't sustain
@@ -905,8 +1013,10 @@ export function NdiOutputPanel() {
                   reported visible lag/freeze on both foreground media and
                   background videos. Defaulting to 30 gives the software
                   decoder ~2× the per-frame budget. 60 stays available for
-                  high-end machines; 25/20 for older boxes. Changing this
-                  restarts NDI via the restartGuard above. */}
+                  high-end machines; 25/20/15 for older boxes. Changing
+                  this restarts NDI via the restartGuard above.
+                  v0.7.194-hotfix.3 — 15fps added as the deepest relief
+                  option for very old hardware (Ivy Bridge mobile etc). */}
               <div className="space-y-1">
                 <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
                   Capture frame rate
@@ -914,7 +1024,7 @@ export function NdiOutputPanel() {
                 <select
                   value={String(ndiCaptureFps)}
                   onChange={(e) => {
-                    const v = Number(e.target.value) as 60 | 30 | 25 | 20
+                    const v = Number(e.target.value) as 60 | 30 | 25 | 20 | 15
                     updateSettings({ ndiCaptureFps: v })
                   }}
                   className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
@@ -923,9 +1033,10 @@ export function NdiOutputPanel() {
                   <option value="60">60 fps — high-end PC only</option>
                   <option value="25">25 fps — older PC / EU broadcast</option>
                   <option value="20">20 fps — minimum / very old PC</option>
+                  <option value="15">15 fps — deepest relief / 2012-era laptops</option>
                 </select>
                 <p className="text-[10px] text-muted-foreground leading-snug">
-                  If video media or background videos lag/freeze on NDI, lower this. NDI capture is software-decoded — 30fps is the sweet spot for almost every PC.
+                  If video media or background videos still lag/freeze on NDI after switching to 720p above, drop this. NDI capture is software-decoded — 30fps is the sweet spot for almost every PC; 15fps is the floor.
                 </p>
               </div>
               <div className="space-y-1">

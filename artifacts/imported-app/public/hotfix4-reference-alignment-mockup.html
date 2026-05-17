@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>v0.7.194-hotfix.4 — Reference Alignment fix</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background:#0b0d10; color:#e7e9ec; padding:20px; }
+  h1 { font-size: 18px; margin: 0 0 6px; color: #fcd34d; }
+  .sub { margin: 0 0 18px; color: #9aa0a6; font-size: 12px; max-width: 1200px; line-height:1.55; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 24px; }
+  .col h2 { font-size: 13px; letter-spacing:.05em; text-transform:uppercase; margin:0 0 4px; }
+  .col h2.bad { color:#f87171; }
+  .col h2.good { color:#34d399; }
+  .col .why { font-size: 11px; color:#9aa0a6; margin-bottom:10px; line-height:1.5; }
+
+  /* simulated slide content */
+  .stage {
+    background: radial-gradient(ellipse at top, rgba(120,53,15,.5), transparent 70%), linear-gradient(180deg, #1c1410 0%, #0b0805 100%);
+    border: 1px solid rgba(252,211,77,.2);
+    border-radius: 6px;
+    aspect-ratio: 16/9;
+    width: 100%;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+    position: relative;
+  }
+  .stage::after {
+    content: '↕ flex column · align-items:center';
+    position: absolute; bottom: 6px; right: 8px;
+    font-size: 8px; color:#9aa0a6; background:rgba(0,0,0,.5); padding:2px 5px; border-radius:3px;
+  }
+  /* BAD: slide-content with align-items:center but ref has no width:100% */
+  .stage .content-bad {
+    display: flex; flex-direction: column;
+    align-items: center; /* THE OFFENDER */
+    width: 90%;
+    text-align: center;
+  }
+  .stage .content-bad .ref {
+    /* operator picked text-align:left, but parent align-items:center centers the SHRUNK div */
+    text-align: left;
+    color: #fcd34d;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    margin-bottom: 10px;
+    /* NO width:100% — shrinks to content width, parent centers it */
+    outline: 1px dashed rgba(248,113,113,.7);
+  }
+  .stage .content-bad .body {
+    font-size: 14px;
+    line-height: 1.4;
+    color: #fff;
+    text-align: center;
+  }
+
+  /* GOOD: ref forced to width:100% so its text-align has horizontal space */
+  .stage .content-good {
+    display: flex; flex-direction: column;
+    align-items: center;
+    width: 90%;
+    text-align: center;
+  }
+  .stage .content-good .ref {
+    text-align: left; /* same operator pick */
+    width: 100%; /* THE FIX */
+    color: #fcd34d;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    margin-bottom: 10px;
+    outline: 1px dashed rgba(52,211,153,.7);
+  }
+  .stage .content-good .body {
+    font-size: 14px;
+    line-height: 1.4;
+    color: #fff;
+    text-align: center;
+  }
+
+  .panel { background:#11151a; border:1px solid #1f242b; border-radius:8px; padding:14px; }
+  .panel h3 { font-size:11px; letter-spacing:.05em; color:#e7e9ec; margin:0 0 8px; font-weight:700; }
+  .key-row { display:flex; align-items:center; gap:8px; padding:4px 0; font-size:11px; }
+  .key-row .label { color:#9aa0a6; min-width:160px; }
+  .key-row .val { color:#fbbf24; font-family: 'Menlo', 'Monaco', monospace; }
+
+  .legend { padding:12px; background:#11151a; border:1px solid #1f242b; border-radius:6px; font-size:11px; color:#cbd5e1; line-height:1.6; }
+  .legend strong { color:#fcd34d; }
+  .legend code { background:#1f2937; padding:1px 4px; border-radius:3px; color:#fbbf24; font-size:10px; }
+</style>
+</head>
+<body>
+  <h1>v0.7.194-hotfix.4 — Reference Alignment finally applies in-app</h1>
+  <p class="sub">
+    Operator picks <strong>Reference Alignment → Left</strong> in Typography & Appearance. The setting writes to <code style="background:#1f2937;padding:1px 4px;border-radius:3px;color:#fbbf24;font-size:10.5px;">settings.referenceTextAlign</code> correctly and the renderer reads it correctly — but the rendered <code style="background:#1f2937;padding:1px 4px;border-radius:3px;color:#fbbf24;font-size:10.5px;">&lt;div class="slide-reference" style="text-align:left"&gt;</code> shrinks to content width because its flex-column parent (<code style="background:#1f2937;padding:1px 4px;border-radius:3px;color:#fbbf24;font-size:10.5px;">.slide-content</code>) has <code style="background:#1f2937;padding:1px 4px;border-radius:3px;color:#fbbf24;font-size:10.5px;">align-items: center</code>, which centers it as a block. <code style="background:#1f2937;padding:1px 4px;border-radius:3px;color:#fbbf24;font-size:10.5px;">text-align: left</code> on a content-width element is a no-op. Same shape bug in <code style="background:#1f2937;padding:1px 4px;border-radius:3px;color:#fbbf24;font-size:10.5px;">slide-renderer.tsx</code> for the main Live Display panel.
+  </p>
+
+  <div class="row">
+    <div class="col">
+      <h2 class="bad">BEFORE — operator picks "left" but reference stays centered</h2>
+      <div class="why">Reference div (dashed red outline) has no width — shrinks to "Proverbs 18:10 — NKJV" exactly, then parent flex column centers the shrunk box. The <code>text-align:left</code> on the div is mathematically dead.</div>
+      <div class="stage">
+        <div class="content-bad">
+          <div class="ref">Proverbs 18:10 — NKJV</div>
+          <div class="body">The name of the LORD is a strong tower; The righteous run to it and are safe.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <h2 class="good">AFTER — reference left-aligns as operator picked</h2>
+      <div class="why">Reference div (dashed green outline) is now forced to <code>width:100%</code> of its parent. Its <code>text-align:left</code> finally has horizontal slack to push the text to the left edge — matching every other alignment pick.</div>
+      <div class="stage">
+        <div class="content-good">
+          <div class="ref">Proverbs 18:10 — NKJV</div>
+          <div class="body">The name of the LORD is a strong tower; The righteous run to it and are safe.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col">
+      <div class="panel">
+        <h3>What happens in the DOM today (broken)</h3>
+        <div class="key-row"><span class="label">Operator click:</span><span class="val">referenceTextAlign = 'left'</span></div>
+        <div class="key-row"><span class="label">Store writes:</span><span class="val">{ referenceTextAlign: 'left' }</span> ✓</div>
+        <div class="key-row"><span class="label">Renderer reads:</span><span class="val">rfTa = 'left'</span> ✓ (route.ts L1305)</div>
+        <div class="key-row"><span class="label">Inline style on div:</span><span class="val">text-align: left</span> ✓ (route.ts L1306)</div>
+        <div class="key-row"><span class="label">Parent flex column:</span><span class="val">align-items: center</span> ✗ centers the shrunk div</div>
+        <div class="key-row"><span class="label">Visible result:</span><span class="val" style="color:#f87171;">reference stays centered — bug</span></div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="panel">
+        <h3>Fix (3 files, ~4 lines)</h3>
+        <div style="font-size:11px; line-height:1.7; color:#cbd5e1;">
+          <strong style="color:#fcd34d;">1. <code style="background:#1f2937;padding:1px 4px;border-radius:3px;color:#fbbf24;font-size:10.5px;">route.ts</code> L79 + L187 (CSS block)</strong><br/>
+          Add <code style="background:#1f2937;padding:1px 4px;border-radius:3px;color:#fbbf24;font-size:10.5px;">width:100%</code> to <code style="background:#1f2937;padding:1px 4px;border-radius:3px;color:#fbbf24;font-size:10.5px;">.slide-reference</code> in both the full-screen and <code>.lt-box .slide-reference</code> lower-third rules. One CSS rule, no per-instance changes needed. Covers in-app OutputPreview iframe + secondary screen + NDI capture surface — all three use the same stylesheet.<br/><br/>
+
+          <strong style="color:#fcd34d;">2. <code style="background:#1f2937;padding:1px 4px;border-radius:3px;color:#fbbf24;font-size:10.5px;">slide-renderer.tsx</code> L391-404 (Live Display panel)</strong><br/>
+          Add <code style="background:#1f2937;padding:1px 4px;border-radius:3px;color:#fbbf24;font-size:10.5px;">w-full</code> to the reference <code>&lt;p&gt;</code>'s className. Same logic — the inline <code>textAlign: refTypo.textAlign</code> at L399 only works if the &lt;p&gt; spans the parent's width. Currently parent has <code>items-center</code> from body align.<br/><br/>
+
+          <strong style="color:#fcd34d;">3. No store / state changes</strong><br/>
+          <code style="background:#1f2937;padding:1px 4px;border-radius:3px;color:#fbbf24;font-size:10.5px;">settings.referenceTextAlign</code> already exists, reads correctly, broadcasts correctly. Only the CSS box-model was wrong.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <strong>Why this is risk-free:</strong>
+    <ul style="margin:6px 0 0; padding-left:18px;">
+      <li>When operator picks Center (the default), <code>text-align:center</code> on a width:100% div centers the text exactly like before. No visible change for existing users.</li>
+      <li>The same fix works on the secondary screen, NDI feed, in-app preview pane, and Live Display — all four use one of the two renderers being patched.</li>
+      <li>Lower-third reference (<code>.lt-box .slide-reference</code>) gets the same treatment so left/right/justify picks work consistently between full-screen and lower-third modes.</li>
+    </ul>
+  </div>
+</body>
+</html>

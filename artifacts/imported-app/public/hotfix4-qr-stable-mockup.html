@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>v0.7.194-hotfix.4 — QR/OBS URL stops mutating on slider drag</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background:#0b0d10; color:#e7e9ec; padding:20px; }
+  h1 { font-size: 18px; margin: 0 0 6px; color: #fcd34d; }
+  .sub { margin: 0 0 18px; color: #9aa0a6; font-size: 12px; max-width: 1200px; line-height:1.55; }
+  code { background:#1f2937; padding:1px 5px; border-radius:3px; color:#fbbf24; font-size:10.5px; font-family: 'Menlo', 'Monaco', monospace; }
+
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 18px; }
+  .col h2 { font-size: 13px; letter-spacing:.05em; text-transform:uppercase; margin:0 0 4px; }
+  .col h2.bad { color:#f87171; }
+  .col h2.good { color:#34d399; }
+  .col .why { font-size: 11px; color:#9aa0a6; margin-bottom:10px; line-height:1.5; }
+
+  .panel { background: #14181f; border: 1px solid #1f242b; border-radius: 8px; padding: 16px; }
+  .url-box { background:#0d1015; border:1px solid #2a313a; border-radius:4px; padding: 6px 9px; font-family:'Menlo', monospace; font-size:10px; color:#cbd5e1; word-break:break-all; line-height:1.45; }
+  .url-box .stable { color:#86efac; }
+  .url-box .churn { color:#fca5a5; font-weight:700; background:rgba(248,113,113,.15); padding: 0 2px; border-radius:2px; }
+  .url-box .removed { color:#fca5a5; text-decoration: line-through; opacity: 0.6; }
+  .lbl { font-size:10px; color:#9aa0a6; text-transform:uppercase; letter-spacing:.06em; margin: 8px 0 4px; }
+
+  .qr-row { display:flex; align-items:center; gap:14px; margin-top: 10px; }
+  .qr-mock { width: 110px; height: 110px; background: repeating-conic-gradient(#000 0% 25%, #fff 0% 50%) 0/14px 14px; border:6px solid #fff; border-radius:4px; }
+  .qr-mock.v2 { background: repeating-conic-gradient(#000 0% 25%, #fff 0% 50%) 4px 6px/12px 12px; }
+  .qr-mock.v3 { background: repeating-conic-gradient(#000 0% 25%, #fff 0% 50%) 2px 8px/16px 16px; }
+  .qr-cap { font-size: 10.5px; color:#cbd5e1; line-height:1.5; }
+  .qr-cap b { color:#fbbf24; }
+
+  .scenario { background:#0d1015; border:1px solid #1f242b; border-radius:6px; padding:10px; margin-top:10px; }
+  .scenario .head { font-size:10px; font-weight:700; color:#fbbf24; margin-bottom:4px; text-transform:uppercase; letter-spacing:.06em; }
+  .scenario .body { font-size:10.5px; color:#cbd5e1; line-height:1.5; }
+
+  pre { background:#0a0d11; border:1px solid #1f242b; border-radius:5px; padding:12px; font-size:11px; color:#cbd5e1; overflow:auto; margin:6px 0; line-height:1.55; font-family: 'Menlo', monospace; }
+  pre .minus { color:#f87171; }
+  pre .plus { color:#34d399; }
+  pre .note { color:#9aa0a6; }
+  pre .kw { color:#fbbf24; }
+
+  .info { background:#11151a; border:1px solid #1f242b; border-radius:8px; padding:14px; }
+  .info h3 { font-size:11px; letter-spacing:.05em; color:#e7e9ec; margin:0 0 8px; font-weight:700; }
+  .key-row { display:flex; gap:8px; padding:3px 0; font-size:11px; }
+  .key-row .label { color:#9aa0a6; min-width:230px; }
+  .key-row .val { color:#fbbf24; font-family: 'Menlo', 'Monaco', monospace; }
+  .key-row .good { color:#34d399; }
+
+  .legend { padding:12px; background:#11151a; border:1px solid #1f242b; border-radius:6px; font-size:11px; color:#cbd5e1; line-height:1.6; }
+  .legend strong { color:#fcd34d; }
+</style>
+</head>
+<body>
+  <h1>v0.7.194-hotfix.4 — QR / OBS URL stops mutating on every slider tick</h1>
+  <p class="sub">
+    <strong>Symptom:</strong> dragging the Lower-third size slider visibly redraws the QR code and changes the URL displayed in the OBS card. <strong>It's a bug</strong> — but harmless to OBS, just visually confusing. The <code>sc</code> + <code>lh</code> URL params were added in v0.7.5.1 as cold-start fallbacks, then v0.7.11 made them <em>functionally redundant</em> when slider drags moved to SSE-only. Removing them stabilises the URL/QR without changing any operator-visible NDI behaviour.
+  </p>
+
+  <div class="row">
+    <div class="col">
+      <h2 class="bad">BEFORE — every slider tick rewrites the URL + redraws the QR</h2>
+      <div class="why">Operator drags scale from 1.00× → 1.15× → 1.10×. URL mutates 3 times. QR regenerates 3 times. OBS doesn't care (already loaded). Operator just sees flicker and wonders if they need to re-paste.</div>
+      <div class="panel">
+        <div class="lbl">URL at scale 1.00×</div>
+        <div class="url-box"><span class="stable">http://192.168.0.148:47330/api/output/congregation?ndi=1&amp;transparent=1&amp;lowerThird=1&amp;lh=sm&amp;sc=</span><span class="churn">1</span></div>
+
+        <div class="lbl">URL at scale 1.15× (operator dragged)</div>
+        <div class="url-box"><span class="stable">http://192.168.0.148:47330/api/output/congregation?ndi=1&amp;transparent=1&amp;lowerThird=1&amp;lh=sm&amp;sc=</span><span class="churn">1.15</span></div>
+
+        <div class="lbl">URL at scale 1.10× (operator nudged back)</div>
+        <div class="url-box"><span class="stable">http://192.168.0.148:47330/api/output/congregation?ndi=1&amp;transparent=1&amp;lowerThird=1&amp;lh=sm&amp;sc=</span><span class="churn">1.1</span></div>
+
+        <div class="qr-row">
+          <div class="qr-mock"></div>
+          <div class="qr-mock v2"></div>
+          <div class="qr-mock v3"></div>
+        </div>
+        <div class="qr-cap" style="margin-top:6px;">3 visually different QR codes for 3 slider positions — <b>flicker on every tick.</b></div>
+      </div>
+    </div>
+
+    <div class="col">
+      <h2 class="good">AFTER — URL/QR locked. Slider does its job silently via SSE.</h2>
+      <div class="why">Operator drags scale however much they want. URL stays put. QR stays put. NDI feed updates instantly via SSE (already does today — that's the whole point of v0.7.11).</div>
+      <div class="panel">
+        <div class="lbl">URL at scale 1.00×</div>
+        <div class="url-box"><span class="stable">http://192.168.0.148:47330/api/output/congregation?ndi=1&amp;transparent=1&amp;lowerThird=1</span></div>
+
+        <div class="lbl">URL at scale 1.15× (operator dragged)</div>
+        <div class="url-box"><span class="stable">http://192.168.0.148:47330/api/output/congregation?ndi=1&amp;transparent=1&amp;lowerThird=1</span></div>
+
+        <div class="lbl">URL at scale 1.10× (operator nudged back)</div>
+        <div class="url-box"><span class="stable">http://192.168.0.148:47330/api/output/congregation?ndi=1&amp;transparent=1&amp;lowerThird=1</span></div>
+
+        <div class="qr-row">
+          <div class="qr-mock"></div>
+          <div class="qr-mock"></div>
+          <div class="qr-mock"></div>
+        </div>
+        <div class="qr-cap" style="margin-top:6px;">Same QR for all 3 positions — <b>zero flicker.</b> URL only changes when display mode itself flips (Full ↔ Lower Third), which IS a legitimate re-paste situation.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col">
+      <h2 class="bad">BEFORE — buildCongregationParams (L93-109)</h2>
+<pre><span class="kw">const</span> buildCongregationParams = (): <span class="kw">string</span> =&gt; {
+  <span class="kw">const</span> s = useAppStore.getState().settings
+  <span class="kw">const</span> p = <span class="kw">new</span> URLSearchParams()
+  p.set(<span class="plus">'ndi'</span>, <span class="plus">'1'</span>)
+  p.set(<span class="plus">'transparent'</span>, <span class="plus">'1'</span>)
+  <span class="kw">if</span> (s.ndiDisplayMode === <span class="plus">'lower-third'</span>) {
+    p.set(<span class="plus">'lowerThird'</span>, <span class="plus">'1'</span>)
+    <span class="minus">if (s.lowerThirdPosition === 'top') p.set('position', 'top')</span>
+    <span class="minus">const lh = s.lowerThirdHeight</span>
+    <span class="minus">if (lh === 'sm' || lh === 'md' || lh === 'lg') p.set('lh', lh)</span>
+    <span class="minus">const sc = s.ndiLowerThirdScale</span>
+    <span class="minus">if (typeof sc === 'number' &amp;&amp; sc &gt;= 0.5 &amp;&amp; sc &lt;= 2) {</span>
+    <span class="minus">  p.set('sc', String(sc))</span>
+    <span class="minus">}</span>
+  }
+  <span class="kw">return</span> p.toString()
+}</pre>
+    </div>
+
+    <div class="col">
+      <h2 class="good">AFTER — same function, churning params removed</h2>
+<pre><span class="note">// v0.7.194-hotfix.4 — Stripped live-mutable lower-third params
+// (sc, lh, position) from the OBS URL. They were cold-start
+// fallbacks added in v0.7.5.1, then made functionally redundant
+// by v0.7.11 (SSE owns slider updates within ~16ms of page load
+// — invisibly faster than any OBS render). Keeping them in the
+// URL caused the displayed URL string + QR code to flicker on
+// every slider tick, confusing operators into thinking they
+// needed to re-paste. lowerThird=1 stays so cold-start renders
+// the correct layout immediately without a Full→LT flash.</span>
+<span class="kw">const</span> buildCongregationParams = (): <span class="kw">string</span> =&gt; {
+  <span class="kw">const</span> s = useAppStore.getState().settings
+  <span class="kw">const</span> p = <span class="kw">new</span> URLSearchParams()
+  p.set(<span class="plus">'ndi'</span>, <span class="plus">'1'</span>)
+  p.set(<span class="plus">'transparent'</span>, <span class="plus">'1'</span>)
+  <span class="kw">if</span> (s.ndiDisplayMode === <span class="plus">'lower-third'</span>) {
+    p.set(<span class="plus">'lowerThird'</span>, <span class="plus">'1'</span>)
+  }
+  <span class="kw">return</span> p.toString()
+}</pre>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col">
+      <div class="info">
+        <h3>What still triggers a URL/QR change (intentional)</h3>
+        <div class="key-row"><span class="label">Operator flips Full ↔ LT:</span><span class="val good">URL toggles ?lowerThird=1 → re-paste required (always was)</span></div>
+        <div class="key-row"><span class="label">Operator drags Lower-third size:</span><span class="val good">URL UNCHANGED → SSE updates the feed silently</span></div>
+        <div class="key-row"><span class="label">Operator changes height bucket (sm/md/lg):</span><span class="val good">URL UNCHANGED → SSE updates the feed silently</span></div>
+        <div class="key-row"><span class="label">Operator flips position (top/bottom):</span><span class="val good">URL UNCHANGED → SSE updates the feed silently</span></div>
+        <div class="key-row"><span class="label">Operator changes NDI source name:</span><span class="val good">URL UNCHANGED (name isn't in URL)</span></div>
+        <div class="key-row"><span class="label">Operator changes server port:</span><span class="val good">URL changes → re-paste required (correct)</span></div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="info">
+        <h3>Why this is safe (the cold-start question)</h3>
+        <div style="font-size:11px; color:#cbd5e1; line-height:1.6;">
+          <strong style="color:#fcd34d;">Cold-start window is ~0-16ms.</strong> When OBS first loads the URL:
+          <ol style="margin:6px 0; padding-left:18px;">
+            <li>Renderer parses URL → sees <code>lowerThird=1</code> → sets <code>FORCE_LT=true</code></li>
+            <li>Renderer paints first frame using <code>NDI_DEFAULTS</code> for lh/sc (lh='sm', sc=1.0) — per route.ts L1519/L1542</li>
+            <li>SSE connection opens and first push arrives within ~16ms</li>
+            <li>SSE state overrides defaults → renderer re-paints with real values</li>
+          </ol>
+          Pre-fix: OBS saw 1 frame at operator's <em>actual</em> sc/lh values (URL-baked) and then SSE confirmed.<br>
+          Post-fix: OBS sees 1 frame at <em>defaults</em> (lh='sm', sc=1.0) then SSE corrects within 16ms.<br><br>
+          That 16ms first-frame difference is sub-perceptible — OBS itself takes ~100-300ms to initialise its browser source, well after SSE has already corrected. Operators will <strong>never see</strong> the transient default frame.
+          <br><br>
+          <strong>Files touched:</strong> 1 (<code>ndi-output-panel.tsx</code> L100-106), 6 lines deleted, 0 added.<br>
+          <strong>Risk:</strong> lowest possible — additive removal of redundant params.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <strong>Net change:</strong> 1 file (<code>ndi-output-panel.tsx</code>), 6 lines deleted from <code>buildCongregationParams</code>. QR / OBS URL stops flickering on slider drags. SSE-driven live updates continue working exactly as today. Only display-mode flip (Full↔LT) still re-mints the URL — which is correct, because that's the one change that genuinely requires OBS to reconnect.
+  </div>
+</body>
+</html>

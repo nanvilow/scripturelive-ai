@@ -76,7 +76,7 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    for the reference to read clearly so the congregation sees what
    chapter is being read. Bound to ALL surfaces (live display,
    secondary screen, NDI lower-third) since they share this engine. */
-.slide-reference{font-size:clamp(.85rem,1.4vw,1.6rem);opacity:1;font-weight:700;margin-bottom:1.4vh;letter-spacing:.06em}
+.slide-reference{font-size:clamp(.85rem,1.4vw,1.6rem);opacity:1;font-weight:700;margin-bottom:1.4vh;letter-spacing:.06em;width:100%;display:block;box-sizing:border-box}
 .slide-text{font-weight:500;line-height:1.4;margin:0;padding:0;word-wrap:break-word;overflow-wrap:break-word}
 /* When the verse splitter hands us multiple short lines, render them
    as a single flowing paragraph so words wrap on a consistent baseline
@@ -292,10 +292,19 @@ var FORCE_FULL=false;
 // by the renderer below with PRIORITY over st.* so URL wins.
 var FORCE_LH=null;
 var FORCE_SC=null;
+// v0.7.194-hotfix.4 — Per-feed full-screen background override pushed
+// from the NDI panel via buildCongregationParams. Default = themed
+// (v0.6.9 behaviour: themed gradient + custom bg rendered into NDI,
+// identical to the in-room projector). When set to 'transparent' we
+// strip both so vMix/OBS/Wirecast receive verse text on a clean alpha
+// matte. Lower-third has the equivalent toggle (ndiLowerThirdTransparent
+// + ltTransparentClass) for its surrounding area.
+var FS_BG_TRANSPARENT=false;
 try{
   var __qp=new URLSearchParams(location.search);
   IS_NDI=(__qp.get('ndi')==='1');
   FORCE_TRANSPARENT=(__qp.get('transparent')==='1');
+  FS_BG_TRANSPARENT=(__qp.get('fsbg')==='transparent');
   FORCE_LT=(__qp.get('lowerThird')==='1');
   var __p=__qp.get('position');
   if(__p==='top'||__p==='bottom')FORCE_POS=__p;
@@ -1557,7 +1566,7 @@ function render(s){
     // (#000), per spec. Theme colour and custom background image
     // both render *inside* the rounded card only.
     var ltStyle='position:absolute;left:1%;right:1%;height:'+hPctScaled+'%;border-radius:.5rem;'+(pos==='top'?'top:3%;':'bottom:3%;');
-    var alignClass='align-'+(st.textAlign||'center');
+    var alignClass='align-'+(T_TA||'center');
     // Re-size body text inside the bar based on character density so
     // long verses shrink to fit. We also bake in the operator's
     // fontSize bucket and textScale multiplier so Settings → Typography
@@ -1659,7 +1668,7 @@ function render(s){
     if(__ltBox && dm!=='lower-third-black' && safeLtBg){ mountLtBg(__ltBox, safeLtBg); }
     else { ensureLtBgEl(''); }
   }else{
-    var ta=st.textAlign||'center';
+    var ta=T_TA||'center';
     var jc=ta==='left'?'flex-start':ta==='right'?'flex-end':'center';
     // v0.6.9 — REVERT v0.6.8 background-stripping in full-screen NDI.
     // Operator video showed full-screen NDI broadcasting the verse on
@@ -1676,11 +1685,20 @@ function render(s){
     // the FULL-SCREEN branch was over-zealously stripping. The legacy
     // overlay use case is still served by lower-third mode + the
     // operator's per-box ndiLowerThirdTransparent toggle.
-    var fsTheme=tc;
-    var fsBg=bg;
+    // v0.7.194-hotfix.4 — Per-feed full-screen background gate. When
+    // the operator picked "Transparent" in the NDI Output panel
+    // (fsbg=transparent on the URL), strip the theme class AND the
+    // background-image string so vMix/OBS/Wirecast receive verse text
+    // on a clean alpha matte. Default ('themed') keeps the v0.6.9
+    // behaviour — themed gradient + custom bg render identical to the
+    // in-room projector. The themeBg inline style is also nulled when
+    // transparent so the gradient doesn't leak through.
+    var fsTheme=FS_BG_TRANSPARENT?'':tc;
+    var fsBg=FS_BG_TRANSPARENT?'':bg;
+    var fsThemeBg=FS_BG_TRANSPARENT?'':themeBg;
     var fsOrdered=refOrderTop?(ref+txt):(txt+ref);
-    setBgVid(safeBg);
-    $('output').innerHTML='<div class="'+fsTheme+'" style="'+themeBg+'width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';'+fontStyle+'">'+fsBg+'<div class="slide-content" style="text-align:'+ta+';'+fontStyle+'">'+fsOrdered+'</div></div>';
+    setBgVid(FS_BG_TRANSPARENT?'':safeBg);
+    $('output').innerHTML='<div class="'+fsTheme+'" style="'+fsThemeBg+'width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';'+fontStyle+'">'+fsBg+'<div class="slide-content" style="text-align:'+ta+';'+fontStyle+'">'+fsOrdered+'</div></div>';
   }
   $('output').classList.remove('hidden');
   // v0.7.182 — fire autofit AFTER layout settles. rAF guarantees the
@@ -1688,7 +1706,27 @@ function render(s){
   // we measure scrollHeight. Fallback to setTimeout(0) keeps the
   // call ordering identical when rAF is unavailable (extremely old
   // Electron / SSR test).
-  if(typeof requestAnimationFrame==='function'){requestAnimationFrame(fitVerseText);}else{setTimeout(fitVerseText,0);}
+  // v0.7.194-hotfix.4 — Triple-pass autofit. Pre-fix a single rAF
+  // measured scrollHeight too early when the injected HTML contained
+  // (a) custom web-font (Playfair/Merriweather/etc still loading),
+  // (b) a background <video> element changing the layout context, or
+  // (c) the new .slide-reference{width:100%} chyron that re-flows
+  // text wrap on second paint. Operators saw verses occasionally clip
+  // at the bottom or run off-screen on first show, then "snap" to the
+  // correct size on the next slide. Now: rAF #1 lets layout settle,
+  // rAF #2 covers post-font-swap re-measure, and a 120ms setTimeout
+  // catches video-decoder ready + Chromium offscreen compositor pass
+  // (the NDI capture surface in particular needs that extra beat).
+  // fitVerseText itself is idempotent so triple-firing is safe.
+  if(typeof requestAnimationFrame==='function'){
+    requestAnimationFrame(function(){
+      requestAnimationFrame(fitVerseText);
+      setTimeout(fitVerseText,120);
+    });
+  }else{
+    setTimeout(fitVerseText,0);
+    setTimeout(fitVerseText,120);
+  }
 }
 
 // Polling fallback. Server-Sent Events break when the deployment is

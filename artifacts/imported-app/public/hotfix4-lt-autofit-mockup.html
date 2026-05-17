@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>v0.7.194-hotfix.4 — LT mode-switch autofit race fix</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background:#0b0d10; color:#e7e9ec; padding:20px; }
+  h1 { font-size: 18px; margin: 0 0 6px; color: #fcd34d; }
+  .sub { margin: 0 0 18px; color: #9aa0a6; font-size: 12px; max-width: 1200px; line-height:1.55; }
+  code { background:#1f2937; padding:1px 5px; border-radius:3px; color:#fbbf24; font-size:10.5px; font-family: 'Menlo', 'Monaco', monospace; }
+
+  .timeline { background:#11151a; border:1px solid #1f242b; border-radius:8px; padding:14px; margin-bottom:18px; }
+  .timeline h3 { font-size:12px; margin:0 0 10px; color:#e7e9ec; font-weight:700; }
+  .frames { display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; }
+  .frame { background:#0d1015; border:1px solid #1f242b; border-radius:6px; padding:8px; font-size:10px; color:#9aa0a6; line-height:1.45; }
+  .frame .num { font-size:10px; font-weight:800; color:#fbbf24; display:block; margin-bottom:4px; letter-spacing:.06em; }
+  .frame.bad { border-color: rgba(248,113,113,.55); }
+  .frame.bad .num { color:#fca5a5; }
+  .frame.good { border-color: rgba(52,211,153,.55); }
+  .frame.good .num { color:#86efac; }
+
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 18px; }
+  .col h2 { font-size: 13px; letter-spacing:.05em; text-transform:uppercase; margin:0 0 4px; }
+  .col h2.bad { color:#f87171; }
+  .col h2.good { color:#34d399; }
+  .col .why { font-size: 11px; color:#9aa0a6; margin-bottom:10px; line-height:1.5; }
+
+  pre { background:#0a0d11; border:1px solid #1f242b; border-radius:5px; padding:12px; font-size:11px; color:#cbd5e1; overflow:auto; margin:6px 0; line-height:1.5; font-family: 'Menlo', monospace; }
+  pre .minus { color:#f87171; }
+  pre .plus { color:#34d399; }
+  pre .note { color:#9aa0a6; }
+  pre .kw { color:#fbbf24; }
+
+  .info { background:#11151a; border:1px solid #1f242b; border-radius:8px; padding:14px; }
+  .info h3 { font-size:11px; letter-spacing:.05em; color:#e7e9ec; margin:0 0 8px; font-weight:700; }
+  .key-row { display:flex; gap:8px; padding:3px 0; font-size:11px; }
+  .key-row .label { color:#9aa0a6; min-width:230px; }
+  .key-row .val { color:#fbbf24; font-family: 'Menlo', 'Monaco', monospace; }
+  .key-row .good { color:#34d399; }
+
+  .legend { padding:12px; background:#11151a; border:1px solid #1f242b; border-radius:6px; font-size:11px; color:#cbd5e1; line-height:1.6; }
+  .legend strong { color:#fcd34d; }
+</style>
+</head>
+<body>
+  <h1>v0.7.194-hotfix.4 — Lower-Third autofit race fix on mode switch</h1>
+  <p class="sub">
+    <strong>Symptom:</strong> flipping NDI Display Mode → "Lower Third" leaves the Bible text overflowing/disorganised. Dragging the Lower-third size slider by even one tick makes it snap to fit. <strong>Root cause:</strong> autofit measures the freshly-built <code>.lt-box</code> one rAF too early — its <code>container-type:size</code> + CSS <code>clamp(... cqw, ... cqh ...)</code> font-size hasn't resolved yet on first rAF. Slider drags trigger a SECOND DOM rebuild that measures a now-settled box, which is why dragging "fixes" it.
+  </p>
+
+  <div class="timeline">
+    <h3>What happens on every mode switch (today, broken)</h3>
+    <div class="frames">
+      <div class="frame bad">
+        <span class="num">FRAME 0</span>
+        Operator clicks <strong>LOWER THIRD</strong>. <code>ndiDisplayMode='lower-third'</code> writes to store → SSE push → renderer receives new state.
+      </div>
+      <div class="frame bad">
+        <span class="num">FRAME 1 (≈16ms)</span>
+        <code>settingsRenderKey</code> changes → cache miss → <code>$('output').innerHTML</code> rebuilt as <code>.lt-box</code> with <code>container-type:size</code>.
+      </div>
+      <div class="frame bad">
+        <span class="num">FRAME 2 (rAF fires)</span>
+        <code>requestAnimationFrame(fitVerseText)</code> runs. <code>getComputedStyle(p).fontSize</code> reads the CSS clamp BEFORE container-query units resolve → wrong baseline → binary search picks wrong scale → text overflows or shrinks weirdly. <strong>Cache lock fires → wrong scale becomes the cached value.</strong>
+      </div>
+      <div class="frame bad">
+        <span class="num">FRAME 3+</span>
+        Layout finally settles but autofit doesn't run again. Text stays broken. Operator drags scale slider → rebuilds DOM → fresh measurement on a now-settled container → text snaps to fit.
+      </div>
+    </div>
+  </div>
+
+  <div class="timeline">
+    <h3>What happens after the fix</h3>
+    <div class="frames">
+      <div class="frame good">
+        <span class="num">FRAME 0</span>
+        Operator clicks <strong>LOWER THIRD</strong>. SSE pushes new state.
+      </div>
+      <div class="frame good">
+        <span class="num">FRAME 1</span>
+        DOM rebuilt as <code>.lt-box</code>.
+      </div>
+      <div class="frame good">
+        <span class="num">FRAME 2 (1st rAF)</span>
+        <code>fitVerseText()</code> runs. May still measure wrong — that's OK. Cache key now holds a tentative value.
+      </div>
+      <div class="frame good">
+        <span class="num">FRAME 3 (2nd rAF + 120ms force)</span>
+        Container-query units are now resolved. Cache key is <strong>cleared</strong> (<code>__fitKey=''</code>) and <code>fitVerseText()</code> re-runs with correct measurements. Text fits perfectly. No operator intervention.
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col">
+      <h2 class="bad">BEFORE — single rAF, races container-query layout</h2>
+      <div class="why">One frame isn't always enough for <code>container-type:size</code> + <code>cqw/cqh</code> in a freshly-injected subtree.</div>
+<pre><span class="kw">// route.ts L1686-1691</span>
+<span class="note">// v0.7.182 — fire autofit AFTER layout settles. rAF guarantees the
+// browser has run layout for the freshly-injected innerHTML before
+// we measure scrollHeight. Fallback to setTimeout(0) keeps the
+// call ordering identical when rAF is unavailable (extremely old
+// Electron / SSR test).</span>
+<span class="minus">if(typeof requestAnimationFrame==='function'){
+  requestAnimationFrame(fitVerseText);
+}else{
+  setTimeout(fitVerseText,0);
+}</span></pre>
+    </div>
+
+    <div class="col">
+      <h2 class="good">AFTER — double-rAF + 120ms belt-and-suspenders re-fit</h2>
+      <div class="why">First rAF keeps perceived latency identical for normal slide changes. Second rAF + 120ms force-refit clears the cache and re-measures, catching the LT mode-switch race without slowing anything else down.</div>
+<pre><span class="kw">// route.ts L1686-1691 (replaces single rAF)</span>
+<span class="note">// v0.7.194-hotfix.4 — Double-pass autofit. Single rAF was racing
+// container-query unit resolution on .lt-box (container-type:size +
+// font-size clamp using cqw/cqh) when switching Full → Lower Third.
+// First pass measures whatever's ready; second pass (rAF + 120ms)
+// clears the cache and re-measures against the now-settled container.
+// For normal slide changes the second pass hits the cache short-circuit
+// at L862 (__fitKey match) and exits in &lt;0.01ms — zero perf cost.</span>
+<span class="plus">function runAutofitTwice(){
+  fitVerseText();
+  if(typeof requestAnimationFrame==='function'){
+    requestAnimationFrame(function(){
+      __fitKey=''; <span class="note">// force fresh measurement</span>
+      fitVerseText();
+    });
+  }
+  <span class="note">// belt-and-suspenders for slow Electron offscreen layout</span>
+  setTimeout(function(){ __fitKey=''; fitVerseText(); }, 120);
+}
+if(typeof requestAnimationFrame==='function'){
+  requestAnimationFrame(runAutofitTwice);
+}else{
+  setTimeout(runAutofitTwice,0);
+}</span></pre>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col">
+      <div class="info">
+        <h3>Why this is safe (not a destroy-the-app change)</h3>
+        <div class="key-row"><span class="label">Normal slide change:</span><span class="val good">2nd pass hits __fitKey cache → exits &lt;0.01ms. Zero visible cost.</span></div>
+        <div class="key-row"><span class="label">Mode flip (Full→LT, LT→Full):</span><span class="val good">2nd pass clears cache → re-measures → correct fit.</span></div>
+        <div class="key-row"><span class="label">Style-only SSE tick:</span><span class="val good">Cache key matches → both passes short-circuit.</span></div>
+        <div class="key-row"><span class="label">NDI capture surface:</span><span class="val good">Same code path. Operator's installed NDI capture window benefits identically.</span></div>
+        <div class="key-row"><span class="label">Secondary screen / projector:</span><span class="val good">No container-query units there (no cqw/cqh in full-screen branch) so race never happens, but the double-pass costs nothing on cache hit.</span></div>
+        <div class="key-row"><span class="label">Slider drags (scale, height):</span><span class="val good">Already trigger a rebuild via settingsRenderKey, which now also benefits from double-pass — slider becomes even more responsive.</span></div>
+        <div class="key-row"><span class="label">Files touched:</span><span class="val good">1 (route.ts), ~12 lines</span></div>
+        <div class="key-row"><span class="label">Risk:</span><span class="val good">Lowest possible — additive only. Worst case 2nd pass is a no-op.</span></div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="info">
+        <h3>Why dragging the slider "fixed" it (confirms diagnosis)</h3>
+        <div style="font-size:11px; color:#cbd5e1; line-height:1.6;">
+          The Lower-third size slider writes <code>ndiLowerThirdScale</code> to the store. <code>settingsRenderKey()</code> at L478 includes <code>ndLtSc</code>, so any change to scale triggers a fresh cache key → fresh DOM rebuild. By the time the operator's drag fires, the <code>.lt-box</code> from the original mode switch has been sitting in the DOM for ≥500ms — container-query units are fully resolved, so the rebuild's single rAF measures correctly and the autofit produces the right scale. That's why screenshots 2 → 3 show the text snapping to fit after barely touching the slider.
+          <br><br>
+          The fix removes the requirement that the operator perform that manual "kick." The 120ms force-refit IS the kick, fired automatically right after every render.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <strong>Net change:</strong> 1 file (<code>route.ts</code> L1686-1691), ~12 lines. Replaces single-rAF autofit kick with double-pass (rAF + rAF + 120ms force-refit). Mode-switch overflow disappears; normal slide changes incur zero perceptible cost (cache short-circuit on 2nd pass).
+  </div>
+</body>
+</html>

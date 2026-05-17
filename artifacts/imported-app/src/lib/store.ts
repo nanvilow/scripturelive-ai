@@ -280,11 +280,38 @@ export interface AppSettings {
    *  capture window uses SOFTWARE video decode (Chromium's offscreen
    *  rendering path has no GPU video decode on Windows) which struggles
    *  to keep a 1080p video playing in real time at 60fps capture. Drop
-   *  to 30 (default), 25, or 20 to give the software decoder more
+   *  to 30 (default), 25, 20, or 15 to give the software decoder more
    *  headroom and stop the background-video judder operators reported.
    *  Changing this restarts NDI (handled via the restart guard in
-   *  ndi-output-panel.tsx). 60 stays available for high-end machines. */
-  ndiCaptureFps?: 60 | 30 | 25 | 20
+   *  ndi-output-panel.tsx). 60 stays available for high-end machines.
+   *  v0.7.194-hotfix.3 — 15fps added as a deeper relief option for very
+   *  old hardware (Ivy Bridge / pre-2015 mobile chips). */
+  ndiCaptureFps?: 60 | 30 | 25 | 20 | 15
+
+  /** v0.7.194-hotfix.3 — NDI capture resolution. The offscreen capture
+   *  window is created at this resolution. 1080p (1920×1080) is the
+   *  default and matches what vMix/OBS/Wirecast scenes are usually
+   *  configured for. 720p (1280×720) cuts per-frame work by ~56% (BGRA
+   *  buffer 8.3 MB → 3.7 MB, encoding + memory bandwidth drop in step)
+   *  which is the single biggest CPU relief for operators on older
+   *  hardware (Ivy Bridge mobile, pre-2015 laptops, integrated graphics)
+   *  where software HD video decode saturates the CPU. Downstream
+   *  vMix/Wirecast/OBS upscale 720→1080 in their program output with
+   *  hardware-accelerated bicubic; the visible quality drop on chyron
+   *  text + Bible verses is zero, and full-bleed video media is only
+   *  slightly softer but smooth. Changing this restarts NDI via the
+   *  restart guard in ndi-output-panel.tsx. */
+  ndiCaptureResolution?: '1080p' | '720p'
+
+  /** v0.7.194-hotfix.4 — NDI Full-Screen background mode. When
+   *  'themed' (default) the full-screen NDI surface renders with the
+   *  themed gradient + custom background — identical to the secondary
+   *  screen (v0.6.9 behaviour). When 'transparent' it strips both so
+   *  vMix/OBS/Wirecast receive only the verse text on a clean alpha
+   *  matte, useful when the production switcher already has its own
+   *  program-output background. Lower-third has the per-box equivalent
+   *  via `ndiLowerThirdTransparent`. */
+  ndiFullScreenBackground?: 'themed' | 'transparent'
 
   // Item #15 follow-up — when the SSE link to the secondary screen
   // drops, the page used to slam a full-screen "Reconnecting…"
@@ -312,6 +339,11 @@ interface AppState {
   // the Chapter Navigator / Detected Verses panels can offer a
   // one-click "Clear History" per the v0.5.5 spec.
   clearVerseHistory: () => void
+  /** v0.7.194-hotfix.4 — Remove a single entry from the Scripture
+   *  Feed history pane (per-row × button). Index-based; the React
+   *  key in the list is `${reference}-${i}` which is stable for
+   *  the render. */
+  removeVerseFromHistoryAt: (index: number) => void
   searchQuery: string
   setSearchQuery: (q: string) => void
 
@@ -782,6 +814,16 @@ const defaultSettings: AppSettings = {
   ndiAspectRatio: undefined,
   ndiBibleColor: undefined,
   ndiLowerThirdTransparent: false,
+  // v0.7.194-hotfix.4 — NDI Full-Screen background mode. 'themed'
+  // (default) keeps the v0.6.9 behaviour: full-screen NDI renders
+  // identically to the secondary screen (themed gradient + custom
+  // background visible). 'transparent' strips theme + custom bg so
+  // vMix/OBS/Wirecast receive only the verse text on a clean alpha
+  // matte — useful when the production switcher already has its
+  // own program-output background that the operator wants the NDI
+  // verse to key over. Lower-third has its own per-box toggle
+  // (ndiLowerThirdTransparent); this is the full-screen equivalent.
+  ndiFullScreenBackground: 'themed',
   // v0.7.3 — Reverted to 1.0× (was 2.0× in v0.7.0). Operator's
   // broadcast frame showed 2.0× was way too large; their lower-third
   // was covering the preacher. The slider Reset button also returns
@@ -796,6 +838,12 @@ const defaultSettings: AppSettings = {
   // per-frame budget. Operators on high-end machines can opt back into
   // 60 via the dropdown in NDI Output → Source.
   ndiCaptureFps: 30,
+  // v0.7.194-hotfix.3 — Default 1080p (no migration for existing installs;
+  // matches what vMix/OBS/Wirecast scenes are usually configured for).
+  // Operators on older hardware (Ivy Bridge mobile, pre-2015 laptops,
+  // integrated graphics) flip to 720p via the dropdown in NDI Output →
+  // "NDI Layout & Bible Body" to eliminate software-decode CPU saturation.
+  ndiCaptureResolution: '1080p',
   ndiBibleLineHeight: undefined,
   ndiRefSize: undefined,
   ndiRefStyle: undefined,
@@ -825,6 +873,14 @@ export const useAppStore = create<AppState>()(
           verseHistory: [v, ...state.verseHistory].slice(0, 50),
         })),
       clearVerseHistory: () => set({ verseHistory: [] }),
+      // v0.7.194-hotfix.4 — Per-row delete for the Scripture Feed
+      // History pane. Index-based because verseHistory items don't
+      // carry a unique ID; the index is stable for the lifetime of
+      // the rendered list (React key is `${reference}-${i}`).
+      removeVerseFromHistoryAt: (index: number) =>
+        set((state) => ({
+          verseHistory: state.verseHistory.filter((_, i) => i !== index),
+        })),
       searchQuery: '',
       setSearchQuery: (q) => set({ searchQuery: q }),
 

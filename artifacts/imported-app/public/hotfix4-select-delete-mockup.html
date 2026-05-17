@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>v0.7.194-hotfix.4 — Select-to-delete on History & Queue</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background:#0b0d10; color:#e7e9ec; padding:20px; }
+  h1 { font-size: 18px; margin: 0 0 6px; color: #fcd34d; }
+  .sub { margin: 0 0 18px; color: #9aa0a6; font-size: 12px; }
+  .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .col h3 { font-size: 11px; letter-spacing:.08em; text-transform:uppercase; margin:0 0 8px; color:#cbd5e1; }
+  .col .why { font-size:10px; color:#9aa0a6; margin-bottom:8px; }
+  /* Card replica */
+  .card { background:#11151a; border:1px solid #1f242b; border-radius:8px; overflow:hidden; }
+  .card .head { display:flex; align-items:center; justify-content:space-between; padding:8px 10px; border-bottom:1px solid #1f242b; }
+  .card .title { font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:#9aa0a6; font-weight:700; }
+  .tabs { display:flex; gap:4px; align-items:center; }
+  .tab { display:inline-flex; align-items:center; gap:4px; font-size:10px; padding:3px 8px; border-radius:4px; border:1px solid transparent; color:#cbd5e1; cursor:pointer; background:transparent; }
+  .tab.active { background:#1e3a5f; color:#7dd3fc; border-color:#0369a1; }
+  .tab .ico { width:10px; height:10px; display:inline-block; }
+  .iconbtn { display:inline-flex; align-items:center; gap:3px; font-size:9px; padding:3px 6px; border-radius:4px; border:1px solid #2a3038; background:transparent; color:#9aa0a6; cursor:pointer; }
+  .iconbtn:hover { color:#e7e9ec; border-color:#3a4048; }
+  .iconbtn.danger { color:#f87171; border-color:#7f1d1d; background:rgba(127,29,29,.15); }
+  .iconbtn.danger:hover { background:rgba(127,29,29,.30); }
+  .iconbtn.active { background:#1e3a5f; color:#7dd3fc; border-color:#0369a1; }
+  .body { padding:6px; max-height: 280px; overflow-y:auto; }
+  .item { display:flex; gap:8px; align-items:flex-start; border:1px solid #1f242b; background:rgba(255,255,255,.02); border-radius:6px; padding:6px 8px; margin-bottom:4px; cursor:pointer; }
+  .item .check { width:14px; height:14px; border:1.5px solid #4b5563; border-radius:3px; flex-shrink:0; margin-top:2px; display:flex; align-items:center; justify-content:center; font-size:10px; color:#0b0d10; background:transparent; }
+  .item.selected { border-color:#dc2626; background:rgba(220,38,38,.10); }
+  .item.selected .check { background:#dc2626; border-color:#dc2626; }
+  .item .body-text { flex:1; min-width:0; }
+  .ref-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:2px; }
+  .ref { font-size:10px; font-weight:700; color:#7dd3fc; }
+  .trans { font-size:9px; color:#9aa0a6; text-transform:uppercase; }
+  .verse { font-size:10px; color:#e7e9ec; line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .selbar { padding:6px 10px; background:#1f0f0f; border-bottom:1px solid #7f1d1d; display:flex; justify-content:space-between; align-items:center; gap:6px; }
+  .selbar .count { font-size:10px; color:#fca5a5; }
+  .selbar .btns { display:flex; gap:4px; }
+  .selbar .btns button { font-size:9px; padding:3px 8px; border-radius:4px; border:none; cursor:pointer; }
+  .selbar .btns .cancel { background:#374151; color:#e7e9ec; }
+  .selbar .btns .delall { background:#dc2626; color:#fff; font-weight:600; }
+  /* Queue item style */
+  .qitem { display:flex; align-items:center; gap:6px; border:1px solid #1f242b; background:rgba(255,255,255,.02); border-radius:6px; padding:5px 8px; margin-bottom:4px; }
+  .qitem .num { width:14px; height:14px; border-radius:3px; background:#374151; color:#9aa0a6; font-size:9px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+  .qitem .qtype { font-size:8px; color:#9aa0a6; text-transform:uppercase; letter-spacing:.05em; }
+  .qitem .qtitle { font-size:10px; color:#e7e9ec; }
+  .qitem.selected { border-color:#dc2626; background:rgba(220,38,38,.10); }
+  .legend { margin-top:14px; padding:10px; background:#0b0d10; border:1px solid #1f242b; border-radius:6px; font-size:10px; color:#cbd5e1; line-height:1.6; }
+  .legend strong { color:#fcd34d; }
+  .arrow { font-size:20px; color:#fcd34d; text-align:center; margin: 8px 0; }
+</style>
+</head>
+<body>
+  <h1>v0.7.194-hotfix.4 — Select-to-delete on Scripture Feed (History + Queue)</h1>
+  <p class="sub">Add a small <strong>Select</strong> button to the Scripture Feed card header (next to History / Queue tabs). When active, every row becomes selectable (no preview/live actions fire), and a red action bar replaces the header with <strong>Cancel</strong> + <strong>Delete (N)</strong>. Works on both tabs.</p>
+
+  <div class="row">
+
+    <!-- STATE 1: Normal -->
+    <div class="col">
+      <h3 style="color:#9aa0a6;">State 1 — Normal (today + Select button added)</h3>
+      <div class="why">Click "Select" to enter selection mode. Single/double-click still preview/live as today.</div>
+      <div class="card">
+        <div class="head">
+          <span class="title">Scripture Feed</span>
+          <div class="tabs">
+            <button class="tab active">◷ History</button>
+            <button class="tab">≡ Queue</button>
+            <button class="iconbtn" title="Select to delete">☑ Select</button>
+          </div>
+        </div>
+        <div class="body">
+          <div class="item"><div class="body-text">
+            <div class="ref-row"><span class="ref">Isaiah 40:31</span><span class="trans">NKJV</span></div>
+            <p class="verse">But those who wait on the LORD Shall renew their strength; They shall mount up with wings like eagles…</p>
+          </div></div>
+          <div class="item"><div class="body-text">
+            <div class="ref-row"><span class="ref">Numbers 6:25</span><span class="trans">NKJV</span></div>
+            <p class="verse">The LORD make His face shine upon you, And be gracious to you;</p>
+          </div></div>
+          <div class="item"><div class="body-text">
+            <div class="ref-row"><span class="ref">Matthew 28:19</span><span class="trans">NKJV</span></div>
+            <p class="verse">Go therefore and make disciples of all the nations, baptizing them in the name of the Father…</p>
+          </div></div>
+          <div class="item"><div class="body-text">
+            <div class="ref-row"><span class="ref">John 3:16</span><span class="trans">KJV</span></div>
+            <p class="verse">For God so loved the world, that he gave his only begotten Son…</p>
+          </div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STATE 2: Selection mode -->
+    <div class="col">
+      <h3 style="color:#34d399;">State 2 — Selection mode (checkboxes on, clicks select)</h3>
+      <div class="why">Header swaps to red action bar. Click any row to toggle its checkbox. Tabs still switch between History/Queue while in select mode (selections reset on tab switch).</div>
+      <div class="card">
+        <div class="head" style="background:#1e3a5f;">
+          <span class="title" style="color:#7dd3fc;">Scripture Feed · Selecting</span>
+          <div class="tabs">
+            <button class="tab active">◷ History</button>
+            <button class="tab">≡ Queue</button>
+            <button class="iconbtn active" title="Selection mode on">☑ Select</button>
+          </div>
+        </div>
+        <div class="body">
+          <div class="item"><div class="check"></div><div class="body-text">
+            <div class="ref-row"><span class="ref">Isaiah 40:31</span><span class="trans">NKJV</span></div>
+            <p class="verse">But those who wait on the LORD Shall renew their strength…</p>
+          </div></div>
+          <div class="item selected"><div class="check">✓</div><div class="body-text">
+            <div class="ref-row"><span class="ref">Numbers 6:25</span><span class="trans">NKJV</span></div>
+            <p class="verse">The LORD make His face shine upon you, And be gracious to you;</p>
+          </div></div>
+          <div class="item selected"><div class="check">✓</div><div class="body-text">
+            <div class="ref-row"><span class="ref">Matthew 28:19</span><span class="trans">NKJV</span></div>
+            <p class="verse">Go therefore and make disciples of all the nations…</p>
+          </div></div>
+          <div class="item"><div class="check"></div><div class="body-text">
+            <div class="ref-row"><span class="ref">John 3:16</span><span class="trans">KJV</span></div>
+            <p class="verse">For God so loved the world, that he gave his only begotten Son…</p>
+          </div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STATE 3: Action bar -->
+    <div class="col">
+      <h3 style="color:#f87171;">State 3 — Red action bar (replaces header when ≥1 selected)</h3>
+      <div class="why">Compact red bar appears under the header showing the count. Click <strong>Delete (2)</strong> → rows removed; mode exits. <strong>Cancel</strong> clears selection without deleting.</div>
+      <div class="card">
+        <div class="head">
+          <span class="title">Scripture Feed</span>
+          <div class="tabs">
+            <button class="tab active">◷ History</button>
+            <button class="tab">≡ Queue</button>
+            <button class="iconbtn active">☑ Select</button>
+          </div>
+        </div>
+        <div class="selbar">
+          <span class="count">2 selected</span>
+          <div class="btns">
+            <button class="cancel">Cancel</button>
+            <button class="delall">🗑 Delete (2)</button>
+          </div>
+        </div>
+        <div class="body">
+          <div class="item"><div class="check"></div><div class="body-text">
+            <div class="ref-row"><span class="ref">Isaiah 40:31</span><span class="trans">NKJV</span></div>
+            <p class="verse">But those who wait on the LORD Shall renew their strength…</p>
+          </div></div>
+          <div class="item selected"><div class="check">✓</div><div class="body-text">
+            <div class="ref-row"><span class="ref">Numbers 6:25</span><span class="trans">NKJV</span></div>
+            <p class="verse">The LORD make His face shine upon you…</p>
+          </div></div>
+          <div class="item selected"><div class="check">✓</div><div class="body-text">
+            <div class="ref-row"><span class="ref">Matthew 28:19</span><span class="trans">NKJV</span></div>
+            <p class="verse">Go therefore and make disciples of all the nations…</p>
+          </div></div>
+          <div class="item"><div class="check"></div><div class="body-text">
+            <div class="ref-row"><span class="ref">John 3:16</span><span class="trans">KJV</span></div>
+            <p class="verse">For God so loved the world…</p>
+          </div></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <h3 style="color:#cbd5e1; font-size:11px; margin:24px 0 8px; letter-spacing:.08em; text-transform:uppercase;">Same control on Queue tab</h3>
+  <div class="row">
+    <div class="col">
+      <div class="card">
+        <div class="head">
+          <span class="title">Scripture Feed</span>
+          <div class="tabs">
+            <button class="tab">◷ History</button>
+            <button class="tab active">≡ Queue</button>
+            <button class="iconbtn active">☑ Select</button>
+          </div>
+        </div>
+        <div class="selbar">
+          <span class="count">1 selected</span>
+          <div class="btns">
+            <button class="cancel">Cancel</button>
+            <button class="delall">🗑 Delete (1)</button>
+          </div>
+        </div>
+        <div class="body">
+          <div class="qitem"><div class="check"></div><div class="num">1</div><div style="flex:1;"><div class="qtype">verse</div><div class="qtitle">Isaiah 40:31</div></div></div>
+          <div class="qitem selected"><div class="check">✓</div><div class="num">2</div><div style="flex:1;"><div class="qtype">verse</div><div class="qtitle">Numbers 6:25</div></div></div>
+          <div class="qitem"><div class="check"></div><div class="num">3</div><div style="flex:1;"><div class="qtype">media</div><div class="qtitle">Welcome Slide</div></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="col" style="grid-column: span 2;">
+      <div class="legend">
+        <strong>How it behaves</strong>
+        <ul style="margin:8px 0; padding-left:18px;">
+          <li><strong>Default off</strong> — opening the panel looks exactly like today. Just a new small "Select" button at the right side of the tab header.</li>
+          <li><strong>While Select is ON</strong> — single/double-click does NOT preview or go-live. Rows toggle their checkbox instead. This protects Live from accidental clicks during cleanup.</li>
+          <li><strong>Tabs still switch</strong> — clicking History/Queue keeps Select mode on but clears the current selection (since each tab has its own list).</li>
+          <li><strong>Cancel</strong> exits selection mode without deleting. <strong>Delete (N)</strong> removes the chosen rows and auto-exits selection mode. The currently-live verse is unaffected even if it was sent from a deleted History row — Live keeps showing it.</li>
+          <li><strong>Disabled state</strong> — if a tab is empty, the Select button is greyed out.</li>
+        </ul>
+        <strong>Files (3, ~80 lines):</strong>
+        <ol style="margin:8px 0; padding-left:18px;">
+          <li><code style="background:#1f2937; padding:1px 4px; border-radius:3px; color:#fbbf24;">src/lib/store.ts</code> — add <code style="background:#1f2937; padding:1px 4px; border-radius:3px; color:#fbbf24;">removeVerseHistoryAt(indices: number[])</code> + <code style="background:#1f2937; padding:1px 4px; border-radius:3px; color:#fbbf24;">removeScheduleItemsByIds(ids: string[])</code>. (Single-id remove already exists; bulk avoids index-shift bugs.)</li>
+          <li><code style="background:#1f2937; padding:1px 4px; border-radius:3px; color:#fbbf24;">src/components/layout/logos-shell.tsx</code> — Scripture Feed card: add <code style="background:#1f2937; padding:1px 4px; border-radius:3px; color:#fbbf24;">selectMode</code> + <code style="background:#1f2937; padding:1px 4px; border-radius:3px; color:#fbbf24;">selectedKeys</code> local state; render selection bar; gate row click handlers on selectMode.</li>
+          <li><code style="background:#1f2937; padding:1px 4px; border-radius:3px; color:#fbbf24;">src/components/layout/easyworship-shell.tsx</code> — same select/delete UX on the equivalent panel so behavior is consistent across both shells.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

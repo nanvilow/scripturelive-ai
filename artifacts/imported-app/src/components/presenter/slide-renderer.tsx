@@ -390,7 +390,14 @@ function SlideContent({
             : {}
           return (
             <p
-              className={cn('opacity-60 mb-2 shrink-0 m-0 p-0', theme.accent)}
+              // v0.7.194-hotfix.4 — w-full + block so the reference
+              // chyron occupies the full slide width, allowing its
+              // `textAlign` to actually take effect (pre-fix the <p>
+              // shrunk to its text width which made left/right look
+              // identical to center). Mirrors the route.ts CSS change
+              // `.slide-reference{width:100%}` so the projector +
+              // secondary screen + NDI surfaces all agree.
+              className={cn('opacity-60 mb-2 shrink-0 m-0 p-0 w-full block', theme.accent)}
               style={{
                 fontSize: large ? `${refCqi * 0.55}cqi` : '1.0cqi',
                 ...refShadow,
