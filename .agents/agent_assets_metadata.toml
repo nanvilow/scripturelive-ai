@@ -1367,3 +1367,9 @@ id = "Jjyr2Yq7SYliJbuzvBIva"
 uri = "file://screenshots/hotfix4-ndi-align-mockup.jpg"
 type = "image"
 title = "NDI Align dropdown fix — BEFORE/AFTER + 2-line patch"
+
+[[outputs]]
+id = "l7wxSP3GMJ6RnFKhvln1Y"
+uri = "file://screenshots/hotfix4-remove-output-destination-mockup.jpg"
+type = "image"
+title = "Remove Output Destination trio — BEFORE/AFTER + safety trace"
