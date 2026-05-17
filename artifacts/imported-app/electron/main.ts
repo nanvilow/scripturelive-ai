@@ -2817,6 +2817,23 @@ app.whenReady().then(async () => {
           // bytes never change for a given URL — immutable + 1-year max-age
           // lets the Chromium net-cache aggressively reuse decoded frames.
           'Cache-Control': 'public, max-age=31536000, immutable',
+          // v0.7.194-hotfix.12 — CORS headers are LOAD-BEARING. The
+          // renderer-side <video> / <img> elements set crossorigin="anonymous"
+          // (required so the NDI frame-capture canvas stays un-tainted by
+          // cross-origin pixels — without it, drawImage() throws SecurityError
+          // and the NDI sender stops emitting frames). The custom scheme
+          // origin (scripturelive-media://) is cross-origin to the page
+          // origin (http://localhost:<port>), so Chromium issues a strict
+          // CORS request. corsEnabled in registerSchemesAsPrivileged ONLY
+          // marks the scheme as CORS-eligible — the handler MUST still send
+          // ACAO itself. Pre-hotfix.12 this header was missing, every video
+          // silently 4xx'd, v.onerror fired display:none on every surface
+          // (Typography preview, NDI preview, Live preview, main Preview/Live
+          // columns), and the operator saw the empty Scripture AI placeholder
+          // everywhere a video should have been. See GR-A below.
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Access-Control-Allow-Headers': '*',
         }
         if (m) {
           const start = m[1] ? parseInt(m[1], 10) : 0
