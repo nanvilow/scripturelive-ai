@@ -58,6 +58,7 @@ export function BibleLookupCompact() {
     addToVerseHistory,
     settings,
     addScheduleItem,
+    addScheduleItemQuiet,
     navigatorRequestedRef,
     clearNavigatorRequestedRef,
   } = useAppStore()
@@ -144,26 +145,33 @@ export function BibleLookupCompact() {
         content: v.text.split('\n').filter(Boolean),
         background: settings.congregationScreenTheme,
       }
-      addScheduleItem({
-        type: 'verse',
-        title: reference,
-        subtitle: chap.translation,
-        slides: [slide],
-      })
+      // v0.7.194-hotfix.8 — live path uses addScheduleItem (resets
+      // slides/live index by design — operator explicitly chose to go
+      // live); preview path uses addScheduleItemQuiet so the on-air
+      // slide is preserved by the subsequent stageVersePreviewOnly.
       const s = useAppStore.getState()
       if (live) {
-        // Double-click / Enter-twice → go live immediately.
+        addScheduleItem({
+          type: 'verse',
+          title: reference,
+          subtitle: chap.translation,
+          slides: [slide],
+        })
         s.setSlides([slide])
         s.setPreviewSlideIndex(0)
         s.setLiveSlideIndex(0)
         s.setIsLive(true)
       } else {
-        // Single-click → preview only. Preserves current Live slide
-        // when airing (stageVersePreviewOnly appends at index 1).
+        addScheduleItemQuiet({
+          type: 'verse',
+          title: reference,
+          subtitle: chap.translation,
+          slides: [slide],
+        })
         s.stageVersePreviewOnly(slide)
       }
     },
-    [addScheduleItem, settings.congregationScreenTheme],
+    [addScheduleItem, addScheduleItemQuiet, settings.congregationScreenTheme],
   )
 
   // Reload current chapter when translation changes.
@@ -623,6 +631,7 @@ export function ScriptureDetectionCompact() {
     settings,
     updateSettings,
     addScheduleItem,
+    addScheduleItemQuiet,
   } = useAppStore()
 
   const processed = useRef<Set<string>>(new Set())
@@ -1151,7 +1160,7 @@ interface MediaItem {
 const MEDIA_KEY = 'scripturelive.media.v1'
 
 export function MediaLibraryCompact() {
-  const { addScheduleItem, updateSettings, settings } = useAppStore()
+  const { addScheduleItem, addScheduleItemQuiet, updateSettings, settings } = useAppStore()
   const [items, setItems] = useState<MediaItem[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -1272,7 +1281,10 @@ export function MediaLibraryCompact() {
   // decoder.
   const sendMediaToPreview = (m: MediaItem) => {
     const slide = buildMediaSlide(m)
-    addScheduleItem({ type: 'slides', title: m.name, slides: [slide] })
+    // v0.7.194-hotfix.8 — Quiet schedule append so a preview-only
+    // media stage does not yank the on-air slide (`addScheduleItem`
+    // resets liveSlideIndex:-1 by design; preview must not).
+    addScheduleItemQuiet({ type: 'slides', title: m.name, slides: [slide] })
     const s = useAppStore.getState()
     s.setSlides([slide])
     s.setPreviewSlideIndex(0)
