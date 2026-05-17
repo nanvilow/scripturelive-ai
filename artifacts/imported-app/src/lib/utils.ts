@@ -41,14 +41,29 @@ export function isVideoBackground(url: string | null | undefined): boolean {
 // path-traversal guard lives in the protocol handler (electron/main.ts)
 // which refuses any filename containing `..` / `/` / `\`. Do not skip
 // that guard by trusting this rewrite as the only sanitiser.
+// v0.7.196 — ROLLBACK: temporarily disable the scripturelive-media:// URL
+// rewrite. Operator on v0.7.194-hotfix.12 reported the empty "Scripture AI"
+// placeholder bug persisted on ALL 5 video surfaces (Typography preview, NDI
+// Live Preview, Display & Output Live Preview, main Preview/Live columns)
+// even though launch.log proves the protocol handler IS registered at boot
+// (line "[boot] scripturelive-media:// protocol handler registered, uploadsDir=
+// C:\Users\<u>\AppData\Roaming\@workspace\imported-app\uploads") AND
+// SCRIPTURELIVE_UPLOADS_DIR is correctly piped from electron/main.ts L998 into
+// /api/upload route.ts L35 so both writers/readers point at the same dir.
+// The log shows ZERO scripturelive-media:// requests and ZERO /api/upload GET
+// requests in the failing session — meaning the renderer never even issues
+// the request. The bug is somewhere in the renderer/React layer, not in the
+// protocol handler or CORS (hotfix.12's hypothesis was wrong). Until we can
+// instrument the renderer with verbose logging + browser DevTools to find
+// the actual root cause, fall back to the pre-hotfix.10 behaviour: leave the
+// URL as `/api/upload?file=...` so the Next.js HTTP route serves the bytes
+// (slower because all surfaces share one Node event loop, but at least
+// videos PLAY). The protocol handler is left registered in electron/main.ts
+// so a future fix can re-enable rewrite once the renderer bug is identified.
+// GUARD-RAIL: do NOT re-enable rewrite without (a) DevTools-confirmed
+// reproduction of the placeholder bug and a known cause, (b) verbose
+// diagnostic logging in both renderer and protocol handler, (c) operator
+// approval.
 export function resolveMediaUrl(url: string | null | undefined): string {
-  if (!url) return url || ''
-  if (typeof window === 'undefined') return url // SSR — leave HTTP shape
-  const sl = (window as unknown as { scriptureLive?: { isDesktop?: boolean } }).scriptureLive
-  if (!sl?.isDesktop) return url
-  // Data URIs and already-rewritten URLs pass through.
-  if (url.startsWith('data:') || url.startsWith('scripturelive-media://')) return url
-  const m = /^(?:https?:\/\/[^/]+)?\/api\/upload\?file=([^&#]+)/.exec(url)
-  if (!m) return url
-  return `scripturelive-media://uploads/${m[1]}`
+  return url || ''
 }
