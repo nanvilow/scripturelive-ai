@@ -925,7 +925,16 @@ function fitVerseText(){
     }
     __lastIsLT=isLT;
     var minK=0.60;
-    var maxK=isLT?3.50:1.00;
+    // v0.7.194-hotfix.9 Item A — Shrink-only autofit. Previous LT
+    // branch grew up to 3.5× of baseSize which (a) ignored the
+    // operator's Text Size slider and (b) overflowed the LT chyron
+    // producing the "garbled fragments behind ASV" visual bug
+    // operator reported on 2026-05-17. maxK=1.00 means autofit only
+    // intervenes to SHRINK text that would overflow; it never grows
+    // past the natural clamp size the operator dialed in. Applies
+    // identically to Full and Lower-Third — both surfaces now
+    // respect the Typography slider as the upper bound.
+    var maxK=1.00;
     // Binary search the largest scale factor where BOTH dimensions
     // fit. 10 iterations gives ~0.001 precision on [0.60, 2.50] which
     // is well below a single-pixel rounding error at typical sizes.

@@ -319,7 +319,19 @@ export function NdiOutputPanel() {
     (ndiDisplayMode === 'full' && ndiFullScreenBackground === 'transparent')
   useEffect(() => {
     if (!isRunningForEffect || !desktop) return
-    const want = `${ndiDisplayMode}:${lowerThirdPosition}:${sourceName.trim()}:${ndiCaptureFps}:${ndiCaptureResolution}:${ndiFullScreenBackground}`
+    // v0.7.194-hotfix.9 Item E — Restart token now hashes on
+    // wantTransparent (the only BrowserWindow constructor-only flag
+    // that Electron cannot flip at runtime) INSTEAD OF the raw
+    // ndiDisplayMode + ndiFullScreenBackground pair. Net effect:
+    // operator can flip Full ↔ Lower-Third (when both modes are
+    // alpha-keyed, e.g. LT ↔ Full+transparent) without tearing down
+    // the BrowserWindow / NDI sender. OBS / vMix / Wirecast stay
+    // bound to "ScriptureLive AI" across the flip — the renderer
+    // adapts via SSE (route.ts L1103 already prefers live SSE
+    // ndiDisplayMode per hotfix.5). The only restart that remains
+    // is when transparency itself toggles (e.g. LT ↔ Full+themed),
+    // which is genuinely unavoidable.
+    const want = `${wantTransparent}:${lowerThirdPosition}:${sourceName.trim()}:${ndiCaptureFps}:${ndiCaptureResolution}`
     if (restartGuardRef.current === want) return
     if (restartGuardRef.current === '') {
       // First settle — record what's already on the wire so the next

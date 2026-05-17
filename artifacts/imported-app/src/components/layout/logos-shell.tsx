@@ -1990,6 +1990,8 @@ function ScriptureFeedCard() {
     setIsLive,
     stageVersePreviewOnly,
     addScheduleItemQuiet,
+    removeAllVerseHistory,
+    removeAllScheduleItems,
     settings,
     addScheduleItem,
   } = useAppStore()
@@ -2022,6 +2024,32 @@ function ScriptureFeedCard() {
     exitSelectMode()
   }
   const selectedCount = selectedKeys.size
+  // v0.7.194-hotfix.9 Item C — Select All ticks every row in the
+  // active tab using the existing h: / q: discriminator key shape
+  // so the existing deleteSelected handler works unchanged.
+  const selectAllCurrentTab = () => {
+    if (tab === 'history') {
+      setSelectedKeys(new Set(verseHistory.map((_, i) => `h:${i}`)))
+    } else {
+      setSelectedKeys(new Set(schedule.map((s) => `q:${s.id}`)))
+    }
+  }
+  // v0.7.194-hotfix.9 Item C — Delete All wipes the active tab.
+  // History pane: no live state, unconditional wipe. Queue pane:
+  // preserveLive=true so the on-air schedule item stays anchored
+  // and the live broadcast does not get yanked. Confirm dialog
+  // prevents accidental Cmd+click wipes during a service.
+  const deleteAllCurrentTab = () => {
+    const count = tab === 'history' ? verseHistory.length : schedule.length
+    if (count === 0) return
+    const label = tab === 'history' ? `${count} history entries` : `${count} queue items`
+    if (typeof window !== 'undefined' && !window.confirm(`Delete all ${label}? This cannot be undone.`)) {
+      return
+    }
+    if (tab === 'history') removeAllVerseHistory()
+    else removeAllScheduleItems(true)
+    exitSelectMode()
+  }
 
   // v0.7.194-hotfix.4 — Single-click is now PREVIEW-ONLY everywhere.
   // The `live` parameter is retained for future use but no caller in
@@ -2070,11 +2098,14 @@ function ScriptureFeedCard() {
     <Card
       title={selectMode && selectedCount > 0 ? `${selectedCount} selected` : 'Scripture Feed'}
       actions={
-        selectMode && selectedCount > 0 ? (
-          // v0.7.194-hotfix.7 — Red action bar replaces the tab row
-          // when ≥1 row is selected. Tabs are not reachable in this
-          // state (matches operator mockup); Cancel returns to the
-          // normal Select-on header with checkboxes still visible.
+        selectMode ? (
+          // v0.7.194-hotfix.9 Item C — Select-mode action bar now
+          // ALWAYS shows Select All + Delete All; Delete (N) only
+          // appears once ≥1 row is ticked. Cancel returns to the
+          // normal Select-on header. Previous-hotfix.7 layout
+          // conditionally swapped to red bar only at selectedCount>0
+          // which hid Select All when the operator wanted "tick
+          // everything in one click then delete."
           <div className="flex items-center gap-1.5">
             <button
               type="button"
@@ -2085,11 +2116,41 @@ function ScriptureFeedCard() {
             </button>
             <button
               type="button"
-              onClick={deleteSelected}
-              className="h-6 px-2 inline-flex items-center gap-1 rounded text-[10px] font-semibold text-white bg-rose-600 hover:bg-rose-500 border border-rose-500/60"
+              onClick={selectAllCurrentTab}
+              disabled={currentTabEmpty}
+              className={cn(
+                'h-6 px-2 inline-flex items-center gap-1 rounded text-[10px] font-semibold border transition-colors',
+                'bg-sky-700/30 border-sky-500/60 text-sky-100 hover:bg-sky-600/40',
+                currentTabEmpty && 'opacity-40 cursor-not-allowed',
+              )}
+              title="Tick every row in this tab"
+            >
+              <CheckSquare className="h-3 w-3" />
+              Select All
+            </button>
+            {selectedCount > 0 && (
+              <button
+                type="button"
+                onClick={deleteSelected}
+                className="h-6 px-2 inline-flex items-center gap-1 rounded text-[10px] font-semibold text-white bg-rose-600 hover:bg-rose-500 border border-rose-500/60"
+              >
+                <Trash2 className="h-3 w-3" />
+                Delete ({selectedCount})
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={deleteAllCurrentTab}
+              disabled={currentTabEmpty}
+              className={cn(
+                'h-6 px-2 inline-flex items-center gap-1 rounded text-[10px] font-semibold border transition-colors',
+                'bg-rose-900/40 border-rose-600/60 text-rose-100 hover:bg-rose-800/60',
+                currentTabEmpty && 'opacity-40 cursor-not-allowed',
+              )}
+              title={`Wipe all ${tab === 'history' ? 'history' : 'queue'} entries (confirmed)`}
             >
               <Trash2 className="h-3 w-3" />
-              Delete ({selectedCount})
+              Delete All
             </button>
           </div>
         ) : (
@@ -2312,6 +2373,7 @@ function DetectedVersesCard() {
     setPreviewSlideIndex,
     setLiveSlideIndex,
     setIsLive,
+    stageSlidesPreviewOnly,
     settings,
     requestNavigatorRef,
   } = useAppStore()
@@ -2365,14 +2427,22 @@ function DetectedVersesCard() {
     // schedule keeps legacy behaviour from pre-hotfix.8 detected-row
     // clicks until operator explicitly asks for a change).
     if (mode === 'preview') {
+      // v0.7.194-hotfix.9 Item B — Route preview mode through
+      // stageSlidesPreviewOnly so the on-air slide is preserved.
+      // Pre-hotfix.9 this called setSlides(slides) which hardcoded
+      // liveSlideIndex:-1 → live yanked → operator-reported
+      // "snap-back to live" bug across all 5 columns (Auto Verse
+      // Match, Bible Reference Quoted, Suggested Verses, Chapter
+      // Navigator, Scripture Feed). Quiet schedule append still
+      // runs first so the verse appears in history without
+      // changing what's currently broadcasting.
       addScheduleItemQuiet({
         type: 'verse',
         title: v.reference,
         subtitle: v.translation,
         slides,
       })
-      setSlides(slides)
-      setPreviewSlideIndex(0)
+      stageSlidesPreviewOnly(slides)
     } else {
       addScheduleItem({
         type: 'verse',
@@ -2441,7 +2511,12 @@ function DetectedVersesCard() {
             sendDetected({ ...v, confidence: Math.max(0.5, v.confidence) }, 'preview')
             requestNavigatorRef(v.reference)
           } else {
-            sendDetected(v, 'schedule')
+            // v0.7.194-hotfix.9 Item B — Live-column single-click now
+            // PREVIEWS (was 'schedule' which appended silently with
+            // no preview render). Operator's mental model: one click
+            // anywhere = preview without yanking live; double-click
+            // promotes to live. Unified across all 5 columns.
+            sendDetected(v, 'preview')
             requestNavigatorRef(v.reference)
           }
         }}
