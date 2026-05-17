@@ -1379,3 +1379,9 @@ id = "d6j0XcMptHSxXdq7nMrec"
 uri = "file://screenshots/hotfix4-remove-theme-picker-mockup.jpg"
 type = "image"
 title = "Remove Congregation Screen Theme picker — BEFORE/AFTER + safety trace"
+
+[[outputs]]
+id = "2BlJOXGg2kMtHoODBw8wf"
+uri = "file://screenshots/hotfix4-theme-designer-mockup.jpg"
+type = "image"
+title = "Theme Designer — audit (1 dead / 2 work), proposed fix"
