@@ -90,7 +90,15 @@ const NUM_HOMOPHONES: Record<string, string> = {
  * (no Bible chapter or verse exceeds 176, the max in Psalm 119).
  */
 export function wordsToNumbers(text: string): string {
-  const tokens = text.split(/(\s+|[,;:.?!])/) // keep separators
+  // v0.7.199 — Unicode NFC normalisation. Twi (twiasante) and Ewe use
+  // diacritics ("ɛ", "ɔ", "ŋ", combining tone marks) which can arrive
+  // from speech engines / clipboard paste in either NFC or NFD form.
+  // Without normalisation the same logical word can compare unequal at
+  // the byte level → the book-mapping alias table (loaded as NFC at
+  // bundle time) misses the lookup. Cheap (~µs for typical speech
+  // chunk) and idempotent.
+  const normalised = text.normalize('NFC')
+  const tokens = normalised.split(/(\s+|[,;:.?!])/) // keep separators
   const out: string[] = []
   let i = 0
   while (i < tokens.length) {
@@ -166,21 +174,62 @@ export function wordsToNumbers(text: string): string {
 // ─────────────────────────────────────────────────────────────────────
 // Filler stripping
 // ─────────────────────────────────────────────────────────────────────
-const FILLER_PHRASES = [
-  "let us read", "let's read", "lets read", "if you have your bibles",
-  "if you have your bible", "open your bibles to", "open your bible to",
-  "open to", "turn with me to", "turn to", "please turn to",
-  "we'll be reading", "we will be reading", "the reading is from",
-  "the scripture for today", "today's scripture is",
-  "if you'd like to follow along", "follow along with me",
-  "read along with me", "in your bible", "the word of god",
-]
+// v0.7.199 — Per-locale filler dictionaries. Pre-v0.7.199 this was a
+// single English-only array. Non-English preachers saying "abrɛ a
+// woabue wo Bible" (Twi: "when you have opened your Bible") got zero
+// filler stripped → the tokenizer fed the raw phrase into the book
+// matcher → lower detection confidence on the verse that followed.
+//
+// New shape: Record<locale, string[]>. Lookup precedence in
+// stripFiller:
+//   1. Strip the active-locale fillers first (if locale known)
+//   2. Always also strip the English fillers, because English Bible
+//      vocabulary ("read", "turn to", "word of god") shows up
+//      mid-sentence in many bilingual services where the preacher
+//      switches languages.
+//
+// Twi / Ewe buckets are intentionally empty stubs — the operator (or
+// a future native-speaker contributor) populates them as field data
+// arrives. Empty buckets are a no-op, never a regression.
+const FILLER_BY_LOCALE: Record<string, string[]> = {
+  en: [
+    "let us read", "let's read", "lets read", "if you have your bibles",
+    "if you have your bible", "open your bibles to", "open your bible to",
+    "open to", "turn with me to", "turn to", "please turn to",
+    "we'll be reading", "we will be reading", "the reading is from",
+    "the scripture for today", "today's scripture is",
+    "if you'd like to follow along", "follow along with me",
+    "read along with me", "in your bible", "the word of god",
+  ],
+  // Twi (Akan / twiasante translation). Empty until a native-speaker
+  // contributor adds equivalents like "bue wo Bible", "monkenkan", etc.
+  tw: [],
+  // Ewe. Empty until populated. Same model as `tw`.
+  ee: [],
+}
 
-function stripFiller(text: string): string {
+// Kept for legacy callers (preacher-phrases test fixture imports this
+// indirectly via the older API). Always points at the English bucket
+// so existing detection behaviour is unchanged.
+const FILLER_PHRASES = FILLER_BY_LOCALE.en
+
+function stripFiller(text: string, locale?: string): string {
   let out = text.toLowerCase()
+  // Strip locale-specific fillers first when known.
+  if (locale) {
+    const code = locale.toLowerCase().slice(0, 2)
+    const localized = FILLER_BY_LOCALE[code]
+    if (localized && localized !== FILLER_PHRASES) {
+      for (const p of localized) {
+        while (out.includes(p)) out = out.replace(p, ' ')
+      }
+    }
+  }
+  // Always also strip English fillers — bilingual services routinely
+  // mix English Bible vocabulary into non-English preaching, and the
+  // English bucket is the authoritative source of truth for the
+  // current Bible corpus (KJV/NIV/ESV/NLT/NKJV/AMP all English).
   for (const p of FILLER_PHRASES) {
-    // Use a literal replace (allowing repeated matches) so we don't
-    // need to escape regex metacharacters in the phrase list.
     while (out.includes(p)) out = out.replace(p, ' ')
   }
   return out.replace(/\s+/g, ' ').trim()
