@@ -685,29 +685,23 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   content: textOut.split('\n').filter(Boolean),
                   background: s.settings.congregationScreenTheme,
                 }
-                // v0.7.194-hotfix.11 Item #4 — preserve manual preview.
-                // If operator has staged something in preview that isn't
-                // live (previewSlideIndex >= 0 && != liveSlideIndex), the
-                // AI-driven advance MUST NOT yank it. Quiet-append to
-                // schedule + toast instead. Operator keeps control.
-                const __st0 = useAppStore.getState()
-                if (__st0.previewSlideIndex >= 0 && __st0.previewSlideIndex !== __st0.liveSlideIndex) {
-                  __st0.addScheduleItemQuiet({
-                    type: 'verse',
-                    title: slideNew.title,
-                    subtitle: slideNew.subtitle,
-                    slides: [slideNew],
-                  })
-                  toast(`AI: staged ${slideNew.title} (preview preserved)`, { duration: 2200, position: 'bottom-right' })
-                  break
-                }
-                const curSlides = useAppStore.getState().slides
-                const nextSlides = curSlides.length > 0 ? [...curSlides, slideNew] : [slideNew]
-                const idx = nextSlides.length - 1
-                useAppStore.getState().setSlides(nextSlides)
-                useAppStore.getState().setPreviewSlideIndex(idx)
-                useAppStore.getState().setLiveSlideIndex(idx)
-                useAppStore.getState().setIsLive(true)
+                // v0.7.208 — Voice commands target LIVE ONLY. Preview
+                // is reserved for operator manual control. Use the
+                // setLiveAuto direct-ref path (same one the AI auto-
+                // detect useEffect uses in logos-shell.tsx) so the
+                // operator's previewSlideIndex / pinnedPreviewSlide
+                // are NEVER touched by a voice-triggered verse push.
+                //
+                // Pre-208 this branch did setSlides + setPreviewSlideIndex
+                // + setLiveSlideIndex, which clobbered the operator's
+                // preview. The v0.7.194-hotfix.11 "preserve manual
+                // preview" guard tried to mitigate by routing to
+                // addScheduleItemQuiet when preview was off-live, but
+                // that meant the voice-stepped verse silently went to
+                // the schedule instead of live — operator's actual
+                // ask ("next verse" → put John 3:4 on screen) failed.
+                // setLiveAuto fixes both: live updates, preview stays.
+                useAppStore.getState().setLiveAuto(slideNew)
                 useAppStore.getState().setLiveActiveVerseIndex(0)
                 // v0.7.24 — Surface a small toast when we rolled
                 // over so the operator knows the chapter changed.
@@ -728,11 +722,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         }
 
         // (3) Fallback: slide-deck advance (legacy behaviour).
+        // v0.7.208 — Voice "next slide" no longer drags previewSlideIndex
+        // along; it only advances LIVE. Operator's preview stays put
+        // unless they manually move it.
         if (slides.length) {
           const nextI = dir === 1
             ? Math.min(slides.length - 1, Math.max(0, liveIdx + 1))
             : Math.max(0, liveIdx - 1)
-          s.setPreviewSlideIndex(nextI)
           s.setLiveSlideIndex(nextI)
           s.setLiveActiveVerseIndex(0)
         }
@@ -769,20 +765,10 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             content: textOut.split('\n').filter(Boolean),
             background: s.settings.congregationScreenTheme,
           }
-          // v0.7.194-hotfix.11 Item #4 — preserve manual preview (see L691).
-          const __st1 = useAppStore.getState()
-          if (__st1.previewSlideIndex >= 0 && __st1.previewSlideIndex !== __st1.liveSlideIndex) {
-            __st1.addScheduleItemQuiet({ type: 'verse', title: slide.title, subtitle: slide.subtitle, slides: [slide] })
-            toast(`AI: staged ${slide.title} (preview preserved)`, { duration: 2200, position: 'bottom-right' })
-            break
-          }
-          const cur = useAppStore.getState().slides
-          const next = cur.length > 0 ? [...cur, slide] : [slide]
-          const idx = next.length - 1
-          useAppStore.getState().setSlides(next)
-          useAppStore.getState().setPreviewSlideIndex(idx)
-          useAppStore.getState().setLiveSlideIndex(idx)
-          useAppStore.getState().setIsLive(true)
+          // v0.7.208 — Voice "go to <ref>" targets LIVE ONLY via the
+          // setLiveAuto direct-ref path. See the matching block in
+          // next_verse for the full rationale. Operator preview stays.
+          useAppStore.getState().setLiveAuto(slide)
           useAppStore.getState().setLiveActiveVerseIndex(0)
         }
         break

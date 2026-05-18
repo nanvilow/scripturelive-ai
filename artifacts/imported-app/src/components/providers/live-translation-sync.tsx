@@ -44,9 +44,27 @@ export function LiveTranslationSync() {
   useEffect(() => {
     const handle = async () => {
       const s = useAppStore.getState()
+      // v0.7.208 — AI-detection-aware translation swap.
+      //
+      // Pre-208 this watcher ONLY rebuilt `slides[liveSlideIndex]`. But
+      // AI auto-detect (v0.7.203's `setLiveAuto`) writes to the
+      // `liveSlide` DIRECT REF and never touches `liveSlideIndex` (it
+      // stays at -1 or some stale operator value). The output payload
+      // reads `liveSlide ?? slides[liveSlideIndex]` (see output-payload.ts
+      // L22-33) so the AI ref wins on screen; meanwhile the legacy
+      // replaceSlide path here was mutating a `slides[idx]` slot that
+      // wasn't even being rendered, leaving live frozen at the
+      // pre-switch translation while preview/deck showed the new one.
+      //
+      // v0.7.208 prefers the AI ref when present: rebuild `liveSlide`
+      // in place via `setLiveAuto(rebuilt)`. Falls through to the
+      // legacy `replaceSlide(slides[liveSlideIndex])` path only when
+      // there is no AI ref (i.e. operator-driven manual slide).
+      const liveRef = s.liveSlide
+      const useLiveRef = liveRef !== null
       const idx = s.liveSlideIndex
-      if (idx < 0 || idx >= s.slides.length) return
-      const slide = s.slides[idx]
+      const slide: typeof liveRef = useLiveRef ? liveRef : (idx >= 0 && idx < s.slides.length ? s.slides[idx] : null)
+      if (!slide) return
       // We can only swap translations for verse-type slides where
       // the title looks like a Bible reference.
       if (slide.type !== 'verse') return
@@ -55,9 +73,38 @@ export function LiveTranslationSync() {
       const target = s.selectedTranslation
       if (!target || slide.subtitle === target) return
 
-      const key = `${idx}::${slide.id}::${target}`
+      // The cache key distinguishes the two render paths so a switch
+      // immediately after AI detection (liveSlide set) doesn't get
+      // swallowed by a stale key from a prior slides[]-path attempt.
+      const path = useLiveRef ? 'ref' : `idx:${idx}`
+      const key = `${path}::${slide.id}::${target}`
       if (lastKeyRef.current === key) return
       lastKeyRef.current = key
+
+      const commit = (textOut: string, subtitle: string) => {
+        const after = useAppStore.getState()
+        // Re-verify the same target slide is still live before
+        // committing — guards against a stale fetch landing after
+        // operator swapped verses or after a newer translation switch.
+        if (useLiveRef) {
+          const cur = after.liveSlide
+          if (!cur || cur.id !== slide.id) return
+          if (after.selectedTranslation !== target) return
+          after.setLiveAuto({
+            ...cur,
+            content: textOut.split('\n').filter(Boolean),
+            subtitle,
+          })
+        } else {
+          if (after.liveSlideIndex !== idx) return
+          if (after.slides[idx]?.id !== slide.id) return
+          if (after.selectedTranslation !== target) return
+          after.replaceSlide(idx, {
+            content: textOut.split('\n').filter(Boolean),
+            subtitle,
+          })
+        }
+      }
 
       // ─── FAST PATH: bundled translation, synchronous lookup ───
       if (isTranslationBundled(target)) {
@@ -73,10 +120,7 @@ export function LiveTranslationSync() {
           }
           if (textOut) {
             // No await between read and commit — instant swap.
-            s.replaceSlide(idx, {
-              content: textOut.split('\n').filter(Boolean),
-              subtitle: target,
-            })
+            commit(textOut, target)
             return
           }
         }
@@ -86,14 +130,7 @@ export function LiveTranslationSync() {
       try {
         const verse = await fetchBibleVerse(slide.title, target)
         if (!verse) return
-        const after = useAppStore.getState()
-        if (after.liveSlideIndex !== idx) return
-        if (after.slides[idx]?.id !== slide.id) return
-        if (after.selectedTranslation !== target) return
-        after.replaceSlide(idx, {
-          content: verse.text.split('\n').filter(Boolean),
-          subtitle: verse.translation,
-        })
+        commit(verse.text, verse.translation)
       } catch {
         // Silent — operator can manually re-search if the network is
         // down or the translation isn't available for this passage.
@@ -102,6 +139,37 @@ export function LiveTranslationSync() {
 
     void handle()
     const unsub = useAppStore.subscribe(() => { void handle() })
+
+    // v0.7.208 — dev-only bridge for the runtime proof (.local/proof-v208.mjs).
+    // Stripped in production by `process.env.NODE_ENV === 'production'` guard,
+    // which Next.js dead-code-eliminates at build time.
+    if (process.env.NODE_ENV !== 'production' && typeof window !== 'undefined') {
+      (window as unknown as { __SL_DEV_BRIDGE?: unknown }).__SL_DEV_BRIDGE = {
+        setLiveAuto: (slide: Parameters<typeof useAppStore.getState>[0] extends infer _ ? Parameters<ReturnType<typeof useAppStore.getState>['setLiveAuto']>[0] : never) =>
+          useAppStore.getState().setLiveAuto(slide),
+        pinPreviewSlide: (slide: Parameters<ReturnType<typeof useAppStore.getState>['pinPreviewSlide']>[0]) =>
+          useAppStore.getState().pinPreviewSlide(slide),
+        setSelectedTranslation: (t: string) =>
+          useAppStore.getState().setSelectedTranslation(t),
+        clearAll: () => {
+          const st = useAppStore.getState()
+          st.clearLiveAuto()
+          st.clearPinnedPreview()
+        },
+        snapshot: () => {
+          const st = useAppStore.getState()
+          return {
+            liveSlide: st.liveSlide ? { id: st.liveSlide.id, title: st.liveSlide.title, subtitle: st.liveSlide.subtitle, contentFirst: st.liveSlide.content?.[0]?.slice(0, 60) } : null,
+            pinnedPreviewSlide: st.pinnedPreviewSlide ? { id: st.pinnedPreviewSlide.id, title: st.pinnedPreviewSlide.title, subtitle: st.pinnedPreviewSlide.subtitle } : null,
+            previewSlideIndex: st.previewSlideIndex,
+            liveSlideIndex: st.liveSlideIndex,
+            selectedTranslation: st.selectedTranslation,
+            slidesLen: st.slides.length,
+          }
+        },
+      }
+    }
+
     return () => { unsub() }
   }, [])
 
