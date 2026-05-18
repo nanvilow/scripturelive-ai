@@ -2084,12 +2084,33 @@ document.addEventListener('mousemove',function(){
 // it the very first paint after the iframe loads would be the
 // splash watermark until the operator next mutated a setting.
 if(IS_PREVIEW){
+  // v0.7.200-hotfix.3 — Track latest rev to ignore stale/out-of-order
+  // postMessages from the parent. The parent now stamps each payload
+  // with a monotonic __rev counter (OutputPreview.post()). Messages
+  // with rev <= lastPreviewRev are dropped. Messages with newer rev
+  // ALWAYS force a render by resetting lastRenderKey to '' so the
+  // cache-key bailout at render() L1207 cannot skip the new payload.
+  // Together this kills the "preview snaps back to live on single
+  // click" bug from two angles: out-of-order delivery (rev gate) and
+  // cache-key false-positives (forced reset).
+  var lastPreviewRev = -1;
   window.addEventListener('message',function(ev){
     try{
       var d=ev&&ev.data;
       if(!d||typeof d!=='object')return;
       if(d.__sl_preview!==1)return;
-      if(d.payload)applyRender(d.payload);
+      var rev=(typeof d.__rev==='number')?d.__rev:Number.MAX_SAFE_INTEGER;
+      if(rev<=lastPreviewRev)return;
+      lastPreviewRev=rev;
+      if(d.payload){
+        // Force-bypass the render cache for every accepted preview
+        // payload — the parent only sends when state actually changed,
+        // so re-rendering unconditionally is safe and prevents any
+        // shape-equivalent cache collisions.
+        lastRenderKey='';
+        try{ applyRender(d.payload); }
+        catch(_err){ try{ console.error('[applyRender THROW]', _err); }catch(__){} }
+      }
     }catch(e){}
   });
   try{

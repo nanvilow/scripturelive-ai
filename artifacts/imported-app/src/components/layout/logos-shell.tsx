@@ -1151,7 +1151,7 @@ function PreviewCard() {
               // /api/output/congregation route.
               <StableStage isLive={false}>
                 <OutputPreview
-                  slideOverride={effectivePreviewSlide}
+                  derivePreview
                   hideModeBadge
                   className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
                   aspectOverride="16 / 9"

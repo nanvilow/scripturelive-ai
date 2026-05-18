@@ -41,6 +41,7 @@ export function OutputPreview({
   label,
   sample,
   slideOverride,
+  derivePreview = false,
   mirrorLive = false,
   hideModeBadge = false,
   className,
@@ -50,6 +51,20 @@ export function OutputPreview({
   mode?: 'auto' | 'full' | 'lower-third'
   label?: string
   sample?: { reference: string; text: string }
+  /**
+   * v0.7.200-hotfix.2 — When true, the iframe always renders
+   * `slides[previewSlideIndex]` read DIRECTLY from store state at
+   * subscriber-fire time (via useAppStore.getState()). This is the
+   * snap-back fix: the previous slideOverride prop path captured
+   * the slide via React closure, which went stale during the
+   * synchronous Zustand notification window before React could
+   * re-render. Reading from getState() inside the subscriber
+   * always returns the freshest slide, eliminating the stale-prop
+   * race that caused operator-visible "preview snaps back to live
+   * on single-click". The media-paused tweak (preview audio muted
+   * when same media is on Live) is applied inline.
+   */
+  derivePreview?: boolean
   /**
    * v0.7.198 — When true, append ?noMedia=1 to the iframe URL so the
    * renderer skips the <video>/<img> branch and shows ONLY the
@@ -88,6 +103,41 @@ export function OutputPreview({
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const readyRef = useRef(false)
   const pendingRef = useRef<OutputPayload | null>(null)
+  // v0.7.200-hotfix.3 — Monotonic rev counter stamped on every payload
+  // sent to the iframe. The iframe drops messages with rev <= last
+  // seen, killing any out-of-order delivery race. Combined with the
+  // rAF coalescer below, this guarantees the iframe always ends on
+  // the LATEST state regardless of how many synchronous store
+  // mutations occurred in a single tick.
+  const revRef = useRef(0)
+  const rafPendingRef = useRef<number | null>(null)
+  // v0.7.200-hotfix.2 — Refs that ALWAYS hold the latest props.
+  //
+  // The subscriber registered with useAppStore.subscribe() below
+  // captures props via closure. Zustand notifies subscribers
+  // SYNCHRONOUSLY when the store changes — before React has
+  // re-rendered the parent that owns this OutputPreview. That
+  // means when the operator single-clicks a verse in Chapter
+  // Navigator → stageVersePreviewOnly mutates the store → the
+  // SUBSCRIBER fires immediately with the OLD slideOverride from
+  // the previous render's closure → buildPreviewPayload posts the
+  // STALE slide (the live one) into the Preview iframe → operator
+  // sees the preview "snap back" to live within milliseconds. The
+  // subsequent re-render eventually swaps in the correct slide,
+  // but any further store mutation in the gap re-poisons the
+  // iframe. Mirroring props into refs (synchronously, every render)
+  // gives buildPreviewPayload a stable read of the LATEST prop
+  // values regardless of when the subscriber fires.
+  const slideOverrideRef = useRef<Slide | null | undefined>(slideOverride)
+  const mirrorLiveRef = useRef<boolean>(mirrorLive)
+  const sampleRefRef = useRef<string | undefined>(sample?.reference)
+  const sampleTextRef = useRef<string | undefined>(sample?.text)
+  const derivePreviewRef = useRef<boolean>(derivePreview)
+  slideOverrideRef.current = slideOverride
+  mirrorLiveRef.current = mirrorLive
+  sampleRefRef.current = sample?.reference
+  sampleTextRef.current = sample?.text
+  derivePreviewRef.current = derivePreview
 
   // Mirror the renderer's applyRatio() so the iframe wrapper is the
   // right shape — the iframe itself fills 100 % of the wrapper, and
@@ -130,16 +180,69 @@ export function OutputPreview({
   const buildPreviewPayload = (): OutputPayload => {
     const s = useAppStore.getState()
     const payload = buildOutputPayload(s)
+    // v0.7.200-hotfix.2 — Read every prop from a ref so the
+    // subscriber callback (which captures this function via closure)
+    // ALWAYS gets the latest value, even when Zustand fires it
+    // synchronously before React has re-rendered the parent.
+    const slideOverrideLatest = slideOverrideRef.current
+    const mirrorLiveLatest = mirrorLiveRef.current
+    const sampleRefLatest = sampleRefRef.current
+    const sampleTextLatest = sampleTextRef.current
+    const derivePreviewLatest = derivePreviewRef.current
+    // v0.7.200-hotfix.2 — derivePreview=true: read the preview slide
+    // DIRECTLY from store state at this very moment. Bypasses any
+    // prop closure (which goes stale during synchronous Zustand
+    // notifications) — guarantees the iframe sees the operator's
+    // most-recent click outcome. This is THE snap-back fix.
+    if (derivePreviewLatest) {
+      const prevIdx = s.previewSlideIndex
+      const liveIdx = s.liveSlideIndex
+      const previewSlide = prevIdx >= 0 ? (s.slides[prevIdx] ?? null) : null
+      if (previewSlide) {
+        // Match the legacy effectivePreviewSlide (logos-shell L977)
+        // mediaPaused tweak: when the same media slide is on both
+        // Preview and Live, mute the preview's audio to avoid the
+        // doubled-audio operator complaint that v0.7.186 fixed.
+        const liveSlide = liveIdx >= 0 ? (s.slides[liveIdx] ?? null) : null
+        const sameMediaOnLive = !!(
+          previewSlide.type === 'media' &&
+          liveSlide && liveSlide.type === 'media' &&
+          liveSlide.mediaUrl &&
+          previewSlide.mediaUrl === liveSlide.mediaUrl
+        )
+        const stagedSlide = sameMediaOnLive
+          ? { ...previewSlide, mediaPaused: true }
+          : previewSlide
+        const settingsBlock = (payload as { settings: OutputPayload['settings'] }).settings
+        const audio = (payload as { audio: OutputPayload['audio'] }).audio
+        return {
+          type: 'slide' as const,
+          slide: stagedSlide,
+          nextSlide: null,
+          slideIndex: 0,
+          slideTotal: 1,
+          sermonNotes: undefined,
+          countdownEndAt: null,
+          isLive: false,
+          showStartupLogo: false,
+          displayMode: payload.displayMode,
+          settings: settingsBlock,
+          blanked: false,
+          audio,
+        } as OutputPayload
+      }
+      // Fall through to synth/sample path when nothing is queued.
+    }
     // v0.7.158 — slideOverride lets the caller (Main Preview pane)
     // splice their own slide (e.g. the queued previewSlide) into the
     // payload while still inheriting every other field (settings,
     // displayMode, audio, etc.) from the live store.
-    if (slideOverride) {
+    if (slideOverrideLatest) {
       const settingsBlock = (payload as { settings: OutputPayload['settings'] }).settings
       const audio = (payload as { audio: OutputPayload['audio'] }).audio
       return {
         type: 'slide' as const,
-        slide: slideOverride,
+        slide: slideOverrideLatest,
         nextSlide: null,
         slideIndex: 0,
         slideTotal: 1,
@@ -156,7 +259,7 @@ export function OutputPreview({
     // v0.7.158 — mirrorLive=true: pass through unchanged so the Live
     // Display pane is byte-identical to the projector (respects
     // blanked transport button + startup-logo from real state).
-    if (mirrorLive) {
+    if (mirrorLiveLatest) {
       return payload
     }
     if (payload.type === 'slide' && payload.slide) {
@@ -177,7 +280,7 @@ export function OutputPreview({
       null
     const fallback = liveVerse ?? currentVerse ?? null
     const ref =
-      sampleRef ||
+      sampleRefLatest ||
       fallback?.reference ||
       (fallback
         ? `${fallback.book} ${fallback.chapter}:${fallback.verseStart}${fallback.verseEnd ? `-${fallback.verseEnd}` : ''}`
@@ -185,7 +288,7 @@ export function OutputPreview({
       stageSlide?.title ||
       'John 3:16'
     const body =
-      sampleText ||
+      sampleTextLatest ||
       fallback?.text ||
       (stageSlide && Array.isArray(stageSlide.content) && stageSlide.content.length
         ? stageSlide.content.join(' ')
@@ -220,17 +323,40 @@ export function OutputPreview({
     } as OutputPayload
   }
 
-  const post = (payload: OutputPayload) => {
+  // v0.7.200-hotfix.3 — Low-level send. Stamps every outgoing payload
+  // with a fresh monotonic __rev so the iframe can drop any stale /
+  // out-of-order delivery (see route.ts L2098 message handler).
+  const sendNow = (payload: OutputPayload) => {
     const w = iframeRef.current?.contentWindow
     if (!w || !readyRef.current) {
       pendingRef.current = payload
       return
     }
+    revRef.current += 1
     try {
-      w.postMessage({ __sl_preview: 1, payload }, '*')
+      w.postMessage({ __sl_preview: 1, __rev: revRef.current, payload }, '*')
     } catch {
       pendingRef.current = payload
     }
+  }
+  // v0.7.200-hotfix.3 — Coalesce posts via rAF. Zustand may fire the
+  // subscriber multiple times per click (sibling mutations + the
+  // stage call), and posting on every fire wastes work AND opens a
+  // window where an out-of-order message could win. The rAF coalesce
+  // ensures only ONE post per frame, with the LATEST state read from
+  // the store at flush time. No 100ms guard re-post: any subsequent
+  // store mutation will trigger another subscriber fire → another
+  // rAF schedule → another post, so a follow-up mutation is already
+  // covered by the existing subscribe path.
+  const post = (payload: OutputPayload) => {
+    pendingRef.current = payload
+    if (rafPendingRef.current !== null) return
+    rafPendingRef.current = requestAnimationFrame(() => {
+      rafPendingRef.current = null
+      const latest = buildPreviewPayload()
+      pendingRef.current = null
+      sendNow(latest)
+    })
   }
 
   // Handshake: the route's preview branch posts {__sl_preview_ready:1}
@@ -247,25 +373,30 @@ export function OutputPreview({
       readyRef.current = true
       const flush = pendingRef.current ?? buildPreviewPayload()
       pendingRef.current = null
-      try {
-        ;(ev.source as Window).postMessage(
-          { __sl_preview: 1, payload: flush },
-          '*',
-        )
-      } catch {
-        /* iframe may have been unmounted mid-handshake */
-      }
+      // Route the handshake flush through sendNow so it carries a
+      // monotonic __rev (the iframe drops anything <= last seen).
+      sendNow(flush)
     }
     window.addEventListener('message', onMsg)
-    return () => window.removeEventListener('message', onMsg)
+    return () => {
+      window.removeEventListener('message', onMsg)
+      if (rafPendingRef.current !== null) cancelAnimationFrame(rafPendingRef.current)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Subscribe to the store and rebroadcast on every mutation. Belt-
-  // and-braces: also flush in iframe.onLoad in case the handshake
-  // ping was missed (e.g. parent listener attached after the iframe
-  // already posted ready, which can happen on React strict-mode
-  // double-mounts).
+  // v0.7.200-hotfix.2 — Subscribe to the store ONCE on mount (not on
+  // every prop change). Because buildPreviewPayload now reads every
+  // prop from a ref (slideOverrideRef etc.), the subscriber callback
+  // ALWAYS posts the latest values regardless of when Zustand fires
+  // it — eliminating the stale-closure race where a sync store
+  // mutation would post the OLD slideOverride to the iframe between
+  // React renders, causing the operator-visible "preview snaps back
+  // to live on single-click" bug.
+  //
+  // We still need a separate post when props (slideOverride etc.)
+  // change WITHOUT a corresponding store mutation — handled by the
+  // second effect below.
   useEffect(() => {
     pendingRef.current = buildPreviewPayload()
     post(pendingRef.current)
@@ -275,24 +406,35 @@ export function OutputPreview({
     })
     return () => unsubscribe()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    // v0.7.159 — depend on the JSON-serialized slide so content edits
-    // (operator changes the title / body text on the queued slide
-    // without changing its id) trigger an immediate re-post. Slides
-    // are tiny objects so the stringify cost is negligible.
-  }, [sampleRef, sampleText, mode, slideOverride ? JSON.stringify(slideOverride) : null, mirrorLive])
+  }, [mode])
+
+  // v0.7.200-hotfix.2 — Re-post when props change. slideOverride
+  // arriving as a NEW slide doesn't trigger a store mutation (it's
+  // derived from store but flows in as a prop), so without this
+  // effect the iframe would only see the new slide on the NEXT
+  // store mutation. Refs have already been synchronously updated
+  // above (slideOverrideRef.current = slideOverride) at the top of
+  // render, so by the time this effect runs the ref already holds
+  // the latest value — buildPreviewPayload will see it.
+  useEffect(() => {
+    const p = buildPreviewPayload()
+    post(p)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sampleRef, sampleText, slideOverride ? JSON.stringify(slideOverride) : null, mirrorLive, derivePreview])
 
   const onIframeLoad = () => {
     // Defensive: if the handshake message was already sent before
     // the parent listener attached, re-flush from this side.
-    const w = iframeRef.current?.contentWindow
-    if (!w) return
-    const payload = buildPreviewPayload()
-    try {
-      w.postMessage({ __sl_preview: 1, payload }, '*')
-      readyRef.current = true
-    } catch {
-      pendingRef.current = payload
-    }
+    // v0.7.200-hotfix.3 — Route through sendNow so this load-time
+    // flush carries a monotonic __rev. A raw postMessage here would
+    // arrive at the iframe handler with no rev, which (per route.ts
+    // L2114) defaults to Number.MAX_SAFE_INTEGER and would pin
+    // lastPreviewRev at the ceiling — silently dropping every
+    // subsequent real message. Architect caught this in pre-ship
+    // review.
+    if (!iframeRef.current?.contentWindow) return
+    readyRef.current = true
+    sendNow(buildPreviewPayload())
   }
 
   // v0.7.177 — Render the iframe at NATIVE 1920×1080 (or matching
