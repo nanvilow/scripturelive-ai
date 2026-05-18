@@ -512,6 +512,23 @@ interface AppState {
   liveSlideIndex: number
   setLiveSlideIndex: (i: number) => void
 
+  // v0.7.201 — Pinned preview slide. A direct Slide reference (not an
+  // index lookup) used by the Preview pane / iframe as its source of
+  // truth when set. Set atomically by stageVersePreviewOnly /
+  // stageSlidesPreviewOnly so a single-click in any of the 5 columns
+  // (Chapter Navigator, Auto Verse Match, Bible Reference Quoted,
+  // Suggested Verses, Scripture Feed) is IMMUNE to any subsequent
+  // mutation that touches slides[] / previewSlideIndex / liveSlideIndex.
+  // Cleared on setIsLive(true), selectScheduleItem, removeAllScheduleItems,
+  // clearSchedule, or explicit clearPinnedPreview. This is the
+  // bulletproof v0.7.201 fix for the "preview snaps back to live"
+  // bug — instead of trying to identify which mystery mutation
+  // overwrites preview, we render preview from a slide reference
+  // that the operator's click planted and nothing else can move.
+  pinnedPreviewSlide: Slide | null
+  pinPreviewSlide: (s: Slide | null) => void
+  clearPinnedPreview: () => void
+
   // Presenter
   isPresenterMode: boolean
   setIsPresenterMode: (m: boolean) => void
@@ -1140,7 +1157,16 @@ export const useAppStore = create<AppState>()(
       // Slides
       slides: [],
       setSlides: (s) => set({ slides: s, previewSlideIndex: 0, liveSlideIndex: -1 }),
+      // v0.7.201 — pinnedPreviewSlide. See interface comment.
+      pinnedPreviewSlide: null,
+      pinPreviewSlide: (s) => set({ pinnedPreviewSlide: s }),
+      clearPinnedPreview: () => set({ pinnedPreviewSlide: null }),
       // v0.7.194-hotfix.7 — see interface comment above.
+      // v0.7.201 — Atomically PIN the staged slide so the Preview
+      // pane / iframe renders directly from this reference and is
+      // immune to any subsequent slides[] / previewSlideIndex /
+      // liveSlideIndex mutation. Cleared on setIsLive(true) /
+      // selectScheduleItem / removeAllScheduleItems / clearSchedule.
       stageVersePreviewOnly: (slide) =>
         set((state) => {
           const cur =
@@ -1148,12 +1174,12 @@ export const useAppStore = create<AppState>()(
               ? state.slides[state.liveSlideIndex]
               : null
           if (cur && cur.id === slide.id) {
-            return { previewSlideIndex: state.liveSlideIndex }
+            return { previewSlideIndex: state.liveSlideIndex, pinnedPreviewSlide: slide }
           }
           if (cur) {
-            return { slides: [cur, slide], previewSlideIndex: 1, liveSlideIndex: 0 }
+            return { slides: [cur, slide], previewSlideIndex: 1, liveSlideIndex: 0, pinnedPreviewSlide: slide }
           }
-          return { slides: [slide], previewSlideIndex: 0, liveSlideIndex: -1 }
+          return { slides: [slide], previewSlideIndex: 0, liveSlideIndex: -1, pinnedPreviewSlide: slide }
         }),
       // v0.7.194-hotfix.9 Item B — Multi-slide preview-only. Same
       // contract as stageVersePreviewOnly (preserve live, only
@@ -1168,16 +1194,21 @@ export const useAppStore = create<AppState>()(
             state.isLive && state.liveSlideIndex >= 0
               ? state.slides[state.liveSlideIndex]
               : null
+          // v0.7.201 — Pin the first preview slide (the one at the
+          // previewSlideIndex after this mutation) so render is
+          // immune to subsequent mutations.
+          const pinTarget = slides[0]
           if (cur) {
             const sameAsLive = slides.length === 1 && slides[0].id === cur.id
-            if (sameAsLive) return { previewSlideIndex: state.liveSlideIndex }
+            if (sameAsLive) return { previewSlideIndex: state.liveSlideIndex, pinnedPreviewSlide: pinTarget }
             return {
               slides: [cur, ...slides],
               previewSlideIndex: 1,
               liveSlideIndex: 0,
+              pinnedPreviewSlide: pinTarget,
             }
           }
-          return { slides, previewSlideIndex: 0, liveSlideIndex: -1 }
+          return { slides, previewSlideIndex: 0, liveSlideIndex: -1, pinnedPreviewSlide: pinTarget }
         }),
       replaceSlide: (index, patch) => {
         return set((state) => {
@@ -1204,7 +1235,15 @@ export const useAppStore = create<AppState>()(
       isPresenterMode: false,
       setIsPresenterMode: (m) => set({ isPresenterMode: m }),
       isLive: false,
-      setIsLive: (m) => set({ isLive: m }),
+      // v0.7.201 — Going live clears the operator's pinned preview
+      // because the act of pushing-to-air consumes the staging
+      // intent. Auto-fire effect's curPreview preservation still
+      // restores slides[previewIdx]=curPreview, so the visible
+      // preview keeps showing the operator's choice via the normal
+      // slides[previewSlideIndex] fallback. setIsLive(false) does
+      // NOT clear the pin — operator pressing Black should not
+      // wipe their staged preview.
+      setIsLive: (m) => set(m ? { isLive: m, pinnedPreviewSlide: null } : { isLive: m }),
 
       // NDI Output
       ndiConnected: false,
@@ -1304,6 +1343,7 @@ export const useAppStore = create<AppState>()(
               slides: [],
               previewSlideIndex: 0,
               liveSlideIndex: -1,
+              pinnedPreviewSlide: null,
             }
           }
           const liveId =
@@ -1352,7 +1392,7 @@ export const useAppStore = create<AppState>()(
         }),
       selectScheduleItem: (id) =>
         set((state) => {
-          if (id === null) return { selectedScheduleItemId: null }
+          if (id === null) return { selectedScheduleItemId: null, pinnedPreviewSlide: null }
           const item = state.schedule.find((s) => s.id === id)
           if (!item) return {}
           return {
@@ -1360,6 +1400,7 @@ export const useAppStore = create<AppState>()(
             slides: item.slides,
             previewSlideIndex: 0,
             liveSlideIndex: -1,
+            pinnedPreviewSlide: null,
           }
         }),
       moveScheduleItem: (id, direction) =>
@@ -1379,6 +1420,7 @@ export const useAppStore = create<AppState>()(
           slides: [],
           previewSlideIndex: 0,
           liveSlideIndex: -1,
+          pinnedPreviewSlide: null,
         }),
 
       // Settings

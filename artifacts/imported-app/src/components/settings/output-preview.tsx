@@ -197,7 +197,14 @@ export function OutputPreview({
     if (derivePreviewLatest) {
       const prevIdx = s.previewSlideIndex
       const liveIdx = s.liveSlideIndex
-      const previewSlide = prevIdx >= 0 ? (s.slides[prevIdx] ?? null) : null
+      // v0.7.201 — Read pinnedPreviewSlide FIRST. Single-click in any
+      // of the 5 columns plants a direct Slide reference; rendering
+      // from it is immune to any subsequent slides[] /
+      // previewSlideIndex mutation. Falls back to the index-based
+      // lookup when no pin (after going-live / schedule change /
+      // wipe). This is THE bulletproof v0.7.201 snap-back fix.
+      const pinned = s.pinnedPreviewSlide
+      const previewSlide = pinned ?? (prevIdx >= 0 ? (s.slides[prevIdx] ?? null) : null)
       if (previewSlide) {
         // Match the legacy effectivePreviewSlide (logos-shell L977)
         // mediaPaused tweak: when the same media slide is on both
