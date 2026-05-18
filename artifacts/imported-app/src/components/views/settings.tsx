@@ -955,7 +955,7 @@ export function SettingsView() {
               <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
                 Live Preview
               </div>
-              <OutputPreview mode="full" hideModeBadge />
+              <OutputPreview mode="full" hideModeBadge noMedia />
               <p className="text-[10px] text-muted-foreground/80 px-1 leading-snug">
                 Mirrors the secondary screen / NDI feed. Updates instantly
                 as you change any setting on the left.
@@ -1452,7 +1452,7 @@ export function SettingsView() {
                 compact right-side preview, so duplicating the LT
                 preview here forced the operator to scroll past two
                 near-identical preview boxes for no reason. */}
-            <OutputPreview mode="full" hideModeBadge />
+            <OutputPreview mode="full" hideModeBadge noMedia />
           </div>
         </CardContent>
       </Card>

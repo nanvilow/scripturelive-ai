@@ -45,10 +45,21 @@ export function OutputPreview({
   hideModeBadge = false,
   className,
   aspectOverride,
+  noMedia = false,
 }: {
   mode?: 'auto' | 'full' | 'lower-third'
   label?: string
   sample?: { reference: string; text: string }
+  /**
+   * v0.7.198 — When true, append ?noMedia=1 to the iframe URL so the
+   * renderer skips the <video>/<img> branch and shows ONLY the
+   * background. Used by the SETTINGS preview surfaces (Display &
+   * Output Live Preview, Typography preview) where the operator
+   * wants to audition theme/font/ratio without 5 simultaneous video
+   * decoders running. Default false so all other surfaces (Main
+   * Preview, Live Display, OBS Browser Source) keep playing video.
+   */
+  noMedia?: boolean
   /**
    * v0.7.158 — When set, the iframe renders THIS slide instead of
    * what's currently live. Used by the Main Preview pane in
@@ -97,8 +108,12 @@ export function OutputPreview({
     const params = new URLSearchParams({ preview: '1' })
     if (mode === 'full') params.set('fullScreen', '1')
     else if (mode === 'lower-third') params.set('lowerThird', '1')
+    // v0.7.198 — noMedia=1 tells the renderer to skip video/<img>
+    // rendering. See route.ts L320-330 for the gate. Baked into the
+    // memoized src so iframe never reloads from a noMedia toggle.
+    if (noMedia) params.set('noMedia', '1')
     return `/api/output/congregation?${params.toString()}`
-  }, [mode])
+  }, [mode, noMedia])
 
   // Read these at build time so the synthetic-slide branch below
   // can resolve a sample verse when nothing is on air. Not subscribed
