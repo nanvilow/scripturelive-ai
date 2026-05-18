@@ -2249,17 +2249,15 @@ function setupIpc() {
       return ndi.getStatus()
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
+      // Shape matches NdiStatus in electron/ndi-service.ts L29 +
+      // electron/preload.ts L26 + src/lib/use-electron.ts L5 (all
+      // three must stay in sync). Renderer reads NDI availability via
+      // appInfo.ndiAvailable (preload.ts L42), so we only need to
+      // surface `running:false` + the error string here.
       return {
         running: false,
-        sourceName: '',
-        width: 0,
-        height: 0,
-        fps: 0,
-        layout: 'mirror' as const,
-        transparent: false,
-        lowerThird: { enabled: false, position: 'bottom' as const, height: null, scale: null },
-        available: false,
-        unavailableReason: ndi.unavailableReason() || message,
+        frameCount: 0,
+        error: ndi.unavailableReason() || message,
       }
     }
   })
