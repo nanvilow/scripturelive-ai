@@ -21,8 +21,8 @@ import { describe, it, expect } from 'vitest';
 const ROUTE = readFileSync('src/app/api/output/congregation/route.ts', 'utf8');
 
 describe('v0.7.209 — OBS Custom-CSS override regression net', () => {
-  it('(1) load-time block uses setProperty(...,"important") for html/body/#stage/#output', () => {
-    // Each of the four surfaces must use setProperty + important at load.
+  it('(1) load-time block uses setProperty(...,"important") for html/body/#stage (opaque __bgInit) and #output (always transparent — v0.7.211)', () => {
+    // html, body, #stage carry __bgInit (#000 unless FORCE_TRANSPARENT).
     expect(ROUTE).toMatch(
       /document\.documentElement\.style\.setProperty\(\s*'background'\s*,\s*__bgInit\s*,\s*'important'\s*\)/,
     );
@@ -32,7 +32,14 @@ describe('v0.7.209 — OBS Custom-CSS override regression net', () => {
     expect(ROUTE).toMatch(
       /__st\.style\.setProperty\(\s*'background'\s*,\s*__bgInit\s*,\s*'important'\s*\)/,
     );
+    // v0.7.211 — #output MUST be transparent so #bgLayer (sibling z:0)
+    // showing the operator customBackground is visible through #output (z:1).
     expect(ROUTE).toMatch(
+      /__op\.style\.setProperty\(\s*'background'\s*,\s*'transparent'\s*,\s*'important'\s*\)/,
+    );
+    // v0.7.211 GUARD — #output MUST NOT carry __bgInit (would re-introduce
+    // the v0.7.209 regression that covered customBackground with #000).
+    expect(ROUTE).not.toMatch(
       /__op\.style\.setProperty\(\s*'background'\s*,\s*__bgInit\s*,\s*'important'\s*\)/,
     );
   });
@@ -43,16 +50,19 @@ describe('v0.7.209 — OBS Custom-CSS override regression net', () => {
     );
   });
 
-  it('(2) render-time reset uses setProperty(...,"important") in BOTH branches', () => {
-    // Transparent branch
-    expect(ROUTE).toMatch(
-      /\$\('output'\)\.style\.setProperty\(\s*'background'\s*,\s*'transparent'\s*,\s*'important'\s*\)/,
+  it('(2) render-time reset uses setProperty(...,"important") in BOTH branches — #output ALWAYS transparent (v0.7.211), #stage mirrors FORCE_TRANSPARENT', () => {
+    // Two #output transparent setProperty calls (FORCE_TRANSPARENT branch + opaque branch).
+    const outputTransparent = ROUTE.match(
+      /\$\('output'\)\.style\.setProperty\(\s*'background'\s*,\s*'transparent'\s*,\s*'important'\s*\)/g,
     );
-    // Opaque branch — the operator-NOT-opted-in case, the load-bearing fix
-    expect(ROUTE).toMatch(
+    expect(outputTransparent).not.toBeNull();
+    expect(outputTransparent!.length).toBeGreaterThanOrEqual(2);
+    // v0.7.211 GUARD — #output MUST NEVER be set to #000 in render reset
+    // (would cover #bgLayer / customBackground on every render tick).
+    expect(ROUTE).not.toMatch(
       /\$\('output'\)\.style\.setProperty\(\s*'background'\s*,\s*'#000'\s*,\s*'important'\s*\)/,
     );
-    // Stage repaints on both branches
+    // #stage still mirrors FORCE_TRANSPARENT: transparent branch + opaque branch.
     expect(ROUTE).toMatch(/__stR\.style\.setProperty\(\s*'background'\s*,\s*'transparent'\s*,\s*'important'\s*\)/);
     expect(ROUTE).toMatch(/__stR2\.style\.setProperty\(\s*'background'\s*,\s*'#000'\s*,\s*'important'\s*\)/);
   });

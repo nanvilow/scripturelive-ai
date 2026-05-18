@@ -345,12 +345,27 @@ try{
 //   in-room projector shows. Done at load time (not in render) so the
 //   very first paint already carries the right fill — preventing a
 //   one-frame flash before render() catches up.
+// v0.7.211 — REVISED v0.7.209. The previous block pinned #output to
+// the same opaque __bgInit as html/body/#stage, but #output is the
+// z-index:1 sibling that sits ON TOP of #bgLayer (z:0, where the
+// operator customBackground video/image lives). Inline #000 on
+// #output therefore COVERED the customBackground entirely — operator
+// reported background image not showing AND OBS/Wirecast not showing
+// the themed background. Fix: #output MUST always be inline transparent
+// so #bgLayer shows through; the wrapper div emitted into output.innerHTML
+// carries the theme gradient itself (L1354, L1516, L1892) when no
+// customBg, or stays transparent (L1352, L1514) when a customBg is
+// mounted. OBS Custom CSS body background-color rgba 0 0 0 0 only
+// targets the body element, so html + body + #stage still need their
+// opaque pin to beat that injection; #output is not a target so
+// transparent is safe. important still required so a later plain
+// style.background empty-string in render() can never clear our intent.
 try{
   var __bgInit=FORCE_TRANSPARENT?'transparent':'#000';
   document.documentElement.style.setProperty('background',__bgInit,'important');
   document.body.style.setProperty('background',__bgInit,'important');
   var __st=document.getElementById('stage');if(__st)__st.style.setProperty('background',__bgInit,'important');
-  var __op=document.getElementById('output');if(__op)__op.style.setProperty('background',__bgInit,'important');
+  var __op=document.getElementById('output');if(__op)__op.style.setProperty('background','transparent','important');
 }catch(e){}
 let es=null,reconnects=0;
 const $=id=>document.getElementById(id);
@@ -1136,7 +1151,12 @@ function render(s){
     dropLiveVideoCache();
     setBgVid(''); // v0.7.187 — clear persistent BG layer when blanked
     $('output').innerHTML='';
-    $('output').style.background='#000';
+    // v0.7.211 — see load-time block at ~L367. #output MUST stay
+    // transparent so #stage (z:0, paints #000) shows through; setting
+    // #output to #000 with plain assignment would also strip the
+    // load-time setProperty important pin and re-cover #bgLayer for
+    // any subsequent themed render in the same session.
+    $('output').style.setProperty('background','transparent','important');
     $('output').classList.remove('hidden');
     return;
   }
@@ -1162,7 +1182,12 @@ function render(s){
       // matches the operator's Live Display splash and the spec
       // calling for a logo-less Live Display intro.
       $('output').innerHTML='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;color:#fff;text-align:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif"><div style="font-size:clamp(2rem,7vmin,7rem);font-weight:600;letter-spacing:-.01em;line-height:1.05;opacity:.4">Scripture AI</div><div style="margin-top:1.4vmin;font-size:clamp(.85rem,1.8vmin,1.6rem);opacity:.3;font-weight:500">Powered By WassMedia (+233246798526)</div></div>';
-      $('output').style.background='#000';
+      // v0.7.211 — splash sits on transparent #output so #stage (z:0,
+      // #000) shows through. Original comment at L1176 said
+      // "transparent (#000) backdrop" — the intent was always
+      // transparent; the plain-assignment #000 was a v0.5.33 bug that
+      // covered any customBackground operator had configured.
+      $('output').style.setProperty('background','transparent','important');
       $('output').classList.remove('hidden');
       return;
     }
@@ -1170,7 +1195,8 @@ function render(s){
     if(ckey===lastRenderKey)return;
     lastRenderKey=ckey;
     $('output').innerHTML='';
-    $('output').style.background='#000';
+    // v0.7.211 — see splash branch comment above for full rationale.
+    $('output').style.setProperty('background','transparent','important');
     $('output').classList.remove('hidden');
     return;
   }
@@ -1192,11 +1218,20 @@ function render(s){
   // plain style.background empty-string would clear it and let OBS
   // Custom CSS re-win). FORCE_TRANSPARENT=true: keep transparent
   // matte; else hold #000 so OBS Browser Source never falls back to alpha.
+  // v0.7.211 — #output stays TRANSPARENT in both branches so the
+  // operator customBackground (mounted in #bgLayer, sibling z:0)
+  // shows through #output (z:1). The wrapper div emitted into the
+  // output innerHTML carries the theme gradient itself when no
+  // customBg, or stays transparent when a customBg is mounted. See
+  // load-time block ~L367 for the full rationale. #stage continues
+  // to mirror FORCE_TRANSPARENT (opaque #000 for normal, alpha for
+  // vMix overlay) because #stage IS the letterbox layer the operator
+  // chose to expose.
   if(FORCE_TRANSPARENT){
     $('output').style.setProperty('background','transparent','important');
     var __stR=document.getElementById('stage');if(__stR)__stR.style.setProperty('background','transparent','important');
   }else{
-    $('output').style.setProperty('background','#000','important');
+    $('output').style.setProperty('background','transparent','important');
     var __stR2=document.getElementById('stage');if(__stR2)__stR2.style.setProperty('background','#000','important');
   }
   // Skip the rebuild entirely if the payload is identical to what's

@@ -511,6 +511,7 @@ export function OutputPreview({
             src={src}
             title={label || 'Output Preview'}
             onLoad={onIframeLoad}
+            allow="autoplay; encrypted-media"
             style={{
               border: 0,
               display: 'block',
