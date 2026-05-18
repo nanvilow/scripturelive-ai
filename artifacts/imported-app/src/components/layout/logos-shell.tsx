@@ -3869,50 +3869,70 @@ export function LogosShell() {
       content: (best.text || '').split('\n').filter(Boolean),
       background: settings.congregationScreenTheme,
     }
-    // v0.7.197 — Preview-lock guard. Mirrors the 5-site speech-provider
-    // preview-lock pattern from hotfix.11. Pre-fix this useEffect was
-    // the SIXTH AI-push site and the only one missed by hotfix.11's
-    // bulk pass — it fires from the addDetectedVerse pipeline (mic
-    // hot, AI hears preacher quoting "John 3:18"), not from speech
-    // commands, which is why hotfix.11's grep didn't catch it.
-    // Operator-visible bug: double-click v18 (live + preview = v18) →
-    // single-click v19 (intended: preview=v19, live=v18 unchanged) →
-    // ~200-800ms later this effect fires for v18 (still being quoted)
-    // and runs setSlides([v18]) which WIPES the [v18,v19] array down
-    // to [v18], previewSlideIndex=0 → preview snaps back to v18.
-    // Operator reported across all 5 click columns (Chapter Navigator,
-    // Auto Verse Match, Bible Reference Quoted, Suggested Verses,
-    // Scripture Feed) because they ALL stage manual preview which
-    // this single auto-fire effect then clobbers.
+    // v0.7.200 — Replaces v0.7.197's preview-lock (which wrongly
+    // blocked AI MASTER mode from sending detections to LIVE — the
+    // entire reason that mode exists). The actual snap-back root
+    // cause is the unconditional setSlides([slide]) call below: when
+    // the preacher keeps reading v18 and the AI keeps re-detecting
+    // it, setSlides wipes the operator's manually-staged [v18,v19]
+    // array down to [v18] → previewSlideIndex=0 → preview snaps back.
     //
-    // Guard: if operator manually staged something different in
-    // preview (previewSlideIndex !== liveSlideIndex), queue the AI
-    // verse via addScheduleItemQuiet (still shows in Scripture Feed
-    // Queue history) and skip the slides/index mutation so manual
-    // preview survives. When preview === live (no manual stage) or
-    // there's no live slide, fall through to the regular live-fire.
+    // Two-part fix:
+    //   (1) SAME-AS-LIVE SHORT-CIRCUIT — if the AI re-detects the
+    //       verse that is already live, return immediately. Do NOT
+    //       call setSlides (which would clobber operator's preview).
+    //       This is the ACTUAL snap-back fix.
+    //   (2) PRESERVE-PREVIEW ON NEW-DETECTION — when the AI detects
+    //       a genuinely new verse, push it to live (that's what AI
+    //       MASTER is FOR). If the operator has staged a different
+    //       preview manually, keep their preview slide at index 1.
+    //
+    // Operator workflow this enables (all 5 columns: Chapter
+    // Navigator, Auto Verse Match, Bible Reference Quoted, Suggested
+    // Verses, Scripture Feed):
+    //   - double-click v18 → live=v18, preview=v18
+    //   - single-click v19 → live=v18 unchanged, preview=v19 staged
+    //   - AI re-detects v18 (preacher still reading) → SHORT-CIRCUIT
+    //     → preview=v19 SURVIVES (no snap-back)
+    //   - preacher moves to v19, AI detects v19 → new detection →
+    //     pushes v19 live, syncs preview to v19
+    //   - operator double-clicks v25 anywhere → promotes to live
+    //     via the normal go-live path (unrelated to this effect)
     const __st = useAppStore.getState()
-    if (__st.previewSlideIndex >= 0 && __st.previewSlideIndex !== __st.liveSlideIndex) {
-      addScheduleItemQuiet({
-        type: 'verse',
-        title: best.reference,
-        subtitle: best.translation,
-        slides: [slide],
-      })
+    const curLiveSlide = __st.isLive && __st.liveSlideIndex >= 0
+      ? __st.slides[__st.liveSlideIndex]
+      : null
+    // (1) Same as current live → no-op, preserve operator's preview
+    if (curLiveSlide && curLiveSlide.id === slide.id) {
       return
     }
+    // (2) New verse → push live. Preserve a different staged preview.
+    const curPreviewSlide = (
+      __st.previewSlideIndex >= 0 &&
+      __st.previewSlideIndex !== __st.liveSlideIndex
+    )
+      ? __st.slides[__st.previewSlideIndex]
+      : null
     addScheduleItem({
       type: 'verse',
       title: best.reference,
       subtitle: best.translation,
       slides: [slide],
     })
-    setSlides([slide])
-    setPreviewSlideIndex(0)
-    setLiveSlideIndex(0)
+    if (curPreviewSlide && curPreviewSlide.id !== slide.id) {
+      // Operator has a different preview staged — keep it
+      setSlides([slide, curPreviewSlide])
+      setLiveSlideIndex(0)
+      setPreviewSlideIndex(1)
+    } else {
+      // No preview staged (or preview matches new live) — sync both
+      setSlides([slide])
+      setLiveSlideIndex(0)
+      setPreviewSlideIndex(0)
+    }
     setIsLive(true)
     // Toast suppressed per FRS — output actions stay silent.
-  }, [effectiveAutoFire, detectedVerses, addScheduleItem, addScheduleItemQuiet, setSlides, setPreviewSlideIndex, setLiveSlideIndex, setIsLive, settings.congregationScreenTheme])
+  }, [effectiveAutoFire, detectedVerses, addScheduleItem, setSlides, setPreviewSlideIndex, setLiveSlideIndex, setIsLive, settings.congregationScreenTheme])
 
   // Local no-op broadcaster — the real broadcaster lives globally in
   // <OutputBroadcaster /> (mounted in page.tsx) so settings tweaks
