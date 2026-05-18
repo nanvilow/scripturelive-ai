@@ -327,21 +327,31 @@ try{
   // operator + congregation + OBS still see video.
   IS_NO_MEDIA=(__qp.get('noMedia')==='1');
 }catch(e){}
-// Drop body / stage / output backgrounds when running as an NDI
-// alpha-keyed overlay so vMix/OBS receives a clean matte. Done at
-// load time (not in render) so the very first paint already carries
-// the transparent fill — preventing a one-frame black flash. The
-// stylesheet sets html / body / #stage / #output to solid #000 by
-// default (so the projector window is opaque), so all four surfaces
-// must be flipped here when transparent mode is requested.
-if(FORCE_TRANSPARENT){
-  try{
-    document.documentElement.style.background='transparent';
-    document.body.style.background='transparent';
-    var __st=document.getElementById('stage');if(__st)__st.style.background='transparent';
-    var __op=document.getElementById('output');if(__op)__op.style.background='transparent';
-  }catch(e){}
-}
+// v0.7.209 — Force the operator-chosen background with !important
+// inline so it beats OBS Browser Source default Custom CSS
+//   body { background-color: rgba(0,0,0,0); }
+// which OBS appends AFTER our page style and which previously won
+// the cascade (same specificity, later declaration wins) — silently
+// making the OBS feed transparent even when the operator had picked
+// themed full-screen mode. v0.7.202 gated the URL transparent=1
+// param but the underlying CSS override was untouched, so OBS still
+// applied its alpha rule on top of our stylesheet background #000
+// (line 31). Inline style + important beats any stylesheet rule,
+// important or not, so this is the only fix that consistently wins
+// regardless of what OBS / vMix / Wirecast inject into the page.
+// FORCE_TRANSPARENT=true  → operator opted in: paint transparent.
+// FORCE_TRANSPARENT=false → operator did NOT opt in: paint solid #000
+//   so the OBS Browser Source receives the same opaque frame the
+//   in-room projector shows. Done at load time (not in render) so the
+//   very first paint already carries the right fill — preventing a
+//   one-frame flash before render() catches up.
+try{
+  var __bgInit=FORCE_TRANSPARENT?'transparent':'#000';
+  document.documentElement.style.setProperty('background',__bgInit,'important');
+  document.body.style.setProperty('background',__bgInit,'important');
+  var __st=document.getElementById('stage');if(__st)__st.style.setProperty('background',__bgInit,'important');
+  var __op=document.getElementById('output');if(__op)__op.style.setProperty('background',__bgInit,'important');
+}catch(e){}
 let es=null,reconnects=0;
 const $=id=>document.getElementById(id);
 // Hash of the last rendered payload — render() bails out if the next
@@ -1177,11 +1187,17 @@ function render(s){
   // (and re-assert #stage transparency) on every render so a
   // subsequent media slide that briefly forced #000 doesn't leave
   // the alpha matte tinted black on the next text slide.
+  // v0.7.209 — Re-assert with important on every render so the
+  // load-time inline-with-important set above stays inline (a later
+  // plain style.background empty-string would clear it and let OBS
+  // Custom CSS re-win). FORCE_TRANSPARENT=true: keep transparent
+  // matte; else hold #000 so OBS Browser Source never falls back to alpha.
   if(FORCE_TRANSPARENT){
-    $('output').style.background='transparent';
-    var __stR=document.getElementById('stage');if(__stR)__stR.style.background='transparent';
+    $('output').style.setProperty('background','transparent','important');
+    var __stR=document.getElementById('stage');if(__stR)__stR.style.setProperty('background','transparent','important');
   }else{
-    $('output').style.background='';
+    $('output').style.setProperty('background','#000','important');
+    var __stR2=document.getElementById('stage');if(__stR2)__stR2.style.setProperty('background','#000','important');
   }
   // Skip the rebuild entirely if the payload is identical to what's
   // already on screen. Without this guard the secondary display
@@ -1820,12 +1836,17 @@ function render(s){
     // honours the URL flag (always-on for v0.6.8 NDI) while the BOX class
     // (ltTransparentClass class on lt-box) continues to honour only the operator's
     // toggle. Two settings, two effects, no cross-contamination.
+    // v0.7.209 — setProperty background important so this
+    // surrounding-area paint beats OBS Browser Source Custom CSS
+    // (body background-color rgba 0 0 0 0) the same way the load-
+    // time block and render-time reset above do. Without important
+    // OBS would re-introduce alpha here on every lower-third repaint.
     try{
       var __bg=(FORCE_TRANSPARENT||ltTransparent)?'transparent':'#000';
-      document.documentElement.style.background=__bg;
-      document.body.style.background=__bg;
-      var __st2=document.getElementById('stage');if(__st2)__st2.style.background=__bg;
-      var __op2=document.getElementById('output');if(__op2)__op2.style.background=__bg;
+      document.documentElement.style.setProperty('background',__bg,'important');
+      document.body.style.setProperty('background',__bg,'important');
+      var __st2=document.getElementById('stage');if(__st2)__st2.style.setProperty('background',__bg,'important');
+      var __op2=document.getElementById('output');if(__op2)__op2.style.setProperty('background',__bg,'important');
     }catch(e){}
     var ltOrdered=refOrderTop?(ref+ltTxt):(ltTxt+ref);
     $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:transparent;'+fontStyle+'"><div class="lower-third '+pos+ndiFullClass+'" style="'+ltStyle+'"><div class="lt-box '+boxThemeClass+ltTransparentClass+ndiFullClass+' '+alignClass+'" style="'+boxStyleExtra+fontStyle+'">'+ltInnerBg+'<div class="lt-content '+alignClass+'">'+ltOrdered+'</div></div></div></div>';
