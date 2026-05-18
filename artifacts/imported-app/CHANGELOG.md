@@ -1,3 +1,65 @@
+## v0.7.211 — Themed/custom background NOT showing in app preview + OBS/Wirecast + video autoplay ($1600-customer escalation)
+
+Operator on v0.7.210: "My background image is not showing from the app. OBS and Wirecast are not showing with the right themed background. Vidoe dont play at once when double click or send to live display." Three related bugs all rooted in v0.7.209's over-aggressive background pinning.
+
+**Root cause (bugs 1+2 — bg not showing in preview AND in OBS/Wirecast, in `src/app/api/output/congregation/route.ts`)**: v0.7.209 added `document.getElementById('output').style.setProperty('background', '#000', 'important')` at the load-time block (~L372) AND in the render-time reset's opaque branch (~L1227) AND THREE plain-assignment sites (L1154, 1180, 1188 — splash/blank/clear paths) had `$('output').style.background='#000'` from v0.5.33. The DOM stack is `<div id="stage"><div id="bgLayer" z:0><div id="output" z:1></div></div></div>`. `#bgLayer` is where operator's customBackground `<video>`/`<img>` mounts (via `mountBgVid` at ~L1010). `#output` is the SIBLING of `#bgLayer` at z-index:1 — it sits ON TOP. Pinning #output's background to opaque #000 via `setProperty(...,'important')` therefore COMPLETELY COVERED #bgLayer's customBackground rendering. For themed-only operation (no customBg), the wrapper div emitted into `#output.innerHTML` (L1354 no-slide, L1516 noMedia, L1892 full-screen verse) carries the theme gradient via `class="theme-worship"` etc and renders correctly on top of #output's #000 — so the theme bug only manifested when the wrapper had `style="background:transparent;"` (the customBg path at L1352, L1514, where wrapper transparency is intentional to let #bgLayer show through). v0.7.209's URL-gate fix was real but only addressed the FORCE_TRANSPARENT input path; the CSS-layer fix at #output was over-strict for OBS protection (OBS Custom CSS `body{background-color:rgba(0,0,0,0)}` only targets the `body` selector — it never targets #output, #stage, or html, so pinning ONLY html+body+#stage to opaque is sufficient to beat OBS injection AND leaves #output free as the transparent window through which #bgLayer is visible).
+
+**Root cause (bug 3 — autoplay)**: The in-app live preview surfaces (`output-preview.tsx` L509 OutputPreview iframe + `ndi-output-panel.tsx` L1531 NDI Live Preview iframe) did not advertise `allow="autoplay"`. The renderer emits `<video autoplay muted playsinline>` at route.ts L1604 — browsers allow muted autoplay without a user gesture, BUT cross-frame autoplay requires the iframe element itself to be granted the `autoplay` Feature-Policy permission. Without `allow="autoplay"`, the embedded video's `autoplay` attribute is ignored and operator has to click the iframe to start playback. OBS Browser Source is a top-level document (not an iframe) so OBS-side autoplay was unaffected — but the operator's in-app preview surface and any embedded NDI preview saw the bug.
+
+**Fix (5 sites in route.ts + 2 iframe attribute additions, ~40 lines net)**:
+- (1) `route.ts` L372 load-time block — `__op.style.setProperty('background','transparent','important')` (was `__bgInit` which is #000 unless FORCE_TRANSPARENT). html/body/#stage continue to pin to `__bgInit` (OBS body-selector protection intact).
+- (2) `route.ts` L1227 render-time reset opaque branch — `$('output').style.setProperty('background','transparent','important')` (was `#000`). Transparent branch was already correct.
+- (3) `route.ts` L1162 blanked path — replaced plain `style.background='#000'` with `setProperty('background','transparent','important')` (v0.5.33 bug class — plain assignment silently strips the load-time !important pin).
+- (4) `route.ts` L1193 splash path — same fix; the existing comment at L1184-1186 literally said "Pure-white wordmark on a transparent (#000) backdrop" — the intent was always transparent.
+- (5) `route.ts` L1202 clear-no-logo path — same fix.
+- (6) `output-preview.tsx` L517 — added `allow="autoplay; encrypted-media"` to the OutputPreview iframe.
+- (7) `ndi-output-panel.tsx` L1538 — added `allow="autoplay; encrypted-media"` to the NDI Live Preview iframe.
+- (8) `package.json` 0.7.210→0.7.211 + `BUILD.bat` banner.
+
+**Updated v0.7.209 regression test (`src/lib/obs-bg-important.test.ts`)**: Test (1) "load-time block" now asserts `__op` carries `transparent,important` (not `__bgInit`) AND asserts the negative case "#output MUST NOT carry __bgInit". Test (2) "render-time reset" now asserts BOTH branches set #output to `transparent,important` (≥2 matches) AND "#output MUST NEVER be set to #000 in render reset". #stage assertions unchanged.
+
+**New regression tests (12, in new file `src/lib/theme-bg-visibility.test.ts`)**:
+- (A) THE LOAD-BEARING ASSERTION — load-time #output is ALWAYS transparent !important.
+- (B) GUARD: #output MUST NOT be set to __bgInit or #000 at load.
+- (C) html+body+#stage STILL pinned to __bgInit (OBS protection intact).
+- (D) Render-time reset sets #output transparent in BOTH branches (≥2 matches).
+- (E) GUARD: #output MUST NEVER be set to #000 in render reset.
+- (F) #stage still mirrors FORCE_TRANSPARENT in render reset.
+- (G)+(H)+(I) Wrapper div inside #output STILL carries the theme class — no-slide path uses `tcE`, noMedia path uses `tcM`, full-screen verse path uses `fsTheme`.
+- (J) v0.7.210 GUARD-RAIL still active — `sendMediaToPreview` uses `pinPreviewSlide(slide)` and `sendMediaToLive` uses `setLiveAuto(slide)`.
+- (K) OutputPreview iframe carries `allow="autoplay"`.
+- (L) NDI output panel iframe carries `allow="autoplay"`.
+
+Source-level grep is the right test layer because route.ts is a 2200-line bundled template-literal `<script>` not importable here (same constraint as v0.7.205/v0.7.207/v0.7.209).
+
+**Test results**: 12/12 PASS in `theme-bg-visibility.test.ts` + 8/8 PASS in updated `obs-bg-important.test.ts`. Full suite **627/627 PASS** (was 615/615 on v0.7.210; +12 from new file). Zero pre-existing failures.
+
+**Replit runtime proof (`.local/proof-v211.mjs`)**:
+- A — served-bundle grep: 6 regex assertions for the load-bearing tokens (load-time `__bgInit` ternary intact, body+html+#stage opaque pins intact, **#output ALWAYS transparent**, render-reset opaque branch #output transparent NOT #000). All 6 PASS on the served 125.7 KB bundle.
+- B — Playwright simulated-OBS Custom CSS injection: load `/api/output/congregation`, inject OBS's default Custom CSS `body { background-color: rgba(0, 0, 0, 0); }` at end of `<head>` (same cascade position OBS uses), read `getComputedStyle(...).backgroundColor` for body / html / #output / #stage.
+  - Default URL (operator did NOT opt into transparent): `body=rgb(0,0,0)` ✓ OBS beaten, `html=rgb(0,0,0)` ✓, `stage=rgb(0,0,0)` ✓, **`output=rgba(0,0,0,0)` ✓ — #bgLayer customBackground would show through**.
+  - `?transparent=1` URL: all 4 surfaces = `rgba(0,0,0,0)` ✓.
+
+Verdict **✅ v0.7.211 PROVEN**. Pre-fix on v0.7.210 the same script reported `output=rgb(0,0,0) inlineBgImportant=""` (covering #bgLayer regardless of operator intent, AND with !important silently stripped by the L1154/1180/1188 plain assignments) — operator's exact bug. Proof first run on v0.7.211 source caught the same symptom because of the splash-path plain assignments downstream; fixing those 3 sites was the final piece.
+
+**GUARD-RAIL (A) — #output MUST always be inline `setProperty('background','transparent','important')` at load AND in render-time reset (both branches) AND at the 3 splash/blank/clear sites at ~L1162, L1193, L1202**: any setProperty/assignment of #000 to #output at ANY site covers #bgLayer (sibling z:0) and re-introduces operator's "background image not showing" bug. Audit: `rg -n "\$\('output'\)\.style\.setProperty\('background','#000'" artifacts/imported-app/src/app/api/output/congregation/route.ts | wc -l` MUST return 0. `rg -n "\$\('output'\)\.style\.background\s*=" artifacts/imported-app/src/app/api/output/congregation/route.ts | wc -l` MUST return 0 (plain assignment strips the load-time !important pin and re-introduces the v0.5.33 bug class). The (A)+(D)+(E)+(J) assertions in `theme-bg-visibility.test.ts` enforce this.
+
+**GUARD-RAIL (B) — html + body + #stage MUST keep their `setProperty('background',__bgInit,'important')` pins at load time AND #stage MUST mirror FORCE_TRANSPARENT in render-time reset**: removing these re-introduces v0.7.209's OBS Custom CSS regression (OBS-injected `body{background-color:rgba(0,0,0,0)}` would win the cascade). Test (C)+(F) enforce.
+
+**GUARD-RAIL (C) — Wrapper div inside `#output.innerHTML` MUST always carry the theme class** (`class="'+tcE+'"`, `'+tcM+'"`, `'+fsTheme+'"`): this is the actual visible bg when no customBg is set (#bgLayer is empty, #output is transparent, wrapper class renders the theme gradient). Tests (G)+(H)+(I) source-grep enforce.
+
+**GUARD-RAIL (D) — Both OutputPreview iframe (`output-preview.tsx`) and NDI panel iframe (`ndi-output-panel.tsx`) MUST carry `allow="autoplay"`**: removing it re-introduces operator's "video doesn't play at once" bug in any iframe-embedded preview. OBS Browser Source is top-level so OBS itself is unaffected, but in-app preview surfaces and any vMix/Wirecast preview embedded as an iframe are. Tests (K)+(L) enforce.
+
+**GUARD-RAIL (E) — Comments inside the route.ts HTML template literal MUST NOT contain backticks** (re-asserts v0.7.209 GR-D): broke v0.7.211 first draft when I used a backtick in a comment — closed the template literal early and the served bundle dropped to 4.7 KB with `pageerror "Expected a semicolon"`.
+
+**PROCESS GR — v0.7.209's "force opaque to beat OBS Custom CSS" pattern was correct for `body` (the only OBS target) but over-applied to #output (which OBS does not target, and which sits over the customBackground layer)**: when defending against third-party renderer chrome injections, the defense MUST be SCOPED to the EXACT selectors the chrome targets. Pinning everything in sight to opaque is a sledgehammer that breaks the operator's own layering.
+
+**PROCESS GR — v0.7.211 demonstrates that v0.5.33-era plain `style.background='#000'` assignments (L1154, 1180, 1188 in splash/blank/clear paths) are LATENT REGRESSION SOURCES**: even when v0.7.209's intent was "load-time pin to !important", the three plain assignments downstream silently stripped the pin on EVERY render of the splash/blank/clear branches (which fire on initial page load and on `type:'clear'`). The Playwright proof on the FIRST run showed `output=rgb(0,0,0)` with `inlineBgImportant=""` despite load-time setting !important — definitive evidence the !important was being stripped by a downstream plain assignment. Future audits for any inline-!important contract MUST grep for plain `style.<prop>=` assignments at the same property across the entire file; without that audit, the !important is theatrical.
+
+**PROCESS GR — When the operator complains about a visual bug across multiple surfaces (in-app preview + OBS + Wirecast), reproduce on the SHARED renderer first (route.ts) rather than per-surface**: in-app and OBS read the same `/api/output/congregation` HTML, so a renderer-level fix lands all three surfaces in one shot. v0.7.209 + v0.7.211 both root-caused at the renderer; per-surface debugging would have taken 3× the time.
+
+---
+
 ## v0.7.210 — Single-click on video tile in Media stages Preview ONLY; live keeps playing what was there + lag fix + cloud-admin-sync "1 pre-existing failure" actually fixed ($1600-customer escalation)
 
 Operator on v0.7.209: "Vidoe playing still lags and impletment when user single click on video in media, video in live display wont go off but still playing what is there. A single click on video in media send it to preview only." Two distinct bugs at the same call site plus a long-standing test failure.

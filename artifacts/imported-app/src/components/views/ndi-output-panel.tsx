@@ -1532,6 +1532,7 @@ function NdiPreviewSurface(props: NdiPreviewSurfaceProps): React.JSX.Element {
           key={stableKey}
           src={stableSrc}
           title="NDI Live Preview"
+          allow="autoplay; encrypted-media"
           style={{
             border: 0,
             display: 'block',
