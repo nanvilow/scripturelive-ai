@@ -1697,3 +1697,11 @@ export const useAppStore = create<AppState>()(
     }
   )
 )
+
+// DEV-ONLY diagnostic exposure (NOT for ship). Allows browser console
+// to read `window.__store.getState()` to verify pin/slide state during
+// the v0.7.203 preview-snap-back investigation. Gated by NODE_ENV so
+// production bundles don't carry it.
+if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
+  ;(window as unknown as { __store: typeof useAppStore }).__store = useAppStore
+}
