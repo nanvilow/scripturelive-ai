@@ -1409,3 +1409,27 @@ id = "fa1g2hxKK5ffTbV9Jp1L7"
 uri = "file://screenshots/hotfix9-comprehensive-bundle-mockup.jpg"
 type = "image"
 title = "Hotfix.9 — Comprehensive Bundle Mock (A+B+C+D+E)"
+
+[[outputs]]
+id = "n6ca1az0M6DZo8aArbO5L"
+uri = "file://screenshots/proof/02-romans-8-loaded.jpg"
+type = "image"
+title = "1 — Romans 8 loaded in Chapter Navigator"
+
+[[outputs]]
+id = "II8zrjvRpLo45imiaqYom"
+uri = "file://screenshots/proof/03-after-doubleclick-v28.jpg"
+type = "image"
+title = "2 — After DOUBLE-CLICK v28 → both PREVIEW + LIVE show v28"
+
+[[outputs]]
+id = "FrC8MnJLhTECq7IA29-8u"
+uri = "file://screenshots/proof/04-after-singleclick-v35.jpg"
+type = "image"
+title = "3 — After SINGLE-CLICK v35 → PREVIEW=v35, LIVE still v28 (THE PROOF)"
+
+[[outputs]]
+id = "nyNsIL-oPLdQU16EjPoul"
+uri = "file://screenshots/proof/05-pin-holds-after-wait.jpg"
+type = "image"
+title = "4 — 5 seconds later → pin still holds, panes still different"
