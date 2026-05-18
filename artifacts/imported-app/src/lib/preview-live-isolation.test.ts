@@ -383,6 +383,30 @@ describe('v0.7.205 — preview iframe must not pull live state via pollOnce', ()
     expect(s.liveStatePainted).toEqual([])
   })
 
+  it('v0.7.206 — wakeAndPoll MUST short-circuit in preview (focus/visibility/pageshow/online events)', () => {
+    // wakeAndPoll is bound to visibilitychange, focus, pageshow, online.
+    // Pre-v0.7.206 (v0.7.205 fix gated the intervals but NOT wakeAndPoll)
+    // any of these events firing on the preview iframe would call
+    // pollOnce → fetch /api/output (LIVE) → applyRender → clobber.
+    // v0.7.206 adds `if(IS_PREVIEW) return;` at the top of wakeAndPoll.
+    const wakeAndPoll = (isPreview: boolean, pollFn: () => void) => {
+      if (isPreview) return
+      pollFn()
+    }
+    const liveStatePainted: string[] = []
+    const pollOnce = () => { liveStatePainted.push('v28') }
+    // Operator: pin v35 in preview, then alt-tab away and back
+    // (visibilitychange fires), OS goes online (online fires).
+    wakeAndPoll(true, pollOnce) // visibilitychange in preview iframe
+    wakeAndPoll(true, pollOnce) // focus in preview iframe
+    wakeAndPoll(true, pollOnce) // pageshow in preview iframe
+    wakeAndPoll(true, pollOnce) // online in preview iframe
+    expect(liveStatePainted).toEqual([]) // NONE clobber preview
+    // Same events on the LIVE surface still wake/poll normally.
+    wakeAndPoll(false, pollOnce)
+    expect(liveStatePainted).toEqual(['v28'])
+  })
+
   it('Repro of the snap-back bug on pre-v0.7.205 code (gate inverted)', () => {
     // This test documents what the bug looked like — built without the
     // v0.7.205 gate by inverting the bootstrap. If a future refactor

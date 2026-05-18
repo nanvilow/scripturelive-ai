@@ -1942,6 +1942,17 @@ if(!IS_PREVIEW) setInterval(pollOnce,1500);
 // becomes visible OR comes back into focus, so any missed update
 // catches up immediately. This is in ADDITION to the 1.5 s interval.
 function wakeAndPoll(){
+  // v0.7.205 — Wake/poll path MUST short-circuit in preview iframes.
+  // pollOnce fetches /api/output (LIVE state) and applyRenders it —
+  // doing that in a preview iframe would clobber the preview slide
+  // with live whenever the operator's tab regains focus, the OS goes
+  // online, or the browser fires pageshow. Preview iframes are
+  // repainted by the parent OutputPreview's Zustand subscriber, which
+  // posts a fresh payload (with lastRenderKey='' reset) on every
+  // store change — that is the ONLY repaint path preview surfaces
+  // need. See the IS_PREVIEW gate on setInterval(pollOnce,1500) at
+  // L1935 and the empty-DOM watchdog at L1994 for the same rationale.
+  if(IS_PREVIEW)return;
   // Reset cache keys so the next payload always paints, even if
   // it's byte-identical to whatever we last drew before throttle.
   lastRenderKey='';
