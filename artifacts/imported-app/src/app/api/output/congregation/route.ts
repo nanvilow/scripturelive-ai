@@ -1921,7 +1921,15 @@ function pollOnce(){
 }
 // SSE handles the realtime push; this poll is a 1.5s safety net for
 // autoscale deployments where SSE can land on a different replica.
-setInterval(pollOnce,1500);
+// v0.7.205 — GATED behind !IS_PREVIEW. Preview iframes receive their
+// payload via parent postMessage (see IS_PREVIEW handler below) and
+// MUST NOT pull live state from /api/output — doing so was painting
+// the LIVE slide over the preview every 1.5 s, which is the true
+// "preview snaps back to live on single-click" bug operators have
+// been reporting since v0.7.158. Every previous fix (v0.7.200..204)
+// chased the postMessage pipeline; the postMessage was always
+// correct — the poll fallback was silently clobbering it.
+if(!IS_PREVIEW) setInterval(pollOnce,1500);
 
 // v0.5.37 -- Chromium background-throttling defence. The kiosk window
 // is fullscreen on a secondary display and is NOT the focused window
@@ -1974,7 +1982,13 @@ setInterval(function(){
 // repaints. This is the operator's safety net for the "I see black"
 // report — the surface self-heals to the latest broadcast state.
 let emptySince=0;
-setInterval(function(){
+// v0.7.205 — Watchdog also gated behind !IS_PREVIEW. Preview iframes
+// must never re-pull live state via pollOnce (would clobber the
+// preview slide with live). If a preview iframe's DOM goes empty,
+// the next parent postMessage will repaint it — the parent's
+// subscriber fires on every store change and the lastRenderKey=''
+// reset on every preview payload guarantees a re-paint.
+if(!IS_PREVIEW) setInterval(function(){
   if(!lastPolled)return; // never received state — splash is acceptable
   var el=$('output');
   if(!el)return;
@@ -2115,9 +2129,15 @@ if(IS_PREVIEW){
         // the parent only sends when state actually changed, so
         // re-rendering unconditionally is safe and prevents any
         // shape-equivalent cache collisions.
+        var __wantTitle=(d.payload&&d.payload.slide&&d.payload.slide.title)||'(null)';
         lastRenderKey='';
         try{ applyRender(d.payload); }
         catch(_err){ try{ console.error('[applyRender THROW]', _err); }catch(__){} }
+        try{
+          var __ref=document.querySelector('.slide-reference');
+          var __got=(__ref&&__ref.textContent)||'(empty)';
+          console.log('[IF-AFTER] want='+__wantTitle+' painted='+__got+' frameid='+(window.name||'?'));
+        }catch(__){}
       }
     }catch(e){}
   });
