@@ -80,6 +80,10 @@ describe('v0.7.153 — cross-device admin ledger sync', () => {
 
   afterEach(() => {
     delete process.env.SCRIPTURELIVE_LICENSE_DIR
+    // v0.7.210 — Clear the masterCode override set in the
+    // wrong-credential test so it does not leak into subsequent
+    // tests and accidentally pin their storage masterCode.
+    delete process.env.SCRIPTURELIVE_MASTER_CODE
     fs.rmSync(cloudDir, { recursive: true, force: true })
     fs.rmSync(desktopDir, { recursive: true, force: true })
   })
@@ -467,6 +471,16 @@ describe('v0.7.153 — cross-device admin ledger sync', () => {
     // re-use the storage module instance the desktop test seeded,
     // whose masterCode is the desktop's random value).
     process.env.SCRIPTURELIVE_LICENSE_DIR = cloudDir
+    // v0.7.210 — Pin masterCode via env override so storage.ts's
+    // v0.7.179 self-heal block (L608-636) doesn't silently re-pin
+    // our seeded TEST-MASTER-CODE-1234 to BAKED_CLOUD_ADMIN_CODE on
+    // load (which made the route's getFile().masterCode mismatch
+    // the submitted code → 401). With the env set, load() at L559
+    // returns the override and the self-heal skips its rewrite.
+    // This mirrors how the actual cloud deployment runs (its
+    // SCRIPTURELIVE_MASTER_CODE secret pins masterCode to the baked
+    // value). Cleared in afterEach to keep test isolation.
+    process.env.SCRIPTURELIVE_MASTER_CODE = 'TEST-MASTER-CODE-1234'
     vi.resetModules()
     const { POST } = (await import('../../app/api/license/cloud/admin-snapshot/route')) as unknown as {
       POST: (req: Request) => Promise<Response>

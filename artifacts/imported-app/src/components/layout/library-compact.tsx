@@ -1270,34 +1270,33 @@ export function MediaLibraryCompact() {
     toast.success(`${m.name} added to schedule`)
   }
 
-  // v0.7.190 — Restore the click-to-preview / double-click-to-live
-  // pattern operators expect (matches the verse list at L534-543).
-  // Single click stages the media in Preview ONLY — audio meter
-  // mounts, but Live Display is untouched. Double click promotes
-  // the same slide to Live; the iframe pause-on-promote logic in
-  // logos-shell.tsx L877 then splices `mediaPaused:true` into the
-  // Preview slide payload, which freezes Preview's iframe video at
-  // its current frame and zeroes the VU meter — no echo, no double
-  // decoder.
+  // v0.7.210 — Operator $1600-customer escalation: single-clicking a
+  // video tile in Media was killing the live feed (live went blank /
+  // "video in live wont go off" + lag spike). Root cause: the prior
+  // sendMediaToPreview called `setSlides([slide])` which (store.ts
+  // L1182) ALSO sets `liveSlideIndex:-1, liveSlide:null` — wiping
+  // the on-air slide AND the AI direct ref. Plus the
+  // `addScheduleItemQuiet` call serialised the entire base64 video
+  // dataURL into the schedule on every click, triggering an SSE
+  // broadcast of MB-sized payload → operator-visible lag. Fix: use
+  // the `pinPreviewSlide` direct-ref pathway (v0.7.201 pattern, same
+  // architecture as v0.7.208's setLiveAuto for live). Preview reads
+  // pinnedPreviewSlide first (logos-shell L967, output-preview L200);
+  // slides[] and live are NEVER touched, so live keeps playing
+  // whatever it was already showing.
   const sendMediaToPreview = (m: MediaItem) => {
     const slide = buildMediaSlide(m)
-    // v0.7.194-hotfix.8 — Quiet schedule append so a preview-only
-    // media stage does not yank the on-air slide (`addScheduleItem`
-    // resets liveSlideIndex:-1 by design; preview must not).
-    addScheduleItemQuiet({ type: 'slides', title: m.name, slides: [slide] })
-    const s = useAppStore.getState()
-    s.setSlides([slide])
-    s.setPreviewSlideIndex(0)
+    useAppStore.getState().pinPreviewSlide(slide)
   }
 
+  // v0.7.210 — Symmetric fix: double-click "send to live" uses the
+  // setLiveAuto direct ref (v0.7.203/v0.7.208 pathway) instead of
+  // `setSlides + setLiveSlideIndex + setIsLive(true)`, which yanked
+  // the operator's preview pin and clobbered any AI-pushed live ref.
+  // Operator preview survives a video promote-to-live now.
   const sendMediaToLive = (m: MediaItem) => {
     const slide = buildMediaSlide(m)
-    addScheduleItem({ type: 'slides', title: m.name, slides: [slide] })
-    const s = useAppStore.getState()
-    s.setSlides([slide])
-    s.setPreviewSlideIndex(0)
-    s.setLiveSlideIndex(0)
-    s.setIsLive(true)
+    useAppStore.getState().setLiveAuto(slide)
   }
 
   const useAsBackground = (m: MediaItem) => {
