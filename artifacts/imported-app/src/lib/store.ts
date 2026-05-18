@@ -1179,7 +1179,12 @@ export const useAppStore = create<AppState>()(
       // v0.7.203 — setSlides is the operator's hard-reset hook. Clear
       // liveSlide so the new slides[] array is the unambiguous source
       // of truth for the live surface.
-      setSlides: (s) => set({ slides: s, previewSlideIndex: 0, liveSlideIndex: -1, liveSlide: null }),
+      // v0.7.213 — also clear pinnedPreviewSlide. A stale pin from an
+      // earlier Media single-click would otherwise survive into the
+      // new slides[]-based Preview content (e.g. detected/suggested
+      // verses arrive via setSlides), and v0.7.212's goLive reads the
+      // pin first — promoting the stale media instead of the new verse.
+      setSlides: (s) => set({ slides: s, previewSlideIndex: 0, liveSlideIndex: -1, liveSlide: null, pinnedPreviewSlide: null }),
       // v0.7.201 — pinnedPreviewSlide. See interface comment.
       pinnedPreviewSlide: null,
       pinPreviewSlide: (s) => set({ pinnedPreviewSlide: s }),

@@ -175,3 +175,123 @@ describe('v0.7.210 — single-click video in media stages preview ONLY, live unt
     expect(body, 'MUST NOT call setLiveSlideIndex').not.toMatch(/setLiveSlideIndex\(/)
   })
 })
+
+describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slides[previewSlideIndex])', () => {
+  it('(f) THE LOAD-BEARING ASSERTION — pin a media slide, simulate goLive: live MUST become the pinned slide', () => {
+    // Operator clicked a video tile (v0.7.210 sendMediaToPreview path).
+    // slides[] is empty — pinPreviewSlide does NOT add to slides[].
+    const vid = mediaSlide('vid-pin', 'preview-pin.mp4')
+    useAppStore.getState().pinPreviewSlide(vid)
+    expect(useAppStore.getState().slides).toEqual([])
+
+    // Mirror the v0.7.212 goLive primitive path: consult
+    // pinnedPreviewSlide first, route through setLiveAuto.
+    const pinned = useAppStore.getState().pinnedPreviewSlide
+    expect(pinned?.id).toBe('vid-pin')
+    useAppStore.getState().setLiveAuto(pinned!)
+
+    // Live MUST now be the pinned video.
+    const liveAfter = buildOutputPayload(useAppStore.getState()).slide
+    expect(liveAfter?.id).toBe('vid-pin')
+    expect(liveAfter?.type).toBe('media')
+    expect(liveAfter?.mediaKind).toBe('video')
+    expect(useAppStore.getState().isLive).toBe(true)
+  })
+
+  it('(g) GUARD — easyworship-shell goLive source MUST check pinnedPreviewSlide and call setLiveAuto', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/easyworship-shell.tsx'),
+      'utf8',
+    )
+    const m = src.match(/const goLive = useCallback\(\(\) => \{([\s\S]*?)\}, \[/)
+    expect(m, 'easyworship-shell goLive not found').toBeTruthy()
+    const body = m![1]
+    expect(body, 'goLive MUST read pinnedPreviewSlide').toMatch(/pinnedPreviewSlide/)
+    expect(body, 'goLive MUST call setLiveAuto on the pin path').toMatch(/setLiveAuto\(/)
+    // The early-return MUST come BEFORE the legacy slides.length guard
+    // so a pin always wins over the "Add something to the schedule" toast.
+    const pinIdx = body.indexOf('pinnedPreviewSlide')
+    const guardIdx = body.indexOf('!slides.length')
+    expect(pinIdx).toBeGreaterThan(-1)
+    expect(guardIdx).toBeGreaterThan(-1)
+    expect(pinIdx, 'pin check MUST run before the !slides.length toast').toBeLessThan(guardIdx)
+  })
+
+  it('(i) v0.7.213 — setSlides MUST clear pinnedPreviewSlide so detected/suggested verses on Preview win over a stale media pin on goLive', () => {
+    // Operator first single-clicks a video tile (v0.7.210 path → pinPreviewSlide).
+    const stalePin = mediaSlide('vid-stale', 'old-clip.mp4')
+    useAppStore.getState().pinPreviewSlide(stalePin)
+    expect(useAppStore.getState().pinnedPreviewSlide?.id).toBe('vid-stale')
+
+    // Then a detected verse stages on Preview via setSlides (library-compact
+    // sendDetectedToSchedule: s.setSlides([slide]); s.setPreviewSlideIndex(0)).
+    const v = verse('rom-8-29', 'Romans 8:29', 'For whom he did foreknow...')
+    useAppStore.getState().setSlides([v])
+
+    // The stale pin MUST be cleared so goLive's v0.7.212 pin-first branch
+    // falls through to the slides[previewSlideIndex] legacy path, which
+    // correctly promotes the new verse.
+    expect(useAppStore.getState().pinnedPreviewSlide).toBeNull()
+
+    // Mirror goLive: pin null → take legacy path.
+    const s = useAppStore.getState()
+    const pinned = s.pinnedPreviewSlide
+    expect(pinned).toBeNull()
+    s.setLiveSlideIndex(s.previewSlideIndex)
+    s.setIsLive(true)
+    const liveAfter = buildOutputPayload(useAppStore.getState()).slide
+    expect(liveAfter?.id).toBe('rom-8-29')
+    expect(liveAfter?.type).toBe('verse')
+  })
+
+  it('(k) v0.7.213 — verse on Preview, then single-click a video: Preview MUST swap to video IMMEDIATELY (live untouched)', () => {
+    // Operator setup: verse staged on Preview (slides[0]), live empty.
+    const v = verse('rom-8-28', 'Romans 8:28', 'And we know that all things work together...')
+    useAppStore.getState().setSlides([v])
+    expect(useAppStore.getState().slides[0]?.id).toBe('rom-8-28')
+    expect(useAppStore.getState().pinnedPreviewSlide).toBeNull()
+
+    // Operator single-clicks a video tile (sendMediaToPreview → pinPreviewSlide).
+    const vid = mediaSlide('vid-storm', '1-day-Wonder.mp4')
+    useAppStore.getState().pinPreviewSlide(vid)
+
+    // Mirror the Preview pane read: `pinnedPreviewSlide ?? slides[previewSlideIndex]`.
+    const s = useAppStore.getState()
+    const previewNow = s.pinnedPreviewSlide ?? s.slides[s.previewSlideIndex] ?? null
+    expect(previewNow?.id).toBe('vid-storm')
+    expect(previewNow?.type).toBe('media')
+    expect(previewNow?.mediaKind).toBe('video')
+
+    // slides[] MUST survive — the verse is still in the deck, just shadowed by the pin.
+    expect(s.slides[0]?.id).toBe('rom-8-28')
+    // Live MUST be untouched (was empty, stays empty — no isLive flip).
+    expect(s.isLive).toBe(false)
+    expect(s.liveSlide).toBeNull()
+  })
+
+  it('(j) v0.7.213 GUARD — store setSlides MUST include pinnedPreviewSlide:null in its set() payload', () => {
+    const src = readFileSync(join(process.cwd(), 'src/lib/store.ts'), 'utf8')
+    const m = src.match(/setSlides:\s*\(s\)\s*=>\s*set\(\{([^}]*)\}\)/)
+    expect(m, 'setSlides reducer not found in store.ts').toBeTruthy()
+    const payload = m![1]
+    expect(payload, 'setSlides MUST reset pinnedPreviewSlide').toMatch(/pinnedPreviewSlide:\s*null/)
+    expect(payload, 'setSlides MUST also reset liveSlide (v0.7.203)').toMatch(/liveSlide:\s*null/)
+  })
+
+  it('(h) GUARD — logos-shell goLive source MUST check pinnedPreviewSlide and call setLiveAuto', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+    const m = src.match(/\/\/ Transport actions\s*\n\s*const goLive = useCallback\(\(\) => \{([\s\S]*?)\}, \[/)
+    expect(m, 'logos-shell goLive not found').toBeTruthy()
+    const body = m![1]
+    expect(body, 'goLive MUST read pinnedPreviewSlide').toMatch(/pinnedPreviewSlide/)
+    expect(body, 'goLive MUST call setLiveAuto on the pin path').toMatch(/setLiveAuto\(/)
+    const pinIdx = body.indexOf('pinnedPreviewSlide')
+    const guardIdx = body.indexOf('!slides.length')
+    expect(pinIdx).toBeGreaterThan(-1)
+    expect(guardIdx).toBeGreaterThan(-1)
+    expect(pinIdx, 'pin check MUST run before the !slides.length toast').toBeLessThan(guardIdx)
+  })
+})
