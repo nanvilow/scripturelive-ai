@@ -130,6 +130,7 @@ export function BibleLookupCompact() {
   // click) and the search box (Enter / Enter-twice).
   const stageVerse = useCallback(
     (chap: BibleChapter, verseNum: number, live: boolean) => {
+      try { console.log('[STAGE-VERSE] verseNum='+verseNum+' live='+live+' chap='+chap.book+' '+chap.chapter); } catch {}
       const v = chap.verses.find((x) => x.verse === verseNum)
       if (!v) return
       const reference = `${chap.book} ${chap.chapter}:${verseNum}`

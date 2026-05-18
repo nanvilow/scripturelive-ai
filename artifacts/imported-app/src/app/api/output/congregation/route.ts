@@ -2109,6 +2109,7 @@ if(IS_PREVIEW){
       var d=ev&&ev.data;
       if(!d||typeof d!=='object')return;
       if(d.__sl_preview!==1)return;
+      try{ var __t=d&&d.payload&&d.payload.slide&&d.payload.slide.title; console.log('[IF-RX] rev='+d.__rev+' slide='+__t+' isPreview='+IS_PREVIEW); }catch(__){}
       if(d.payload){
         // Force-bypass the render cache for every preview payload —
         // the parent only sends when state actually changed, so

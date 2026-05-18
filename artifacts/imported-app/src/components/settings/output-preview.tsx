@@ -337,9 +337,11 @@ export function OutputPreview({
     const w = iframeRef.current?.contentWindow
     if (!w || !readyRef.current) {
       pendingRef.current = payload
+      try { console.log('[OP-POST] BUFFERED mode='+mode+' ready='+readyRef.current+' hasW='+!!w+' slide='+(payload?.slide as any)?.title); } catch {}
       return
     }
     revRef.current += 1
+    try { console.log('[OP-POST] SEND mode='+mode+' rev='+revRef.current+' slide='+(payload?.slide as any)?.title); } catch {}
     try {
       // __rev is still stamped for log-correlation / future diagnostics
       // but the iframe handler (v0.7.204) no longer gates on it.
