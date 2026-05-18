@@ -916,6 +916,17 @@ function applyRender(s){
 //   isLT  → [0.60, 2.50]  (grow short verses up to 2.5× the CSS base)
 //   else  → [0.60, 1.00]  (shrink-only, identical to v0.7.184.2)
 var __fitKey='', __fitScale=1, __fitBase=0, __lastIsLT=null;
+// v0.7.207 — Typography-settings fingerprint stamped by render() on
+// every paint. Included in __fitKey so any settings change (Display &
+// Output Typography, NDI Full Typography, NDI Lower-Third Typography,
+// Reference Label fields, line-height, text-scale, aspect-ratio,
+// align, drop-shadow, etc.) invalidates the autofit cache. Pre-fix
+// the cache key was only text-length + parent.clientWidth/Height —
+// so changing a typography setting did NOT invalidate the cache,
+// fitVerseText hit the early-return at L963 and reapplied the STALE
+// __fitBase*__fitScale pixel value, silently overwriting the operator's
+// new clamp() and making every NDI/Display typography knob look dead.
+var __renderSettingsFP='';
 function fitVerseText(){
   try{
     // v0.7.192-hotfix.2 Fix 3 — Reference autofit (LT only).
@@ -959,7 +970,7 @@ function fitVerseText(){
     if(!p)return;
     var parent=p.parentElement;
     if(!parent)return;
-    var key=(p.textContent||'').length+'|'+parent.clientWidth+'x'+parent.clientHeight;
+    var key=(p.textContent||'').length+'|'+parent.clientWidth+'x'+parent.clientHeight+'|'+__renderSettingsFP;
     if(key===__fitKey && __fitBase>0){
       // LOCKED — same verse + same frame. Reapply cached pixel size
       // directly without re-searching. Must rewrite because the <p>
@@ -1206,6 +1217,9 @@ function render(s){
     var domEmpty=elCk && (!elCk.innerHTML || elCk.innerHTML.trim().length===0);
     if(key===lastRenderKey && !domEmpty)return;
     lastRenderKey=key;
+    // v0.7.207 — Stamp typography fingerprint for fitVerseText cache
+    // invalidation. See __renderSettingsFP declaration comment at L922.
+    try{__renderSettingsFP=settingsRenderKey(s.settings)||'';}catch(e){}
   }catch(e){}
   var slide=s.slide;
   // Display mode resolution — single source of truth across all
