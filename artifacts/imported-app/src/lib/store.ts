@@ -1179,14 +1179,15 @@ export const useAppStore = create<AppState>()(
           }
           return { slides, previewSlideIndex: 0, liveSlideIndex: -1 }
         }),
-      replaceSlide: (index, patch) =>
-        set((state) => {
+      replaceSlide: (index, patch) => {
+        return set((state) => {
           if (index < 0 || index >= state.slides.length) return {}
           const nextSlides = state.slides.map((sl, i) =>
             i === index ? { ...sl, ...patch } : sl,
           )
           return { slides: nextSlides }
-        }),
+        })
+      },
       previewSlideIndex: 0,
       setPreviewSlideIndex: (i) => set({ previewSlideIndex: i }),
       liveSlideIndex: -1,
