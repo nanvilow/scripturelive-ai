@@ -6,6 +6,7 @@ import { cn, isVideoBackground, resolveMediaUrl } from '@/lib/utils'
 import type { Slide, AppSettings } from '@/lib/store'
 import { useAppStore } from '@/lib/store'
 import { getFontStack, resolveReferenceTypography } from '@/lib/fonts'
+import { getDirAttribute } from '@/lib/bibles/translation-direction'
 import { attachAnalyser, readLevel } from '@/lib/audio-level'
 
 // ──────────────────────────────────────────────────────────────────
@@ -366,6 +367,15 @@ function SlideContent({
     // "Who" hang on a separate line above the rest of the verse.
     const joined = slide.content.join(' ').replace(/\s+/g, ' ').trim()
     const ta = settings.textAlign ?? 'center'
+    // v0.7.199 — RTL Bible-translation support.
+    // For Hebrew / Arabic / Aramaic / Farsi / Urdu translations we set
+    // `dir="rtl"` on the verse container so punctuation, verse numbers,
+    // and line wrapping flow right-to-left. The helper returns
+    // undefined for every currently-bundled translation (all LTR), so
+    // the rendered DOM is byte-identical to pre-v0.7.199 for English /
+    // Twi / Ewe. The reference chyron inherits direction naturally
+    // from the container.
+    const verseDir = getDirAttribute(useAppStore.getState().selectedTranslation)
     const itemsClass =
       ta === 'left' ? 'items-start' : ta === 'right' ? 'items-end' : 'items-center'
     const textClass =
@@ -377,7 +387,7 @@ function SlideContent({
             ? 'text-justify'
             : 'text-center'
     return (
-      <div className={cn('w-full h-full flex flex-col justify-center overflow-hidden', itemsClass, textClass)} style={fontStyle}>
+      <div dir={verseDir} className={cn('w-full h-full flex flex-col justify-center overflow-hidden', itemsClass, textClass)} style={fontStyle}>
         {settings.showReferenceOnOutput && (() => {
           // Reference typography (Bug #5): resolve the operator's
           // reference-specific font/size/align/shadow/scale. Each

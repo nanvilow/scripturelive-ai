@@ -140,6 +140,54 @@ const subscribers = new Set<{
 
 let subscriberIdCounter = 0
 
+// v0.7.199 — Heartbeat-based SSE leak prune.
+//
+// Pre-v0.7.199 the only prune path was "sub.write returned false OR
+// threw" during a real state broadcast. Stalled-but-not-closed sockets
+// (Wi-Fi blip, suspended laptop, dead congregation TV that never sent
+// FIN) silently buffer forever — Node's res.write keeps returning true
+// until the OS buffer overflows, which on a 10MB socket buffer with a
+// 200-byte SSE payload would take ~50k unanswered broadcasts. During a
+// long live service this stacks dead subscribers in the Set and every
+// real update walks all of them, slowing the broadcast hot path.
+//
+// Fix: every 25 seconds emit an SSE comment-line heartbeat (`:hb\n\n`)
+// to every subscriber. Comment lines are valid SSE per spec, the
+// browser EventSource drops them silently, so the only visible effect
+// is that Node's write attempt eventually fails on truly-dead sockets,
+// the existing prune path catches it, and the Set stays bounded.
+// 25s is well under any common HTTP idle-timeout (most proxies cut at
+// 60s, AWS ALB defaults to 60s, Cloudflare 100s) so this also acts as
+// a keep-alive for SSE through proxies — relevant the moment anyone
+// puts the congregation feed behind a reverse proxy.
+//
+// We use a Node process-scoped interval (not unref'd) — the SSE
+// broadcaster is the heart of the live service, so keeping the event
+// loop alive on its behalf is the right tradeoff. The interval is
+// idempotent: only one is created per process even across Next.js hot
+// reloads (the module-level guard below prevents stacking).
+const HEARTBEAT_INTERVAL_MS = 25_000
+const HEARTBEAT_PAYLOAD = `:hb\n\n`
+declare global {
+  // eslint-disable-next-line no-var
+  var __scriptureLiveSseHeartbeat: NodeJS.Timeout | undefined
+}
+if (typeof globalThis !== 'undefined' && !globalThis.__scriptureLiveSseHeartbeat) {
+  globalThis.__scriptureLiveSseHeartbeat = setInterval(() => {
+    if (subscribers.size === 0) return
+    const toRemove: { id: string; write: (d: string) => boolean }[] = []
+    subscribers.forEach((sub) => {
+      try {
+        const ok = sub.write(HEARTBEAT_PAYLOAD)
+        if (!ok) toRemove.push(sub)
+      } catch {
+        toRemove.push(sub)
+      }
+    })
+    toRemove.forEach((sub) => subscribers.delete(sub))
+  }, HEARTBEAT_INTERVAL_MS)
+}
+
 /**
  * Get the current output state.
  */

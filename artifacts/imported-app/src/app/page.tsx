@@ -24,6 +24,7 @@ import { AdminModal } from '@/components/license/admin-modal'
 import { WelcomeDialog } from '@/components/providers/welcome-dialog'
 import { useAppStore } from '@/lib/store'
 import { ArrowLeft } from 'lucide-react'
+import { ErrorBoundary } from '@/components/error-boundary'
 
 // v0.7.40 — Dynamic-imported. LogosShell is ~3,400 LOC plus its full
 // transitive component / hook / icon / Bible-API graph; SettingsView is
@@ -67,7 +68,9 @@ function AppContent() {
         inert={settingsOpen ? '' : undefined}
         style={settingsOpen ? { visibility: 'hidden' } : undefined}
       >
-        <LogosShell />
+        <ErrorBoundary label="Live Console">
+          <LogosShell />
+        </ErrorBoundary>
       </div>
       {settingsOpen && (
         <div className="fixed inset-0 z-50 bg-background flex flex-col">
@@ -91,7 +94,9 @@ function AppContent() {
             </button>
           </div>
           <div className="flex-1 overflow-y-auto bg-background">
-            <SettingsView />
+            <ErrorBoundary label="Settings">
+              <SettingsView />
+            </ErrorBoundary>
           </div>
         </div>
       )}

@@ -2234,7 +2234,35 @@ function setupIpc() {
     }
   })
 
-  ipcMain.handle('ndi:status', () => ndi.getStatus())
+  // v0.7.199 — Defensive IPC guards. `ndi.getStatus()` and the stop
+  // handler below are called from the renderer at boot and on every
+  // operator click of the NDI panel. If the bundled DLL failed to load
+  // (corrupt install / missing VC++ runtime / blocked by AV), some
+  // internal fields on the NdiService instance are nullable. A renderer
+  // call into an unhealthy main-process handler that throws would be
+  // surfaced as an `invoke` rejection in the operator's console with no
+  // diagnostic. Returning a structured "unavailable" reply lets the UI
+  // render the NDI panel in its disabled state with the actual reason
+  // string instead of bubbling up an Error to React.
+  ipcMain.handle('ndi:status', () => {
+    try {
+      return ndi.getStatus()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      return {
+        running: false,
+        sourceName: '',
+        width: 0,
+        height: 0,
+        fps: 0,
+        layout: 'mirror' as const,
+        transparent: false,
+        lowerThird: { enabled: false, position: 'bottom' as const, height: null, scale: null },
+        available: false,
+        unavailableReason: ndi.unavailableReason() || message,
+      }
+    }
+  })
 
   ipcMain.handle('ndi:start', (_e, opts: NdiStartOptions) =>
     serializeNdi(async () => {
@@ -2390,6 +2418,17 @@ function setupIpc() {
 
   ipcMain.handle('ndi:stop', () =>
     serializeNdi(async () => {
+      // v0.7.199 — Match the ndi:start guard. If the runtime never
+      // loaded there is nothing to stop, but we still want a clean
+      // structured reply so the renderer doesn't see an invoke
+      // rejection (which would surface as a generic "Disconnect
+      // failed" toast). Returning ok:true here is correct: from the
+      // operator's perspective "the NDI sender is not running" is the
+      // desired post-state and that is exactly what `available=false`
+      // already guarantees.
+      if (!ndi.isAvailable()) {
+        return { ok: true, alreadyStopped: true }
+      }
       try {
         // v0.7.103 — LINGER MODE on operator-initiated Disconnect.
         //
