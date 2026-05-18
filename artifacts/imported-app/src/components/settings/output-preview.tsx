@@ -111,6 +111,25 @@ export function OutputPreview({
   // mutations occurred in a single tick.
   const revRef = useRef(0)
   const rafPendingRef = useRef<number | null>(null)
+  // v0.7.212 — Operator $1600-customer escalation: single-clicking a
+  // media tile in the Library was killing the LIVE video element in
+  // the mirrorLive=true Live Display pane. Root cause: Zustand
+  // subscribe fires on EVERY store change (incl. pinnedPreviewSlide),
+  // so the mirrorLive iframe was getting re-posted with a byte-
+  // identical payload on every click. The iframe handler
+  // (route.ts L2202 IS_PREVIEW) does `lastRenderKey=''` BEFORE
+  // applyRender — which forces a full DOM rebuild even when the
+  // slide identity is unchanged. Rebuilding the live <video> element
+  // restarts playback (or stops it if the element is detached
+  // mid-frame). Fix: dedup at the parent. Compute a CHEAP fingerprint
+  // of the meaningful identity fields and skip the postMessage if it
+  // matches the last one we sent to THIS iframe. mediaUrl is excluded
+  // (multi-MB dataURL → expensive stringify) — slide.id is the
+  // identity proxy: when operator picks a different media, id
+  // changes; when the same media stays on air, id stays. Settings,
+  // displayMode, blanked, etc. are still in the FP so a typography
+  // tweak still flows through.
+  const lastSentFpRef = useRef<string>('')
   // v0.7.200-hotfix.2 — Refs that ALWAYS hold the latest props.
   //
   // The subscriber registered with useAppStore.subscribe() below
@@ -339,6 +358,39 @@ export function OutputPreview({
       pendingRef.current = payload
       return
     }
+    // v0.7.212 — Parent-side dedup. See lastSentFpRef comment above
+    // for the operator-visible bug this fixes. Mirrors the cheap
+    // identity fields the renderer's L1260 cache key would
+    // distinguish, MINUS mediaUrl (excluded for cost — slide.id is
+    // the identity proxy and changes whenever operator picks a
+    // different media). If the fingerprint matches the last one we
+    // sent, the iframe would render identical output anyway, so
+    // skipping the postMessage avoids the iframe's
+    // `lastRenderKey=''` force-reset (route.ts L2212) tearing down
+    // the live <video> element and restarting playback.
+    const s = payload.slide as (OutputPayload['slide'] & { mediaUrl?: string; mediaKind?: string }) | null
+    const fp = JSON.stringify({
+      t: payload.type,
+      b: payload.blanked,
+      l: payload.isLive,
+      dm: payload.displayMode,
+      sl: s
+        ? {
+            id: s.id,
+            ty: s.type,
+            ti: s.title,
+            su: s.subtitle,
+            co: s.content,
+            mk: s.mediaKind,
+            mu: s.mediaUrl ? s.mediaUrl.length : 0,
+            mp: (s as { mediaPaused?: boolean }).mediaPaused === true ? 1 : 0,
+          }
+        : null,
+      st: payload.settings,
+      au: payload.audio,
+    })
+    if (fp === lastSentFpRef.current) return
+    lastSentFpRef.current = fp
     revRef.current += 1
     try {
       // __rev is still stamped for log-correlation / future diagnostics

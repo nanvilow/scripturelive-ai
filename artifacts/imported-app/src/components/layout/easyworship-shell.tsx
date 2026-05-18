@@ -1578,6 +1578,26 @@ export function EasyWorshipShell() {
 
   // ── Transport actions ────────────────────────────────────────────────
   const goLive = useCallback(() => {
+    // v0.7.212 — Operator $1600-customer escalation: clicking GO LIVE
+    // while a media tile is staged on Preview (via the v0.7.210
+    // pinPreviewSlide direct-ref path) must promote the pinned slide
+    // to live and start playback immediately. Pre-fix, goLive only
+    // consulted slides[previewSlideIndex] — but pinPreviewSlide
+    // intentionally does NOT add the slide to slides[] (that was the
+    // whole point of v0.7.210, to avoid clobbering slides[] / live
+    // on every preview click). So with only a pin set and no schedule
+    // entry, operator hit either "Add something to the schedule first"
+    // or got the wrong slide promoted. Fix: consult pinnedPreviewSlide
+    // first and route through setLiveAuto (the v0.7.203/v0.7.208/v0.7.210
+    // canonical "promote to live" primitive). setLiveAuto sets
+    // {liveSlide, isLive:true, hasShownContent:true} and the renderer
+    // reads liveSlide first (output-payload L19) so the video is on air
+    // immediately.
+    const pinned = useAppStore.getState().pinnedPreviewSlide
+    if (pinned) {
+      useAppStore.getState().setLiveAuto(pinned)
+      return
+    }
     if (!slides.length) {
       toast.info('Add something to the schedule first')
       return

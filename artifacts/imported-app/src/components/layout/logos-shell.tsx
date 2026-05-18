@@ -3987,6 +3987,30 @@ export function LogosShell() {
 
   // Transport actions
   const goLive = useCallback(() => {
+    // v0.7.212 — Operator $1600-customer escalation: clicking GO LIVE
+    // while a media tile is staged on Preview (via the v0.7.210
+    // pinPreviewSlide direct-ref path) must promote the pinned slide
+    // to live and start playback immediately. Pre-fix, goLive only
+    // consulted slides[previewSlideIndex] — but pinPreviewSlide
+    // intentionally does NOT add to slides[] (that was the whole
+    // point of v0.7.210). Fix: consult pinnedPreviewSlide first and
+    // route through setLiveAuto (canonical promote-to-live primitive).
+    const pinned = useAppStore.getState().pinnedPreviewSlide
+    if (pinned) {
+      // Mirror the smooth handoff: capture preview video timestamp +
+      // unpause live media so playback resumes seamlessly on the
+      // promoted slide (same UX as the schedule-based path below).
+      if (typeof document !== 'undefined') {
+        const pv = document.querySelector<HTMLVideoElement>('video[data-surface="preview"]')
+        if (pv && Number.isFinite(pv.currentTime)) {
+          try { useAppStore.getState().setLiveMediaCurrentTime(pv.currentTime) } catch { /* ignore */ }
+        }
+      }
+      useAppStore.getState().setLiveMediaPaused(false)
+      useAppStore.getState().setPreviewMediaPaused(true)
+      useAppStore.getState().setLiveAuto(pinned)
+      return
+    }
     if (!slides.length) {
       toast.info('Add something to the schedule first')
       return
