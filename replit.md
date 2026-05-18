@@ -2,6 +2,10 @@
 
 A Next.js application providing scripture-related services for web and desktop, enhancing live service experiences, and streamlining administrative tasks.
 
+## User preferences
+
+-   **Autonomy**: Act without asking for consent on routine decisions — always do what's better for the app. Do not ask permission for housekeeping (file trims, refactors, retry logic, dependency bumps, etc.). Only ask when a decision is genuinely destructive or shapes product direction.
+
 ## Run & Operate
 
 -   **Install dependencies**: `pnpm install`
