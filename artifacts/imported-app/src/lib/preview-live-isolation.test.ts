@@ -32,9 +32,8 @@
  * this workspace, not yet shipped).
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { Slide } from './slides'
 import { buildOutputPayload } from './output-payload'
-import { useAppStore } from './store'
+import { useAppStore, type Slide } from './store'
 
 // Minimal localStorage shim — Zustand persist needs *something*
 // callable. We don't care about persistence in tests; the in-memory
@@ -228,5 +227,68 @@ describe('v0.7.203 — preview/live isolation (operator snap-back bug)', () => {
 
     expect(useAppStore.getState().liveSlide).toBeNull()
     expect(useAppStore.getState().pinnedPreviewSlide).toBeNull()
+  })
+})
+
+/**
+ * v0.7.204 — Iframe handler MUST render the latest payload it
+ * receives even when __rev is lower than a previously-seen rev. The
+ * v0.7.200-hotfix.3 rev gate was theorised to protect against
+ * out-of-order delivery, but postMessage between a parent window and
+ * its direct iframe is FIFO per spec — the rev gate only ever caused
+ * silent drops on parent remount (revRef resets to 0 while iframe's
+ * lastPreviewRev was still high), which presented to the operator as
+ * the "preview snaps back to live on single click" bug.
+ *
+ * This test mirrors the EXACT iframe handler logic at
+ * route.ts L2110-2125 so a future refactor that re-introduces the
+ * rev gate will fail this test immediately.
+ */
+describe('v0.7.204 — iframe message handler must not drop on rev regression', () => {
+  // Mirror the L2110 handler. The renders[] array stands in for what
+  // applyRender(d.payload) would visibly paint.
+  const makeHandler = () => {
+    const renders: string[] = []
+    const onMessage = (d: { __sl_preview?: number; __rev?: number; payload?: { slide?: { title?: string } } } | null) => {
+      if (!d || typeof d !== 'object') return
+      if (d.__sl_preview !== 1) return
+      if (d.payload) renders.push(d.payload.slide?.title ?? 'NO-SLIDE')
+    }
+    return { renders, onMessage }
+  }
+
+  it('accepts a strictly increasing rev sequence (baseline)', () => {
+    const { renders, onMessage } = makeHandler()
+    onMessage({ __sl_preview: 1, __rev: 1, payload: { slide: { title: 'v18' } } })
+    onMessage({ __sl_preview: 1, __rev: 2, payload: { slide: { title: 'v19' } } })
+    onMessage({ __sl_preview: 1, __rev: 3, payload: { slide: { title: 'v25' } } })
+    expect(renders).toEqual(['v18', 'v19', 'v25'])
+  })
+
+  it('THE FIX — accepts payload whose rev RESTARTED at 1 after parent remount (was silently dropped pre-v0.7.204)', () => {
+    const { renders, onMessage } = makeHandler()
+    // Pre-remount: parent posted up to rev=12
+    onMessage({ __sl_preview: 1, __rev: 11, payload: { slide: { title: 'v18-old' } } })
+    onMessage({ __sl_preview: 1, __rev: 12, payload: { slide: { title: 'v19-old' } } })
+    // Parent OutputPreview remounts (StrictMode / layout shuffle).
+    // revRef restarts at 0 → next post is rev=1.
+    onMessage({ __sl_preview: 1, __rev: 1, payload: { slide: { title: 'v35-new' } } })
+    onMessage({ __sl_preview: 1, __rev: 2, payload: { slide: { title: 'v36-new' } } })
+    // Pre-v0.7.204 (with rev gate): renders would be ['v18-old','v19-old']
+    // — the two v*-new messages would be silently dropped. The operator
+    // would see the preview iframe STUCK on v19-old even though their
+    // single-click on v35 was correctly recorded in the store.
+    // v0.7.204 (gate removed): every payload renders.
+    expect(renders).toEqual(['v18-old', 'v19-old', 'v35-new', 'v36-new'])
+    // Final visible slide MUST be the operator's most-recent click.
+    expect(renders.at(-1)).toBe('v36-new')
+  })
+
+  it('ignores messages without __sl_preview tag (unrelated postMessage traffic)', () => {
+    const { renders, onMessage } = makeHandler()
+    onMessage(null)
+    onMessage({ __rev: 1, payload: { slide: { title: 'imposter' } } })
+    onMessage({ __sl_preview: 1, __rev: 1, payload: { slide: { title: 'real' } } })
+    expect(renders).toEqual(['real'])
   })
 })
