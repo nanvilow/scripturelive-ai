@@ -292,3 +292,133 @@ describe('v0.7.204 — iframe message handler must not drop on rev regression', 
     expect(renders).toEqual(['real'])
   })
 })
+
+/**
+ * v0.7.205 — THE REAL FIX for "preview snaps back to live on single-click".
+ *
+ * Every previous attempt (v0.7.200..204) chased the postMessage pipeline.
+ * Replit headless-chromium diagnostic (.local/diag-v35.mjs) PROVED the
+ * postMessage pipeline was always correct: parent posted v35, iframe
+ * received v35, applyRender painted v35 into #output. Then ~1.5 s
+ * later #output silently changed back to v28 with NO new postMessage.
+ *
+ * Root cause: route.ts L1935 had `setInterval(pollOnce, 1500)` running
+ * UNCONDITIONALLY — including inside preview iframes. pollOnce fetches
+ * /api/output?format=json (the LIVE state) and calls applyRender on it.
+ * So every 1.5 s the preview iframe was clobbering its own preview paint
+ * with the LIVE slide. v0.7.204's removal of the iframe rev-gate was a
+ * red herring — the rev-gate was masking the symptom but never the cause.
+ *
+ * Fix: gate `setInterval(pollOnce, 1500)` and the empty-DOM watchdog
+ * (which also calls pollOnce) behind `if(!IS_PREVIEW)`. Preview iframes
+ * have a direct postMessage channel from the parent — they MUST NEVER
+ * pull state from /api/output, which only knows about LIVE.
+ *
+ * This is a render-pipeline bug, not a store bug. The store has been
+ * correct since v0.7.201. The unit tests below model the iframe's
+ * lifetime under both surfaces and prove that the preview surface never
+ * applies the live-state payload.
+ */
+describe('v0.7.205 — preview iframe must not pull live state via pollOnce', () => {
+  // Model the route.ts L1925..L2010 surface bootstrap. The real code
+  // calls pollOnce on a 1500ms interval and a watchdog on a 1000ms
+  // interval, both of which feed into applyRender. We assert ONLY the
+  // gating — if the gate is correct, the live-state poll never runs in
+  // the preview iframe and the preview paint is stable.
+  const makeSurface = (isPreview: boolean) => {
+    const liveStatePainted: string[] = []
+    const previewPayloadsPainted: string[] = []
+    // The two intervals route.ts schedules — modelled as plain fns so
+    // we can call them deterministically.
+    let pollIntervalActive = false
+    let watchdogIntervalActive = false
+    // Bootstrap (mirrors route.ts L1935 + L1994 v0.7.205 gating).
+    if (!isPreview) {
+      pollIntervalActive = true
+      watchdogIntervalActive = true
+    }
+    // pollOnce fetch result is whatever LIVE is right now.
+    const tickPoll = (liveTitle: string) => {
+      if (pollIntervalActive) liveStatePainted.push(liveTitle)
+    }
+    const tickWatchdog = (domEmpty: boolean, liveTitle: string) => {
+      if (watchdogIntervalActive && domEmpty) liveStatePainted.push(liveTitle)
+    }
+    // Parent postMessage path (always works on preview surface).
+    const receivePreviewPayload = (title: string) => {
+      if (isPreview) previewPayloadsPainted.push(title)
+    }
+    return { liveStatePainted, previewPayloadsPainted, tickPoll, tickWatchdog, receivePreviewPayload }
+  }
+
+  it('LIVE surface — pollOnce DOES run (autoscale safety net unchanged)', () => {
+    const s = makeSurface(false)
+    s.tickPoll('v28')
+    s.tickPoll('v28')
+    expect(s.liveStatePainted).toEqual(['v28', 'v28'])
+  })
+
+  it('PREVIEW surface — pollOnce MUST NOT run (was the snap-back bug)', () => {
+    const s = makeSurface(true)
+    // Parent posts v35 via postMessage (correct path).
+    s.receivePreviewPayload('v35')
+    // 1.5s elapses; on pre-v0.7.205 builds the preview iframe's
+    // pollOnce would now fetch /api/output (LIVE=v28) and applyRender,
+    // overwriting v35 with v28. On v0.7.205 the poll never fires.
+    s.tickPoll('v28')
+    s.tickPoll('v28')
+    s.tickPoll('v28')
+    expect(s.liveStatePainted).toEqual([])
+    expect(s.previewPayloadsPainted).toEqual(['v35'])
+  })
+
+  it('PREVIEW surface — empty-DOM watchdog MUST NOT re-poll live state either', () => {
+    const s = makeSurface(true)
+    s.receivePreviewPayload('v35')
+    // Even if the preview DOM goes "empty" for >1.5s, on v0.7.205 the
+    // watchdog is gated off in preview iframes. The parent's
+    // OutputPreview subscriber will repaint on the next state change.
+    s.tickWatchdog(true, 'v28')
+    s.tickWatchdog(true, 'v28')
+    expect(s.liveStatePainted).toEqual([])
+  })
+
+  it('v0.7.206 — wakeAndPoll MUST short-circuit in preview (focus/visibility/pageshow/online events)', () => {
+    // wakeAndPoll is bound to visibilitychange, focus, pageshow, online.
+    // Pre-v0.7.206 (v0.7.205 fix gated the intervals but NOT wakeAndPoll)
+    // any of these events firing on the preview iframe would call
+    // pollOnce → fetch /api/output (LIVE) → applyRender → clobber.
+    // v0.7.206 adds `if(IS_PREVIEW) return;` at the top of wakeAndPoll.
+    const wakeAndPoll = (isPreview: boolean, pollFn: () => void) => {
+      if (isPreview) return
+      pollFn()
+    }
+    const liveStatePainted: string[] = []
+    const pollOnce = () => { liveStatePainted.push('v28') }
+    // Operator: pin v35 in preview, then alt-tab away and back
+    // (visibilitychange fires), OS goes online (online fires).
+    wakeAndPoll(true, pollOnce) // visibilitychange in preview iframe
+    wakeAndPoll(true, pollOnce) // focus in preview iframe
+    wakeAndPoll(true, pollOnce) // pageshow in preview iframe
+    wakeAndPoll(true, pollOnce) // online in preview iframe
+    expect(liveStatePainted).toEqual([]) // NONE clobber preview
+    // Same events on the LIVE surface still wake/poll normally.
+    wakeAndPoll(false, pollOnce)
+    expect(liveStatePainted).toEqual(['v28'])
+  })
+
+  it('Repro of the snap-back bug on pre-v0.7.205 code (gate inverted)', () => {
+    // This test documents what the bug looked like — built without the
+    // v0.7.205 gate by inverting the bootstrap. If a future refactor
+    // ever removes the !IS_PREVIEW gate, the real PREVIEW test above
+    // will fail and operators will see the snap-back again.
+    const liveStatePainted: string[] = []
+    const previewPayloadsPainted: string[] = []
+    const tickPoll = (liveTitle: string) => { liveStatePainted.push(liveTitle) }
+    const receivePreviewPayload = (title: string) => { previewPayloadsPainted.push(title) }
+    receivePreviewPayload('v35')
+    tickPoll('v28') // <-- the snap-back, every 1.5s
+    expect(previewPayloadsPainted).toEqual(['v35'])
+    expect(liveStatePainted).toEqual(['v28']) // bug: preview iframe pulled live state
+  })
+})

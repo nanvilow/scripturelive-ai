@@ -1942,6 +1942,17 @@ if(!IS_PREVIEW) setInterval(pollOnce,1500);
 // becomes visible OR comes back into focus, so any missed update
 // catches up immediately. This is in ADDITION to the 1.5 s interval.
 function wakeAndPoll(){
+  // v0.7.205 — Wake/poll path MUST short-circuit in preview iframes.
+  // pollOnce fetches /api/output (LIVE state) and applyRenders it —
+  // doing that in a preview iframe would clobber the preview slide
+  // with live whenever the operator's tab regains focus, the OS goes
+  // online, or the browser fires pageshow. Preview iframes are
+  // repainted by the parent OutputPreview's Zustand subscriber, which
+  // posts a fresh payload (with lastRenderKey='' reset) on every
+  // store change — that is the ONLY repaint path preview surfaces
+  // need. See the IS_PREVIEW gate on setInterval(pollOnce,1500) at
+  // L1935 and the empty-DOM watchdog at L1994 for the same rationale.
+  if(IS_PREVIEW)return;
   // Reset cache keys so the next payload always paints, even if
   // it's byte-identical to whatever we last drew before throttle.
   lastRenderKey='';
@@ -2123,21 +2134,13 @@ if(IS_PREVIEW){
       var d=ev&&ev.data;
       if(!d||typeof d!=='object')return;
       if(d.__sl_preview!==1)return;
-      try{ var __t=d&&d.payload&&d.payload.slide&&d.payload.slide.title; console.log('[IF-RX] rev='+d.__rev+' slide='+__t+' isPreview='+IS_PREVIEW); }catch(__){}
       if(d.payload){
         // Force-bypass the render cache for every preview payload —
         // the parent only sends when state actually changed, so
         // re-rendering unconditionally is safe and prevents any
         // shape-equivalent cache collisions.
-        var __wantTitle=(d.payload&&d.payload.slide&&d.payload.slide.title)||'(null)';
         lastRenderKey='';
-        try{ applyRender(d.payload); }
-        catch(_err){ try{ console.error('[applyRender THROW]', _err); }catch(__){} }
-        try{
-          var __ref=document.querySelector('.slide-reference');
-          var __got=(__ref&&__ref.textContent)||'(empty)';
-          console.log('[IF-AFTER] want='+__wantTitle+' painted='+__got+' frameid='+(window.name||'?'));
-        }catch(__){}
+        try{ applyRender(d.payload); }catch(_err){}
       }
     }catch(e){}
   });

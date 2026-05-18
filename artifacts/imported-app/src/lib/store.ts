@@ -1697,7 +1697,3 @@ export const useAppStore = create<AppState>()(
     }
   )
 )
-
-if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
-  try { (window as any).__store = useAppStore } catch {}
-}
