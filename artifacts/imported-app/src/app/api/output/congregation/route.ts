@@ -68,7 +68,7 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 #bgLayer.ratio-21x9{aspect-ratio:21/9;width:min(100vw,calc(100vh*21/9));height:min(100vh,calc(100vw*9/21))}
 #bgLayer > video, #bgLayer > img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;display:block}
 #output{position:relative;z-index:1}
-.slide-content{position:relative;z-index:1;text-align:center;width:90%;max-width:90vw;padding:4vh 3vw;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.slide-content{position:relative;z-index:1;text-align:center;width:90%;max-width:90vw;height:100%;max-height:100%;min-height:0;box-sizing:border-box;overflow:hidden;padding:4vh 3vw;display:flex;flex-direction:column;align-items:center;justify-content:center}
 /* v0.6.3 — Bible reference text: BOLD by default + full opacity. The
    previous .55 opacity + default 500 weight made the chapter / verse
    line whisper-soft on the projector and effectively invisible on the

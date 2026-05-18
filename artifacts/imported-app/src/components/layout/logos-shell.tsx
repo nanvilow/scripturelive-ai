@@ -3731,6 +3731,7 @@ export function LogosShell() {
     settings,
     detectedVerses,
     addScheduleItem,
+    addScheduleItemQuiet,
     setSlides,
     outputEnabled,
     setOutputEnabled,
@@ -3868,6 +3869,38 @@ export function LogosShell() {
       content: (best.text || '').split('\n').filter(Boolean),
       background: settings.congregationScreenTheme,
     }
+    // v0.7.197 — Preview-lock guard. Mirrors the 5-site speech-provider
+    // preview-lock pattern from hotfix.11. Pre-fix this useEffect was
+    // the SIXTH AI-push site and the only one missed by hotfix.11's
+    // bulk pass — it fires from the addDetectedVerse pipeline (mic
+    // hot, AI hears preacher quoting "John 3:18"), not from speech
+    // commands, which is why hotfix.11's grep didn't catch it.
+    // Operator-visible bug: double-click v18 (live + preview = v18) →
+    // single-click v19 (intended: preview=v19, live=v18 unchanged) →
+    // ~200-800ms later this effect fires for v18 (still being quoted)
+    // and runs setSlides([v18]) which WIPES the [v18,v19] array down
+    // to [v18], previewSlideIndex=0 → preview snaps back to v18.
+    // Operator reported across all 5 click columns (Chapter Navigator,
+    // Auto Verse Match, Bible Reference Quoted, Suggested Verses,
+    // Scripture Feed) because they ALL stage manual preview which
+    // this single auto-fire effect then clobbers.
+    //
+    // Guard: if operator manually staged something different in
+    // preview (previewSlideIndex !== liveSlideIndex), queue the AI
+    // verse via addScheduleItemQuiet (still shows in Scripture Feed
+    // Queue history) and skip the slides/index mutation so manual
+    // preview survives. When preview === live (no manual stage) or
+    // there's no live slide, fall through to the regular live-fire.
+    const __st = useAppStore.getState()
+    if (__st.previewSlideIndex >= 0 && __st.previewSlideIndex !== __st.liveSlideIndex) {
+      addScheduleItemQuiet({
+        type: 'verse',
+        title: best.reference,
+        subtitle: best.translation,
+        slides: [slide],
+      })
+      return
+    }
     addScheduleItem({
       type: 'verse',
       title: best.reference,
@@ -3879,7 +3912,7 @@ export function LogosShell() {
     setLiveSlideIndex(0)
     setIsLive(true)
     // Toast suppressed per FRS — output actions stay silent.
-  }, [effectiveAutoFire, detectedVerses, addScheduleItem, setSlides, setPreviewSlideIndex, setLiveSlideIndex, setIsLive, settings.congregationScreenTheme])
+  }, [effectiveAutoFire, detectedVerses, addScheduleItem, addScheduleItemQuiet, setSlides, setPreviewSlideIndex, setLiveSlideIndex, setIsLive, settings.congregationScreenTheme])
 
   // Local no-op broadcaster — the real broadcaster lives globally in
   // <OutputBroadcaster /> (mounted in page.tsx) so settings tweaks
