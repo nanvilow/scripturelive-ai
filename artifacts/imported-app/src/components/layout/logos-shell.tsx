@@ -956,7 +956,15 @@ function PreviewCard() {
   } = useAppStore()
   const previewVideoPlaying = useAppStore((s) => s.previewVideoPlaying)
   const isLive = useAppStore((s) => s.isLive)
-  const previewSlide = slides[previewSlideIndex] || null
+  // v0.7.201 — Pinned preview slide takes precedence over the
+  // slides[previewSlideIndex] lookup. Operator's single-click in
+  // any of the 5 columns plants a direct Slide reference that
+  // nothing else (mystery mutation, Zustand notification race,
+  // setSlides reset) can overwrite. Pin is cleared on setIsLive(true)
+  // / selectScheduleItem / removeAllScheduleItems / clearSchedule,
+  // at which point this falls back to the normal index-based lookup.
+  const pinnedPreviewSlide = useAppStore((s) => s.pinnedPreviewSlide)
+  const previewSlide = pinnedPreviewSlide ?? slides[previewSlideIndex] ?? null
   // v0.7.186 — Restore the v0.7.157-and-earlier behaviour where the
   // Preview pane FREEZES on its current frame the moment the same
   // media is sent to Live, so the operator never hears doubled audio
