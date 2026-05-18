@@ -1415,6 +1415,16 @@ function NdiPreviewSurface(props: NdiPreviewSurfaceProps): React.JSX.Element {
   const src = (() => {
     const p = new URLSearchParams()
     p.set('ndi', '1')
+    // v0.7.198 — This iframe is the OPERATOR-FACING NDI Live Preview
+    // INSIDE the settings panel, NOT the offscreen FrameCapture surface
+    // that feeds OBS/vMix/Wirecast. The operator explicitly does not
+    // want video media playing here — the settings preview should show
+    // ONLY the static background so they can audition typography /
+    // mode / position without 5 simultaneous video decoders chewing
+    // CPU. Real outputs (Main Preview/Live columns, second screen,
+    // OBS via NDI, OBS via Browser Source) keep playing video — they
+    // do NOT pass noMedia=1.
+    p.set('noMedia', '1')
     // v0.7.159 — DO NOT pass `transparent=1` here. The actual NDI capture
     // (a hidden FrameCapture BrowserWindow elsewhere in the Electron main
     // process) keeps `transparent=1` so OBS / vMix get a clean alpha
@@ -1444,9 +1454,24 @@ function NdiPreviewSurface(props: NdiPreviewSurfaceProps): React.JSX.Element {
     return `/api/output/congregation?${p.toString()}`
   })()
 
-  // The iframe's effective src: latest computed value if mode/position
-  // changed (intentional reload), otherwise the frozen first src.
-  const stableKey = `ndi-preview:${props.ndiDisplayMode}:${props.lowerThirdPosition}`
+  // v0.7.198 — The iframe's React key MUST be a stable constant so
+  // flipping Full ↔ Lower-Third (or moving the LT bar top ↔ bottom)
+  // does NOT unmount + remount the iframe. Pre-fix the key included
+  // `ndiDisplayMode` + `lowerThirdPosition`, so every mode flip
+  // re-mounted the iframe → fresh load of /api/output/congregation
+  // → ~200-500ms of empty "ScriptureLive AI" splash placeholder
+  // before SSE caught up. That reload was leftover from before
+  // hotfix.5 taught the renderer to switch displayMode live via SSE
+  // precedence (see route.ts L1103). The renderer now adapts to
+  // ndiDisplayMode in <50ms with no reload — SSE pushes the new
+  // mode, the renderer re-paints — so the iframe MUST stay mounted.
+  // GUARD-RAIL: do NOT re-introduce mode/position into this key
+  // "to be safe" — every axis (height bucket lh, scale sc, position,
+  // mode) flows via SSE and is byte-identical between iframe and
+  // FrameCapture surfaces. The initialSrcRef freeze below bakes the
+  // first-paint URL so the very first frame carries the right mode;
+  // SSE drives every subsequent change.
+  const stableKey = 'ndi-preview'
   const lastKeyRef = useRef<string>(stableKey)
   if (lastKeyRef.current !== stableKey) {
     lastKeyRef.current = stableKey

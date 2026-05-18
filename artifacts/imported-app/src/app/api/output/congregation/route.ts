@@ -281,6 +281,7 @@ var FORCE_POS=null;
 // without the operator having to toggle their actual setting).
 var IS_PREVIEW=false;
 var FORCE_FULL=false;
+var IS_NO_MEDIA=false;
 // v0.7.5.1 — FORCE_LH / FORCE_SC let the Electron NDI capture pin the
 // operator's lower-third HEIGHT bucket and SCALE multiplier into the
 // URL itself, so the captured BrowserWindow renders the right box
@@ -314,6 +315,17 @@ try{
   if(isFinite(__sc)&&__sc>=0.5&&__sc<=2)FORCE_SC=__sc;
   IS_PREVIEW=(__qp.get('preview')==='1');
   FORCE_FULL=(__qp.get('fullScreen')==='1');
+  // v0.7.198 — When ?noMedia=1 is set, the renderer skips the
+  // <video>/<img> branch entirely and falls through to the standard
+  // verse/background path. Used by the SETTINGS preview iframes
+  // (Display & Output Live Preview, Typography preview, NDI Live
+  // Preview inside the NDI panel) where the operator wants to see
+  // ONLY the background — not 5 simultaneous video decoders running
+  // for what is essentially a typography auditioning UI. The actual
+  // outputs (Main Preview/Live columns, secondary screen, offscreen
+  // NDI FrameCapture, Browser Source) do NOT pass this flag, so
+  // operator + congregation + OBS still see video.
+  IS_NO_MEDIA=(__qp.get('noMedia')==='1');
 }catch(e){}
 // Drop body / stage / output backgrounds when running as an NDI
 // alpha-keyed overlay so vMix/OBS receives a clean matte. Done at
@@ -1174,7 +1186,16 @@ function render(s){
   // refreshes whenever ndiDisplayMode flips, even if the projector's
   // displayMode and slide are otherwise unchanged.
   try{
-    var key=JSON.stringify({sl:s.slide,dm:s.displayMode,st:settingsRenderKey(s.settings),ndi:IS_NDI});
+    // v0.7.198 — nm field tracks IS_NO_MEDIA so settings previews
+    // (which pass ?noMedia=1) get their own cache slot. Without this,
+    // a single payload would hash identically across the noMedia and
+    // playable surfaces; whichever rendered first would block the
+    // other rebuild. Also mirrored in the no-media early-bail (L1490)
+    // and media-reuse (L1562) branch writes so all three sites
+    // produce shape-identical keys. NO BACKTICKS in this comment —
+    // see v0.7.196 GUARD-RAIL D (we are inside the outer const-html
+    // template literal so any backtick terminates the literal).
+    var key=JSON.stringify({sl:s.slide,dm:s.displayMode,st:settingsRenderKey(s.settings),ndi:IS_NDI,nm:IS_NO_MEDIA?1:0});
     // v0.5.32 — bypass the cache-key bailout when the DOM is visually
     // empty. If the previous render left #output with no innerHTML
     // (rare race condition or watchdog-cleared state), the cache
@@ -1448,6 +1469,27 @@ function render(s){
   var fontFam=resolveFont(T_FF);
   var fontStyle='font-family:'+fontFam+';';
   var txt='';
+  if(slide.type==='media'&&slide.mediaUrl&&IS_NO_MEDIA){
+    // v0.7.198 — Settings preview wants background-only on media
+    // slides. Without this short-circuit, falling through to the
+    // standard text-slide branch would render slide.title (the
+    // media filename) as dim text — operator wants pure background.
+    // Mirrors the !slide themed-bg path at L1294-1316: paint the
+    // operator's customBackground via #bgLayer, lay the theme card
+    // + bg-overlay over it, and skip the verse/text DOM entirely.
+    var tkM=(st.congregationScreenTheme||'minimal');
+    var tcM=themes[tkM]||'theme-minimal';
+    var safeBgM=safeBgUrl(st.customBackground);
+    var bgOverlayM=safeBgM?'<div class="bg-overlay"></div>':'';
+    var themeBgM=safeBgM?'background:transparent;':'';
+    setBgVid(safeBgM);
+    $('output').innerHTML='<div class="'+tcM+'" style="'+themeBgM+'width:100%;height:100%;position:relative;">'+bgOverlayM+'</div>';
+    $('output').classList.remove('hidden');
+    window.__liveVideoEl=null;
+    window.__liveVideoKey='';
+    try{lastRenderKey=JSON.stringify({sl:slide,dm:s.displayMode,st:settingsRenderKey(s.settings),ndi:IS_NDI,nm:IS_NO_MEDIA?1:0});}catch(e){}
+    return;
+  }
   if(slide.type==='media'&&slide.mediaUrl){
     // Mirror the in-app resolveMediaPresentation() helper so the
     // congregation/NDI feed honours the operator's per-asset Fit /
@@ -1516,7 +1558,7 @@ function render(s){
       // shape mismatch, fails the early-bail check, and rebuilds the
       // DOM unnecessarily — costing us the very flicker-avoidance
       // this branch exists to provide.
-      try{lastRenderKey=JSON.stringify({sl:slide,dm:s.displayMode,st:settingsRenderKey(s.settings),ndi:IS_NDI});}catch(e){}
+      try{lastRenderKey=JSON.stringify({sl:slide,dm:s.displayMode,st:settingsRenderKey(s.settings),ndi:IS_NDI,nm:IS_NO_MEDIA?1:0});}catch(e){}
       return;
     }
     // NDI surface stays muted: the NDI sender captures raw frames, not

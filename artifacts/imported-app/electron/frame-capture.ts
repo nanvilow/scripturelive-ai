@@ -110,12 +110,69 @@ export class FrameCapture {
       )
     }
 
+    // v0.7.198 — Frame-flow diagnostics. Operator reported "NDI source
+    // appears in OBS dropdown but feed is BLACK" with no clear repro
+    // and "not sure when it broke." Per the v0.7.196 PROCESS GR
+    // ("early-warning canary"), instrumenting the frame producer so
+    // the NEXT launch.log immediately answers three questions:
+    //   1. Are frames flowing at all? (subscription firing?)
+    //   2. If yes, are they all-black pixels? (renderer broken vs
+    //      ndi.sendFrame broken?)
+    //   3. What's the frame rate actually achieved?
+    // Rate-limited to ~once per 2s @ 30fps (every 60th frame) so log
+    // volume is negligible — 30 lines per minute even at 30fps. The
+    // blackness check samples 8 evenly-spaced pixels (covers corners
+    // + centre) and reads only the BGR triplet (skips alpha) — cheap
+    // O(1) work per sampled frame, not per pixel.
+    let __frameIdx = 0
+    let __nonBlackFrames = 0
+    let __lastLogAt = Date.now()
+    const __isAllBlack = (buf: Buffer, w: number, h: number): boolean => {
+      // Sample 8 pixels: 4 corners + 4 mid-edges. If ANY sample shows
+      // non-trivial brightness (R+G+B > 24 = roughly hex #080808), the
+      // frame is not all-black. Mid-edges catch lower-third bars that
+      // might leave corners black even when content is rendering.
+      const samples = [
+        [0, 0],
+        [w - 1, 0],
+        [0, h - 1],
+        [w - 1, h - 1],
+        [(w / 2) | 0, 0],
+        [(w / 2) | 0, h - 1],
+        [0, (h / 2) | 0],
+        [w - 1, (h / 2) | 0],
+      ]
+      for (const [x, y] of samples) {
+        const i = (y * w + x) * 4
+        // BGRA layout: buf[i]=B, buf[i+1]=G, buf[i+2]=R, buf[i+3]=A
+        if (buf[i] + buf[i + 1] + buf[i + 2] > 24) return false
+      }
+      return true
+    }
     this.window.webContents.beginFrameSubscription(false, (image, dirty) => {
       try {
         const size = image.getSize()
         const bitmap = image.getBitmap() // BGRA
         if (size.width === 0 || size.height === 0) return
         if (bitmap.length !== size.width * size.height * 4) return
+        __frameIdx++
+        if (!__isAllBlack(bitmap, size.width, size.height)) __nonBlackFrames++
+        // Once per 60 frames (~2s @ 30fps), summarize: total frames,
+        // non-black ratio, and effective fps since last log line. This
+        // produces a single greppable line per ~2s in launch.log so
+        // operator + future agent can immediately see the truth.
+        if (__frameIdx % 60 === 0) {
+          const now = Date.now()
+          const dtSec = Math.max(0.001, (now - __lastLogAt) / 1000)
+          const fps = (60 / dtSec).toFixed(1)
+          const blackPct = __frameIdx > 0
+            ? (100 * (1 - __nonBlackFrames / __frameIdx)).toFixed(1)
+            : '0.0'
+          console.log(
+            `[frame-capture] frames=${__frameIdx} fps=${fps} black=${blackPct}% size=${size.width}x${size.height}`,
+          )
+          __lastLogAt = now
+        }
         this.deps.onFrame(bitmap, size.width, size.height)
       } catch (err) {
         this.deps.onStatus(`frame error: ${err instanceof Error ? err.message : String(err)}`)
@@ -123,6 +180,9 @@ export class FrameCapture {
     })
     this.subscribed = true
     this.deps.onStatus(`capturing ${opts.width}x${opts.height}@${opts.fps}`)
+    console.log(
+      `[frame-capture] subscription started: ${opts.width}x${opts.height}@${opts.fps} url=${url}`,
+    )
   }
 
   async stop(): Promise<void> {
