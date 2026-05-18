@@ -294,4 +294,149 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
     expect(guardIdx).toBeGreaterThan(-1)
     expect(pinIdx, 'pin check MUST run before the !slides.length toast').toBeLessThan(guardIdx)
   })
+
+  // ──────────────────────────────────────────────────────────────────
+  // v0.7.215 — Per-pane Clear buttons. Both panes get a single-click
+  // Clear that wipes ONLY that pane. Operator request: "add a clear
+  // button on both preview and live display that users can clear
+  // anything on there with a single click. Both shouldn't interfere
+  // with each other."
+  //
+  // Clear Preview = clearPinnedPreview() + setPreviewSlideIndex(-1).
+  //   MUST NOT touch slides[], liveSlide, liveSlideIndex, isLive.
+  // Clear Live    = clearLiveAuto() + setLiveSlideIndex(-1) +
+  //                 setIsLive(false) + sendToOutput(null,false).
+  //   MUST NOT touch pinnedPreviewSlide, previewSlideIndex, slides[].
+  // ──────────────────────────────────────────────────────────────────
+  it('(l) v0.7.215 BEHAVIOURAL — Clear Preview wipes preview but live keeps playing', () => {
+    // Operator state: a verse on Preview (via pin) AND a verse on Live
+    // (via setLiveAuto direct ref). Both panes are fully populated.
+    const previewVerse = verse('john-3-16', 'John 3:16', 'For God so loved...')
+    const liveVerse = verse('rom-8-28', 'Romans 8:28', 'And we know that...')
+    useAppStore.getState().setSlides([liveVerse]) // slides[0] = live verse
+    useAppStore.getState().setLiveSlideIndex(0)
+    useAppStore.getState().setIsLive(true)
+    useAppStore.getState().setLiveAuto(liveVerse) // v0.7.203 direct ref
+    useAppStore.getState().pinPreviewSlide(previewVerse) // v0.7.201 pin
+
+    // Sanity: preview shows previewVerse via pin, live shows liveVerse via direct ref.
+    let s = useAppStore.getState()
+    const previewBefore = s.pinnedPreviewSlide ?? s.slides[s.previewSlideIndex] ?? null
+    expect(previewBefore?.id).toBe('john-3-16')
+    expect(buildOutputPayload(s).slide?.id).toBe('rom-8-28')
+    expect(s.isLive).toBe(true)
+
+    // Operator clicks Clear Preview → EXACT primitives the new button calls.
+    useAppStore.getState().clearPinnedPreview()
+    useAppStore.getState().setPreviewSlideIndex(-1)
+
+    // Preview MUST be empty.
+    s = useAppStore.getState()
+    expect(s.pinnedPreviewSlide).toBeNull()
+    expect(s.previewSlideIndex).toBe(-1)
+    const previewAfter = s.pinnedPreviewSlide ?? s.slides[s.previewSlideIndex] ?? null
+    expect(previewAfter).toBeNull()
+
+    // Live MUST be UNTOUCHED — same slide, isLive still true.
+    expect(s.liveSlide?.id).toBe('rom-8-28')
+    expect(s.liveSlideIndex).toBe(0)
+    expect(s.isLive).toBe(true)
+    expect(buildOutputPayload(s).slide?.id).toBe('rom-8-28')
+    // slides[] survives so operator deck is intact.
+    expect(s.slides[0]?.id).toBe('rom-8-28')
+  })
+
+  it('(m) v0.7.215 BEHAVIOURAL — Clear Live wipes live but preview keeps its pin', () => {
+    const previewVerse = verse('john-3-16', 'John 3:16', 'For God so loved...')
+    const liveVerse = verse('rom-8-28', 'Romans 8:28', 'And we know that...')
+    useAppStore.getState().setSlides([liveVerse])
+    useAppStore.getState().setLiveSlideIndex(0)
+    useAppStore.getState().setIsLive(true)
+    useAppStore.getState().setLiveAuto(liveVerse)
+    useAppStore.getState().pinPreviewSlide(previewVerse)
+
+    // Operator clicks Clear Live → EXACT primitives the new clearLive calls.
+    useAppStore.getState().clearLiveAuto()
+    useAppStore.getState().setLiveSlideIndex(-1)
+    useAppStore.getState().setIsLive(false)
+
+    const s = useAppStore.getState()
+    // Live MUST be empty — liveSlide direct ref cleared (v0.7.215 fix),
+    // liveSlideIndex back to -1, isLive false.
+    expect(s.liveSlide).toBeNull()
+    expect(s.liveSlideIndex).toBe(-1)
+    expect(s.isLive).toBe(false)
+
+    // Preview MUST be UNTOUCHED — pin survives, index untouched.
+    expect(s.pinnedPreviewSlide?.id).toBe('john-3-16')
+    const previewAfter = s.pinnedPreviewSlide ?? s.slides[s.previewSlideIndex] ?? null
+    expect(previewAfter?.id).toBe('john-3-16')
+    // slides[] survives.
+    expect(s.slides[0]?.id).toBe('rom-8-28')
+  })
+
+  it('(n) v0.7.215 GUARD — logos-shell clearLive source MUST call clearLiveAuto so v0.7.203 direct ref is wiped', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+    const m = src.match(/const clearLive = useCallback\(\(\) => \{([\s\S]*?)\}, \[/)
+    expect(m, 'logos-shell clearLive not found').toBeTruthy()
+    const body = m![1]
+    expect(body, 'clearLive MUST call clearLiveAuto() to wipe v0.7.203 liveSlide ref').toMatch(
+      /clearLiveAuto\(\)/,
+    )
+    expect(body, 'clearLive MUST still reset liveSlideIndex').toMatch(/setLiveSlideIndex\(-1\)/)
+    expect(body, 'clearLive MUST still flip isLive false').toMatch(/setIsLive\(false\)/)
+    expect(body, 'clearLive MUST still post null to output').toMatch(/sendToOutput\(null,\s*false\)/)
+  })
+
+  it('(o) v0.7.215 GUARD — PreviewCard symmetry strip MUST host a Clear Preview button wired to clearPinnedPreview+setPreviewSlideIndex(-1)', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+    // The Clear Preview button lives between the symmetry-strip comment
+    // and the closing of PreviewCard's transport block.
+    const m = src.match(
+      /v0\.7\.215 — Symmetry strip now carries an explicit Clear[\s\S]*?Clear Preview\s*<\/Button>/,
+    )
+    expect(m, 'Clear Preview button missing from PreviewCard symmetry strip').toBeTruthy()
+    const block = m![0]
+    expect(block, 'Clear Preview MUST call clearPinnedPreview()').toMatch(/clearPinnedPreview\(\)/)
+    expect(block, 'Clear Preview MUST reset previewSlideIndex to -1').toMatch(
+      /setPreviewSlideIndex\(-1\)/,
+    )
+    // MUST NOT touch live state — the whole point of independence.
+    expect(block, 'Clear Preview MUST NOT call setIsLive').not.toMatch(/setIsLive\(/)
+    expect(block, 'Clear Preview MUST NOT call setLiveSlideIndex').not.toMatch(
+      /setLiveSlideIndex\(/,
+    )
+    expect(block, 'Clear Preview MUST NOT call clearLiveAuto').not.toMatch(/clearLiveAuto\(/)
+    expect(block, 'Clear Preview MUST NOT touch slides[]').not.toMatch(/setSlides\(/)
+  })
+
+  it('(p) v0.7.215 GUARD — LiveDisplayCard bottom toolbar MUST host a Clear Live button wired to onClearLive (independent of GO LIVE toggle)', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+    const m = src.match(
+      /v0\.7\.215 — Explicit Clear Live button[\s\S]*?Clear\s*<\/Button>/,
+    )
+    expect(m, 'Clear Live button missing from LiveDisplayCard toolbar').toBeTruthy()
+    const block = m![0]
+    expect(block, 'Clear Live button MUST call onClearLive').toMatch(/onClick=\{onClearLive\}/)
+    // MUST be a separate button — not the GO LIVE / STOP LIVE toggle.
+    expect(block, 'Clear Live MUST NOT be the GO LIVE / STOP LIVE toggle').not.toMatch(
+      /onSendLive/,
+    )
+    // MUST NOT touch preview-side state inline.
+    expect(block, 'Clear Live button MUST NOT touch pinnedPreviewSlide inline').not.toMatch(
+      /clearPinnedPreview/,
+    )
+    expect(block, 'Clear Live button MUST NOT touch setPreviewSlideIndex inline').not.toMatch(
+      /setPreviewSlideIndex/,
+    )
+  })
 })

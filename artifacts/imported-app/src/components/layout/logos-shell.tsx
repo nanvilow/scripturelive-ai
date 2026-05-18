@@ -1177,23 +1177,28 @@ function PreviewCard() {
           )}
         </div>
       </div>
-      {/* Symmetry strip — mirrors Live Display's always-visible
-          bottom transport row (Mic / Vol / Prev / Go Live / Next) so
-          both cards reserve the same vertical real estate. Without
-          this, the Preview body has more room than Live Display and
-          the 16:9 stages render at different sizes side-by-side.
-          Operators specifically asked for the two stages to be
-          visual twins so they can A/B compare what's queued vs
-          what's live without optical illusions. Kept content-light
-          (just chapter prev/next mirrors plus a spacer) since the
-          authoritative chapter nav already lives in the header — we
-          just need the height. */}
-      <div
-        className="border-t border-border/60 px-3 py-2 flex items-center justify-end gap-3 bg-card/30 shrink-0"
-        aria-hidden="true"
-        role="presentation"
-      >
-        <div className="h-7" />
+      {/* v0.7.215 — Symmetry strip now carries an explicit Clear
+          button that wipes the Preview pane only. Independent of
+          the Live pane's Clear (see LiveDisplayCard's bottom
+          toolbar). Operator asked for one-click wipe per pane so
+          the two surfaces never interfere. Internally calls
+          clearPinnedPreview() + setPreviewSlideIndex(-1) only —
+          slides[] / live state untouched. */}
+      <div className="border-t border-border/60 px-3 py-2 flex items-center justify-end gap-3 bg-card/30 shrink-0">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            useAppStore.getState().clearPinnedPreview()
+            useAppStore.getState().setPreviewSlideIndex(-1)
+          }}
+          disabled={!previewSlide}
+          title="Clear the Preview pane (does not affect Live)"
+          className="h-7 px-3 text-[10px] uppercase tracking-wider font-semibold text-muted-foreground hover:text-foreground border border-border gap-1.5"
+        >
+          <CircleSlash className="h-3 w-3" />
+          Clear Preview
+        </Button>
       </div>
       {/* Preview transport — Play / Pause + scrubbable seek bar. Only
           rendered for media-video preview slides; controls the actual
@@ -1940,6 +1945,24 @@ function LiveDisplayCard({
             global master volume the slide renderer already honours. */}
         <LiveBottomAudioControls />
         <div className="flex items-center gap-1">
+          {/* v0.7.215 — Explicit Clear Live button. Always visible
+              and independent of the GO LIVE / STOP LIVE toggle so
+              the operator can wipe the Live pane in one click even
+              when isLive=false but a stale slide (e.g. AI direct
+              ref) is still showing. Mirrors the Preview pane's
+              Clear button at the symmetry strip — the two are
+              fully independent. */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onClearLive}
+            disabled={!liveSlide && !isLive}
+            title="Clear the Live pane (does not affect Preview)"
+            className="h-7 px-2 text-[10px] uppercase tracking-wider font-semibold text-muted-foreground hover:text-foreground border border-border gap-1.5"
+          >
+            <CircleSlash className="h-3 w-3" />
+            Clear
+          </Button>
           <Button variant="ghost" size="icon" onClick={onPrev} className="h-7 w-7 text-foreground hover:text-foreground border border-border">
             <ChevronLeft className="h-3.5 w-3.5" />
           </Button>
@@ -4042,10 +4065,25 @@ export function LogosShell() {
   }, [slides.length, previewSlideIndex, setLiveSlideIndex, setIsLive, setPreviewSlideIndex])
 
   const clearLive = useCallback(() => {
+    // v0.7.215 — also wipe the v0.7.203 liveSlide direct ref. Pre-215
+    // clearLive only reset liveSlideIndex; a stale AI auto-detected
+    // verse (held in `liveSlide`) survived and the output payload's
+    // `liveSlide ?? slides[liveSlideIndex]` read would re-render it
+    // on the next broadcaster tick. Clear button must produce a truly
+    // empty Live pane.
+    useAppStore.getState().clearLiveAuto()
     setLiveSlideIndex(-1)
     setIsLive(false)
     sendToOutput(null, false)
   }, [setLiveSlideIndex, setIsLive, sendToOutput])
+
+  // v0.7.215 — Clear Preview lives inline at PreviewCard's symmetry
+  // strip (uses useAppStore.getState().clearPinnedPreview() +
+  // setPreviewSlideIndex(-1)). PreviewCard already subscribes to the
+  // store, so no prop drilling needed. clearLive above is the
+  // symmetric Live-only wipe. The two panes are independent: clicking
+  // Clear Preview does NOT touch liveSlide/liveSlideIndex/isLive, and
+  // clearLive does NOT touch pinnedPreviewSlide/previewSlideIndex.
 
   const goBlack = useCallback(() => {
     // Toggle the store-wide BLACK flag. The broadcaster stamps
