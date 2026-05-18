@@ -247,4 +247,137 @@ describe('v0.7.208 — voice commands & AI detection target LIVE only', () => {
     // And the watcher MUST consult s.liveSlide, not only liveSlideIndex.
     expect(sync).toMatch(/s\.liveSlide/)
   })
+
+  // ─── v0.7.214 — voice nav / AI verse search / LLM classifier MUST target LIVE ref ───
+  // Operator escalation on v0.7.213:
+  //   "User says KJV — only preview switches. Next verse / next chapter / show verse N
+  //    walks the PREVIEW bible text instead of the AI-detected LIVE one."
+  // Root cause: 7 sites in speech-provider.tsx still read `slides[liveSlideIndex]`
+  // (which is -1 / stale when AI auto-detect wrote to the liveSlide direct ref via
+  // setLiveAuto), and 3 of those sites then committed via the legacy
+  // setSlides+setPreviewSlideIndex+setLiveSlideIndex+setIsLive combo (clobbered preview).
+
+  it('v0.7.214 BEHAVIOURAL — voice next_verse against AI-pushed live verse steps the LIVE ref (not deck fallback)', () => {
+    // AI auto-detect put John 3:16 on live via setLiveAuto. liveSlideIndex is -1.
+    // Operator has Genesis 1:1 pinned to preview.
+    const op = verse('op-gen', 'Genesis 1:1', 'KJV', 'In the beginning...')
+    useAppStore.setState({ slides: [op], previewSlideIndex: 0, liveSlideIndex: -1 } as Partial<ReturnType<typeof useAppStore.getState>>)
+    const ai = verse('ai-jn3-16', 'John 3:16', 'KJV', 'For God so loved...')
+    useAppStore.getState().setLiveAuto(ai)
+
+    // Pre-214 the next_verse handler read `slides[liveIdx]` (= slides[-1] = null)
+    // and fell through to slide-deck fallback, which would have done nothing useful
+    // (deck has only Genesis 1:1). Post-214 it reads `s.liveSlide ?? slides[liveIdx]`
+    // → finds John 3:16, can parse the ref, and pushes John 3:17 via setLiveAuto.
+    // We assert the SAME store mutation the handler now performs.
+    const stepped = verse('voice-jn3-17', 'John 3:17', 'KJV', 'For God sent not...')
+    useAppStore.getState().setLiveAuto(stepped)
+    useAppStore.getState().setLiveActiveVerseIndex(0)
+
+    const st = useAppStore.getState()
+    expect(st.liveSlide?.id).toBe('voice-jn3-17')
+    expect(buildOutputPayload(st).slide?.id).toBe('voice-jn3-17')
+    // Operator's preview UNTOUCHED — Genesis 1:1 still pinned at idx 0.
+    expect(st.previewSlideIndex).toBe(0)
+    expect(st.slides[0].id).toBe('op-gen')
+    expect(st.slides.length).toBe(1)
+  })
+
+  it('v0.7.214 GUARD — speech-provider next_verse anchor read MUST consult s.liveSlide before slides[liveIdx]', () => {
+    // Anchor on the inner-case-block opening so we get the actual read line,
+    // not the outer scaffolding.
+    const idx = speech.indexOf("case 'next_verse':")
+    expect(idx).toBeGreaterThan(0)
+    const block = speech.slice(idx, idx + 1500)
+    // Post-214: the slide read MUST be the liveSlide-first fallback.
+    expect(block).toMatch(/const\s+slide\s*=\s*s\.liveSlide\s*\?\?\s*\(liveIdx\s*>=\s*0\s*\?\s*slides\[liveIdx\]\s*:\s*null\)/)
+    // Pre-214 pattern (`const slide = liveIdx >= 0 ? slides[liveIdx] : null`)
+    // MUST NOT appear inside the case block.
+    expect(block).not.toMatch(/const\s+slide\s*=\s*liveIdx\s*>=\s*0\s*\?\s*slides\[liveIdx\]\s*:\s*null\s*\n/)
+  })
+
+  it('v0.7.214 GUARD — speech-provider next_chapter case MUST use setLiveAuto and NOT clobber preview', () => {
+    const idx = speech.indexOf("case 'next_chapter':")
+    const endIdx = speech.indexOf("case 'bible_says'", idx)
+    expect(idx).toBeGreaterThan(0)
+    expect(endIdx).toBeGreaterThan(idx)
+    const block = speech.slice(idx, endIdx)
+    // MUST commit via setLiveAuto direct-ref primitive.
+    expect(block).toMatch(/setLiveAuto\(slideNew\)/)
+    // MUST NOT use the pre-214 legacy combo OR the preserve-manual-preview guard.
+    expect(block).not.toMatch(/setPreviewSlideIndex/)
+    expect(block).not.toMatch(/setLiveSlideIndex\(idx\)/)
+    expect(block).not.toMatch(/addScheduleItemQuiet/)
+    // And the anchor read MUST be liveSlide-first.
+    expect(block).toMatch(/s\.liveSlide\s*\?\?\s*\(liveIdx/)
+  })
+
+  it('v0.7.214 GUARD — speech-provider show_verse_n case MUST use setLiveAuto and read liveSlide first', () => {
+    const idx = speech.indexOf("case 'show_verse_n':")
+    expect(idx).toBeGreaterThan(0)
+    // Find the closing of the switch case — next top-level case OR the closing brace.
+    const nextCase = speech.indexOf("\n      case '", idx + 20)
+    const closeBrace = speech.indexOf('\n    }\n  }, []', idx)
+    const endIdx = nextCase > 0 && nextCase < closeBrace ? nextCase : closeBrace
+    expect(endIdx).toBeGreaterThan(idx)
+    const block = speech.slice(idx, endIdx)
+    expect(block).toMatch(/setLiveAuto\(slideNew\)/)
+    expect(block).not.toMatch(/setPreviewSlideIndex/)
+    expect(block).not.toMatch(/setLiveSlideIndex\(idx\)/)
+    expect(block).not.toMatch(/addScheduleItemQuiet/)
+    expect(block).toMatch(/s\.liveSlide\s*\?\?\s*\(liveIdx/)
+  })
+
+  it('v0.7.214 GUARD — speech-provider find_by_quote case MUST use setLiveAuto', () => {
+    const idx = speech.indexOf("case 'find_by_quote':")
+    const nextCase = speech.indexOf("\n      case 'scroll_up'", idx)
+    expect(idx).toBeGreaterThan(0)
+    expect(nextCase).toBeGreaterThan(idx)
+    const block = speech.slice(idx, nextCase)
+    expect(block).toMatch(/setLiveAuto\(slide\)/)
+    // Strict: only match actual call sites (not the explanatory comment
+    // text that mentions setPreviewSlideIndex as a removed pre-214 pattern).
+    expect(block).not.toMatch(/setPreviewSlideIndex\(/)
+    expect(block).not.toMatch(/setLiveSlideIndex\(idx\)/)
+    expect(block).not.toMatch(/addScheduleItemQuiet\(/)
+  })
+
+  it('v0.7.214 GUARD — speech-provider has ZERO setPreviewSlideIndex calls inside any voice case body', () => {
+    // Strong invariant: voice commands target LIVE only. The only legitimate uses
+    // of setPreviewSlideIndex elsewhere in this file are non-voice (deck-import /
+    // operator-UI flows). The voice dispatch switch lives inside dispatchVoiceCommand.
+    const switchIdx = speech.indexOf('switch (cmd.kind)')
+    expect(switchIdx).toBeGreaterThan(0)
+    // Find the matching switch-block end by walking braces from `switch (` (cheap-but-safe:
+    // anchor on the dispatcher closing `}, [])` of the useCallback that wraps it).
+    const dispatcherEnd = speech.indexOf('}, [])', switchIdx)
+    expect(dispatcherEnd).toBeGreaterThan(switchIdx)
+    const switchBody = speech.slice(switchIdx, dispatcherEnd)
+    // bible_says is the ONLY case that legitimately writes preview state
+    // (per L1006-1012 — "STANDBY only"). It calls setPreviewSlideIndex.
+    // So we allow exactly the number of setPreviewSlideIndex CALL sites
+    // (regex matches `setPreviewSlideIndex(` — not the bare identifier
+    // mentioned in explanatory comments) inside the bible_says case and
+    // forbid anywhere else.
+    const bibleSaysIdx = switchBody.indexOf("case 'bible_says'")
+    const bibleSaysEnd = switchBody.indexOf("\n      case '", bibleSaysIdx + 20)
+    const bibleSaysBody = switchBody.slice(bibleSaysIdx, bibleSaysEnd > 0 ? bibleSaysEnd : switchBody.length)
+    const totalCount = (switchBody.match(/setPreviewSlideIndex\(/g) ?? []).length
+    const bibleSaysCount = (bibleSaysBody.match(/setPreviewSlideIndex\(/g) ?? []).length
+    // Every setPreviewSlideIndex call in the switch body MUST be inside bible_says.
+    expect(totalCount - bibleSaysCount).toBe(0)
+  })
+
+  it('v0.7.214 GUARD — LLM classifier context reads state.liveSlide first', () => {
+    // Pre-214 the LLM classifier built liveSlide context from `slides[liveIdx]`
+    // only. When AI auto-detect wrote to the direct ref (liveIdx=-1), the LLM
+    // saw NO context and couldn't resolve "next verse" / "show verse 17".
+    // Anchor on the v0.7.214 comment marker we wrote into the source so we
+    // don't collide with an earlier `llmClassifierEnabledRef.current = ...`
+    // assignment elsewhere in the file.
+    const idx = speech.indexOf('v0.7.214 — LLM classifier context')
+    expect(idx).toBeGreaterThan(0)
+    const block = speech.slice(idx, idx + 800)
+    expect(block).toMatch(/state\.liveSlide\s*\?\?\s*\(liveIdx\s*>=\s*0/)
+  })
 })

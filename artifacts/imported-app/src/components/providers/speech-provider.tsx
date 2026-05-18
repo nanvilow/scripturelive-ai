@@ -606,7 +606,17 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       case 'next_verse':
       case 'previous_verse': {
         const dir = cmd.kind === 'next_verse' ? 1 : -1
-        const slide = liveIdx >= 0 ? slides[liveIdx] : null
+        // v0.7.214 — Voice nav reads from LIVE direct-ref FIRST.
+        // Pre-214 this read `slides[liveIdx]` only, ignoring the
+        // AI-detected verse held in `s.liveSlide` (which is what's
+        // actually rendering on the live display per output-payload
+        // L19's `liveSlide ?? slides[liveSlideIndex]` read). Operator
+        // bug: AI auto-detected John 3:16 onto live (liveSlide ref set,
+        // liveSlideIndex=-1), operator says "next verse" → this branch
+        // saw `null` from slides[-1], fell through to slide-deck
+        // fallback, and either did nothing or stepped a stale deck
+        // entry. Mirror logos-shell.tsx L3929 read pattern.
+        const slide = s.liveSlide ?? (liveIdx >= 0 ? slides[liveIdx] : null)
 
         // (1) Multi-verse passage: try to advance highlight first.
         if (slide && slide.type === 'verse' && (slide.content?.length ?? 0) > 1) {
@@ -896,20 +906,18 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           content: textOut.split('\n').filter(Boolean),
           background: s.settings.congregationScreenTheme,
         }
-        // v0.7.194-hotfix.11 Item #4 — preserve manual preview (see L691).
-        const __st2 = useAppStore.getState()
-        if (__st2.previewSlideIndex >= 0 && __st2.previewSlideIndex !== __st2.liveSlideIndex) {
-          __st2.addScheduleItemQuiet({ type: 'verse', title: slide.title, subtitle: slide.subtitle, slides: [slide] })
-          toast(`AI: staged ${slide.title} (preview preserved)`, { duration: 2200, position: 'bottom-right' })
-          break
-        }
-        const cur = useAppStore.getState().slides
-        const next = cur.length > 0 ? [...cur, slide] : [slide]
-        const idx = next.length - 1
-        useAppStore.getState().setSlides(next)
-        useAppStore.getState().setPreviewSlideIndex(idx)
-        useAppStore.getState().setLiveSlideIndex(idx)
-        useAppStore.getState().setIsLive(true)
+        // v0.7.214 — AI / voice verse search targets LIVE ONLY via
+        // setLiveAuto. Pre-214 this used the legacy
+        // `setSlides + setPreviewSlideIndex + setLiveSlideIndex + setIsLive`
+        // combo, which clobbered the operator's preview (yanked their
+        // pin to the AI-loaded verse). The v0.7.194-hotfix.11 "preserve
+        // manual preview" guard above tried to mitigate by routing to
+        // addScheduleItemQuiet when preview was off-live, but the
+        // operator's actual ask ("find this quote → put on live") was
+        // silently going to the schedule instead. v0.7.208 / v0.7.210
+        // already proved setLiveAuto is the canonical direct-ref
+        // primitive for "AI/voice → live without touching preview".
+        useAppStore.getState().setLiveAuto(slide)
         useAppStore.getState().setLiveActiveVerseIndex(0)
         toast.success(
           `${refKey} (${match.confidence === 'high' ? 'AI: high match' : 'AI: best match'})`,
@@ -938,7 +946,8 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       // no live verse-passage to anchor against.
       case 'next_chapter':
       case 'previous_chapter': {
-        const slide = liveIdx >= 0 ? slides[liveIdx] : null
+        // v0.7.214 — read LIVE direct-ref first (see L609 note).
+        const slide = s.liveSlide ?? (liveIdx >= 0 ? slides[liveIdx] : null)
         if (!slide || slide.type !== 'verse' || !slide.title) {
           toast.error('Chapter navigation needs a live Bible passage', { duration: 2000, position: 'bottom-right' })
           break
@@ -986,20 +995,9 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           content: textOut.split('\n').filter(Boolean),
           background: s.settings.congregationScreenTheme,
         }
-        // v0.7.194-hotfix.11 Item #4 — preserve manual preview (see L691).
-        const __st3 = useAppStore.getState()
-        if (__st3.previewSlideIndex >= 0 && __st3.previewSlideIndex !== __st3.liveSlideIndex) {
-          __st3.addScheduleItemQuiet({ type: 'verse', title: slideNew.title, subtitle: slideNew.subtitle, slides: [slideNew] })
-          toast(`AI: staged ${slideNew.title} (preview preserved)`, { duration: 2200, position: 'bottom-right' })
-          break
-        }
-        const cur = useAppStore.getState().slides
-        const next = cur.length > 0 ? [...cur, slideNew] : [slideNew]
-        const idx = next.length - 1
-        useAppStore.getState().setSlides(next)
-        useAppStore.getState().setPreviewSlideIndex(idx)
-        useAppStore.getState().setLiveSlideIndex(idx)
-        useAppStore.getState().setIsLive(true)
+        // v0.7.214 — Voice next/previous_chapter → LIVE only via setLiveAuto
+        // (see L905 note). Preview is never touched.
+        useAppStore.getState().setLiveAuto(slideNew)
         useAppStore.getState().setLiveActiveVerseIndex(0)
         break
       }
@@ -1107,7 +1105,10 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         const next = cur.slice(0, -1)
         const newIdx = next.length - 1
         useAppStore.getState().setSlides(next)
-        useAppStore.getState().setPreviewSlideIndex(newIdx)
+        // v0.7.214 — voice commands target LIVE ONLY. Preview is the
+        // operator's surface and MUST NOT be reseated by a voice path.
+        // Pre-214 this also wrote previewSlideIndex which yanked the
+        // operator's pinned preview to the new last-deck slot.
         useAppStore.getState().setLiveSlideIndex(newIdx)
         useAppStore.getState().setLiveActiveVerseIndex(0)
         if (newIdx < 0) {
@@ -1133,7 +1134,8 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       case 'show_verse_n': {
         if (!cmd.verseNumber) break
         const n = cmd.verseNumber
-        const slide = liveIdx >= 0 ? slides[liveIdx] : null
+        // v0.7.214 — read LIVE direct-ref first (see L609 note).
+        const slide = s.liveSlide ?? (liveIdx >= 0 ? slides[liveIdx] : null)
         // We need to know the passage anchor (book/chapter/verseStart)
         // for BOTH branches: Case A uses verseStart to map "show verse
         // 17" against a "John 3:16-18" slide to range-index 1 (NOT
@@ -1201,20 +1203,8 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           content: textOut.split('\n').filter(Boolean),
           background: s.settings.congregationScreenTheme,
         }
-        // v0.7.194-hotfix.11 Item #4 — preserve manual preview (see L691).
-        const __st4 = useAppStore.getState()
-        if (__st4.previewSlideIndex >= 0 && __st4.previewSlideIndex !== __st4.liveSlideIndex) {
-          __st4.addScheduleItemQuiet({ type: 'verse', title: slideNew.title, subtitle: slideNew.subtitle, slides: [slideNew] })
-          toast(`AI: staged ${slideNew.title} (preview preserved)`, { duration: 2200, position: 'bottom-right' })
-          break
-        }
-        const cur = useAppStore.getState().slides
-        const next = cur.length > 0 ? [...cur, slideNew] : [slideNew]
-        const idx = next.length - 1
-        useAppStore.getState().setSlides(next)
-        useAppStore.getState().setPreviewSlideIndex(idx)
-        useAppStore.getState().setLiveSlideIndex(idx)
-        useAppStore.getState().setIsLive(true)
+        // v0.7.214 — show_verse_n → LIVE only via setLiveAuto (see L905 note).
+        useAppStore.getState().setLiveAuto(slideNew)
         useAppStore.getState().setLiveActiveVerseIndex(0)
         break
       }
@@ -1487,8 +1477,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           try {
             const slides = state.slides
             const liveIdx = state.liveSlideIndex
+            // v0.7.214 — LLM classifier context reads LIVE direct-ref first.
+            // Pre-214 the classifier only saw `slides[liveIdx]`, so when the
+            // current live verse came from AI auto-detect (liveSlide ref set,
+            // liveIdx=-1) the LLM was given NO context and couldn't resolve
+            // "next verse" / "show verse 17" against the actual live passage.
             const liveSlide =
-              liveIdx >= 0 && liveIdx < slides.length ? slides[liveIdx] : undefined
+              state.liveSlide ?? (liveIdx >= 0 && liveIdx < slides.length ? slides[liveIdx] : undefined)
             // For verse slides, the reference text lives in `title`
             // (e.g. "John 3:16"). Other slide types don't carry a
             // reference — we just omit the field rather than feeding
