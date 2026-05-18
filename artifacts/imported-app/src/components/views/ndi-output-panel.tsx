@@ -117,8 +117,29 @@ export function NdiOutputPanel() {
     const s = useAppStore.getState().settings
     const p = new URLSearchParams()
     p.set('ndi', '1')
-    p.set('transparent', '1')
-    void s.ndiDisplayMode // referenced for clarity; live mode flows via SSE, not URL
+    // v0.7.202 — Operator-reported bug: OBS Browser Source rendered
+    // with a transparent background even though the operator had not
+    // selected transparent mode. Root cause was a hardcoded
+    // `p.set('transparent', '1')` here that ignored
+    // `ndiFullScreenBackground`. The hardcoded flag was a leftover
+    // from when this URL was assumed to serve only NDI/alpha-keyed
+    // consumers, but OBS Browser Source is a plain HTTP consumer
+    // that does not strip alpha — it just renders whatever the page
+    // paints. Transparent body + OBS default Custom CSS (`body {
+    // background-color: rgba(0,0,0,0); }`) = transparent feed in
+    // OBS regardless of operator intent. Now `transparent=1` is
+    // gated on operator opt-in: either Full mode with the explicit
+    // `transparent` background choice, or Lower-Third mode (which is
+    // always alpha-keyed because the LT bar is by definition an
+    // overlay). The actual NDI capture window (FrameCapture in
+    // electron/main.ts L2361) keeps its own `transparent=1` for NDI
+    // consumers — that path is unaffected by this change.
+    const wantTransparent =
+      s.ndiFullScreenBackground === 'transparent' ||
+      s.ndiDisplayMode === 'lower-third'
+    if (wantTransparent) {
+      p.set('transparent', '1')
+    }
     // v0.7.194-hotfix.4 — Operator's per-feed full-screen background
     // choice. Default 'themed' is omitted from the URL so the existing
     // OBS Browser-Source URLs operators have pasted don't change shape
