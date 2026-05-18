@@ -974,7 +974,10 @@ function PreviewCard() {
   // here when the Preview slide and the Live slide point at the same
   // mediaUrl. Verse / image / theme slides are passed through
   // unchanged — the pause-on-promote rule is media-only.
-  const liveSlide = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
+  // v0.7.203 — liveSlide direct ref (set by auto-fire via setLiveAuto)
+  // takes precedence over slides[liveSlideIndex], matching buildOutputPayload.
+  const liveSlideRef = useAppStore((s) => s.liveSlide)
+  const liveSlide = liveSlideRef ?? (liveSlideIndex >= 0 ? slides[liveSlideIndex] : null)
   const previewMediaIsLive = !!(
     isLive &&
     previewSlide?.type === 'media' &&
@@ -1692,7 +1695,10 @@ function LiveDisplayCard({
   const liveVideoPlaying = useAppStore((s) => s.liveVideoPlaying)
   const mediaPaused = useAppStore((s) => s.liveMediaPaused)
   const setMediaPaused = useAppStore((s) => s.setLiveMediaPaused)
-  const liveSlide = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
+  // v0.7.203 — liveSlide direct ref (set by auto-fire via setLiveAuto)
+  // takes precedence over slides[liveSlideIndex], matching buildOutputPayload.
+  const liveSlideRef = useAppStore((s) => s.liveSlide)
+  const liveSlide = liveSlideRef ?? (liveSlideIndex >= 0 ? slides[liveSlideIndex] : null)
   // Interactive Scale Control state. The slider / drag handle write
   // to `size` (the TARGET); the displayed transform uses `actualSize`,
   // which eases toward the target on every animation frame. That
@@ -3906,23 +3912,22 @@ export function LogosShell() {
     //     pushes v19 live, syncs preview to v19
     //   - operator double-clicks v25 anywhere → promotes to live
     //     via the normal go-live path (unrelated to this effect)
+    // v0.7.203 — Auto-fire writes ONLY to the liveSlide direct ref
+    // via setLiveAuto. Does NOT touch slides[] / previewSlideIndex /
+    // liveSlideIndex / pinnedPreviewSlide. The operator's single-click
+    // pin therefore SURVIVES every AI detection, regardless of whether
+    // the AI re-detects the same verse or a new one. The schedule still
+    // gets a (quiet) history entry so the Queue/History tab shows the
+    // detection trail. Compare current live (liveSlide ref or
+    // slides[liveSlideIndex]) by title+subtitle (per v0.7.200-hotfix.1
+    // — id varies by click origin: Chapter Navigator builds
+    // `slide-${Date.now()}-${verse}`, Detected Verses builds
+    // `slide-${Date.now()}-${idx}`, auto builds `auto-${best.id}`).
+    // Same-as-live short-circuits so we don't re-broadcast the same
+    // frame and re-trigger the secondary screen's transition CSS.
     const __st = useAppStore.getState()
-    const curLiveSlide = __st.isLive && __st.liveSlideIndex >= 0
-      ? __st.slides[__st.liveSlideIndex]
-      : null
-    // (1) Same verse as current live → no-op, preserve operator's preview.
-    // v0.7.200-hotfix.1 — Compare by title+subtitle (reference+translation),
-    // NOT by slide.id. The original v0.7.200 fix used slide.id but that
-    // varies by click origin: Chapter Navigator clicks build
-    // `slide-${Date.now()}-${verse}` (L1024), Detected Verses clicks
-    // build `slide-${Date.now()}-${idx}` (L2420), AI auto-detect builds
-    // `auto-${best.id}` (L3865). So when operator double-clicked v18 from
-    // Chapter Navigator (id=slide-1779…-18) and the AI re-detected v18
-    // (id=auto-john-3-18-asv-0), the IDs never matched → short-circuit
-    // skipped → setSlides clobbered preview → snap-back STILL happened.
-    // title+subtitle is stable across all click origins because every
-    // path sets title=verse-reference (e.g. "John 3:18") and
-    // subtitle=translation (e.g. "ASV").
+    const curLiveSlide = __st.liveSlide
+      ?? (__st.isLive && __st.liveSlideIndex >= 0 ? __st.slides[__st.liveSlideIndex] : null)
     const sameAsLive = !!curLiveSlide
       && curLiveSlide.title === slide.title
       && curLiveSlide.subtitle === slide.subtitle
@@ -3930,38 +3935,15 @@ export function LogosShell() {
     if (sameAsLive) {
       return
     }
-    // (2) New verse → push live. Preserve a different staged preview.
-    const curPreviewSlide = (
-      __st.previewSlideIndex >= 0 &&
-      __st.previewSlideIndex !== __st.liveSlideIndex
-    )
-      ? __st.slides[__st.previewSlideIndex]
-      : null
-    addScheduleItem({
+    addScheduleItemQuiet({
       type: 'verse',
       title: best.reference,
       subtitle: best.translation,
       slides: [slide],
     })
-    // Same title+subtitle comparison for preview preservation
-    const previewIsSameAsNewLive = !!curPreviewSlide
-      && curPreviewSlide.title === slide.title
-      && curPreviewSlide.subtitle === slide.subtitle
-      && curPreviewSlide.type === 'verse'
-    if (curPreviewSlide && !previewIsSameAsNewLive) {
-      // Operator has a different preview staged — keep it
-      setSlides([slide, curPreviewSlide])
-      setLiveSlideIndex(0)
-      setPreviewSlideIndex(1)
-    } else {
-      // No preview staged (or preview matches new live) — sync both
-      setSlides([slide])
-      setLiveSlideIndex(0)
-      setPreviewSlideIndex(0)
-    }
-    setIsLive(true)
+    useAppStore.getState().setLiveAuto(slide)
     // Toast suppressed per FRS — output actions stay silent.
-  }, [effectiveAutoFire, detectedVerses, addScheduleItem, setSlides, setPreviewSlideIndex, setLiveSlideIndex, setIsLive, settings.congregationScreenTheme])
+  }, [effectiveAutoFire, detectedVerses, addScheduleItemQuiet, settings.congregationScreenTheme])
 
   // Local no-op broadcaster — the real broadcaster lives globally in
   // <OutputBroadcaster /> (mounted in page.tsx) so settings tweaks

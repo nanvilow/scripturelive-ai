@@ -529,6 +529,26 @@ interface AppState {
   pinPreviewSlide: (s: Slide | null) => void
   clearPinnedPreview: () => void
 
+  // v0.7.203 — Direct LIVE slide ref (symmetric mirror of
+  // pinnedPreviewSlide). When set, the buildOutputPayload helper
+  // and the in-app Live Display pane read the live frame from this
+  // reference INSTEAD of slides[liveSlideIndex]. Used by auto-fire
+  // so the AI can push detections to the projector WITHOUT
+  // mutating slides[]/previewSlideIndex/liveSlideIndex — which is
+  // what was clearing the operator's pinnedPreviewSlide via the
+  // setIsLive(true) cascade and causing the operator-reported
+  // "single-click preview snaps back to live" bug. With this field,
+  // preview and live are completely independent surfaces: the
+  // operator's single-click pins preview; the AI's detection pins
+  // live; neither can clobber the other. Cleared on any operator-
+  // manual hard reset (setSlides / setLiveSlideIndex / setIsLive(false)
+  // / clearSchedule / selectScheduleItem / removeAllScheduleItems
+  // (preserveLive=false)) so the operator's deliberate slides[]
+  // ownership immediately wins back the live surface.
+  liveSlide: Slide | null
+  setLiveAuto: (s: Slide) => void
+  clearLiveAuto: () => void
+
   // Presenter
   isPresenterMode: boolean
   setIsPresenterMode: (m: boolean) => void
@@ -1156,11 +1176,18 @@ export const useAppStore = create<AppState>()(
 
       // Slides
       slides: [],
-      setSlides: (s) => set({ slides: s, previewSlideIndex: 0, liveSlideIndex: -1 }),
+      // v0.7.203 — setSlides is the operator's hard-reset hook. Clear
+      // liveSlide so the new slides[] array is the unambiguous source
+      // of truth for the live surface.
+      setSlides: (s) => set({ slides: s, previewSlideIndex: 0, liveSlideIndex: -1, liveSlide: null }),
       // v0.7.201 — pinnedPreviewSlide. See interface comment.
       pinnedPreviewSlide: null,
       pinPreviewSlide: (s) => set({ pinnedPreviewSlide: s }),
       clearPinnedPreview: () => set({ pinnedPreviewSlide: null }),
+      // v0.7.203 — liveSlide direct ref. See interface comment.
+      liveSlide: null,
+      setLiveAuto: (s) => set({ liveSlide: s, isLive: true, hasShownContent: true }),
+      clearLiveAuto: () => set({ liveSlide: null }),
       // v0.7.194-hotfix.7 — see interface comment above.
       // v0.7.201 — Atomically PIN the staged slide so the Preview
       // pane / iframe renders directly from this reference and is
@@ -1229,6 +1256,9 @@ export const useAppStore = create<AppState>()(
           // permanently dismissed for this session — no matter which
           // panel (Media, Bible, Songs, Schedule) initiated the cue.
           hasShownContent: i >= 0 ? true : s.hasShownContent,
+          // v0.7.203 — Operator explicitly pointed live at a slides[]
+          // slot. Release the auto liveSlide ref so slides[i] wins.
+          liveSlide: null,
         })),
 
       // Presenter
@@ -1243,7 +1273,15 @@ export const useAppStore = create<AppState>()(
       // slides[previewSlideIndex] fallback. setIsLive(false) does
       // NOT clear the pin — operator pressing Black should not
       // wipe their staged preview.
-      setIsLive: (m) => set(m ? { isLive: m, pinnedPreviewSlide: null } : { isLive: m }),
+      // v0.7.203 — setIsLive(false) ALSO clears liveSlide so the
+      // operator's "BLACK / kill live" intent fully releases the auto
+      // ref. setIsLive(true) keeps liveSlide untouched (auto-fire's
+      // setLiveAuto already sets it; manual double-clicks go through
+      // setSlides+setLiveSlideIndex which clear liveSlide anyway).
+      setIsLive: (m) =>
+        set(m
+          ? { isLive: m, pinnedPreviewSlide: null }
+          : { isLive: m, liveSlide: null }),
 
       // NDI Output
       ndiConnected: false,
@@ -1344,6 +1382,7 @@ export const useAppStore = create<AppState>()(
               previewSlideIndex: 0,
               liveSlideIndex: -1,
               pinnedPreviewSlide: null,
+              liveSlide: null,
             }
           }
           const liveId =
@@ -1392,7 +1431,7 @@ export const useAppStore = create<AppState>()(
         }),
       selectScheduleItem: (id) =>
         set((state) => {
-          if (id === null) return { selectedScheduleItemId: null, pinnedPreviewSlide: null }
+          if (id === null) return { selectedScheduleItemId: null, pinnedPreviewSlide: null, liveSlide: null }
           const item = state.schedule.find((s) => s.id === id)
           if (!item) return {}
           return {
@@ -1401,6 +1440,7 @@ export const useAppStore = create<AppState>()(
             previewSlideIndex: 0,
             liveSlideIndex: -1,
             pinnedPreviewSlide: null,
+            liveSlide: null,
           }
         }),
       moveScheduleItem: (id, direction) =>
@@ -1421,6 +1461,7 @@ export const useAppStore = create<AppState>()(
           previewSlideIndex: 0,
           liveSlideIndex: -1,
           pinnedPreviewSlide: null,
+          liveSlide: null,
         }),
 
       // Settings

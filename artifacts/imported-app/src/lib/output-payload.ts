@@ -17,7 +17,17 @@ type StoreState = ReturnType<typeof useAppStore.getState>
  * postMessage instead of inventing its own React mockup.
  */
 export function buildOutputPayload(s: StoreState) {
-  const baseCur = s.liveSlideIndex >= 0 ? s.slides[s.liveSlideIndex] : null
+  // v0.7.203 — liveSlide direct ref (set by auto-fire via setLiveAuto)
+  // takes precedence over slides[liveSlideIndex]. This lets the AI
+  // push detections to LIVE without mutating slides[], which was
+  // clobbering the operator's pinnedPreviewSlide via the setIsLive(true)
+  // cascade and causing the "single-click preview snaps back to live"
+  // bug. When the operator manually drives live (setSlides /
+  // setLiveSlideIndex), liveSlide is cleared and we fall through to
+  // the slides[] path.
+  const baseCur = s.liveSlide
+    ? s.liveSlide
+    : (s.liveSlideIndex >= 0 ? s.slides[s.liveSlideIndex] : null)
   const isMediaVideo = !!(
     baseCur && baseCur.type === 'media' && baseCur.mediaKind === 'video'
   )
