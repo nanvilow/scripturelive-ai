@@ -341,11 +341,9 @@ export function OutputPreview({
     }
     revRef.current += 1
     try {
+      // __rev is still stamped for log-correlation / future diagnostics
+      // but the iframe handler (v0.7.204) no longer gates on it.
       w.postMessage({ __sl_preview: 1, __rev: revRef.current, payload }, '*')
-      if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
-        const t = (payload as { slide?: { title?: string } }).slide?.title ?? 'NO-SLIDE'
-        console.log(`[OP-POST] derivePreview=${derivePreviewRef.current} mirrorLive=${mirrorLiveRef.current} rev=${revRef.current} slide=${t}`)
-      }
     } catch {
       pendingRef.current = payload
     }

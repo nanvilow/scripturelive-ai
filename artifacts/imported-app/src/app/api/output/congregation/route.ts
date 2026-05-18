@@ -2084,28 +2084,35 @@ document.addEventListener('mousemove',function(){
 // it the very first paint after the iframe loads would be the
 // splash watermark until the operator next mutated a setting.
 if(IS_PREVIEW){
-  // v0.7.200-hotfix.3 — Track latest rev to ignore stale/out-of-order
-  // postMessages from the parent. The parent now stamps each payload
-  // with a monotonic __rev counter (OutputPreview.post()). Messages
-  // with rev <= lastPreviewRev are dropped. Messages with newer rev
-  // ALWAYS force a render by resetting lastRenderKey to '' so the
-  // cache-key bailout at render() L1207 cannot skip the new payload.
-  // Together this kills the "preview snaps back to live on single
-  // click" bug from two angles: out-of-order delivery (rev gate) and
-  // cache-key false-positives (forced reset).
-  var lastPreviewRev = -1;
+  // v0.7.204 — Rev gate REMOVED. The v0.7.200-hotfix.3 rev gate
+  // (drop messages with __rev <= lastPreviewRev) was theorised to
+  // protect against out-of-order delivery, but postMessage between
+  // a parent window and its direct iframe is FIFO per spec — there
+  // is no real reordering source. Meanwhile the rev gate created a
+  // silent-drop failure mode: any time the parent OutputPreview
+  // component remounted (React StrictMode dev double-mount, layout
+  // -driven re-render that preserves the iframe DOM node, hot
+  // reload), its useRef-backed revRef restarted at 0 while the
+  // iframe's lastPreviewRev was still at some high value from the
+  // old session — every subsequent post was silently dropped and
+  // the iframe stayed on whatever it last rendered (typically the
+  // live slide), which is the operator-visible "preview snaps back
+  // to live on single click" bug.
+  //
+  // v0.7.204 trusts the parent: it only posts when state actually
+  // changed (rAF-coalesced) and postMessage delivers FIFO, so the
+  // iframe simply renders every payload it receives. The
+  // lastRenderKey='' force-reset (the part that ACTUALLY fixed the
+  // shape-equivalent cache collision) is preserved.
   window.addEventListener('message',function(ev){
     try{
       var d=ev&&ev.data;
       if(!d||typeof d!=='object')return;
       if(d.__sl_preview!==1)return;
-      var rev=(typeof d.__rev==='number')?d.__rev:Number.MAX_SAFE_INTEGER;
-      if(rev<=lastPreviewRev)return;
-      lastPreviewRev=rev;
       if(d.payload){
-        // Force-bypass the render cache for every accepted preview
-        // payload — the parent only sends when state actually changed,
-        // so re-rendering unconditionally is safe and prevents any
+        // Force-bypass the render cache for every preview payload —
+        // the parent only sends when state actually changed, so
+        // re-rendering unconditionally is safe and prevents any
         // shape-equivalent cache collisions.
         lastRenderKey='';
         try{ applyRender(d.payload); }
