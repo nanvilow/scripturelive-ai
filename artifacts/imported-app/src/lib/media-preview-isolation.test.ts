@@ -625,6 +625,55 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
     )
   })
 
+  it('(w) v0.7.216 follow-up #4 GUARD — MediaVideoSurface live writeback threshold MUST be 0.50s (5x reduction from pre-fix 0.10s) so SSE broadcast rate stays at 2Hz during steady playback', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+    // Anchor on the writeback useEffect that hosts the `writeThreshold` const.
+    // Capture enough of the body to assert both the live value AND the new
+    // transport-event listeners (play/pause/seeked/loadedmetadata) that
+    // compensate for the coarser timeupdate threshold.
+    const m = src.match(
+      /const writeThreshold = surface === 'live' \? ([\d.]+) : ([\d.]+)[\s\S]*?v\.removeEventListener\('loadedmetadata', onTransport\)/,
+    )
+    expect(m, 'MediaVideoSurface writeback effect (with transport listeners) not found').toBeTruthy()
+    const liveThreshold = parseFloat(m![1])
+    const previewThreshold = parseFloat(m![2])
+    expect(liveThreshold, 'LIVE writeback threshold MUST be 0.50s — broadcast rate cap for SSE+NDI smoothness').toBe(0.50)
+    expect(previewThreshold, 'PREVIEW writeback threshold MUST stay 0.25s — local UI only, no SSE cost').toBe(0.25)
+    const body = m![0]
+    // Transport-event listeners MUST be registered so transport transitions
+    // (play / pause / seek / loadedmetadata) still produce an immediate
+    // writeback even though timeupdate is now throttled to 2Hz.
+    expect(body, 'play event MUST trigger writeback').toMatch(/addEventListener\('play', onTransport\)/)
+    expect(body, 'pause event MUST trigger writeback').toMatch(/addEventListener\('pause', onTransport\)/)
+    expect(body, 'seeked event MUST trigger writeback').toMatch(/addEventListener\('seeked', onTransport\)/)
+    expect(body, 'loadedmetadata event MUST trigger writeback').toMatch(/addEventListener\('loadedmetadata', onTransport\)/)
+    // Cleanup MUST mirror all four registrations.
+    expect(body, 'play cleanup MUST remove listener').toMatch(/removeEventListener\('play', onTransport\)/)
+    expect(body, 'pause cleanup MUST remove listener').toMatch(/removeEventListener\('pause', onTransport\)/)
+    expect(body, 'seeked cleanup MUST remove listener').toMatch(/removeEventListener\('seeked', onTransport\)/)
+    expect(body, 'loadedmetadata cleanup MUST remove listener').toMatch(/removeEventListener\('loadedmetadata', onTransport\)/)
+  })
+
+  it('(x) v0.7.216 follow-up #4 GUARD — congregation receiver drift tolerance MUST be 1.5s (raised from 0.20s) so SSE jitter on secondary display does NOT force keyframe-flush seeks during steady playback', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/app/api/output/congregation/route.ts'),
+      'utf8',
+    )
+    // Anchor on the drift-correction block. MUST be NDI-exempt
+    // (`!IS_NDI&&`) AND MUST compare against the new 1.5 threshold.
+    const m = src.match(
+      /if\(!IS_NDI&&typeof slide\.mediaCurrentTime==='number'&&slide\.mediaCurrentTime>0\)\{[\s\S]*?var drift=Math\.abs\(\(existingVid\.currentTime\|\|0\)-slide\.mediaCurrentTime\);\s*if\(drift>([\d.]+)\)/,
+    )
+    expect(m, 'congregation receiver drift-correction block not found').toBeTruthy()
+    const tolerance = parseFloat(m![1])
+    expect(tolerance, 'receiver drift tolerance MUST be 1.5s — well above writeback latency (0.50s) so routine SSE jitter never triggers a force-seek').toBe(1.5)
+    // NDI surface MUST still be exempted (v0.7.194-hotfix.2 invariant).
+    expect(m![0], 'NDI capture surface MUST stay exempt from drift correction (writes via seedSeek on initial mount only)').toMatch(/!IS_NDI/)
+  })
+
   it('(v) v0.7.216 GUARD — Radix portal-based UI primitives (Select/DropdownMenu/Popover/Tooltip/Dialog/etc) MUST render ABOVE the Settings overlay so dropdowns are visible when a media-video is playing on Live', () => {
     // Settings overlay is `fixed inset-0 z-50` (app/page.tsx). Pre-fix every
     // portal-based primitive was ALSO z-50 — equal-z sibling under <body>, so

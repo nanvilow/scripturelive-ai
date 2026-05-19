@@ -1587,31 +1587,37 @@ function render(s){
     if(slide.mediaKind==='video'&&canReuse){
       // Same source — just honour the transport flag, do not rebuild.
       try{
-        // v0.7.193-hotfix.2 — Drift tolerance: 0.4s (pre-fix) was so
-        // loose the output drifted visibly ahead of the in-app Live
-        // Display and never corrected. We first tightened to 0.12s
-        // mid-hotfix.2, but on slower machines that triggered a
-        // correction-seek every couple of seconds — and each seek
-        // forces a key-frame decode pause that shows up as judder.
-        // 0.20s is the sweet spot: humans don't notice <250ms drift
-        // in non-music video, and seeks now fire only on real desyncs
-        // (operator scrub / pause / Stop) instead of routine playback.
-        // v0.7.194-hotfix.2 — Skip drift correction on the NDI capture
-        // surface. The offscreen Electron window uses SOFTWARE video
-        // decode (no GPU offscreen path on Windows), which runs slower
-        // than wall-clock; currentTime drifts past 0.20s within ~1s and
-        // every drift-seek flushes the decode pipeline → keyframe re-
-        // decode → 100-300ms freeze. Repeated 10×/sec (Live writeback
-        // throttle) this manifests as the "constant lag and freeze on
-        // NDI video media" the operator reported. NDI is the SOURCE for
-        // vMix/OBS — there is no other surface it needs to stay in sync
-        // with — so the seedSeek on initial mount (below ~L1415) is
-        // sufficient. Real transport events (operator scrub, pause/
-        // resume, source change) still apply because they go through
-        // the rebuild path or mediaPaused branch, not this drift check.
+        // v0.7.193-hotfix.2 — Drift tolerance was originally 0.4s, then
+        // tightened to 0.20s for frame-accurate sync.
+        // v0.7.194-hotfix.2 — NDI surface exempted (software decode on
+        // offscreen Windows compositor drifts past tolerance within ~1s
+        // and every drift-seek flushes the decode pipeline → keyframe
+        // re-decode → 100-300ms freeze).
+        //
+        // v0.7.216 follow-up #4 — Operator $1600-customer escalation:
+        // "Fix the output video freezing for main app output and NDI
+        // output make it play smoothly live Easyworship". Same root
+        // cause as the NDI exemption, but on the SECONDARY DISPLAY
+        // surface too: SSE / IPC jitter between the Live broadcast and
+        // the secondary-display BrowserWindow regularly exceeds 0.20s
+        // even on healthy machines (Chromium's SSE delivery + the
+        // 16ms broadcaster debounce + Electron IPC scheduling stack up
+        // to 100-300ms of jitter under load). Every jitter spike past
+        // 0.20s forced existingVid.currentTime = mediaCurrentTime → HW
+        // decoder pipeline flush → visible freeze. EasyWorship is
+        // smooth because it doesn't have a network-based sync loop at
+        // all — its outputs share the same decoder. We can't share
+        // decoders without a major rewrite, but raising tolerance to
+        // 1.5s eliminates the seek thrash entirely: routine SSE jitter
+        // never crosses it, while real transport events (operator
+        // scrub, GO LIVE promotion with a non-zero start time, jump
+        // to chapter) always exceed it by far and still get corrected.
+        // Pairs with logos-shell.tsx L420 (writeback throttle 0.10s →
+        // 0.50s) which already keeps local→broadcast latency inside
+        // 0.50s, well under the new tolerance.
         if(!IS_NDI&&typeof slide.mediaCurrentTime==='number'&&slide.mediaCurrentTime>0){
           var drift=Math.abs((existingVid.currentTime||0)-slide.mediaCurrentTime);
-          if(drift>0.20){try{existingVid.currentTime=slide.mediaCurrentTime;}catch(e){}}
+          if(drift>1.5){try{existingVid.currentTime=slide.mediaCurrentTime;}catch(e){}}
         }
         if(slide.mediaPaused){existingVid.pause();}
         else{var p=existingVid.play();if(p&&p.catch)p.catch(function(){});}

@@ -414,17 +414,35 @@ function MediaVideoSurface({
     if (mediaPaused) v.pause()
   }, [surface, isLive, mediaPaused, mediaCurrentTime, src])
 
-  // Write the surface's current time back to its OWN clock. For the
-  // LIVE surface this clock is also broadcast over SSE to NDI / OBS /
-  // secondary-screen iframes, so a tighter threshold keeps the output
-  // tracked frame-accurately to what the operator sees in the Live
-  // Display. v0.7.193-hotfix.2 — Live writes every >0.10s, Preview
-  // every >0.25s (no need to spam writes for a clock no other surface
-  // consumes).
+  // Write the surface's current time back to its OWN clock.
+  //
+  // v0.7.216 follow-up #4 — Operator $1600-customer escalation:
+  // "Fix the output video freezing for main app output and NDI output
+  // make it play smoothly live Easyworship". Pre-fix, the LIVE
+  // surface wrote back every >0.10s (10Hz). Each write triggered
+  // OutputBroadcaster.onChange → JSON.stringify(~80-field payload) →
+  // SSE POST → secondary-screen + offscreen NDI capture window both
+  // parse + reconcile. That CPU storm on every store tick starved
+  // the offscreen compositor of frame time (visible NDI freezes) and
+  // the receiver's drift-correction (route.ts L1612) force-seeked the
+  // secondary <video> every time SSE jitter pushed mediaCurrentTime
+  // past its 0.20s tolerance (visible main-output freezes). The 0.10s
+  // threshold from v0.7.193-hotfix.2 was sized for a tighter sync
+  // model that no longer applies — the receiver-side tolerance is
+  // now 1.5s (route.ts) so we have a lot more headroom.
+  //
+  // 0.50s writeback gives:
+  //   - 2Hz broadcast rate during steady playback (5x reduction)
+  //   - Max local→broadcast latency of 0.50s (well inside the new
+  //     1.5s receiver tolerance, no spurious seeks)
+  //   - Transport scrubber in the main app still updates 2x/sec which
+  //     is faster than human perceptual threshold for a progress bar.
+  // Preview stays at 0.25s — it doesn't broadcast, so the 4Hz tick is
+  // just for the local transport UI and costs nothing extra.
   useEffect(() => {
     const v = videoRef.current
     if (!v) return
-    const writeThreshold = surface === 'live' ? 0.10 : 0.25
+    const writeThreshold = surface === 'live' ? 0.50 : 0.25
     const onTimeUpdate = () => {
       const cur = v.currentTime
       const stored = surface === 'preview'
@@ -432,8 +450,25 @@ function MediaVideoSurface({
         : useAppStore.getState().liveMediaCurrentTime
       if (Math.abs(cur - stored) > writeThreshold) setOwnCurrentTime(cur)
     }
+    // v0.7.216 follow-up #4 — ALSO write on these transport events so
+    // the receiver gets an immediate sync target on operator-driven
+    // transitions (play / pause / seek). Without these, raising the
+    // timeupdate threshold could leave the receiver up to 0.50s stale
+    // at the moment of a real transport event — and transport events
+    // are exactly when we want pixel-accurate sync.
+    const onTransport = () => setOwnCurrentTime(v.currentTime)
     v.addEventListener('timeupdate', onTimeUpdate)
-    return () => v.removeEventListener('timeupdate', onTimeUpdate)
+    v.addEventListener('play', onTransport)
+    v.addEventListener('pause', onTransport)
+    v.addEventListener('seeked', onTransport)
+    v.addEventListener('loadedmetadata', onTransport)
+    return () => {
+      v.removeEventListener('timeupdate', onTimeUpdate)
+      v.removeEventListener('play', onTransport)
+      v.removeEventListener('pause', onTransport)
+      v.removeEventListener('seeked', onTransport)
+      v.removeEventListener('loadedmetadata', onTransport)
+    }
   }, [surface, src, setOwnCurrentTime])
 
   const objectFit: 'contain' | 'cover' | 'fill' =
