@@ -1702,3 +1702,14 @@ export const useAppStore = create<AppState>()(
     }
   )
 )
+
+// v0.7.216 follow-up #2 — dev-only diagnostic hook. Exposes the Zustand store on
+// `window.__appStore` so Playwright (and operators debugging via DevTools) can
+// stage repro scenarios — e.g. push a media-video slide to Live, then open
+// Settings and click a dropdown to verify the z-[60] portal fix holds while a
+// HW-decoded video is actively repainting the live compositor layer. Guarded
+// on `process.env.NODE_ENV !== 'production'` so production builds never expose
+// the store. No-op outside the browser (SSR safety).
+if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
+  ;(window as unknown as { __appStore?: typeof useAppStore }).__appStore = useAppStore
+}
