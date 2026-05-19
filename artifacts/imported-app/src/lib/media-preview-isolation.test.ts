@@ -594,4 +594,34 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
       /setPreviewSlideIndex/,
     )
   })
+
+  it('(u) v0.7.216 GUARD — MediaVideoSurface play/pause effect MUST register a one-shot `canplay` retry so GO-LIVE-swapped media-videos auto-play once the new src buffers', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+    // Anchor on the play/pause effect: `shouldPlay = ... ? (isLive && !mediaPaused) : !mediaPaused`
+    // through to the effect's deps array. Capture the WHOLE effect body so we
+    // can assert structure of the canplay branch + cleanup.
+    const m = src.match(
+      /const shouldPlay = surface === 'live'[\s\S]*?\}, \[surface, isLive, mediaPaused, mediaCurrentTime, src\]\)/,
+    )
+    expect(m, 'play/pause effect with expected deps not found in MediaVideoSurface').toBeTruthy()
+    const body = m![0]
+    // Initial play attempt MUST still happen synchronously.
+    expect(body, 'MUST still call v.play() synchronously on shouldPlay').toMatch(
+      /v\.play\(\)\.catch\(\(\) => \{\}\)/,
+    )
+    // One-shot canplay retry MUST be registered inside the shouldPlay branch.
+    expect(body, 'MUST register a one-shot canplay listener that retries play()').toMatch(
+      /addEventListener\(\s*'canplay'\s*,\s*onCanPlay\s*,\s*\{\s*once:\s*true\s*\}\s*\)/,
+    )
+    expect(body, 'onCanPlay MUST call v.play()').toMatch(
+      /const onCanPlay = \(\) => \{ v\.play\(\)\.catch\(\(\) => \{\}\) \}/,
+    )
+    // Cleanup MUST remove the listener so a rapid second src-swap doesn't leak.
+    expect(body, 'cleanup MUST remove the canplay listener').toMatch(
+      /removeEventListener\(\s*'canplay'\s*,\s*onCanPlay\s*\)/,
+    )
+  })
 })

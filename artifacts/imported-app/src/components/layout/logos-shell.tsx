@@ -377,8 +377,32 @@ function MediaVideoSurface({
       try { v.currentTime = mediaCurrentTime } catch { /* ignore */ }
     }
     const shouldPlay = surface === 'live' ? (isLive && !mediaPaused) : !mediaPaused
-    if (shouldPlay) v.play().catch(() => {})
-    else if (mediaPaused) v.pause()
+    if (shouldPlay) {
+      v.play().catch(() => {})
+      // v0.7.216 — Operator $1600-customer escalation: "user clicking
+      // on go live also send video from preview to live display to
+      // immediate start playing". Root cause: when LIVE is being
+      // SWAPPED from one media-video to another (operator pins clip
+      // B over a different live clip A, then presses GO LIVE → goLive
+      // pinned-path does setLiveMediaPaused(false) + setLiveAuto(B)),
+      // the React element is REUSED at the same position with a new
+      // `src` attribute. Browser semantics: changing `src` aborts the
+      // current playback and starts LOADING the new resource — but
+      // this effect fires SYNCHRONOUSLY in the same render commit,
+      // BEFORE the new src has buffered. v.play() called pre-`canplay`
+      // either drops silently or never resolves, leaving the live
+      // pane stalled on the first frame after promotion. Fix: register
+      // a one-shot `canplay` retry that calls v.play() the moment the
+      // new src is buffered enough to start. Same render commit, no
+      // extra store mutation needed — operator sees the promoted clip
+      // start playing the instant the browser is ready. Cleanup tears
+      // down the listener if the effect re-runs before `canplay` fires
+      // (e.g. operator rapidly swaps the live clip again).
+      const onCanPlay = () => { v.play().catch(() => {}) }
+      v.addEventListener('canplay', onCanPlay, { once: true })
+      return () => v.removeEventListener('canplay', onCanPlay)
+    }
+    if (mediaPaused) v.pause()
   }, [surface, isLive, mediaPaused, mediaCurrentTime, src])
 
   // Write the surface's current time back to its OWN clock. For the
