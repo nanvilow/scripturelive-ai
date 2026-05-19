@@ -656,6 +656,68 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
     // specifically to pre-warm caches) and is a separate concern.
   })
 
+  it('(z) v0.7.219 GUARD — MediaPreheat MUST warm bytes via <link rel="preload" as="video"> (NOT <video preload="auto">) so the warm-up itself never allocates a HW decoder slot AND MUST subscribe to pinnedPreviewSlide + liveSlide direct refs so single-clicked / AI-routed media is in HTTP cache when GO LIVE promotes it', () => {
+    // The previous warm-up strategy used hidden `<video preload="auto">`
+    // elements — but preload="auto" allocates a HW decoder slot to fetch
+    // metadata + decode the first frame for the poster. With a 2-4
+    // stream GPU cap, those hidden videos silently competed with the
+    // real Preview/Live/NDI decoders, contributing to the same live-
+    // video-stalls-on-single-click bug that v0.7.210/v0.7.212/v0.7.216/
+    // v0.7.218 tried to close. v0.7.219 swaps to <link rel="preload">
+    // which fetches bytes into the HTTP cache without any decoder cost.
+    //
+    // Separately, MediaPreheat pre-fix only read `slides[idx]` — missing
+    // the v0.7.201 pinnedPreviewSlide and v0.7.203 liveSlide direct
+    // refs. v0.7.219 adds both so bytes are actually warm when the
+    // operator presses GO LIVE on a single-clicked or AI-routed clip.
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+    const mph = src.match(/function MediaPreheat\(\)[\s\S]*?\n\}\n/)
+    expect(mph, 'MediaPreheat function not found').toBeTruthy()
+    const body = mph![0]
+    // PART 1: MUST use <link rel="preload" as="video"> via document.head
+    // imperative DOM API (createElement('link') + appendChild to head).
+    expect(body, 'MediaPreheat MUST create a <link> element imperatively').toMatch(
+      /document\.createElement\(\s*['"]link['"]\s*\)/,
+    )
+    expect(body, 'link.rel MUST be "preload"').toMatch(/\.rel\s*=\s*['"]preload['"]/)
+    expect(body, 'link.as MUST be "video"').toMatch(/\.as\s*=\s*['"]video['"]/)
+    expect(body, 'link MUST be appended to document.head').toMatch(
+      /document\.head\.appendChild/,
+    )
+    // PART 1 guard: MediaPreheat MUST return null (no JSX tree) — all
+    // work happens via the imperative head-link useEffect. Returning
+    // JSX <video> would re-introduce the decoder-slot anti-pattern.
+    expect(body, 'MediaPreheat MUST return null (no JSX render)').toMatch(
+      /\n\s*return null\n/,
+    )
+    // Strip comments before checking for any stray JSX <video> tag —
+    // doc comments legitimately mention "<video>" when describing the
+    // anti-pattern this fix replaced.
+    const noLineComments = body.replace(/\/\/[^\n]*/g, '')
+    const noBlockComments = noLineComments.replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(noBlockComments, 'MediaPreheat code (excl. comments) MUST NOT render a JSX <video> tag').not.toMatch(
+      /<video[\s/>]/,
+    )
+    // PART 2: MUST subscribe to pinnedPreviewSlide AND liveSlide.
+    expect(body, 'MediaPreheat MUST subscribe to pinnedPreviewSlide').toMatch(
+      /useAppStore\(\(s\)\s*=>\s*s\.pinnedPreviewSlide\)/,
+    )
+    expect(body, 'MediaPreheat MUST subscribe to liveSlide').toMatch(
+      /useAppStore\(\(s\)\s*=>\s*s\.liveSlide\)/,
+    )
+    // PART 2 guard: both direct-ref values MUST flow into addIfVideo so
+    // their mediaUrl actually ends up in the URLs set.
+    expect(body, 'pinnedPreviewSlide MUST be passed to addIfVideo').toMatch(
+      /addIfVideo\(pinnedPreviewSlide/,
+    )
+    expect(body, 'liveSlide MUST be passed to addIfVideo').toMatch(
+      /addIfVideo\(liveSlide/,
+    )
+  })
+
   it('(w) v0.7.216 follow-up #4 GUARD — MediaVideoSurface live writeback threshold MUST be 0.50s (5x reduction from pre-fix 0.10s) so SSE broadcast rate stays at 2Hz during steady playback', () => {
     const src = readFileSync(
       join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
