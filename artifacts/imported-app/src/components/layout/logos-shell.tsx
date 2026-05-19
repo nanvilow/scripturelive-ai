@@ -496,9 +496,29 @@ function MediaVideoSurface({
         // gating autoPlay on !mediaPaused honours it at mount so the
         // 2nd decoder never spins up. Operator presses Play in the
         // transport bar when ready to actually preview the new clip.
+        //
+        // v0.7.218 — Operator escalation, v0.7.217 follow-up: gating
+        // `autoPlay` alone WAS NOT ENOUGH. `preload="auto"` (the
+        // previous default) tells Chromium to eagerly DOWNLOAD AND
+        // DECODE the media on element mount — even without autoplay.
+        // That eager decode allocates a HW decoder slot the instant
+        // the new preview <video> mounts, competing with the live
+        // decoder regardless of the autoPlay gate. Net behaviour: live
+        // video still stalled on single-click of a different media
+        // tile. Fix: gate `preload` symmetric to `autoPlay` — when the
+        // preview is mounted in the "paused-at-zero" state (i.e.
+        // sendMediaToPreview's pause-before-pin branch fired), use
+        // `preload="metadata"` which fetches duration/dimensions only
+        // and does NOT allocate a HW decoder slot. When operator
+        // presses Play in the transport bar, `previewMediaPaused`
+        // flips to false → preload flips to "auto" → the play()
+        // useEffect kicks the fetch+decode for the first time. Cold-
+        // start latency is acceptable (the slide wasn't preheated
+        // anyway because MediaPreheat only reads slides[idx], not
+        // pinnedPreviewSlide). Live decoder stays uncontested.
         autoPlay={surface === 'preview' && !mediaPaused}
         playsInline
-        preload="auto"
+        preload={surface === 'preview' && mediaPaused ? 'metadata' : 'auto'}
         crossOrigin="anonymous"
         className="absolute inset-0 w-full h-full"
         style={{ objectFit }}

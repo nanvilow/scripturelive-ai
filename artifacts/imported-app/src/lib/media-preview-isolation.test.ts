@@ -625,6 +625,37 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
     )
   })
 
+  it('(y) v0.7.218 GUARD — MediaVideoSurface <video> `preload` MUST be gated on `surface === \'preview\' && mediaPaused` so a paused-by-sendMediaToPreview clip does NOT eagerly allocate a HW decoder slot that competes with the live decoder', () => {
+    // v0.7.216 gated `autoPlay` on `!mediaPaused` to stop the 2nd HW
+    // decoder from spinning up. But operator escalation showed live
+    // video STILL stalled — because `preload="auto"` (the prior value)
+    // tells Chromium to eagerly DOWNLOAD AND DECODE on element mount,
+    // allocating a HW decoder slot regardless of the autoPlay flag.
+    // The v0.7.218 fix makes preload SYMMETRIC to autoPlay: when the
+    // preview is mounted paused-at-zero, preload="metadata" (no HW
+    // decoder); otherwise preload="auto" (normal behaviour).
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+    // The autoPlay gate from v0.7.216 MUST remain (defence in depth —
+    // both autoPlay and preload now need to honour mediaPaused).
+    expect(src, 'autoPlay gate from v0.7.216 MUST remain').toMatch(
+      /autoPlay=\{surface === 'preview' && !mediaPaused\}/,
+    )
+    // The new preload gate MUST use the same condition shape so the
+    // two attributes stay in sync. Either-or branches must read
+    // `metadata` (no HW decoder) and `auto` (normal).
+    expect(src, 'preload MUST be gated on (surface === preview && mediaPaused) → metadata, else auto').toMatch(
+      /preload=\{surface === 'preview' && mediaPaused \? 'metadata' : 'auto'\}/,
+    )
+    // The positive match above already pins the exact gate; an extra
+    // "no bare preload" grep would false-positive on documentation
+    // comments that quote the old behaviour. MediaPreheat's <video>
+    // intentionally keeps preload="auto" (it's OFF-VIEWPORT and exists
+    // specifically to pre-warm caches) and is a separate concern.
+  })
+
   it('(w) v0.7.216 follow-up #4 GUARD — MediaVideoSurface live writeback threshold MUST be 0.50s (5x reduction from pre-fix 0.10s) so SSE broadcast rate stays at 2Hz during steady playback', () => {
     const src = readFileSync(
       join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
