@@ -496,9 +496,29 @@ function MediaVideoSurface({
         // gating autoPlay on !mediaPaused honours it at mount so the
         // 2nd decoder never spins up. Operator presses Play in the
         // transport bar when ready to actually preview the new clip.
+        //
+        // v0.7.218 — Operator escalation, v0.7.217 follow-up: gating
+        // `autoPlay` alone WAS NOT ENOUGH. `preload="auto"` (the
+        // previous default) tells Chromium to eagerly DOWNLOAD AND
+        // DECODE the media on element mount — even without autoplay.
+        // That eager decode allocates a HW decoder slot the instant
+        // the new preview <video> mounts, competing with the live
+        // decoder regardless of the autoPlay gate. Net behaviour: live
+        // video still stalled on single-click of a different media
+        // tile. Fix: gate `preload` symmetric to `autoPlay` — when the
+        // preview is mounted in the "paused-at-zero" state (i.e.
+        // sendMediaToPreview's pause-before-pin branch fired), use
+        // `preload="metadata"` which fetches duration/dimensions only
+        // and does NOT allocate a HW decoder slot. When operator
+        // presses Play in the transport bar, `previewMediaPaused`
+        // flips to false → preload flips to "auto" → the play()
+        // useEffect kicks the fetch+decode for the first time. Cold-
+        // start latency is acceptable (the slide wasn't preheated
+        // anyway because MediaPreheat only reads slides[idx], not
+        // pinnedPreviewSlide). Live decoder stays uncontested.
         autoPlay={surface === 'preview' && !mediaPaused}
         playsInline
-        preload="auto"
+        preload={surface === 'preview' && mediaPaused ? 'metadata' : 'auto'}
         crossOrigin="anonymous"
         className="absolute inset-0 w-full h-full"
         style={{ objectFit }}
@@ -3744,13 +3764,13 @@ function MediaCard() {
 // ──────────────────────────────────────────────────────────────────────
 // MAIN SHELL
 // ──────────────────────────────────────────────────────────────────────
-// v0.7.194-hotfix.10 — MediaPreheat: invisible "warm-up" <video> elements
-// that pre-fetch + pre-decode any video media currently in the Preview slot
-// AND the live slot's neighbours (next/previous schedule entries that
-// contain media). When Go Live promotes the preview slide, the real Live
-// <video> element mounts to a URL whose bytes are ALREADY in the OS file
-// cache + Chromium net-cache — Promotion startup time drops from "seconds
-// of buffering then maybe-plays" to <100 ms decoder init. This is the
+// v0.7.194-hotfix.10 — MediaPreheat: invisible "warm-up" elements that
+// pre-fetch any video media currently in the Preview slot, the Live slot,
+// the pinned preview slot (v0.7.219), and the next schedule item's
+// slides. When Go Live promotes the preview slide, the real Live <video>
+// element mounts to a URL whose bytes are ALREADY in the OS file cache +
+// Chromium net-cache — promotion startup time drops from "seconds of
+// buffering then maybe-plays" to <100 ms decoder init. This is the
 // pragmatic Path-D win: we can't physically share one <video> element
 // across Preview / Live / NDI offscreen / secondary-screen BrowserWindows
 // (Chromium doesn't allow transplanting a MediaElement across documents),
@@ -3758,17 +3778,45 @@ function MediaCard() {
 // file already-buffered. Combined with scripturelive-media:// (disk reads,
 // no HTTP) this delivers EasyWorship-class hand-off latency.
 //
-// GUARD-RAIL: keep the element style absolutely OFF-VIEWPORT (left:-9999px)
-// — display:none would cause Chromium to skip the preload entirely. The
-// element MUST be in the layout tree and "visible" to the browser, just
-// not visible to the operator. muted+playsInline ensures the autoplay
-// policy never blocks the warm-up fetch.
+// v0.7.219 — Operator $1600-customer escalation, two-part fix:
+//
+// PART 1 (root-cause flip) — Switched from hidden `<video preload="auto">`
+// to `<link rel="preload" as="video">`. The previous `<video>` approach
+// caused Chromium to allocate a HW DECODER SLOT for every warmed URL
+// (preload="auto" decodes metadata + first frame for the poster). With a
+// 2-4 stream GPU cap, MediaPreheat's hidden videos were silently eating
+// decoder budget that the real Preview + Live + NDI offscreen videos
+// needed. Result: same "live video stalls when you single-click another
+// media tile" complaint that v0.7.210/v0.7.212/v0.7.216/v0.7.218 tried
+// to close, because the 4th-decoder-competition path was the hidden
+// warm-up <video> itself. `<link rel="preload" as="video">` instructs
+// the browser to fetch bytes into the HTTP cache WITHOUT allocating any
+// decoder slot. When the real `<video>` later mounts with that URL, it
+// pulls from cache instantly → fast `canplay` → fast playback start.
+//
+// PART 2 (pinned-preview coverage) — Added `pinnedPreviewSlide` (and the
+// `liveSlide` v0.7.203 direct ref) to the warmed URLs set. Pre-fix,
+// MediaPreheat only read `slides[previewIdx]` and `slides[liveIdx]` —
+// but `pinPreviewSlide` (v0.7.201) and `setLiveAuto` (v0.7.203) BOTH
+// bypass `slides[]` entirely. So a single-clicked media tile's bytes
+// were NEVER warmed, and on GO LIVE the live <video> did a cold network
+// fetch before `canplay` could fire — operator perceived this as "GO
+// LIVE doesn't immediately start playing". Subscribing to the direct-ref
+// fields fixes the warming gap.
+//
+// GUARD-RAIL: the <link> element MUST live in the document <head>, not
+// as an inline DOM child, because Chromium's preload scanner only honours
+// preload links discovered in the head. We portal into document.head via
+// a useEffect that imperatively creates / removes <link> elements keyed
+// by URL. React's render tree never owns these elements directly.
 function MediaPreheat() {
   const slides = useAppStore((s) => s.slides)
   const previewIdx = useAppStore((s) => s.previewSlideIndex)
   const liveIdx = useAppStore((s) => s.liveSlideIndex)
   const schedule = useAppStore((s) => s.schedule)
   const selectedId = useAppStore((s) => s.selectedScheduleItemId)
+  const pinnedPreviewSlide = useAppStore((s) => s.pinnedPreviewSlide)
+  const liveSlide = useAppStore((s) => s.liveSlide)
 
   const urls = new Set<string>()
   const addIfVideo = (s: { mediaKind?: string; mediaUrl?: string } | undefined | null) => {
@@ -3776,6 +3824,11 @@ function MediaPreheat() {
   }
   if (previewIdx >= 0) addIfVideo(slides[previewIdx])
   if (liveIdx >= 0) addIfVideo(slides[liveIdx])
+  // v0.7.219 — the v0.7.201 pinned-preview + v0.7.203 live direct-ref
+  // shadows of slides[] MUST also be warmed; otherwise single-click and
+  // AI-routed media slides cold-fetch on promotion.
+  addIfVideo(pinnedPreviewSlide as { mediaKind?: string; mediaUrl?: string } | null)
+  addIfVideo(liveSlide as { mediaKind?: string; mediaUrl?: string } | null)
   // Look one ahead in the schedule so when the operator drags the next
   // item forward, its first media slide is already half-decoded.
   if (selectedId) {
@@ -3785,35 +3838,47 @@ function MediaPreheat() {
     for (const s of nextSlides) addIfVideo(s)
   }
 
-  if (urls.size === 0) return null
-  return (
-    <div
-      aria-hidden="true"
-      style={{
-        position: 'fixed',
-        left: -9999,
-        top: -9999,
-        width: 1,
-        height: 1,
-        pointerEvents: 'none',
-        opacity: 0,
-        overflow: 'hidden',
-      }}
-    >
-      {Array.from(urls).map((u) => (
-        <video
-          key={u}
-          src={resolveMediaUrl(u)}
-          muted
-          playsInline
-          preload="auto"
-          // No autoPlay — we only need the file fetched + decoder warm, not
-          // running. autoPlay would also count against Chromium's "video
-          // playing" counter and could trigger battery-saver throttling.
-        />
-      ))}
-    </div>
-  )
+  // v0.7.219 — Imperatively manage <link rel="preload" as="video"> in
+  // document.head. We tag each link with `data-media-preheat="<url>"`
+  // so we can find and remove our own elements without disturbing any
+  // other preload links the app or its dependencies may inject.
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const want = new Set<string>(Array.from(urls).map((u) => resolveMediaUrl(u)))
+    const existing = new Map<string, HTMLLinkElement>()
+    document
+      .querySelectorAll<HTMLLinkElement>('link[data-media-preheat]')
+      .forEach((el) => {
+        const k = el.getAttribute('data-media-preheat') || ''
+        existing.set(k, el)
+      })
+    // Add new
+    for (const resolved of want) {
+      if (existing.has(resolved)) continue
+      const link = document.createElement('link')
+      link.rel = 'preload'
+      link.as = 'video'
+      link.href = resolved
+      link.setAttribute('data-media-preheat', resolved)
+      // crossOrigin matches the eventual <video crossOrigin="anonymous">
+      // so the cached response is reusable by the real video element
+      // without a second fetch (CORS-mode mismatches force a refetch).
+      link.crossOrigin = 'anonymous'
+      document.head.appendChild(link)
+    }
+    // Remove stale
+    for (const [k, el] of existing) {
+      if (!want.has(k)) el.remove()
+    }
+    // Note: we intentionally do NOT remove on unmount of MediaPreheat —
+    // these links are cheap (1 cache entry each) and aggressive removal
+    // would defeat the purpose if the component briefly re-mounts.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Array.from(urls).sort().join('|')])
+
+  // No visible output — everything happens in document.head via the
+  // useEffect above. Returning null avoids polluting the layout tree.
+  return null
 }
 
 export function LogosShell() {

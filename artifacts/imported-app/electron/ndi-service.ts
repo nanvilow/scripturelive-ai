@@ -121,6 +121,13 @@ type NdiBindings = {
   send_create: (settings: unknown) => unknown
   send_destroy: (instance: unknown) => void
   send_send_video_v2: (instance: unknown, frame: unknown) => void
+  // v0.7.220 — Async video send. NDI SDK contract: the call returns
+  // immediately; the NDI worker thread reads from the supplied buffer
+  // in the background. The buffer MUST remain valid until the NEXT
+  // call to send_send_video_async_v2 (which signals "I'm done with
+  // the previous one"). We honour this via a 2-slot pre-allocated
+  // buffer pool (see videoBufferPool below).
+  send_send_video_async_v2: (instance: unknown, frame: unknown) => void
   send_send_audio_v3: (instance: unknown, frame: unknown) => void
   videoFrameType: unknown
   audioFrameType: unknown
@@ -169,6 +176,22 @@ export class NdiService extends EventEmitter {
   private bridgeDeadline = 0
   private sendBusy = false
   private lastDestroyAt = 0
+  // v0.7.220 — 2-slot pre-allocated buffer pool for async NDI video
+  // send. send_send_video_async_v2 returns immediately but the NDI
+  // worker thread reads from the supplied buffer asynchronously. The
+  // buffer MUST remain valid until the NEXT async send call. With 2
+  // slots and a `sendBusy` mutex ensuring at most ONE outstanding
+  // async send at a time, the slot NDI is currently reading is never
+  // the slot we are writing into. This eliminates the per-frame
+  // Buffer.allocUnsafe + Buffer.copy that v0.7.219 was paying ~8MB
+  // x 30fps = ~240MB/s of allocator + GC pressure on the main
+  // process — a known stutter source on long-running sessions.
+  // Pool re-allocates lazily on first frame and on any resolution
+  // change (rare). Capacity is recorded so resolution changes
+  // trigger a fresh allocation rather than a buffer-too-small write.
+  private videoBufferPool: Buffer[] = []
+  private videoBufferIndex = 0
+  private videoBufferCapacity = 0
   // v0.7.56 — Tracks whether NDIlib_initialize() is currently active.
   // The operator-initiated stop() path now calls NDIlib_destroy() to
   // fully recycle the NDI runtime — killing the mDNS responder and
@@ -287,6 +310,20 @@ export class NdiService extends EventEmitter {
       const send_send_video_v2 = lib.func(
         'void NDIlib_send_send_video_v2(void *p_instance, const NDIlib_video_frame_v2_t *p_video_data)',
       ) as (instance: unknown, frame: unknown) => void
+      // v0.7.220 — Async video send. Returns immediately after queueing
+      // the frame onto NDI's internal worker thread. This eliminates the
+      // main-process event-loop blocking that send_send_video_v2 +
+      // clock_video=true imposed (visible to NDI receivers as random
+      // micro-stutters whenever the main process was busy with IPC, GC,
+      // or disk I/O). Buffer lifetime contract: the NDI runtime reads
+      // from `p_data` asynchronously; the caller MUST keep the buffer
+      // valid until the next call to this function (NDI signals "done
+      // with the previous one" by accepting a new submission). We
+      // honour this via a 2-slot pre-allocated buffer pool — see
+      // sendFrame + videoBufferPool.
+      const send_send_video_async_v2 = lib.func(
+        'void NDIlib_send_send_video_async_v2(void *p_instance, const NDIlib_video_frame_v2_t *p_video_data)',
+      ) as (instance: unknown, frame: unknown) => void
       const send_send_audio_v3 = lib.func(
         'void NDIlib_send_send_audio_v3(void *p_instance, const NDIlib_audio_frame_v3_t *p_audio_data)',
       ) as (instance: unknown, frame: unknown) => void
@@ -305,6 +342,7 @@ export class NdiService extends EventEmitter {
         send_create,
         send_destroy,
         send_send_video_v2,
+        send_send_video_async_v2,
         send_send_audio_v3,
         videoFrameType: NDIlib_video_frame_v2_t,
         audioFrameType: NDIlib_audio_frame_v3_t,
@@ -426,11 +464,16 @@ export class NdiService extends EventEmitter {
     const settings = {
       p_ndi_name: wantedName,
       p_groups: null as unknown as string,
-      // clock_video = true makes NDIlib_send_send_video_v2 block to pace
-      // frames at the declared frame rate. This is what gives NDI its
-      // famously stable, low-jitter output even when our compositor
-      // delivers frames slightly early or late.
-      clock_video: true,
+      // v0.7.220 — clock_video MUST be false now that we use
+      // send_send_video_async_v2. With async send, the NDI worker
+      // thread handles outbound pacing internally; setting clock_video
+      // would queue an additional pacing layer that fights the async
+      // queue and re-introduces the main-thread blocking that v0.7.220
+      // is specifically eliminating. Frame cadence is now driven by
+      // the offscreen BrowserWindow's webContents.setFrameRate(fps)
+      // (frame-capture.ts L93) which gives Chromium-paced, jitter-
+      // free delivery into our send pipeline.
+      clock_video: false,
       clock_audio: false,
     }
     const instance = this.bindings.send_create(settings)
@@ -544,7 +587,13 @@ export class NdiService extends EventEmitter {
         p_metadata: null as unknown as string,
         timestamp: BigInt(0) as unknown as number,
       }
-      this.bindings.send_send_video_v2(this.senderInstance, frame)
+      // v0.7.220 — Async send. Returns immediately; NDI worker thread
+      // reads from `bgraBuffer` until the next async_v2 call. Buffer
+      // lifetime is guaranteed by the 2-slot videoBufferPool in
+      // sendFrame and the keep-alive ticker re-using lastFrame.buffer
+      // (re-submitting the same pointer is explicitly allowed by the
+      // NDI SDK and is how the keep-alive contract has always worked).
+      this.bindings.send_send_video_async_v2(this.senderInstance, frame)
       this.status.frameCount += 1
       if (this.status.frameCount % 30 === 0) {
         this.emit('frame', this.status.frameCount)
@@ -583,6 +632,16 @@ export class NdiService extends EventEmitter {
       this.lastDestroyAt = Date.now()
     }
     this.lastFrame = null
+    // v0.7.220 — Release the 2-slot video buffer pool (~16MB at 1080p)
+    // on sender teardown. Next start() will lazy-allocate fresh slots
+    // on the first frame at whatever resolution is active. Without
+    // this, an operator who switches projector resolution between
+    // sessions would keep the old-resolution pool alive in memory
+    // (small leak, but adds up across many resolution changes during
+    // a long event day).
+    this.videoBufferPool = []
+    this.videoBufferIndex = 0
+    this.videoBufferCapacity = 0
     this.status = { running: false, frameCount: this.status.frameCount }
 
     // v0.7.56 — Full NDI runtime recycle on operator-initiated stop.
@@ -679,10 +738,21 @@ export class NdiService extends EventEmitter {
     // the linger window via keep-alive re-emission.
     const black = Buffer.alloc(w * h * 4)
     for (let i = 3; i < black.length; i += 4) black[i] = 255
-    // Burst the fade-to-black so receivers see the visual go-dark
-    // event immediately. clock_video=true paces these naturally.
+    // Stream the fade-to-black at the configured frame cadence so
+    // receivers see a clean, paced go-dark transition rather than a
+    // single-tick burst.
+    // v0.7.220 — Pre-fix this was a tight `for` loop relying on
+    // clock_video=true to BLOCK each send_video_v2 for ~frameMs.
+    // Under async_v2 + clock_video=false the FFI returns instantly,
+    // so the same tight loop would dump every fade frame into NDI's
+    // async queue in one tick — receivers might coalesce them down
+    // to a single black flash instead of a paced fade. We pace
+    // explicitly via setTimeout-await between sends.
     for (let i = 0; i < totalFrames; i++) {
       this.nativeSendFrame(black, w, h)
+      if (i < totalFrames - 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, frameMs))
+      }
     }
     // Pin the cached frame to BLACK so the keep-alive ticker keeps
     // emitting black at the configured fps for the linger window —
@@ -761,13 +831,21 @@ export class NdiService extends EventEmitter {
     const totalFrames = Math.max(1, Math.ceil(blackFrameMs / frameMs))
     // BGRA opaque black: B=0,G=0,R=0,A=255. Allocating once is fine
     // (1080p = ~8MB, lives only for the fadeout). We reuse the same
-    // buffer across all the fadeout sends — NDI copies it internally
-    // before send_send_video_v2 returns (clock_video=true blocks
-    // until the slot is consumed).
+    // buffer across all the fadeout sends — NDI's async send accepts
+    // the same buffer pointer repeatedly (each submission means
+    // "process again"); the buffer stays valid for the lifetime of
+    // gracefulStop's stack frame which outlives every send.
+    // v0.7.220 — Same pacing rationale as lingerStop above: under
+    // async_v2 + clock_video=false we MUST pace fade frames via
+    // setTimeout-await; tight loop would coalesce into a single
+    // black flash on the receiver instead of a visible fade.
     const black = Buffer.alloc(w * h * 4)
     for (let i = 3; i < black.length; i += 4) black[i] = 255
     for (let i = 0; i < totalFrames; i++) {
       this.nativeSendFrame(black, w, h)
+      if (i < totalFrames - 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, frameMs))
+      }
     }
     return this.stop()
   }
@@ -838,7 +916,14 @@ export class NdiService extends EventEmitter {
       const last = this.lastFrame
       if (!last) return
       this.nativeSendFrame(last.buffer, last.width, last.height)
-    }, 16)
+      // v0.7.220 — Bridge tick interval MUST be paced to configured
+      // fps. Pre-fix it was 16ms (62fps) which was implicitly capped
+      // by the SYNC send_video_v2 blocking under clock_video=true.
+      // Under async_v2 + clock_video=false the FFI returns instantly,
+      // so a 16ms ticker would burst-send duplicate frames at 62fps
+      // — wasting NDI worker thread cycles and confusing receiver
+      // jitter buffers. Cap at fps (33ms @ 30fps, 16ms @ 60fps).
+    }, Math.max(16, Math.floor(1000 / (this.status.fps || 30))))
   }
 
   disarmBridge(): void {
@@ -851,19 +936,42 @@ export class NdiService extends EventEmitter {
 
   sendFrame(bgraBuffer: Buffer, width: number, height: number): void {
     if (!this.senderInstance || !this.bindings) return
-    // v0.7.12 — Cache the frame BEFORE pushing so even if the native
-    // call is currently blocked (sendBusy), the keep-alive ticker has
-    // a fresh frame to emit on its next tick. We make a defensive
-    // COPY because the BrowserWindow frame subscription's bitmap is
-    // owned by Chromium's compositor — it's reused for the next
-    // capture immediately after our callback returns, so retaining a
-    // reference for keep-alive re-emit would race against Chromium
-    // overwriting it. Copy is cheap (1080p = ~8MB / 30fps) compared
-    // to the alternative of dropping frames or showing tearing.
-    const copy = Buffer.allocUnsafe(bgraBuffer.length)
-    bgraBuffer.copy(copy)
-    this.lastFrame = { buffer: copy, width, height, ts: Date.now() }
-    this.nativeSendFrame(copy, width, height)
+    // v0.7.12 — Cache the frame BEFORE pushing so even if a native
+    // send is currently in flight (sendBusy), the keep-alive ticker
+    // has a fresh frame to emit on its next tick. We must COPY because
+    // the BrowserWindow frame subscription's bitmap is owned by
+    // Chromium's compositor — it is reused for the next capture
+    // immediately after our callback returns, so retaining a
+    // reference would race against Chromium overwriting it.
+    //
+    // v0.7.220 — The copy now lands in a 2-slot pre-allocated buffer
+    // pool instead of a fresh Buffer.allocUnsafe per frame. Rationale:
+    //   • Allocator + GC pressure: 1080p BGRA = ~8.3MB/frame. At 30fps
+    //     that is ~250MB/s of allocate-then-discard churn on the main
+    //     process. Empirically this is one of the top main-thread
+    //     stutter sources on long-running sessions (V8 young-gen GC
+    //     pauses scale with allocation rate, not live set).
+    //   • Async send buffer-lifetime contract: send_send_video_async_v2
+    //     requires the buffer to stay valid until the NEXT async send.
+    //     With 2 slots and a sendBusy mutex (at most ONE outstanding
+    //     async send at a time), the slot NDI is currently reading is
+    //     never the slot we are about to write into next.
+    // The pool is lazy-allocated on first frame and re-allocated only
+    // on a resolution change (rare; e.g. operator switches projector
+    // from 1080p to 4K).
+    const needed = bgraBuffer.length
+    if (this.videoBufferCapacity !== needed || this.videoBufferPool.length !== 2) {
+      this.videoBufferPool = [Buffer.allocUnsafe(needed), Buffer.allocUnsafe(needed)]
+      this.videoBufferCapacity = needed
+      this.videoBufferIndex = 0
+    }
+    const slot = this.videoBufferPool[this.videoBufferIndex]!
+    bgraBuffer.copy(slot)
+    this.lastFrame = { buffer: slot, width, height, ts: Date.now() }
+    this.nativeSendFrame(slot, width, height)
+    // Advance index AFTER submit. Next sendFrame writes into the OTHER
+    // slot, which is the one NDI is NOT currently reading from.
+    this.videoBufferIndex = (this.videoBufferIndex + 1) % 2
   }
 
   /**
