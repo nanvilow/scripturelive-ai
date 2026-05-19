@@ -48,7 +48,6 @@ import {
   SkipForward,
   Volume2,
   VolumeX,
-  Headphones,
   LayoutGrid,
   List as ListIcon,
   Rows3,
@@ -269,6 +268,16 @@ function MediaVideoSurface({
   )
   const globalMuted = useAppStore((s) => s.globalMuted)
   const globalVolume = useAppStore((s) => s.globalVolume)
+  // v0.7.216 follow-up #3 — Live broadcast-audio toggle (the speaker
+  // button on the right rail of LiveDisplayCard) MUST actually mute
+  // the in-app live <video>, not just flip a payload flag. Pre-fix,
+  // `liveBroadcastAudio` only set `broadcastEnabled` in the output
+  // payload — the operator clicked it expecting their local speakers
+  // to mute and nothing happened. Now the live MediaVideoSurface
+  // honours it too, so the speaker button gates BOTH the SSE/NDI
+  // output (existing behaviour via output-payload.ts L105 +
+  // output-broadcaster.tsx L213) AND the local live <video> audio.
+  const liveBroadcastAudio = useAppStore((s) => s.liveBroadcastAudio)
   const mediaPaused = useAppStore((s) =>
     surface === 'preview' ? s.previewMediaPaused : s.liveMediaPaused,
   )
@@ -316,7 +325,7 @@ function MediaVideoSurface({
   // a few % CPU per surface for nothing — multiplied across surfaces
   // it adds up to visible playback judder. Meter shows 0 when muted,
   // which is exactly what the operator expects from a muted source.
-  const muted = forceMute || globalMuted
+  const muted = forceMute || globalMuted || (surface === 'live' && !liveBroadcastAudio)
   useEffect(() => {
     if (muted) {
       setAudioLevel(surface, 0)
@@ -351,9 +360,9 @@ function MediaVideoSurface({
   useEffect(() => {
     const v = videoRef.current
     if (!v) return
-    v.muted = forceMute || globalMuted
+    v.muted = forceMute || globalMuted || (surface === 'live' && !liveBroadcastAudio)
     v.volume = Math.max(0, Math.min(1, globalVolume))
-  }, [forceMute, globalMuted, globalVolume])
+  }, [forceMute, globalMuted, globalVolume, surface, liveBroadcastAudio])
 
   // Loop — mirror the store flag onto the element.
   useEffect(() => {
@@ -1720,8 +1729,6 @@ function LiveDisplayCard({
     hasShownContent,
     liveBroadcastAudio,
     setLiveBroadcastAudio,
-    liveMonitorAudio,
-    setLiveMonitorAudio,
   } = useAppStore()
   // v0.7.78 — Voice Control + Speaker-Follow toggles surfaced in the
   // Live Output column header so the operator can flip them mid-show
@@ -1913,16 +1920,19 @@ function LiveDisplayCard({
         )}
         </div>
         {/* RIGHT audio rail — sits OUTSIDE the live frame on the
-            right edge, exactly like the Wirecast reference. Stack:
-            VU meter on top, then the broadcast speaker, then the
-            operator headphone toggle. The meter tone follows whichever
-            of the two toggles is currently driving audio. */}
+            right edge. Stack: VU meter on top, then the broadcast
+            speaker toggle. v0.7.216 follow-up #3 — removed the
+            operator-headphone monitor toggle per operator request
+            ("Take the Headphone icon off") and made the remaining
+            volume button actually mute/unmute the live <video> (was
+            a no-op flag pre-fix; MediaVideoSurface now honours
+            `liveBroadcastAudio` via its `muted` computation). */}
         <div className="w-7 shrink-0 flex flex-col items-center gap-1.5 py-1">
           <div className="flex-1 min-h-0 w-full flex justify-center">
             <AudioMeter
-              active={liveBroadcastAudio || liveMonitorAudio}
+              active={liveBroadcastAudio}
               playing={liveVideoPlaying}
-              tone={liveBroadcastAudio ? 'red' : liveMonitorAudio ? 'amber' : 'green'}
+              tone={liveBroadcastAudio ? 'red' : 'green'}
               surface="live"
             />
           </div>
@@ -1931,9 +1941,11 @@ function LiveDisplayCard({
             onClick={() => setLiveBroadcastAudio(!liveBroadcastAudio)}
             title={
               liveBroadcastAudio
-                ? 'Mute broadcast audio'
-                : 'Send audio to broadcast'
+                ? 'Mute live audio (in-app + broadcast)'
+                : 'Unmute live audio (in-app + broadcast)'
             }
+            aria-pressed={liveBroadcastAudio}
+            aria-label={liveBroadcastAudio ? 'Mute live audio' : 'Unmute live audio'}
             className={cn(
               'h-6 w-6 rounded-md border flex items-center justify-center transition-colors shrink-0',
               liveBroadcastAudio
@@ -1945,26 +1957,6 @@ function LiveDisplayCard({
               <Volume2 className="h-3 w-3" />
             ) : (
               <VolumeX className="h-3 w-3" />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setLiveMonitorAudio(!liveMonitorAudio)}
-            title={
-              liveMonitorAudio
-                ? 'Stop monitoring live audio'
-                : 'Monitor live audio in your headphones'
-            }
-            className={cn(
-              'h-6 w-6 rounded-md border flex items-center justify-center transition-colors relative shrink-0',
-              liveMonitorAudio
-                ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
-                : 'bg-black/60 border-border text-muted-foreground hover:text-foreground hover:border-border',
-            )}
-          >
-            <Headphones className="h-3 w-3" />
-            {!liveMonitorAudio && (
-              <span className="absolute inset-x-1 h-px bg-current rotate-45" />
             )}
           </button>
         </div>
