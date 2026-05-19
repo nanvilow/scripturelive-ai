@@ -624,4 +624,39 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
       /removeEventListener\(\s*'canplay'\s*,\s*onCanPlay\s*\)/,
     )
   })
+
+  it('(v) v0.7.216 GUARD — Radix portal-based UI primitives (Select/DropdownMenu/Popover/Tooltip/Dialog/etc) MUST render ABOVE the Settings overlay so dropdowns are visible when a media-video is playing on Live', () => {
+    // Settings overlay is `fixed inset-0 z-50` (app/page.tsx). Pre-fix every
+    // portal-based primitive was ALSO z-50 — equal-z sibling under <body>, so
+    // when the live MediaVideoSurface kept repainting via the HW video
+    // compositor the dropdown portal could be re-stacked beneath the opaque
+    // `bg-background` of the settings overlay. Fix: bump portal primitives
+    // to z-[60] so they always paint above the settings chrome.
+    const settingsPage = readFileSync(join(process.cwd(), 'src/app/page.tsx'), 'utf8')
+    expect(settingsPage, 'settings overlay MUST stay at z-50 (load-bearing baseline for this guard)').toMatch(
+      /fixed inset-0 z-50 bg-background/,
+    )
+    const uiFiles = [
+      'src/components/ui/select.tsx',
+      'src/components/ui/dropdown-menu.tsx',
+      'src/components/ui/popover.tsx',
+      'src/components/ui/tooltip.tsx',
+      'src/components/ui/hover-card.tsx',
+      'src/components/ui/context-menu.tsx',
+      'src/components/ui/menubar.tsx',
+      'src/components/ui/navigation-menu.tsx',
+      'src/components/ui/dialog.tsx',
+      'src/components/ui/alert-dialog.tsx',
+      'src/components/ui/sheet.tsx',
+    ]
+    for (const rel of uiFiles) {
+      const src = readFileSync(join(process.cwd(), rel), 'utf8')
+      expect(src, `${rel} MUST NOT use bare z-50 (would tie with settings overlay)`).not.toMatch(
+        /\bz-50\b/,
+      )
+      expect(src, `${rel} MUST use z-[60] for portal/overlay content`).toMatch(
+        /z-\[60\]/,
+      )
+    }
+  })
 })
