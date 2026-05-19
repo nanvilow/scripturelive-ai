@@ -1284,9 +1284,39 @@ export function MediaLibraryCompact() {
   // pinnedPreviewSlide first (logos-shell L967, output-preview L200);
   // slides[] and live are NEVER touched, so live keeps playing
   // whatever it was already showing.
+  // v0.7.216 — Operator $1600-customer escalation: single-clicking a
+  // DIFFERENT media-video tile while one is on LIVE was stalling the
+  // live video. v0.7.210 fixed the store-mutation path (pinPreviewSlide
+  // doesn't touch live state) and v0.7.212 fixed the iframe sendNow
+  // dedup, but the React MediaVideoSurface for the new preview clip
+  // still mounts a 2nd <video> with autoPlay=true — adding a 2nd HW
+  // decoder slot that competes for the GPU's 2-4 stream cap and
+  // pauses the live decoder. Fix: when LIVE is already playing a
+  // DIFFERENT media-video, flip `previewMediaPaused=true` (and reset
+  // the preview clock to 0) BEFORE the pin so the new MediaVideoSurface
+  // mounts with autoPlay disabled (v0.7.216 gate in logos-shell.tsx
+  // L434). Operator scrubs/plays via the VideoTransport bar when ready.
+  // Same-media case is unchanged — it already short-circuits at the
+  // PreviewCard "ON AIR" placard (v0.7.193-hotfix.2) and never mounts
+  // a 2nd <video>.
   const sendMediaToPreview = (m: MediaItem) => {
     const slide = buildMediaSlide(m)
-    useAppStore.getState().pinPreviewSlide(slide)
+    const st = useAppStore.getState()
+    const liveSlide = st.liveSlide ?? (st.liveSlideIndex >= 0 ? st.slides[st.liveSlideIndex] : null)
+    const liveIsPlayingDifferentMediaVideo = !!(
+      liveSlide &&
+      liveSlide.type === 'media' &&
+      liveSlide.mediaKind === 'video' &&
+      liveSlide.mediaUrl &&
+      m.kind === 'video' &&
+      slide.mediaUrl &&
+      liveSlide.mediaUrl !== slide.mediaUrl
+    )
+    if (liveIsPlayingDifferentMediaVideo) {
+      st.setPreviewMediaPaused(true)
+      st.setPreviewMediaCurrentTime(0)
+    }
+    st.pinPreviewSlide(slide)
   }
 
   // v0.7.210 — Symmetric fix: double-click "send to live" uses the

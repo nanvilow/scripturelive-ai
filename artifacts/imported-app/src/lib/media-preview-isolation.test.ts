@@ -416,6 +416,161 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
     expect(block, 'Clear Preview MUST NOT touch slides[]').not.toMatch(/setSlides\(/)
   })
 
+  it('(q) v0.7.216 BEHAVIOURAL — clicking a DIFFERENT media tile while LIVE plays a media-video MUST pin preview AND set previewMediaPaused=true (no 2nd HW decoder) while leaving LIVE completely untouched', () => {
+    const liveVid = mediaSlide('vid-live', 'live-clip.mp4')
+    const previewVid: Slide = {
+      ...mediaSlide('vid-new', 'new-clip.mp4'),
+      mediaUrl: 'data:video/mp4;base64,BBBBBBBBBBBBBBBBBBBB',
+    }
+
+    // Stage: LIVE playing video A via legacy GO LIVE path.
+    useAppStore.setState({
+      slides: [liveVid],
+      previewSlideIndex: 0,
+      liveSlideIndex: 0,
+      liveSlide: null,
+      pinnedPreviewSlide: null,
+      isLive: true,
+      previewMediaPaused: false,
+      previewMediaCurrentTime: 42.5,
+    } as Partial<ReturnType<typeof useAppStore.getState>>)
+
+    // Simulate the EXACT v0.7.216 sendMediaToPreview store mutation
+    // sequence for a DIFFERENT media-video click. See
+    // library-compact.tsx L1305-1323.
+    const st = useAppStore.getState()
+    const cur = st.liveSlide ?? (st.liveSlideIndex >= 0 ? st.slides[st.liveSlideIndex] : null)
+    const liveIsPlayingDifferentMediaVideo = !!(
+      cur &&
+      cur.type === 'media' &&
+      cur.mediaKind === 'video' &&
+      cur.mediaUrl &&
+      previewVid.mediaKind === 'video' &&
+      previewVid.mediaUrl &&
+      cur.mediaUrl !== previewVid.mediaUrl
+    )
+    expect(liveIsPlayingDifferentMediaVideo).toBe(true)
+    if (liveIsPlayingDifferentMediaVideo) {
+      st.setPreviewMediaPaused(true)
+      st.setPreviewMediaCurrentTime(0)
+    }
+    st.pinPreviewSlide(previewVid)
+
+    const after = useAppStore.getState()
+    // Preview MUST be pinned AND paused at t=0 — guarantees the
+    // <video autoPlay={surface==='preview' && !mediaPaused}> at
+    // logos-shell L434 mounts WITHOUT autoplay, so no 2nd HW
+    // decoder spins up.
+    expect(after.pinnedPreviewSlide?.id).toBe('vid-new')
+    expect(after.previewMediaPaused).toBe(true)
+    expect(after.previewMediaCurrentTime).toBe(0)
+    // LIVE MUST be totally untouched — same deck, same index,
+    // same isLive flag. broadcaster's buildOutputPayload still
+    // sees the same liveSlide so SSE payload is byte-identical
+    // (broadcaster dedups at JSON.stringify compare).
+    expect(after.slides[0]?.id).toBe('vid-live')
+    expect(after.liveSlideIndex).toBe(0)
+    expect(after.liveSlide).toBeNull()
+    expect(after.isLive).toBe(true)
+    const payload = buildOutputPayload(after) as { slide?: { id?: string } | null }
+    expect(payload.slide?.id).toBe('vid-live')
+  })
+
+  it('(r) v0.7.216 BEHAVIOURAL — clicking the SAME media tile that is on LIVE MUST NOT force-pause preview (the PreviewCard ON-AIR placard short-circuits, no 2nd <video> mounts)', () => {
+    const liveVid = mediaSlide('vid-same', 'same-clip.mp4')
+
+    useAppStore.setState({
+      slides: [liveVid],
+      previewSlideIndex: 0,
+      liveSlideIndex: 0,
+      liveSlide: null,
+      pinnedPreviewSlide: null,
+      isLive: true,
+      previewMediaPaused: false,
+      previewMediaCurrentTime: 0,
+    } as Partial<ReturnType<typeof useAppStore.getState>>)
+
+    // Same identity as the live slide — pinPreviewSlide gets the
+    // SAME mediaUrl, so the v0.7.193-hotfix.2 PreviewCard placard
+    // branch wins; no autoplay-pause needed.
+    const samePreview: Slide = {
+      ...liveVid,
+      id: 'vid-same-preview-clone',
+    }
+    const st = useAppStore.getState()
+    const cur = st.liveSlide ?? (st.liveSlideIndex >= 0 ? st.slides[st.liveSlideIndex] : null)
+    const liveIsPlayingDifferentMediaVideo = !!(
+      cur &&
+      cur.type === 'media' &&
+      cur.mediaKind === 'video' &&
+      cur.mediaUrl &&
+      samePreview.mediaKind === 'video' &&
+      samePreview.mediaUrl &&
+      cur.mediaUrl !== samePreview.mediaUrl
+    )
+    expect(liveIsPlayingDifferentMediaVideo).toBe(false)
+    if (liveIsPlayingDifferentMediaVideo) {
+      st.setPreviewMediaPaused(true)
+      st.setPreviewMediaCurrentTime(0)
+    }
+    st.pinPreviewSlide(samePreview)
+
+    const after = useAppStore.getState()
+    expect(after.pinnedPreviewSlide?.id).toBe('vid-same-preview-clone')
+    // previewMediaPaused MUST NOT have been forced — the operator's
+    // existing preview transport state survives.
+    expect(after.previewMediaPaused).toBe(false)
+  })
+
+  it('(s) v0.7.216 GUARD — MediaVideoSurface <video> autoPlay attr MUST be gated on !mediaPaused so the v0.7.216 pause-before-pin sequence prevents the 2nd HW decoder', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+    // The <video> tag inside MediaVideoSurface's return().
+    const m = src.match(/<video\s+ref=\{videoRef\}[\s\S]*?autoPlay=\{([^}]+)\}/)
+    expect(m, 'MediaVideoSurface <video> autoPlay attr not found').toBeTruthy()
+    const expr = m![1]
+    expect(expr, 'autoPlay MUST gate on !mediaPaused (v0.7.216)').toMatch(/!mediaPaused/)
+    expect(expr, 'autoPlay MUST still be preview-only').toMatch(/surface\s*===\s*'preview'/)
+  })
+
+  it('(t) v0.7.216 GUARD — library-compact sendMediaToPreview MUST set previewMediaPaused(true) + reset clock when LIVE plays a DIFFERENT media-video', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/library-compact.tsx'),
+      'utf8',
+    )
+    const m = src.match(
+      /const sendMediaToPreview = \(m: MediaItem\) => \{([\s\S]*?pinPreviewSlide\(slide\)[\s\S]*?)\n\s{2}\}/,
+    )
+    expect(m, 'sendMediaToPreview body not found').toBeTruthy()
+    const body = m![1]
+    // v0.7.216 detection branch
+    expect(body, 'sendMediaToPreview MUST detect liveIsPlayingDifferentMediaVideo').toMatch(
+      /liveIsPlayingDifferentMediaVideo/,
+    )
+    expect(body, 'sendMediaToPreview MUST compare liveSlide.mediaUrl !== slide.mediaUrl').toMatch(
+      /mediaUrl\s*!==\s*slide\.mediaUrl/,
+    )
+    expect(body, 'sendMediaToPreview MUST call setPreviewMediaPaused(true) in that branch').toMatch(
+      /setPreviewMediaPaused\(true\)/,
+    )
+    expect(body, 'sendMediaToPreview MUST reset previewMediaCurrentTime to 0').toMatch(
+      /setPreviewMediaCurrentTime\(0\)/,
+    )
+    // MUST still call pinPreviewSlide as the final ownership-of-preview step.
+    expect(body, 'sendMediaToPreview MUST still call pinPreviewSlide(slide)').toMatch(
+      /pinPreviewSlide\(slide\)/,
+    )
+    // MUST NOT touch live state — independence invariant from v0.7.210.
+    expect(body, 'sendMediaToPreview MUST NOT call setSlides').not.toMatch(/setSlides\(/)
+    expect(body, 'sendMediaToPreview MUST NOT call setLiveSlideIndex').not.toMatch(
+      /setLiveSlideIndex\(/,
+    )
+    expect(body, 'sendMediaToPreview MUST NOT call setIsLive').not.toMatch(/setIsLive\(/)
+    expect(body, 'sendMediaToPreview MUST NOT call setLiveAuto').not.toMatch(/setLiveAuto\(/)
+  })
+
   it('(p) v0.7.215 GUARD — LiveDisplayCard bottom toolbar MUST host a Clear Live button wired to onClearLive (independent of GO LIVE toggle)', () => {
     const src = readFileSync(
       join(process.cwd(), 'src/components/layout/logos-shell.tsx'),

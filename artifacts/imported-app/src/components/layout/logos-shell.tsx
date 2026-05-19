@@ -418,7 +418,17 @@ function MediaVideoSurface({
         // Preview auto-plays on mount so the operator hears/sees the
         // clip immediately on first click. Live auto-plays via the
         // isLive effect above (only after Send-to-Live).
-        autoPlay={surface === 'preview'}
+        //
+        // v0.7.216 — Operator $1600-customer escalation: when LIVE is
+        // already playing a DIFFERENT media-video, the new Preview
+        // <video> auto-decoding adds a 2nd HW decoder slot that
+        // steals from the live decoder (GPU cap 2-4 streams), causing
+        // the live video to stall. `sendMediaToPreview` now flips
+        // `previewMediaPaused=true` BEFORE pinning in that scenario;
+        // gating autoPlay on !mediaPaused honours it at mount so the
+        // 2nd decoder never spins up. Operator presses Play in the
+        // transport bar when ready to actually preview the new clip.
+        autoPlay={surface === 'preview' && !mediaPaused}
         playsInline
         preload="auto"
         crossOrigin="anonymous"
