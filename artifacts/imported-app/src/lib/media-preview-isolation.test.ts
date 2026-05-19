@@ -801,4 +801,112 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
       )
     }
   })
+
+  it('(aa) v0.7.220 GUARD — NDI hot path MUST use send_send_video_async_v2 + clock_video=false + 2-slot buffer pool (EasyWorship-class smoothness; eliminates main-thread blocking + ~250MB/s allocator churn)', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'electron/ndi-service.ts'),
+      'utf8',
+    )
+
+    // (1) FFI binding MUST be loaded for the async variant.
+    expect(src, 'send_send_video_async_v2 koffi func declaration MUST exist').toMatch(
+      /lib\.func\(\s*['"]void NDIlib_send_send_video_async_v2\(void \*p_instance, const NDIlib_video_frame_v2_t \*p_video_data\)['"]/,
+    )
+
+    // (2) Bindings object MUST expose send_send_video_async_v2 so the
+    // hot path can call it. Without this, nativeSendFrame would
+    // silently fall back to the sync v2 path.
+    expect(src, 'bindings object MUST include send_send_video_async_v2').toMatch(
+      /this\.bindings\s*=\s*\{[\s\S]*?send_send_video_async_v2[\s\S]*?\}/,
+    )
+
+    // (3) The hot send path MUST call the async variant, NOT the
+    // legacy sync v2 (which blocks the main thread under
+    // clock_video=true and was the v0.7.217-era stutter source).
+    const nativeSend = src.match(
+      /private nativeSendFrame\([\s\S]*?\n\s\s\}\n/,
+    )
+    expect(nativeSend, 'nativeSendFrame body not found').toBeTruthy()
+    expect(
+      nativeSend![0],
+      'nativeSendFrame MUST call send_send_video_async_v2 (NOT send_send_video_v2)',
+    ).toMatch(/this\.bindings\.send_send_video_async_v2\(this\.senderInstance, frame\)/)
+    expect(
+      nativeSend![0],
+      'nativeSendFrame MUST NOT call the sync send_send_video_v2 (would re-introduce main-thread blocking under clock_video=true semantics)',
+    ).not.toMatch(/this\.bindings\.send_send_video_v2\(this\.senderInstance, frame\)/)
+
+    // (4) clock_video MUST be false. With async send, NDI's internal
+    // worker thread paces the wire; enabling clock_video would queue
+    // a second pacing layer that fights the async queue and re-
+    // introduces the main-thread blocking v0.7.220 specifically
+    // eliminates.
+    const sendCreate = src.match(
+      /const settings = \{[\s\S]*?clock_video:\s*(true|false)/,
+    )
+    expect(sendCreate, 'send_create settings block not found').toBeTruthy()
+    expect(sendCreate![1], 'clock_video MUST be false for async send pacing').toBe('false')
+
+    // (5) sendFrame MUST use the 2-slot pre-allocated buffer pool
+    // instead of per-frame Buffer.allocUnsafe. With the pool the hot
+    // path allocates ZERO bytes per frame (just a memcpy into a
+    // pre-existing slot), eliminating ~250MB/s of GC pressure on
+    // long-running sessions.
+    const sendFrame = src.match(
+      /sendFrame\(bgraBuffer: Buffer, width: number, height: number\): void \{[\s\S]*?\n\s\s\}/,
+    )
+    expect(sendFrame, 'sendFrame body not found').toBeTruthy()
+    expect(
+      sendFrame![0],
+      'sendFrame MUST reference videoBufferPool (the v0.7.220 2-slot pool)',
+    ).toMatch(/this\.videoBufferPool/)
+    expect(
+      sendFrame![0],
+      'sendFrame MUST advance videoBufferIndex so consecutive frames write to DIFFERENT slots (NDI buffer-lifetime contract for async send)',
+    ).toMatch(/this\.videoBufferIndex\s*=\s*\(this\.videoBufferIndex\s*\+\s*1\)\s*%\s*2/)
+    expect(
+      sendFrame![0],
+      'sendFrame MUST NOT call Buffer.allocUnsafe per frame (would re-introduce ~250MB/s allocator churn the pool is designed to eliminate)',
+    ).not.toMatch(/Buffer\.allocUnsafe\(bgraBuffer\.length\)/)
+
+    // (6) Pool MUST be released on stop() so resolution changes
+    // across sessions do not leak the old-resolution pool.
+    expect(
+      src,
+      'stop() path MUST reset videoBufferPool to release ~16MB/sender on teardown',
+    ).toMatch(/this\.videoBufferPool\s*=\s*\[\]/)
+
+    // (7) Bridge / linger / graceful-stop pacing — under async send
+    // these were implicitly fps-paced by the sync FFI blocking. Now
+    // they MUST pace explicitly or they burst-send and overwhelm
+    // NDI's worker queue (architect medium-risk caveat).
+    // armBridge ticker MUST use fps-derived interval, NOT bare 16.
+    const armBridgeMatch = src.match(
+      /armBridge\(ms = 3000\): void \{[\s\S]*?\n\s\s\}/,
+    )
+    expect(armBridgeMatch, 'armBridge body not found').toBeTruthy()
+    expect(
+      armBridgeMatch![0],
+      'armBridge setInterval MUST pace to fps (Math.max(16, Math.floor(1000 / fps))), NOT bare 16ms (would burst at 62fps under async)',
+    ).toMatch(/Math\.max\(16,\s*Math\.floor\(1000\s*\/\s*\(this\.status\.fps[\s\S]*?\)\)\)/)
+    expect(
+      armBridgeMatch![0],
+      'armBridge MUST NOT use bare 16ms interval (the literal pre-fix value)',
+    ).not.toMatch(/\}, 16\)/)
+    // lingerStop & gracefulStop fade-to-black loops MUST pace via
+    // setTimeout-await between sends; tight for-loop would coalesce
+    // into a single black-flash on the receiver under async send.
+    const lingerStop = src.match(/async lingerStop\([\s\S]*?\n\s\s\}/)
+    expect(lingerStop, 'lingerStop body not found').toBeTruthy()
+    expect(
+      lingerStop![0],
+      'lingerStop fade-to-black loop MUST await setTimeout(frameMs) between sends',
+    ).toMatch(/setTimeout\(resolve,\s*frameMs\)/)
+    const gracefulStop = src.match(/async gracefulStop\([\s\S]*?\n\s\s\}/)
+    expect(gracefulStop, 'gracefulStop body not found').toBeTruthy()
+    expect(
+      gracefulStop![0],
+      'gracefulStop fade-to-black loop MUST await setTimeout(frameMs) between sends',
+    ).toMatch(/setTimeout\(resolve,\s*frameMs\)/)
+  })
 })
