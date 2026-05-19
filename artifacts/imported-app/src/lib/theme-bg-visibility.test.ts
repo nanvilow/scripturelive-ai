@@ -114,8 +114,13 @@ describe('v0.7.211 — themed background + customBackground visibility', () => {
     // The v0.7.211 bg fix MUST NOT regress the v0.7.210 media-tile
     // click handlers. Re-asserts the GUARD-RAILs from v0.7.210.
     const lib = readFileSync('src/components/layout/library-compact.tsx', 'utf8');
-    expect(lib).toMatch(/const sendMediaToPreview[^}]+pinPreviewSlide\(slide\)/s);
-    expect(lib).toMatch(/const sendMediaToLive[^}]+setLiveAuto\(slide\)/s);
+    // v0.7.216: regex widened from `[^}]+` to `[\s\S]*?` because the
+    // v0.7.216 sendMediaToPreview now contains an `if {...}` block
+    // (the pause-before-pin branch that prevents 2nd HW decoder
+    // competition) BEFORE the pinPreviewSlide call. The primitive
+    // call itself is still asserted.
+    expect(lib).toMatch(/const sendMediaToPreview[\s\S]*?pinPreviewSlide\(slide\)/);
+    expect(lib).toMatch(/const sendMediaToLive[\s\S]*?setLiveAuto\(slide\)/);
   });
 });
 

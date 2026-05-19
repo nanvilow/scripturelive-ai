@@ -416,6 +416,161 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
     expect(block, 'Clear Preview MUST NOT touch slides[]').not.toMatch(/setSlides\(/)
   })
 
+  it('(q) v0.7.216 BEHAVIOURAL — clicking a DIFFERENT media tile while LIVE plays a media-video MUST pin preview AND set previewMediaPaused=true (no 2nd HW decoder) while leaving LIVE completely untouched', () => {
+    const liveVid = mediaSlide('vid-live', 'live-clip.mp4')
+    const previewVid: Slide = {
+      ...mediaSlide('vid-new', 'new-clip.mp4'),
+      mediaUrl: 'data:video/mp4;base64,BBBBBBBBBBBBBBBBBBBB',
+    }
+
+    // Stage: LIVE playing video A via legacy GO LIVE path.
+    useAppStore.setState({
+      slides: [liveVid],
+      previewSlideIndex: 0,
+      liveSlideIndex: 0,
+      liveSlide: null,
+      pinnedPreviewSlide: null,
+      isLive: true,
+      previewMediaPaused: false,
+      previewMediaCurrentTime: 42.5,
+    } as Partial<ReturnType<typeof useAppStore.getState>>)
+
+    // Simulate the EXACT v0.7.216 sendMediaToPreview store mutation
+    // sequence for a DIFFERENT media-video click. See
+    // library-compact.tsx L1305-1323.
+    const st = useAppStore.getState()
+    const cur = st.liveSlide ?? (st.liveSlideIndex >= 0 ? st.slides[st.liveSlideIndex] : null)
+    const liveIsPlayingDifferentMediaVideo = !!(
+      cur &&
+      cur.type === 'media' &&
+      cur.mediaKind === 'video' &&
+      cur.mediaUrl &&
+      previewVid.mediaKind === 'video' &&
+      previewVid.mediaUrl &&
+      cur.mediaUrl !== previewVid.mediaUrl
+    )
+    expect(liveIsPlayingDifferentMediaVideo).toBe(true)
+    if (liveIsPlayingDifferentMediaVideo) {
+      st.setPreviewMediaPaused(true)
+      st.setPreviewMediaCurrentTime(0)
+    }
+    st.pinPreviewSlide(previewVid)
+
+    const after = useAppStore.getState()
+    // Preview MUST be pinned AND paused at t=0 — guarantees the
+    // <video autoPlay={surface==='preview' && !mediaPaused}> at
+    // logos-shell L434 mounts WITHOUT autoplay, so no 2nd HW
+    // decoder spins up.
+    expect(after.pinnedPreviewSlide?.id).toBe('vid-new')
+    expect(after.previewMediaPaused).toBe(true)
+    expect(after.previewMediaCurrentTime).toBe(0)
+    // LIVE MUST be totally untouched — same deck, same index,
+    // same isLive flag. broadcaster's buildOutputPayload still
+    // sees the same liveSlide so SSE payload is byte-identical
+    // (broadcaster dedups at JSON.stringify compare).
+    expect(after.slides[0]?.id).toBe('vid-live')
+    expect(after.liveSlideIndex).toBe(0)
+    expect(after.liveSlide).toBeNull()
+    expect(after.isLive).toBe(true)
+    const payload = buildOutputPayload(after) as { slide?: { id?: string } | null }
+    expect(payload.slide?.id).toBe('vid-live')
+  })
+
+  it('(r) v0.7.216 BEHAVIOURAL — clicking the SAME media tile that is on LIVE MUST NOT force-pause preview (the PreviewCard ON-AIR placard short-circuits, no 2nd <video> mounts)', () => {
+    const liveVid = mediaSlide('vid-same', 'same-clip.mp4')
+
+    useAppStore.setState({
+      slides: [liveVid],
+      previewSlideIndex: 0,
+      liveSlideIndex: 0,
+      liveSlide: null,
+      pinnedPreviewSlide: null,
+      isLive: true,
+      previewMediaPaused: false,
+      previewMediaCurrentTime: 0,
+    } as Partial<ReturnType<typeof useAppStore.getState>>)
+
+    // Same identity as the live slide — pinPreviewSlide gets the
+    // SAME mediaUrl, so the v0.7.193-hotfix.2 PreviewCard placard
+    // branch wins; no autoplay-pause needed.
+    const samePreview: Slide = {
+      ...liveVid,
+      id: 'vid-same-preview-clone',
+    }
+    const st = useAppStore.getState()
+    const cur = st.liveSlide ?? (st.liveSlideIndex >= 0 ? st.slides[st.liveSlideIndex] : null)
+    const liveIsPlayingDifferentMediaVideo = !!(
+      cur &&
+      cur.type === 'media' &&
+      cur.mediaKind === 'video' &&
+      cur.mediaUrl &&
+      samePreview.mediaKind === 'video' &&
+      samePreview.mediaUrl &&
+      cur.mediaUrl !== samePreview.mediaUrl
+    )
+    expect(liveIsPlayingDifferentMediaVideo).toBe(false)
+    if (liveIsPlayingDifferentMediaVideo) {
+      st.setPreviewMediaPaused(true)
+      st.setPreviewMediaCurrentTime(0)
+    }
+    st.pinPreviewSlide(samePreview)
+
+    const after = useAppStore.getState()
+    expect(after.pinnedPreviewSlide?.id).toBe('vid-same-preview-clone')
+    // previewMediaPaused MUST NOT have been forced — the operator's
+    // existing preview transport state survives.
+    expect(after.previewMediaPaused).toBe(false)
+  })
+
+  it('(s) v0.7.216 GUARD — MediaVideoSurface <video> autoPlay attr MUST be gated on !mediaPaused so the v0.7.216 pause-before-pin sequence prevents the 2nd HW decoder', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+    // The <video> tag inside MediaVideoSurface's return().
+    const m = src.match(/<video\s+ref=\{videoRef\}[\s\S]*?autoPlay=\{([^}]+)\}/)
+    expect(m, 'MediaVideoSurface <video> autoPlay attr not found').toBeTruthy()
+    const expr = m![1]
+    expect(expr, 'autoPlay MUST gate on !mediaPaused (v0.7.216)').toMatch(/!mediaPaused/)
+    expect(expr, 'autoPlay MUST still be preview-only').toMatch(/surface\s*===\s*'preview'/)
+  })
+
+  it('(t) v0.7.216 GUARD — library-compact sendMediaToPreview MUST set previewMediaPaused(true) + reset clock when LIVE plays a DIFFERENT media-video', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/library-compact.tsx'),
+      'utf8',
+    )
+    const m = src.match(
+      /const sendMediaToPreview = \(m: MediaItem\) => \{([\s\S]*?pinPreviewSlide\(slide\)[\s\S]*?)\n\s{2}\}/,
+    )
+    expect(m, 'sendMediaToPreview body not found').toBeTruthy()
+    const body = m![1]
+    // v0.7.216 detection branch
+    expect(body, 'sendMediaToPreview MUST detect liveIsPlayingDifferentMediaVideo').toMatch(
+      /liveIsPlayingDifferentMediaVideo/,
+    )
+    expect(body, 'sendMediaToPreview MUST compare liveSlide.mediaUrl !== slide.mediaUrl').toMatch(
+      /mediaUrl\s*!==\s*slide\.mediaUrl/,
+    )
+    expect(body, 'sendMediaToPreview MUST call setPreviewMediaPaused(true) in that branch').toMatch(
+      /setPreviewMediaPaused\(true\)/,
+    )
+    expect(body, 'sendMediaToPreview MUST reset previewMediaCurrentTime to 0').toMatch(
+      /setPreviewMediaCurrentTime\(0\)/,
+    )
+    // MUST still call pinPreviewSlide as the final ownership-of-preview step.
+    expect(body, 'sendMediaToPreview MUST still call pinPreviewSlide(slide)').toMatch(
+      /pinPreviewSlide\(slide\)/,
+    )
+    // MUST NOT touch live state — independence invariant from v0.7.210.
+    expect(body, 'sendMediaToPreview MUST NOT call setSlides').not.toMatch(/setSlides\(/)
+    expect(body, 'sendMediaToPreview MUST NOT call setLiveSlideIndex').not.toMatch(
+      /setLiveSlideIndex\(/,
+    )
+    expect(body, 'sendMediaToPreview MUST NOT call setIsLive').not.toMatch(/setIsLive\(/)
+    expect(body, 'sendMediaToPreview MUST NOT call setLiveAuto').not.toMatch(/setLiveAuto\(/)
+  })
+
   it('(p) v0.7.215 GUARD — LiveDisplayCard bottom toolbar MUST host a Clear Live button wired to onClearLive (independent of GO LIVE toggle)', () => {
     const src = readFileSync(
       join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
@@ -438,5 +593,119 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
     expect(block, 'Clear Live button MUST NOT touch setPreviewSlideIndex inline').not.toMatch(
       /setPreviewSlideIndex/,
     )
+  })
+
+  it('(u) v0.7.216 GUARD — MediaVideoSurface play/pause effect MUST register a one-shot `canplay` retry so GO-LIVE-swapped media-videos auto-play once the new src buffers', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+    // Anchor on the play/pause effect: `shouldPlay = ... ? (isLive && !mediaPaused) : !mediaPaused`
+    // through to the effect's deps array. Capture the WHOLE effect body so we
+    // can assert structure of the canplay branch + cleanup.
+    const m = src.match(
+      /const shouldPlay = surface === 'live'[\s\S]*?\}, \[surface, isLive, mediaPaused, mediaCurrentTime, src\]\)/,
+    )
+    expect(m, 'play/pause effect with expected deps not found in MediaVideoSurface').toBeTruthy()
+    const body = m![0]
+    // Initial play attempt MUST still happen synchronously.
+    expect(body, 'MUST still call v.play() synchronously on shouldPlay').toMatch(
+      /v\.play\(\)\.catch\(\(\) => \{\}\)/,
+    )
+    // One-shot canplay retry MUST be registered inside the shouldPlay branch.
+    expect(body, 'MUST register a one-shot canplay listener that retries play()').toMatch(
+      /addEventListener\(\s*'canplay'\s*,\s*onCanPlay\s*,\s*\{\s*once:\s*true\s*\}\s*\)/,
+    )
+    expect(body, 'onCanPlay MUST call v.play()').toMatch(
+      /const onCanPlay = \(\) => \{ v\.play\(\)\.catch\(\(\) => \{\}\) \}/,
+    )
+    // Cleanup MUST remove the listener so a rapid second src-swap doesn't leak.
+    expect(body, 'cleanup MUST remove the canplay listener').toMatch(
+      /removeEventListener\(\s*'canplay'\s*,\s*onCanPlay\s*\)/,
+    )
+  })
+
+  it('(w) v0.7.216 follow-up #4 GUARD — MediaVideoSurface live writeback threshold MUST be 0.50s (5x reduction from pre-fix 0.10s) so SSE broadcast rate stays at 2Hz during steady playback', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+    // Anchor on the writeback useEffect that hosts the `writeThreshold` const.
+    // Capture enough of the body to assert both the live value AND the new
+    // transport-event listeners (play/pause/seeked/loadedmetadata) that
+    // compensate for the coarser timeupdate threshold.
+    const m = src.match(
+      /const writeThreshold = surface === 'live' \? ([\d.]+) : ([\d.]+)[\s\S]*?v\.removeEventListener\('loadedmetadata', onTransport\)/,
+    )
+    expect(m, 'MediaVideoSurface writeback effect (with transport listeners) not found').toBeTruthy()
+    const liveThreshold = parseFloat(m![1])
+    const previewThreshold = parseFloat(m![2])
+    expect(liveThreshold, 'LIVE writeback threshold MUST be 0.50s — broadcast rate cap for SSE+NDI smoothness').toBe(0.50)
+    expect(previewThreshold, 'PREVIEW writeback threshold MUST stay 0.25s — local UI only, no SSE cost').toBe(0.25)
+    const body = m![0]
+    // Transport-event listeners MUST be registered so transport transitions
+    // (play / pause / seek / loadedmetadata) still produce an immediate
+    // writeback even though timeupdate is now throttled to 2Hz.
+    expect(body, 'play event MUST trigger writeback').toMatch(/addEventListener\('play', onTransport\)/)
+    expect(body, 'pause event MUST trigger writeback').toMatch(/addEventListener\('pause', onTransport\)/)
+    expect(body, 'seeked event MUST trigger writeback').toMatch(/addEventListener\('seeked', onTransport\)/)
+    expect(body, 'loadedmetadata event MUST trigger writeback').toMatch(/addEventListener\('loadedmetadata', onTransport\)/)
+    // Cleanup MUST mirror all four registrations.
+    expect(body, 'play cleanup MUST remove listener').toMatch(/removeEventListener\('play', onTransport\)/)
+    expect(body, 'pause cleanup MUST remove listener').toMatch(/removeEventListener\('pause', onTransport\)/)
+    expect(body, 'seeked cleanup MUST remove listener').toMatch(/removeEventListener\('seeked', onTransport\)/)
+    expect(body, 'loadedmetadata cleanup MUST remove listener').toMatch(/removeEventListener\('loadedmetadata', onTransport\)/)
+  })
+
+  it('(x) v0.7.216 follow-up #4 GUARD — congregation receiver drift tolerance MUST be 1.5s (raised from 0.20s) so SSE jitter on secondary display does NOT force keyframe-flush seeks during steady playback', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/app/api/output/congregation/route.ts'),
+      'utf8',
+    )
+    // Anchor on the drift-correction block. MUST be NDI-exempt
+    // (`!IS_NDI&&`) AND MUST compare against the new 1.5 threshold.
+    const m = src.match(
+      /if\(!IS_NDI&&typeof slide\.mediaCurrentTime==='number'&&slide\.mediaCurrentTime>0\)\{[\s\S]*?var drift=Math\.abs\(\(existingVid\.currentTime\|\|0\)-slide\.mediaCurrentTime\);\s*if\(drift>([\d.]+)\)/,
+    )
+    expect(m, 'congregation receiver drift-correction block not found').toBeTruthy()
+    const tolerance = parseFloat(m![1])
+    expect(tolerance, 'receiver drift tolerance MUST be 1.5s — well above writeback latency (0.50s) so routine SSE jitter never triggers a force-seek').toBe(1.5)
+    // NDI surface MUST still be exempted (v0.7.194-hotfix.2 invariant).
+    expect(m![0], 'NDI capture surface MUST stay exempt from drift correction (writes via seedSeek on initial mount only)').toMatch(/!IS_NDI/)
+  })
+
+  it('(v) v0.7.216 GUARD — Radix portal-based UI primitives (Select/DropdownMenu/Popover/Tooltip/Dialog/etc) MUST render ABOVE the Settings overlay so dropdowns are visible when a media-video is playing on Live', () => {
+    // Settings overlay is `fixed inset-0 z-50` (app/page.tsx). Pre-fix every
+    // portal-based primitive was ALSO z-50 — equal-z sibling under <body>, so
+    // when the live MediaVideoSurface kept repainting via the HW video
+    // compositor the dropdown portal could be re-stacked beneath the opaque
+    // `bg-background` of the settings overlay. Fix: bump portal primitives
+    // to z-[60] so they always paint above the settings chrome.
+    const settingsPage = readFileSync(join(process.cwd(), 'src/app/page.tsx'), 'utf8')
+    expect(settingsPage, 'settings overlay MUST stay at z-50 (load-bearing baseline for this guard)').toMatch(
+      /fixed inset-0 z-50 bg-background/,
+    )
+    const uiFiles = [
+      'src/components/ui/select.tsx',
+      'src/components/ui/dropdown-menu.tsx',
+      'src/components/ui/popover.tsx',
+      'src/components/ui/tooltip.tsx',
+      'src/components/ui/hover-card.tsx',
+      'src/components/ui/context-menu.tsx',
+      'src/components/ui/menubar.tsx',
+      'src/components/ui/navigation-menu.tsx',
+      'src/components/ui/dialog.tsx',
+      'src/components/ui/alert-dialog.tsx',
+      'src/components/ui/sheet.tsx',
+    ]
+    for (const rel of uiFiles) {
+      const src = readFileSync(join(process.cwd(), rel), 'utf8')
+      expect(src, `${rel} MUST NOT use bare z-50 (would tie with settings overlay)`).not.toMatch(
+        /\bz-50\b/,
+      )
+      expect(src, `${rel} MUST use z-[60] for portal/overlay content`).toMatch(
+        /z-\[60\]/,
+      )
+    }
   })
 })

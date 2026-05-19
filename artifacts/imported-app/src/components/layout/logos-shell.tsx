@@ -48,7 +48,6 @@ import {
   SkipForward,
   Volume2,
   VolumeX,
-  Headphones,
   LayoutGrid,
   List as ListIcon,
   Rows3,
@@ -269,6 +268,16 @@ function MediaVideoSurface({
   )
   const globalMuted = useAppStore((s) => s.globalMuted)
   const globalVolume = useAppStore((s) => s.globalVolume)
+  // v0.7.216 follow-up #3 — Live broadcast-audio toggle (the speaker
+  // button on the right rail of LiveDisplayCard) MUST actually mute
+  // the in-app live <video>, not just flip a payload flag. Pre-fix,
+  // `liveBroadcastAudio` only set `broadcastEnabled` in the output
+  // payload — the operator clicked it expecting their local speakers
+  // to mute and nothing happened. Now the live MediaVideoSurface
+  // honours it too, so the speaker button gates BOTH the SSE/NDI
+  // output (existing behaviour via output-payload.ts L105 +
+  // output-broadcaster.tsx L213) AND the local live <video> audio.
+  const liveBroadcastAudio = useAppStore((s) => s.liveBroadcastAudio)
   const mediaPaused = useAppStore((s) =>
     surface === 'preview' ? s.previewMediaPaused : s.liveMediaPaused,
   )
@@ -316,7 +325,7 @@ function MediaVideoSurface({
   // a few % CPU per surface for nothing — multiplied across surfaces
   // it adds up to visible playback judder. Meter shows 0 when muted,
   // which is exactly what the operator expects from a muted source.
-  const muted = forceMute || globalMuted
+  const muted = forceMute || globalMuted || (surface === 'live' && !liveBroadcastAudio)
   useEffect(() => {
     if (muted) {
       setAudioLevel(surface, 0)
@@ -351,9 +360,9 @@ function MediaVideoSurface({
   useEffect(() => {
     const v = videoRef.current
     if (!v) return
-    v.muted = forceMute || globalMuted
+    v.muted = forceMute || globalMuted || (surface === 'live' && !liveBroadcastAudio)
     v.volume = Math.max(0, Math.min(1, globalVolume))
-  }, [forceMute, globalMuted, globalVolume])
+  }, [forceMute, globalMuted, globalVolume, surface, liveBroadcastAudio])
 
   // Loop — mirror the store flag onto the element.
   useEffect(() => {
@@ -377,21 +386,63 @@ function MediaVideoSurface({
       try { v.currentTime = mediaCurrentTime } catch { /* ignore */ }
     }
     const shouldPlay = surface === 'live' ? (isLive && !mediaPaused) : !mediaPaused
-    if (shouldPlay) v.play().catch(() => {})
-    else if (mediaPaused) v.pause()
+    if (shouldPlay) {
+      v.play().catch(() => {})
+      // v0.7.216 — Operator $1600-customer escalation: "user clicking
+      // on go live also send video from preview to live display to
+      // immediate start playing". Root cause: when LIVE is being
+      // SWAPPED from one media-video to another (operator pins clip
+      // B over a different live clip A, then presses GO LIVE → goLive
+      // pinned-path does setLiveMediaPaused(false) + setLiveAuto(B)),
+      // the React element is REUSED at the same position with a new
+      // `src` attribute. Browser semantics: changing `src` aborts the
+      // current playback and starts LOADING the new resource — but
+      // this effect fires SYNCHRONOUSLY in the same render commit,
+      // BEFORE the new src has buffered. v.play() called pre-`canplay`
+      // either drops silently or never resolves, leaving the live
+      // pane stalled on the first frame after promotion. Fix: register
+      // a one-shot `canplay` retry that calls v.play() the moment the
+      // new src is buffered enough to start. Same render commit, no
+      // extra store mutation needed — operator sees the promoted clip
+      // start playing the instant the browser is ready. Cleanup tears
+      // down the listener if the effect re-runs before `canplay` fires
+      // (e.g. operator rapidly swaps the live clip again).
+      const onCanPlay = () => { v.play().catch(() => {}) }
+      v.addEventListener('canplay', onCanPlay, { once: true })
+      return () => v.removeEventListener('canplay', onCanPlay)
+    }
+    if (mediaPaused) v.pause()
   }, [surface, isLive, mediaPaused, mediaCurrentTime, src])
 
-  // Write the surface's current time back to its OWN clock. For the
-  // LIVE surface this clock is also broadcast over SSE to NDI / OBS /
-  // secondary-screen iframes, so a tighter threshold keeps the output
-  // tracked frame-accurately to what the operator sees in the Live
-  // Display. v0.7.193-hotfix.2 — Live writes every >0.10s, Preview
-  // every >0.25s (no need to spam writes for a clock no other surface
-  // consumes).
+  // Write the surface's current time back to its OWN clock.
+  //
+  // v0.7.216 follow-up #4 — Operator $1600-customer escalation:
+  // "Fix the output video freezing for main app output and NDI output
+  // make it play smoothly live Easyworship". Pre-fix, the LIVE
+  // surface wrote back every >0.10s (10Hz). Each write triggered
+  // OutputBroadcaster.onChange → JSON.stringify(~80-field payload) →
+  // SSE POST → secondary-screen + offscreen NDI capture window both
+  // parse + reconcile. That CPU storm on every store tick starved
+  // the offscreen compositor of frame time (visible NDI freezes) and
+  // the receiver's drift-correction (route.ts L1612) force-seeked the
+  // secondary <video> every time SSE jitter pushed mediaCurrentTime
+  // past its 0.20s tolerance (visible main-output freezes). The 0.10s
+  // threshold from v0.7.193-hotfix.2 was sized for a tighter sync
+  // model that no longer applies — the receiver-side tolerance is
+  // now 1.5s (route.ts) so we have a lot more headroom.
+  //
+  // 0.50s writeback gives:
+  //   - 2Hz broadcast rate during steady playback (5x reduction)
+  //   - Max local→broadcast latency of 0.50s (well inside the new
+  //     1.5s receiver tolerance, no spurious seeks)
+  //   - Transport scrubber in the main app still updates 2x/sec which
+  //     is faster than human perceptual threshold for a progress bar.
+  // Preview stays at 0.25s — it doesn't broadcast, so the 4Hz tick is
+  // just for the local transport UI and costs nothing extra.
   useEffect(() => {
     const v = videoRef.current
     if (!v) return
-    const writeThreshold = surface === 'live' ? 0.10 : 0.25
+    const writeThreshold = surface === 'live' ? 0.50 : 0.25
     const onTimeUpdate = () => {
       const cur = v.currentTime
       const stored = surface === 'preview'
@@ -399,8 +450,25 @@ function MediaVideoSurface({
         : useAppStore.getState().liveMediaCurrentTime
       if (Math.abs(cur - stored) > writeThreshold) setOwnCurrentTime(cur)
     }
+    // v0.7.216 follow-up #4 — ALSO write on these transport events so
+    // the receiver gets an immediate sync target on operator-driven
+    // transitions (play / pause / seek). Without these, raising the
+    // timeupdate threshold could leave the receiver up to 0.50s stale
+    // at the moment of a real transport event — and transport events
+    // are exactly when we want pixel-accurate sync.
+    const onTransport = () => setOwnCurrentTime(v.currentTime)
     v.addEventListener('timeupdate', onTimeUpdate)
-    return () => v.removeEventListener('timeupdate', onTimeUpdate)
+    v.addEventListener('play', onTransport)
+    v.addEventListener('pause', onTransport)
+    v.addEventListener('seeked', onTransport)
+    v.addEventListener('loadedmetadata', onTransport)
+    return () => {
+      v.removeEventListener('timeupdate', onTimeUpdate)
+      v.removeEventListener('play', onTransport)
+      v.removeEventListener('pause', onTransport)
+      v.removeEventListener('seeked', onTransport)
+      v.removeEventListener('loadedmetadata', onTransport)
+    }
   }, [surface, src, setOwnCurrentTime])
 
   const objectFit: 'contain' | 'cover' | 'fill' =
@@ -418,7 +486,17 @@ function MediaVideoSurface({
         // Preview auto-plays on mount so the operator hears/sees the
         // clip immediately on first click. Live auto-plays via the
         // isLive effect above (only after Send-to-Live).
-        autoPlay={surface === 'preview'}
+        //
+        // v0.7.216 — Operator $1600-customer escalation: when LIVE is
+        // already playing a DIFFERENT media-video, the new Preview
+        // <video> auto-decoding adds a 2nd HW decoder slot that
+        // steals from the live decoder (GPU cap 2-4 streams), causing
+        // the live video to stall. `sendMediaToPreview` now flips
+        // `previewMediaPaused=true` BEFORE pinning in that scenario;
+        // gating autoPlay on !mediaPaused honours it at mount so the
+        // 2nd decoder never spins up. Operator presses Play in the
+        // transport bar when ready to actually preview the new clip.
+        autoPlay={surface === 'preview' && !mediaPaused}
         playsInline
         preload="auto"
         crossOrigin="anonymous"
@@ -1686,8 +1764,6 @@ function LiveDisplayCard({
     hasShownContent,
     liveBroadcastAudio,
     setLiveBroadcastAudio,
-    liveMonitorAudio,
-    setLiveMonitorAudio,
   } = useAppStore()
   // v0.7.78 — Voice Control + Speaker-Follow toggles surfaced in the
   // Live Output column header so the operator can flip them mid-show
@@ -1879,16 +1955,19 @@ function LiveDisplayCard({
         )}
         </div>
         {/* RIGHT audio rail — sits OUTSIDE the live frame on the
-            right edge, exactly like the Wirecast reference. Stack:
-            VU meter on top, then the broadcast speaker, then the
-            operator headphone toggle. The meter tone follows whichever
-            of the two toggles is currently driving audio. */}
+            right edge. Stack: VU meter on top, then the broadcast
+            speaker toggle. v0.7.216 follow-up #3 — removed the
+            operator-headphone monitor toggle per operator request
+            ("Take the Headphone icon off") and made the remaining
+            volume button actually mute/unmute the live <video> (was
+            a no-op flag pre-fix; MediaVideoSurface now honours
+            `liveBroadcastAudio` via its `muted` computation). */}
         <div className="w-7 shrink-0 flex flex-col items-center gap-1.5 py-1">
           <div className="flex-1 min-h-0 w-full flex justify-center">
             <AudioMeter
-              active={liveBroadcastAudio || liveMonitorAudio}
+              active={liveBroadcastAudio}
               playing={liveVideoPlaying}
-              tone={liveBroadcastAudio ? 'red' : liveMonitorAudio ? 'amber' : 'green'}
+              tone={liveBroadcastAudio ? 'red' : 'green'}
               surface="live"
             />
           </div>
@@ -1897,9 +1976,11 @@ function LiveDisplayCard({
             onClick={() => setLiveBroadcastAudio(!liveBroadcastAudio)}
             title={
               liveBroadcastAudio
-                ? 'Mute broadcast audio'
-                : 'Send audio to broadcast'
+                ? 'Mute live audio (in-app + broadcast)'
+                : 'Unmute live audio (in-app + broadcast)'
             }
+            aria-pressed={liveBroadcastAudio}
+            aria-label={liveBroadcastAudio ? 'Mute live audio' : 'Unmute live audio'}
             className={cn(
               'h-6 w-6 rounded-md border flex items-center justify-center transition-colors shrink-0',
               liveBroadcastAudio
@@ -1911,26 +1992,6 @@ function LiveDisplayCard({
               <Volume2 className="h-3 w-3" />
             ) : (
               <VolumeX className="h-3 w-3" />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setLiveMonitorAudio(!liveMonitorAudio)}
-            title={
-              liveMonitorAudio
-                ? 'Stop monitoring live audio'
-                : 'Monitor live audio in your headphones'
-            }
-            className={cn(
-              'h-6 w-6 rounded-md border flex items-center justify-center transition-colors relative shrink-0',
-              liveMonitorAudio
-                ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
-                : 'bg-black/60 border-border text-muted-foreground hover:text-foreground hover:border-border',
-            )}
-          >
-            <Headphones className="h-3 w-3" />
-            {!liveMonitorAudio && (
-              <span className="absolute inset-x-1 h-px bg-current rotate-45" />
             )}
           </button>
         </div>
