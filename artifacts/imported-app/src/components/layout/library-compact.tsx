@@ -1365,12 +1365,23 @@ export function MediaLibraryCompact() {
         {settings.customBackground && (
           <div className="flex items-center gap-1.5 rounded border border-border bg-card/40 p-1">
             {isVideoBackground(settings.customBackground) ? (
+              /* v0.7.221 — Library customBackground thumbnail MUST render
+                 as a FROZEN poster (t=0.1 media fragment + preload=metadata
+                 + defensive pause), NOT autoplay/loop. Pre-fix this 32x20
+                 chip was spinning up a HW decoder slot on every render and
+                 competing with the Live Display / Secondary Screen / NDI
+                 capture decoders — same decoder-budget regression class as
+                 v0.7.216-219 (decoder slots are global to the process,
+                 size of the surface is irrelevant). Mirror of the
+                 `freezeBg=1` branch in route.ts `setBgVid`. */
               <video
-                src={settings.customBackground}
-                autoPlay
-                loop
+                src={`${settings.customBackground}${settings.customBackground.includes('#') ? '&' : '#'}t=0.1`}
                 muted
                 playsInline
+                preload="metadata"
+                disablePictureInPicture
+                onLoadedMetadata={(e) => { try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ } }}
+                onPlay={(e) => { try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ } }}
                 className="rounded object-cover"
                 style={{ width: 32, height: 20 }}
               />

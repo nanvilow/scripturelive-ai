@@ -45,8 +45,18 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 #output.ratio-16x9{aspect-ratio:16/9;width:min(100vw,calc(100vh*16/9));height:min(100vh,calc(100vw*9/16))}
 #output.ratio-4x3{aspect-ratio:4/3;width:min(100vw,calc(100vh*4/3));height:min(100vh,calc(100vw*3/4))}
 #output.ratio-21x9{aspect-ratio:21/9;width:min(100vw,calc(100vh*21/9));height:min(100vh,calc(100vw*9/21))}
-.bg-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;pointer-events:none}
-.bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);pointer-events:none;z-index:1}
+/* v0.7.221 — Operator escalation: image AND video backgrounds were too
+   dark to read on the projector / NDI feed. Effective brightness was
+   .4 * (1 - .3) = .28 of source pixel value (bg opacity * (1 - scrim
+   alpha)). Operator side-by-side proof approved opacity .4 → .6 +
+   scrim .3 → .2, taking effective brightness to .6 * .8 = .48 (~70%
+   brighter) while keeping enough contrast for white verse text +
+   text-shadow to stay WCAG-AA legible. Same pair applied to .lt-bg
+   / .lt-bg-overlay (lower-third surface) so chyron and full-screen
+   modes match. The legacy .bg-image class shares the .bg-overlay
+   stack so it follows the same axis. */
+.bg-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.6;pointer-events:none}
+.bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.2);pointer-events:none;z-index:1}
 /* v0.7.187 — Persistent BG VIDEO layer (PERFORMANCE FIX). Pre-fix, the
    verse-background <video> was inlined into #output's innerHTML on every
    render. Because the renderer reassigns $('output').innerHTML on every
@@ -81,7 +91,9 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    surfaces (Secondary Screen popup at non-integer DPRs). These are
    the same primitives EasyWorship/ProPresenter use for their bg
    video layers. Cheap (1 extra compositor layer) and broadcast-safe. */
-#bgLayer > video, #bgLayer > img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;display:block;transform:translateZ(0);will-change:transform,opacity;backface-visibility:hidden}
+/* v0.7.221 — opacity:.4 → .6 (brightness fix, see .bg-image comment
+   above). GPU compositing hints unchanged (also v0.7.221). */
+#bgLayer > video, #bgLayer > img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.6;display:block;transform:translateZ(0);will-change:transform,opacity;backface-visibility:hidden}
 #output{position:relative;z-index:1}
 .slide-content{position:relative;z-index:1;text-align:center;width:90%;max-width:90vw;height:100%;max-height:100%;min-height:0;box-sizing:border-box;overflow:hidden;padding:4vh 3vw;display:flex;flex-direction:column;align-items:center;justify-content:center}
 /* v0.6.3 — Bible reference text: BOLD by default + full opacity. The
@@ -104,7 +116,17 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 .theme-easter{background:linear-gradient(135deg,#0a3c2a,#042f2e)}
 .theme-christmas{background:linear-gradient(135deg,#3c0a0a,#4c0519)}
 .theme-praise{background:linear-gradient(135deg,#3c3a0a,#451a03)}
-.theme-minimal{background:linear-gradient(135deg,#0a0a0a,#171717)}
+/* v0.7.221 — Operator escalation: "I can't see anything when no
+   background uploaded". With Minimal as the default theme and no
+   customBackground configured, the surface was a near-black void
+   (#0a0a0a → #171717). Brightened to a visible slate (#1e1e24 →
+   #2a2a35) so the projector / NDI feed reads as an actual surface
+   even when the operator has not yet uploaded a custom background.
+   Still firmly in the modern dark-UI register — keeps high text
+   contrast and reads as intentional design, not a fade-to-black.
+   Same value applied to .lt-box.theme-minimal so the lower-third
+   chyron card matches the full-screen Minimal surface. */
+.theme-minimal{background:linear-gradient(135deg,#1e1e24,#2a2a35)}
 /* v0.7.15 — Lower-third stretched to fill ~95% of the frame width.
    Operator screenshot (red box covering near-edge-to-edge of preview)
    showed the v0.7.8-restored 68rem max-width was capping the card at
@@ -171,7 +193,19 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 .lt-box.theme-easter{background:linear-gradient(135deg,#0a3c2a,#042f2e)}
 .lt-box.theme-christmas{background:linear-gradient(135deg,#3c0a0a,#4c0519)}
 .lt-box.theme-praise{background:linear-gradient(135deg,#3c3a0a,#451a03)}
-.lt-box.theme-minimal{background:linear-gradient(135deg,#0a0a0a,#171717)}
+/* v0.7.221 — Lower-third Minimal MUST be an explicit compound
+   selector .lt-box.theme-minimal (no space, no comment between),
+   NOT a descendant selector .lt-box .theme-minimal nor a comment-
+   collapsed .lt-box/**/.theme-minimal (architect medium-risk
+   caveat: comment-collapsed compound selectors are technically
+   valid per CSS tokenizer but rely on cascade ordering and are
+   brittle to unrelated reorders). Value MUST match the full-screen
+   .theme-minimal slate gradient defined at L132 so the lower-third
+   chyron and the full-screen Minimal surface stay pixel-identical
+   when the operator toggles Display Mode mid-event. (ASCII quotes
+   only — this CSS lives inside a JS template literal and backticks
+   in the comment would close the outer string.) */
+.lt-box.theme-minimal{background:linear-gradient(135deg,#1e1e24,#2a2a35)}
 /* v0.6.3 — NDI lower-third transparent matte. When the operator flips
    "Transparent lower-third" on the NDI tab, the rounded card drops
    its gradient + drop-shadow so vMix / OBS receive a clean alpha
@@ -181,8 +215,12 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 .lt-box.transparent{background:transparent !important;box-shadow:none !important}
 .lt-box.transparent .lt-bg,.lt-box.transparent .lt-bg-overlay{display:none !important}
 /* Custom background image — clipped to the rounded box only. */
-.lt-box .lt-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;border-radius:inherit;pointer-events:none}
-.lt-box .lt-bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);border-radius:inherit;pointer-events:none}
+/* v0.7.221 — Operator brightness fix (see .bg-image comment at top
+   of CSS): opacity .4 → .6, scrim alpha .3 → .2. Lower-third bg
+   stack mirrors the full-screen bg stack so chyron and full
+   surfaces stay visually consistent. */
+.lt-box .lt-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.6;border-radius:inherit;pointer-events:none}
+.lt-box .lt-bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.2);border-radius:inherit;pointer-events:none}
 .lt-box .lt-content{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;width:100%;height:100%;overflow:hidden;min-height:0}
 /* v0.7.5 — Hard clamp the verse text to N lines inside the FIXED
    lower-third frame (T503). Combined with the auto-fit ltFs clamp

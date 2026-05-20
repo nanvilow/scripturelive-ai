@@ -523,16 +523,24 @@ export function SlideThumb({
                 onPlay={(e) => {
                   try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
                 }}
-                className="absolute inset-0 w-full h-full object-cover opacity-40"
+                className="absolute inset-0 w-full h-full object-cover opacity-60"
               />
             ) : (
               <img
                 src={settings.customBackground}
                 alt=""
-                className="absolute inset-0 w-full h-full object-cover opacity-40"
+                className="absolute inset-0 w-full h-full object-cover opacity-60"
               />
             )}
-            <div className="absolute inset-0 bg-black/40" />
+            {/* v0.7.221 — Scrim alpha dropped from /40 → /20 to keep
+                in lockstep with route.ts `.bg-overlay` rgba(0,0,0,.2).
+                Bg-stack `opacity` and overlay alpha MUST move as a pair
+                so SlideThumb (operator's preview/library tile) shows
+                the SAME effective brightness as the live broadcast
+                surface — operator was previously seeing a darker
+                thumbnail than the actual projector output and
+                under-judging the scene visibility. */}
+            <div className="absolute inset-0 bg-black/20" />
           </>
         )}
       </div>
