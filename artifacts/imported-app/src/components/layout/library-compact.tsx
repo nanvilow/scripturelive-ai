@@ -1365,24 +1365,33 @@ export function MediaLibraryCompact() {
         {settings.customBackground && (
           <div className="flex items-center gap-1.5 rounded border border-border bg-card/40 p-1">
             {isVideoBackground(settings.customBackground) ? (
-              /* v0.7.221 — Library customBackground thumbnail MUST render
-                 as a FROZEN poster (t=0.1 media fragment + preload=metadata
-                 + defensive pause), NOT autoplay/loop. Pre-fix this 32x20
-                 chip was spinning up a HW decoder slot on every render and
-                 competing with the Live Display / Secondary Screen / NDI
-                 capture decoders — same decoder-budget regression class as
-                 v0.7.216-219 (decoder slots are global to the process,
-                 size of the surface is irrelevant). Mirror of the
-                 `freezeBg=1` branch in route.ts `setBgVid`. */
+              /* v0.7.222 Fix #7 (architect final review) — SUPERSEDES v0.7.221.
+                 v0.7.221 used preload="metadata" + onLoadedMetadata pause for
+                 a frozen-poster thumbnail. Architect final review flagged
+                 that this STILL triggers HTTP range fetch + container demux +
+                 transient HW decoder-capability probe on mount, re-opening
+                 the same finite-decoder-slot contention the entire v0.7.222
+                 release is fighting (the chip can render during the LIVE
+                 media-video contention window because the operator opens the
+                 Library popout while live is on a clip). preload="none" is
+                 the only value that guarantees ZERO network + ZERO demux +
+                 ZERO decoder probe; the trade-off is the chip renders as a
+                 black 32x20 box instead of a poster frame, which is fine —
+                 the chip's job is to confirm "a background is set" via the
+                 "Video background" label + remove (X) button, not to render
+                 the frame. Operator already sees the asset in the grid above
+                 if they need a visual reference. onLoadedMetadata is removed
+                 because it never fires under preload="none". Same root
+                 invariant as MediaVideoSurface preload="none" gate (v0.7.222
+                 Fix #1) and the thumbnail gates (Fix #5). */
               <video
-                src={`${settings.customBackground}${settings.customBackground.includes('#') ? '&' : '#'}t=0.1`}
+                src={settings.customBackground}
                 muted
                 playsInline
-                preload="metadata"
+                preload="none"
                 disablePictureInPicture
-                onLoadedMetadata={(e) => { try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ } }}
-                onPlay={(e) => { try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ } }}
-                className="rounded object-cover"
+                disableRemotePlayback
+                className="rounded object-cover bg-black"
                 style={{ width: 32, height: 20 }}
               />
             ) : (
@@ -1430,7 +1439,24 @@ export function MediaLibraryCompact() {
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={m.dataUrl} alt={m.name} className="w-full aspect-video object-cover" />
                 ) : (
-                  <video src={m.dataUrl} className="w-full aspect-video object-cover" muted />
+                  /* v0.7.222 Fix #5 (architect code-review) — library-popout
+                     grid thumbnail MUST use preload="none" + disable PIP /
+                     remote playback so it never triggers a decoder-capability
+                     probe. Pre-fix the bare <video> tag inherited Chromium's
+                     default preload behaviour (often eager metadata fetch +
+                     transient HW decoder slot), compounding the v0.7.222
+                     LIVE-pane contention by N more slot-probes per popout
+                     render. Operator identifies clips via the hover overlay
+                     (filename + delete button) — no thumbnail frame needed. */
+                  <video
+                    src={m.dataUrl}
+                    className="w-full aspect-video object-cover"
+                    muted
+                    playsInline
+                    preload="none"
+                    disablePictureInPicture
+                    disableRemotePlayback
+                  />
                 )}
                 <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-1">
                   <div className="flex justify-end">
