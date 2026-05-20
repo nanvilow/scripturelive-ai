@@ -1445,3 +1445,9 @@ id = "6ALWEMghzU37yBtA6pgu_"
 uri = "file://screenshots/bg-compare-v2.jpg"
 type = "image"
 title = "Background brightness — before vs. after (with no-bg row)"
+
+[[outputs]]
+id = "bTUUMTh-P9JVNG7RVkFm7"
+uri = "file://artifacts/imported-app/CHANGELOG.md"
+type = "text"
+title = "v0.7.225 changelog entry"

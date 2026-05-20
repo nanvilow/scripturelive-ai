@@ -1,3 +1,37 @@
+## v0.7.225 — Settings preview boxes: first frame of bg video must paint instantly, not 1-3s after mount
+
+**Operator on v0.7.224**: "Video background delays to appear on all preview columns it should be fast as users upload it." Clarified: the slow surface is the SETTINGS preview boxes (Display & Output Live Preview, Typography preview, NDI Live Preview, Custom Background thumbnail) — after picking a video tile, the box stayed black-with-text for 1-3 seconds before the first frame painted, then sat there frozen as designed.
+
+**Root cause**: the v0.7.221 freezeBg path (`route.ts` setBgVid L834) mounted the bg `<video>` with `preload='metadata'`. That mode only fetches container headers + dimensions — it explicitly tells Chromium NOT to fetch enough bytes to decode a frame. The `#t=0.1` media fragment is a HINT at the desired display time but does nothing without a load that actually reaches that frame. Worse, the original code called `v.pause()` synchronously immediately after `layer.appendChild(v)` — which put the element in a paused-before-any-data-loaded state, in which some Chromium HW decoder paths refuse to ever begin a decode pass at all (the browser assumes the element will never need a frame and sleeps the decoder).
+
+**Fix** (`route.ts` L834-888): 4 coordinated changes to the freezeBg branch.
+1. `v.preload='metadata'` → `v.preload='auto'`. Browser fetches the first GOP up-front so a decoded frame is available the moment the compositor asks for it.
+2. `loadeddata` handler MUST kick a one-shot `v.play().then(pause)` to force the first decoded frame onto the compositor. Chromium will refuse to paint a paused video that has never been told to play, even with `preload='auto'`, on several HW decoder paths — the play() registers intent to draw, the .then(pause) immediately stops further frames. Decoder slot is held only for the brief play→pause window then released.
+3. `play` listener MUST `setTimeout(pause, 0)` (was synchronous `v.pause()`) so the loadeddata-triggered `play().then(pause)` promise resolves cleanly first — synchronous pause inside the play listener was racing the .then(pause) and producing AbortError spam in the console.
+4. REMOVED the synchronous `v.pause()` call that ran immediately after `layer.appendChild(v)`. Pre-fix that line put the element in a paused-before-any-data state which several Chromium HW decoder paths interpret as "this element will never draw" and sleep the decoder. Letting loadeddata drive the entire first-frame paint sequence is the only reliable path.
+
+**GUARD-RAIL (freezeBg preload)**: `IS_FROZEN_BG` branch MUST set `v.preload='auto'`, NOT `'metadata'` or `'none'`. The pause-on-play listeners (now async via `setTimeout(_, 0)`) ensure the element NEVER animates — preload='auto' is safe.
+
+**GUARD-RAIL (loadeddata play kick)**: `loadeddata` handler MUST call `v.play().then(pause).catch(pause)` (NOT a bare `v.pause()`). Without the play kick, several Chromium HW decoder paths never paint a frame for a paused-from-mount video element, even with preload='auto'.
+
+**GUARD-RAIL (play listener async pause)**: `play` listener MUST schedule the pause via `setTimeout(_, 0)`. Synchronous pause inside the play listener races the loadeddata-triggered `play().then(pause)` and produces AbortError spam.
+
+**GUARD-RAIL (no synchronous pause on append)**: the synchronous `try{v.pause()}catch(_e){}` that ran immediately after `layer.appendChild(v)` MUST stay removed. Re-adding it puts the element in a never-draw state on several Chromium HW decoder paths.
+
+**GUARD-RAIL (NDI/Broadcast path untouched)**: the `else` branch (real broadcast surfaces — Live Display, Secondary Screen, NDI FrameCapture) MUST stay byte-identical to v0.7.224. v0.7.225 is scoped to the freezeBg-only path; the EW-class smoothness invariants on the broadcast path (v0.7.220 async send + BGRX FourCC + buffer pool from v0.7.223) are preserved.
+
+**PROCESS GR — "preload" attribute lies about its costs in BOTH directions on Chromium HW decoder paths**: v0.7.218 / v0.7.222 found that `preload='auto'` allocates a decoder slot eagerly, which is bad for the FOREGROUND preview pane while the LIVE decoder is on a different slot. v0.7.225 finds the OPPOSITE failure mode on the BACKGROUND layer: `preload='metadata'` + immediate-pause-on-append leaves the element in a state where Chromium decides the decoder will never be needed and sleeps it permanently, never painting a frame. The two findings are NOT contradictory — they're symmetric. The lesson: preload's documented behaviour (network-only vs network+decoder) does NOT predict whether a frame will actually paint. The reliable signal is "did the element get a play() call after loadeddata" — if yes, it paints; if no, it may never paint depending on the HW path. Every freezeBg-style "paint one frame and stop" pattern MUST include the play().then(pause) kick.
+
+**PROCESS GR — when an operator says "delays to appear on all preview columns" without specifying which column, ASK before assuming**: the initial diagnosis assumed the main Preview pane (MediaVideoSurface). Clarification revealed it was the SETTINGS preview boxes (OutputPreview + freezeBg renderer path). Those two surfaces share the same operator-visible failure mode (black box with text) but exercise entirely different code paths (MediaVideoSurface React component vs setBgVid imperative DOM in the renderer route). Fixing the wrong one would have left the escalation open AND risked re-opening the v0.7.218/v0.7.222 LIVE-stall regression by relaxing the wrong preload gate.
+
+**Tests**: 670/670 PASS (no new test added — freezeBg path is HTTP-route inline JS, source-grep guards live in route-level tests; the existing media-preview-isolation suite covers the orthogonal MediaVideoSurface path). Typecheck clean.
+
+**NDI runtime + Electron offscreen capture still untestable in Replit** — operator field validation: open Settings → Display & Output, pick a video as Custom Background, the bg should appear in the preview box within ~100ms of selection (was 1-3s pre-fix), and stay frozen on the first frame as before.
+
+**Untouched**: all v0.7.224 GO LIVE pinned-path fixes (logos-shell + easyworship-shell call order + MediaVideoSurface canplay seek); v0.7.223 NDI BGRX + opaque-by-default; v0.7.222 STANDBY placard + MediaCard refactor; v0.7.221 monotonic timecode + atomic setLiveAuto store contract; v0.7.220 async send + buffer pool; v0.7.219 MediaPreheat `<link>`; v0.7.218 preload gating on foreground MediaVideoSurface (orthogonal path — UNTOUCHED); v0.7.217 SSE writeback throttle; v0.7.216 canplay retry + autoPlay gate on foreground.
+
+---
+
 ## v0.7.224 — GO LIVE while preview plays video MUST resume on live (still not working after v0.7.221 + v0.7.223; third-layer fix)
 
 **Operator on v0.7.223**: "The user clicking on go live also sends video from the preview to the live display to immediately start playing. still not working." Same workflow that v0.7.212 / v0.7.216 / v0.7.221 each took one layer off — pinned media playing in preview, operator presses GO LIVE, expected live <video> to immediately resume playback at the preview's current frame. Pre-fix, live mounted on frame 0 (or stalled on first frame) instead of resuming.

@@ -832,19 +832,57 @@ function setBgVid(url){
     // here would close that template literal mid-string and fail
     // typecheck (TS1005). Use plain ASCII quotes in comments.
     if(IS_FROZEN_BG){
+      // v0.7.225 — Operator escalation: bg video in the SETTINGS preview
+      // boxes (and every other freezeBg surface) was taking 1-3s to
+      // paint its first frame, leaving the box black-with-text until
+      // the metadata fetch + first-frame decode finished. Root cause:
+      // preload="metadata" only fetches container headers + dimensions;
+      // many Chromium builds will NOT decode + paint a frame from that
+      // alone until something explicitly triggers a decode pass. The
+      // "#t=0.1" media fragment hints AT a target frame but does
+      // nothing without a load that actually fetches enough bytes to
+      // reach that frame. Fix: preload="auto" so the browser fetches +
+      // decodes the first GOP up-front. The pause-on-play /
+      // pause-on-loadeddata listeners stay in place AND we add an
+      // explicit one-shot play().then(pause) on loadeddata to force
+      // the first decoded frame onto the compositor (Chromium will
+      // refuse to paint a paused video that has never been told to
+      // play, even with preload="auto", on some HW decoder paths).
+      // Decoder slot is held only for the brief play→pause window,
+      // then released, so this does NOT regress the v0.7.222 finite-
+      // HW-decoder invariant (which targets the FOREGROUND Preview/
+      // Live <video>, a separate codepath through MediaVideoSurface).
       v.src=__scrMedia(u)+'#t=0.1';
       v.autoplay=false;v.loop=false;v.muted=true;v.playsInline=true;
-      v.preload='metadata';
+      v.preload='auto';
       try{v.setAttribute('crossorigin','anonymous');}catch(e){}
       v.onerror=function(){try{v.style.display='none';}catch(_e){}};
       // Defensive: some Electron/Chromium versions still start playing
       // when autoplay=false but the element has been added to the DOM
       // and previously played. Pause on every loadeddata + once
-      // immediately so we never animate.
-      v.addEventListener('loadeddata',function(){try{v.pause();}catch(_e){}});
-      v.addEventListener('play',function(){try{v.pause();}catch(_e){}});
+      // immediately so we never animate. The loadeddata handler also
+      // kicks the one-shot play→pause to force first-frame paint
+      // (v0.7.225 fix above).
+      v.addEventListener('loadeddata',function(){
+        try{
+          var pp=v.play();
+          if(pp&&pp.then){pp.then(function(){try{v.pause();}catch(_e){}}).catch(function(){try{v.pause();}catch(_e){}});}
+          else {try{v.pause();}catch(_e){}}
+        }catch(_e){try{v.pause();}catch(__e){}}
+      });
+      v.addEventListener('play',function(){
+        // Re-pause on EVERY play except the loadeddata-triggered one
+        // already handled above. The .then(pause) above resolves
+        // AFTER this listener fires, so we'd be racing — instead
+        // schedule the pause one tick out so the play() promise
+        // resolves cleanly first (avoids AbortError spam).
+        setTimeout(function(){try{v.pause();}catch(_e){}},0);
+      });
       layer.appendChild(v);
-      try{v.pause();}catch(_e){}
+      // Don't pre-pause synchronously here — let loadeddata drive the
+      // first-frame paint sequence. Pre-fix this call put the element
+      // in a paused state BEFORE preload could begin a decode pass,
+      // which was part of why preload="metadata" was so slow.
     } else {
       v.src=__scrMedia(u);
       v.autoplay=true;v.loop=true;v.muted=true;v.playsInline=true;
