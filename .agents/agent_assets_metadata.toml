@@ -1451,3 +1451,21 @@ id = "bTUUMTh-P9JVNG7RVkFm7"
 uri = "file://artifacts/imported-app/CHANGELOG.md"
 type = "text"
 title = "v0.7.225 changelog entry"
+
+[[outputs]]
+id = "6j8emyZJWMMEyhBtBSnxU"
+uri = "file://attached_assets/screenshots/b20a0695-37a6-4cc4-9935-ad1d746cd9ff-00-huuyveihnoxd_kirk_replit_dev_mockup_preview_brightness_Current.png"
+type = "image"
+title = "1. CURRENT — opacity .60 / scrim .20 (effective ~0.48) — what's shipping today"
+
+[[outputs]]
+id = "MsrjPQMDuzSxO49-SE9R6"
+uri = "file://attached_assets/screenshots/b20a0695-37a6-4cc4-9935-ad1d746cd9ff-00-huuyveihnoxd_kirk_replit_dev_mockup_preview_brightness_Mid.png"
+type = "image"
+title = "2. BRIGHTER — opacity .72 / scrim .12 (effective ~0.63, ~30% brighter)"
+
+[[outputs]]
+id = "pvP9KnsoX6si-bSYR-vRv"
+uri = "file://attached_assets/screenshots/b20a0695-37a6-4cc4-9935-ad1d746cd9ff-00-huuyveihnoxd_kirk_replit_dev_mockup_preview_brightness_Max.png"
+type = "image"
+title = "3. BRIGHTEST — opacity .85 / scrim .05 (effective ~0.81, ~70% brighter)"
