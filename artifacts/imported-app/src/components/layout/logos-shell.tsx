@@ -407,7 +407,37 @@ function MediaVideoSurface({
       // start playing the instant the browser is ready. Cleanup tears
       // down the listener if the effect re-runs before `canplay` fires
       // (e.g. operator rapidly swaps the live clip again).
-      const onCanPlay = () => { v.play().catch(() => {}) }
+      // v0.7.224 — Operator $1600-customer escalation (re-fired on
+      // v0.7.223): "go live also send video from preview to live
+      // display to immediately start playing — still not working".
+      // Part B of the fix (part A is at goLive pinned path L4378+):
+      // when the live <video> mounts FRESH (key={mediaUrl} change) and
+      // the store carries a non-zero mediaCurrentTime (operator was
+      // mid-clip in preview when they pressed GO LIVE), the top-of-
+      // effect seek attempt above silently no-ops because Chromium
+      // refuses currentTime writes on a fresh element before metadata
+      // loads. The post-load store update (goLive's resumeFrom
+      // re-apply) would normally re-run this effect, but by then the
+      // first play() has already started from frame 0. Fix: also
+      // re-apply the pending seek inside the canplay handler — by the
+      // time canplay fires the metadata has loaded so the seek lands
+      // before play resumes. Reads the store directly (NOT the
+      // closed-over mediaCurrentTime) so an in-flight setLiveMediaCurrentTime
+      // from goLive lands too, even if the effect closed over the
+      // stale 0 from setLiveAuto's atomic reset.
+      const onCanPlay = () => {
+        const targetTime = surface === 'preview'
+          ? useAppStore.getState().previewMediaCurrentTime
+          : useAppStore.getState().liveMediaCurrentTime
+        if (
+          Number.isFinite(targetTime) &&
+          targetTime > 0 &&
+          Math.abs(v.currentTime - targetTime) > 0.5
+        ) {
+          try { v.currentTime = targetTime } catch { /* ignore */ }
+        }
+        v.play().catch(() => {})
+      }
       v.addEventListener('canplay', onCanPlay, { once: true })
       return () => v.removeEventListener('canplay', onCanPlay)
     }
@@ -4374,18 +4404,59 @@ export function LogosShell() {
     // route through setLiveAuto (canonical promote-to-live primitive).
     const pinned = useAppStore.getState().pinnedPreviewSlide
     if (pinned) {
-      // Mirror the smooth handoff: capture preview video timestamp +
-      // unpause live media so playback resumes seamlessly on the
-      // promoted slide (same UX as the schedule-based path below).
+      // v0.7.224 — Operator $1600-customer escalation, re-fired on
+      // v0.7.223: "user clicking on go live also sends video from the
+      // preview to the live display to immediately start playing —
+      // still not working." Root cause (third layer beyond v0.7.221's
+      // store-contract reset + v0.7.216's canplay retry):
+      //
+      // Pre-fix sequence was:
+      //   1. setLiveMediaCurrentTime(pv.currentTime)  ← captured
+      //   2. setLiveMediaPaused(false)
+      //   3. setPreviewMediaPaused(true)
+      //   4. setLiveAuto(pinned)                      ← atomically
+      //      resets liveMediaPaused=false + liveMediaCurrentTime=0
+      //      when promoting a NEW media URL (store L1233-1236, the
+      //      v0.7.221 defence-in-depth). That clobbered the captured
+      //      preview time in step 1, so live mounted with time=0 and
+      //      either started over from the beginning OR stalled when
+      //      the receiver-side payload race produced an inconsistent
+      //      seek target during the swap.
+      //
+      // Fix part A (this site): swap the order — run setLiveAuto
+      // FIRST so its atomic transport reset applies on the new URL,
+      // THEN set the captured preview time so live resumes from the
+      // operator's watch point. The reset is still correct for every
+      // OTHER setLiveAuto caller (AI auto-fire, speech-provider,
+      // library-compact double-click) — none of them have a preview
+      // <video> playback context to inherit, so starting at 0 is
+      // exactly right for those paths.
+      //
+      // Fix part B lives in MediaVideoSurface's play effect: the
+      // canplay one-shot listener also re-applies the pending seek
+      // before calling play(), because Chromium ignores currentTime
+      // writes on a freshly-mounted <video> before metadata loads
+      // (so the post-mount effect re-run with the new mediaCurrentTime
+      // would silently no-op on the seek without part B).
+      let resumeFrom = 0
       if (typeof document !== 'undefined') {
         const pv = document.querySelector<HTMLVideoElement>('video[data-surface="preview"]')
-        if (pv && Number.isFinite(pv.currentTime)) {
-          try { useAppStore.getState().setLiveMediaCurrentTime(pv.currentTime) } catch { /* ignore */ }
+        if (pv && Number.isFinite(pv.currentTime) && pv.currentTime > 0) {
+          resumeFrom = pv.currentTime
         }
       }
-      useAppStore.getState().setLiveMediaPaused(false)
       useAppStore.getState().setPreviewMediaPaused(true)
+      // setLiveAuto handles isLive=true + liveSlide + atomic transport
+      // reset (liveMediaPaused=false + liveMediaCurrentTime=0) when
+      // the new media URL differs from the current one.
       useAppStore.getState().setLiveAuto(pinned)
+      // Override the just-reset time with the captured preview
+      // resume point so live picks up where preview was watching.
+      // Only meaningful when resumeFrom > 0 (operator had actually
+      // played the preview); a 0 here is identical to the reset.
+      if (resumeFrom > 0) {
+        useAppStore.getState().setLiveMediaCurrentTime(resumeFrom)
+      }
       return
     }
     if (!slides.length) {

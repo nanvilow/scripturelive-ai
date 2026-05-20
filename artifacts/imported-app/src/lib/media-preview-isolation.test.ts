@@ -616,8 +616,17 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
     expect(body, 'MUST register a one-shot canplay listener that retries play()').toMatch(
       /addEventListener\(\s*'canplay'\s*,\s*onCanPlay\s*,\s*\{\s*once:\s*true\s*\}\s*\)/,
     )
-    expect(body, 'onCanPlay MUST call v.play()').toMatch(
-      /const onCanPlay = \(\) => \{ v\.play\(\)\.catch\(\(\) => \{\}\) \}/,
+    // v0.7.224 — onCanPlay expanded from a one-liner to a multi-line
+    // block that also re-applies the pending seek before play (see
+    // test (jj) for the full v0.7.224 invariants). The v0.7.216
+    // invariant this test enforces is unchanged: the handler MUST
+    // exist and MUST call v.play() — we just relax the regex to
+    // accept the expanded body shape.
+    expect(body, 'onCanPlay MUST be defined as a const arrow function').toMatch(
+      /const\s+onCanPlay\s*=\s*\(\)\s*=>\s*\{[\s\S]*?\}/,
+    )
+    expect(body, 'onCanPlay MUST call v.play().catch(() => {}) so the canplay retry actually resumes playback').toMatch(
+      /const\s+onCanPlay\s*=\s*\(\)\s*=>\s*\{[\s\S]*?v\.play\(\)\.catch\(\(\)\s*=>\s*\{\}\)[\s\S]*?\}/,
     )
     // Cleanup MUST remove the listener so a rapid second src-swap doesn't leak.
     expect(body, 'cleanup MUST remove the canplay listener').toMatch(
@@ -1253,6 +1262,106 @@ describe('v0.7.222 — single-click another media tile MUST NOT stall live video
       after.pinnedPreviewSlide?.id,
       '(ii-5) preview pin MUST also advance to the refreshed clip so PreviewCard symmetry holds',
     ).toBe('slide-media-refreshed')
+  })
+
+  it('(jj) v0.7.224 SOURCE-GREP — GO LIVE while preview plays video MUST resume on live: pinned-path call order (setLiveAuto BEFORE setLiveMediaCurrentTime) + MediaVideoSurface canplay handler re-applies pending seek via direct store read', () => {
+    const stripComments = (src: string): string =>
+      src.split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n')
+
+    // ── logos-shell.tsx goLive pinned path ───────────────────────────
+    const logosRaw = readFileSync(
+      join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+    const logos = stripComments(logosRaw)
+
+    // Locate the goLive callback body so the ordering check is scoped
+    // (the file has many setLiveAuto / setLiveMediaCurrentTime callers
+    // outside goLive — e.g. AI auto-fire, Fit handler — which DO NOT
+    // share the pinned-path ordering invariant).
+    const goLiveStart = logos.indexOf('const goLive = useCallback(() => {')
+    expect(
+      goLiveStart,
+      '(jj-1) logos-shell.tsx MUST declare `const goLive = useCallback(() => {` — the operator GO LIVE button handler',
+    ).toBeGreaterThan(-1)
+    const clearLiveStart = logos.indexOf('const clearLive = useCallback', goLiveStart)
+    const goLiveBody = logos.slice(goLiveStart, clearLiveStart)
+
+    // resumeFrom is read from the preview <video> data-surface attr.
+    expect(
+      /resumeFrom\s*=\s*pv\.currentTime/.test(goLiveBody),
+      '(jj-2) logos-shell goLive pinned path MUST capture preview currentTime into `resumeFrom = pv.currentTime` so live can resume seamlessly',
+    ).toBe(true)
+    expect(
+      /video\[data-surface="preview"\]/.test(goLiveBody),
+      '(jj-3) logos-shell goLive pinned path MUST query the preview <video> by data-surface="preview" to capture its currentTime',
+    ).toBe(true)
+
+    // Ordering invariant: setLiveAuto MUST come BEFORE the resume-time
+    // re-application (otherwise setLiveAuto's atomic reset clobbers
+    // the captured time). Compare string indices within goLive body.
+    const setLiveAutoIdx = goLiveBody.indexOf('setLiveAuto(pinned)')
+    const setLiveTimeIdx = goLiveBody.indexOf('setLiveMediaCurrentTime(resumeFrom)')
+    expect(
+      setLiveAutoIdx,
+      '(jj-4) logos-shell goLive pinned path MUST call `setLiveAuto(pinned)` (promotion primitive)',
+    ).toBeGreaterThan(-1)
+    expect(
+      setLiveTimeIdx,
+      '(jj-5) logos-shell goLive pinned path MUST call `setLiveMediaCurrentTime(resumeFrom)` AFTER setLiveAuto to override the atomic transport reset with the captured preview time',
+    ).toBeGreaterThan(-1)
+    expect(
+      setLiveAutoIdx < setLiveTimeIdx,
+      '(jj-6) logos-shell goLive pinned path: setLiveAuto MUST come BEFORE setLiveMediaCurrentTime(resumeFrom). Inverting the order re-opens the v0.7.224 regression (atomic reset in store L1233-1236 clobbers the captured time).',
+    ).toBe(true)
+
+    // ── easyworship-shell.tsx goLive pinned path ─────────────────────
+    const ewRaw = readFileSync(
+      join(process.cwd(), 'src/components/layout/easyworship-shell.tsx'),
+      'utf8',
+    )
+    const ew = stripComments(ewRaw)
+    const ewGoLiveStart = ew.indexOf('const goLive = useCallback(() => {')
+    expect(
+      ewGoLiveStart,
+      '(jj-7) easyworship-shell.tsx MUST declare `const goLive = useCallback(() => {` — parity with logos-shell',
+    ).toBeGreaterThan(-1)
+    const ewClearLiveStart = ew.indexOf('const clearLive = useCallback', ewGoLiveStart)
+    const ewGoLiveBody = ew.slice(ewGoLiveStart, ewClearLiveStart)
+    const ewSetLiveAutoIdx = ewGoLiveBody.indexOf('setLiveAuto(pinned)')
+    const ewSetLiveTimeIdx = ewGoLiveBody.indexOf('setLiveMediaCurrentTime(resumeFrom)')
+    expect(
+      ewSetLiveAutoIdx,
+      '(jj-8) easyworship-shell goLive pinned path MUST call `setLiveAuto(pinned)`',
+    ).toBeGreaterThan(-1)
+    expect(
+      ewSetLiveTimeIdx,
+      '(jj-9) easyworship-shell goLive pinned path MUST call `setLiveMediaCurrentTime(resumeFrom)` after setLiveAuto',
+    ).toBeGreaterThan(-1)
+    expect(
+      ewSetLiveAutoIdx < ewSetLiveTimeIdx,
+      '(jj-10) easyworship-shell goLive pinned path: setLiveAuto MUST come BEFORE setLiveMediaCurrentTime(resumeFrom). Same atomic-reset clobber rationale as logos-shell.',
+    ).toBe(true)
+
+    // ── MediaVideoSurface canplay handler ────────────────────────────
+    // Body of the onCanPlay handler in the live-play effect MUST:
+    //   (a) read liveMediaCurrentTime / previewMediaCurrentTime
+    //       directly from the store (NOT the closed-over hook value)
+    //   (b) seek v.currentTime to the target before play() is called
+    //   (c) close the seek inside an if-guard so a 0 target doesn't
+    //       cause a redundant seek
+    expect(
+      /const\s+onCanPlay\s*=\s*\(\)\s*=>\s*\{[\s\S]*?useAppStore\.getState\(\)\.liveMediaCurrentTime[\s\S]*?v\.currentTime\s*=\s*targetTime[\s\S]*?v\.play\(\)/.test(logos),
+      '(jj-11) MediaVideoSurface onCanPlay handler MUST read liveMediaCurrentTime via useAppStore.getState() (direct store read closes the race with goLive\'s setLiveMediaCurrentTime resolving after effect setup), apply v.currentTime = targetTime, then call v.play() — all in that order',
+    ).toBe(true)
+    expect(
+      /const\s+onCanPlay\s*=\s*\(\)\s*=>\s*\{[\s\S]*?useAppStore\.getState\(\)\.previewMediaCurrentTime/.test(logos),
+      '(jj-12) MediaVideoSurface onCanPlay handler MUST also handle the preview surface via useAppStore.getState().previewMediaCurrentTime (symmetry — same direct-read pattern applies to both surfaces)',
+    ).toBe(true)
+    expect(
+      /targetTime\s*>\s*0\s*&&[\s\S]*?Math\.abs\(v\.currentTime\s*-\s*targetTime\)\s*>\s*0\.5/.test(logos),
+      '(jj-13) MediaVideoSurface onCanPlay seek MUST be guarded by `targetTime > 0` AND a 0.5s tolerance so a zero or near-current target doesn\'t cause a redundant seek that breaks playback smoothness',
+    ).toBe(true)
   })
 
   it('(hh) v0.7.223 SOURCE-GREP — NDI transparent mode MUST be explicit opt-in across every layer + BGRX FourCC MUST be advertised for opaque sends + alpha MUST be forced opaque in opaque mode + start() short-circuit MUST include transparent (architect findings on v0.7.223 code review enforced as a literal guard)', () => {

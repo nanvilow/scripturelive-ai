@@ -1612,15 +1612,24 @@ export function EasyWorshipShell() {
     // calls remain so the currentTime carry-over works.)
     const pinned = useAppStore.getState().pinnedPreviewSlide
     if (pinned) {
+      // v0.7.224 — Parity with logos-shell goLive: setLiveAuto's
+      // atomic transport reset (store L1233-1236) would clobber the
+      // captured preview time if we set it BEFORE setLiveAuto. Capture
+      // first, then setLiveAuto, then re-apply the captured time so
+      // live resumes from where preview was watching. See full
+      // rationale at logos-shell.tsx goLive pinned path.
+      let resumeFrom = 0
       if (typeof document !== 'undefined') {
         const pv = document.querySelector<HTMLVideoElement>('video[data-surface="preview"]')
-        if (pv && Number.isFinite(pv.currentTime)) {
-          try { useAppStore.getState().setLiveMediaCurrentTime(pv.currentTime) } catch { /* ignore */ }
+        if (pv && Number.isFinite(pv.currentTime) && pv.currentTime > 0) {
+          resumeFrom = pv.currentTime
         }
       }
-      useAppStore.getState().setLiveMediaPaused(false)
       useAppStore.getState().setPreviewMediaPaused(true)
       useAppStore.getState().setLiveAuto(pinned)
+      if (resumeFrom > 0) {
+        useAppStore.getState().setLiveMediaCurrentTime(resumeFrom)
+      }
       return
     }
     if (!slides.length) {
