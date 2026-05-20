@@ -1469,3 +1469,15 @@ id = "pvP9KnsoX6si-bSYR-vRv"
 uri = "file://attached_assets/screenshots/b20a0695-37a6-4cc4-9935-ad1d746cd9ff-00-huuyveihnoxd_kirk_replit_dev_mockup_preview_brightness_Max.png"
 type = "image"
 title = "3. BRIGHTEST — opacity .85 / scrim .05 (effective ~0.81, ~70% brighter)"
+
+[[outputs]]
+id = "_6_XIVywJO5psAlPAd_1a"
+uri = "file://artifacts/imported-app/release/ScriptureLive-AI-0.7.226-portable-x64.zip"
+type = "unspecified"
+title = "ScriptureLive AI v0.7.226 — Portable Windows Build (788 MB)"
+
+[[outputs]]
+id = "F746xeS9GbrfA3eyNrgwf"
+uri = "file://artifacts/imported-app/release/HOW-TO-RUN.txt"
+type = "text"
+title = "How to run (read first)"
