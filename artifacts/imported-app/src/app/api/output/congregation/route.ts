@@ -66,7 +66,22 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 #bgLayer.ratio-16x9{aspect-ratio:16/9;width:min(100vw,calc(100vh*16/9));height:min(100vh,calc(100vw*9/16))}
 #bgLayer.ratio-4x3{aspect-ratio:4/3;width:min(100vw,calc(100vh*4/3));height:min(100vh,calc(100vw*3/4))}
 #bgLayer.ratio-21x9{aspect-ratio:21/9;width:min(100vw,calc(100vh*21/9));height:min(100vh,calc(100vw*9/21))}
-#bgLayer > video, #bgLayer > img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;display:block}
+/* v0.7.221 — GPU compositing hints for the background <video>/<img>.
+   #bgLayer sits at z:0 with #output painting opaque slide content at
+   z:1 on top. Without an explicit compositing hint Chromium puts both
+   layers on the same paint surface, so every text re-render (slide
+   transition, animation, anti-aliasing pass) invalidates the bg
+   pixels too and the bg video has to repaint from scratch. That is
+   the dominant source of judder operators saw on the Live Display
+   pane + Secondary Screen popup, and the dominant source of dropped
+   frames on the NDI offscreen capture. translateZ(0) promotes the bg
+   to its own GPU layer (independent of #output's paint), will-change
+   tells the compositor to keep it on the GPU between frames, and
+   backface-visibility:hidden avoids subpixel snap glitches on scaled
+   surfaces (Secondary Screen popup at non-integer DPRs). These are
+   the same primitives EasyWorship/ProPresenter use for their bg
+   video layers. Cheap (1 extra compositor layer) and broadcast-safe. */
+#bgLayer > video, #bgLayer > img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;display:block;transform:translateZ(0);will-change:transform,opacity;backface-visibility:hidden}
 #output{position:relative;z-index:1}
 .slide-content{position:relative;z-index:1;text-align:center;width:90%;max-width:90vw;height:100%;max-height:100%;min-height:0;box-sizing:border-box;overflow:hidden;padding:4vh 3vw;display:flex;flex-direction:column;align-items:center;justify-content:center}
 /* v0.6.3 — Bible reference text: BOLD by default + full opacity. The
@@ -767,12 +782,17 @@ function setBgVid(url){
     var v=document.createElement('video');
     // v0.7.221 — IS_FROZEN_BG path: settings/preview surfaces mount the
     // bg <video> as a still poster, not a playing clip. We append
-    // `#t=0.1` so the browser fetches & paints the frame at 0.1s and
-    // sits there (avoids the all-black first-frame poster many
-    // codecs ship with). preload='metadata' is the cheapest mode
-    // that still produces a visible frame — no decoder slot is held
-    // for ongoing playback. Real broadcast surfaces fall through to
-    // the historical autoplay/loop path.
+    // a "#t=0.1" media-fragment so the browser fetches and paints
+    // the frame at 0.1 seconds and sits there (avoids the all-black
+    // first-frame poster many codecs ship with). preload="metadata"
+    // is the cheapest mode that still produces a visible frame — no
+    // decoder slot is held for ongoing playback. Real broadcast
+    // surfaces fall through to the historical autoplay/loop path.
+    // NOTE: backticks are forbidden anywhere inside this inline JS
+    // because the entire script lives inside the outer template
+    // literal at L20 (const html = ...), and an un-escaped backtick
+    // here would close that template literal mid-string and fail
+    // typecheck (TS1005). Use plain ASCII quotes in comments.
     if(IS_FROZEN_BG){
       v.src=__scrMedia(u)+'#t=0.1';
       v.autoplay=false;v.loop=false;v.muted=true;v.playsInline=true;
@@ -791,9 +811,43 @@ function setBgVid(url){
       v.src=__scrMedia(u);
       v.autoplay=true;v.loop=true;v.muted=true;v.playsInline=true;
       v.preload='auto';
+      // v0.7.221 — Broadcast-smoothness hardening for the three real
+      // output surfaces (Live Display pane, Secondary Screen popup,
+      // NDI offscreen FrameCapture). Together these mirror what
+      // ProPresenter/EasyWorship do for their bg video layers.
+      //
+      // (1) disablePictureInPicture + disableRemotePlayback — kill
+      //     the Chromium overlay buttons that periodically repaint
+      //     the video surface (and silently steal a compositor pass).
+      //     The operator never wants PiP on the projector output.
+      // (2) playbackRate=1 explicit — guards against the rare case
+      //     where a previous element on the same compositor left a
+      //     non-1.0 rate cached at the codec layer.
+      // (3) controls=false, controlsList=nodownload — defence in
+      //     depth; controls were never on, but if Electron flips
+      //     them on by default in a future Chromium bump the video
+      //     surface would repaint on hover.
+      // (4) waiting/stalled/error self-heal — if the network hiccups
+      //     and Chromium suspends playback, re-issue play() so the
+      //     projector doesn't freeze for the operator. The "loop"
+      //     attribute alone doesn't handle the stall case.
+      try{v.disablePictureInPicture=true;}catch(_e){}
+      try{v.disableRemotePlayback=true;}catch(_e){}
+      try{v.controls=false;}catch(_e){}
+      try{v.setAttribute('controlslist','nodownload noremoteplayback noplaybackrate');}catch(_e){}
       try{v.setAttribute('crossorigin','anonymous');}catch(e){}
       v.onerror=function(){try{v.style.display='none';}catch(_e){}};
+      var __bgResume=function(){try{var p=v.play();if(p&&p.catch)p.catch(function(){});}catch(_e){}};
+      v.addEventListener('waiting',__bgResume);
+      v.addEventListener('stalled',__bgResume);
+      v.addEventListener('pause',function(){
+        // Chromium briefly pauses on tab-throttle / decoder reset; only
+        // self-heal if the operator-visible looping playback was
+        // expected (i.e. we did NOT mount this in IS_FROZEN_BG mode).
+        if(!IS_FROZEN_BG)__bgResume();
+      });
       layer.appendChild(v);
+      try{v.playbackRate=1;}catch(_e){}
       var pp=v.play();if(pp&&pp.catch)pp.catch(function(){});
     }
   } else {

@@ -520,8 +520,35 @@ function MediaVideoSurface({
         playsInline
         preload={surface === 'preview' && mediaPaused ? 'metadata' : 'auto'}
         crossOrigin="anonymous"
+        // v0.7.221 — GPU compositing + stall-resistance for the LIVE
+        // media surface. The live <video> for media-video slides
+        // paints behind the slide's caption/overlay layers; without
+        // an explicit GPU promotion every overlay repaint forces the
+        // video pixels to repaint too, costing roughly a frame on
+        // low-end hardware (the same root cause as the bgLayer
+        // judder addressed in route.ts L69). translateZ(0) +
+        // will-change moves it to its own composited layer.
+        // disablePictureInPicture/disableRemotePlayback kill the
+        // Chromium overlay buttons that periodically repaint the
+        // surface (operators never want PiP on a broadcast pane).
+        // Gated to surface === 'live' to preserve the v0.7.216-218
+        // decoder-slot invariants on the preview pane (those gates
+        // assume preview is the "cheap" surface; promoting preview
+        // to its own GPU layer would change the contention budget).
+        disablePictureInPicture={surface === 'live'}
+        disableRemotePlayback={surface === 'live'}
+        controlsList="nodownload noremoteplayback noplaybackrate"
         className="absolute inset-0 w-full h-full"
-        style={{ objectFit }}
+        style={
+          surface === 'live'
+            ? {
+                objectFit,
+                transform: 'translateZ(0)',
+                willChange: 'transform, opacity',
+                backfaceVisibility: 'hidden',
+              }
+            : { objectFit }
+        }
       />
     </div>
   )
