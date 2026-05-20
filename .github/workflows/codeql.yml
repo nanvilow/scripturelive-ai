@@ -1,0 +1,73 @@
+name: CodeQL
+
+# GitHub's CodeQL static analysis — companion to the Task #103 secret scan
+# and Dependabot updates. Secret scanning catches leaked credentials,
+# Dependabot catches vulnerable dependencies, and CodeQL catches actual
+# code-level vulnerabilities (SQL injection, XSS, unsafe deserialization,
+# prototype pollution, etc.) in our own JavaScript/TypeScript surfaces.
+#
+# Findings land in the repo's Security tab → Code scanning alerts:
+# https://github.com/nanvilow/scripturelive-ai/security/code-scanning
+#
+# We scan on every push to main and every PR so a regression can't slip
+# in unreviewed. The weekly cron catches advisories newly published
+# against patterns already in the code (CodeQL queries update over time
+# independently of our pushes).
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    # Mondays 06:17 UTC — off-hour, off-the-hour to avoid GitHub's
+    # cron rush at :00 which can delay runs by 10-30 min.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+# CodeQL needs `security-events: write` to upload SARIF results to the
+# Security tab, and `actions: read` so the analyze step can introspect
+# the workflow run. `contents: read` is the standard checkout perm.
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # `javascript-typescript` is the single combined language pack
+        # CodeQL ships for JS+TS — covers both .js and .ts/.tsx surfaces
+        # across the monorepo in one analysis pass.
+        language: ["javascript-typescript"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # `build-mode: none` skips the autobuild step entirely. JS/TS
+      # analysis doesn't need a compiled build — CodeQL parses the
+      # source directly. This avoids spurious failures from missing
+      # env vars (PORT, BASE_PATH, MAIL_*, etc.) that the workspace
+      # build steps require but aren't wired up in CI.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          # `security-and-quality` is the broader query suite — includes
+          # the default `security-extended` plus maintainability/quality
+          # queries. Worth the extra ~2 min for a hobby/small-team repo
+          # where every extra finding helps.
+          queries: security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
