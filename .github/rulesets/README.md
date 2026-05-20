@@ -174,6 +174,131 @@ signature state, then re-tag (delete the local tag, re-create with
 a tag that already made it to the remote, so this only works if the
 push was rejected and the bad tag never landed.
 
+## Key rotation / loss
+
+If your signing key is lost (laptop dies, key file deleted, passphrase
+forgotten) or you're proactively rotating to a new one, the release
+pipeline is blocked for **you specifically** until GitHub knows about
+the new key — `required_signatures` only accepts tags signed by a key
+that's registered on the pusher's GitHub account. Other maintainers
+can still cut releases in the meantime; this is a per-account
+incident, not a repo-wide outage.
+
+Treat a lost key as compromised. You can't prove it isn't, and the
+cost of revoking a key you still control is zero.
+
+### 1. Revoke the old key on GitHub
+
+Go to <https://github.com/settings/keys>, find the old GPG or SSH
+signing key, and click **Delete**. This immediately stops the git
+server from accepting new tags signed by it. Tags already pushed
+under the old key keep their "Verified" badge — GitHub records the
+verification result at push time, it does not re-check on every
+view, so historical releases are unaffected.
+
+If you still have the GPG private key, also publish a revocation
+certificate so anyone verifying old artifacts offline sees the key
+as revoked rather than just unknown:
+
+```bash
+gpg --output revoke-ABCD1234EF567890.asc --gen-revoke ABCD1234EF567890
+gpg --import revoke-ABCD1234EF567890.asc
+gpg --keyserver keys.openpgp.org --send-keys ABCD1234EF567890
+```
+
+For SSH signing keys there's no equivalent — GitHub removal is the
+whole revocation story.
+
+### 2. Generate and register the new key
+
+Follow the same "One-time GPG setup" or "One-time SSH setup" steps
+above to produce a fresh key and paste the public half into
+<https://github.com/settings/keys>. For GPG, make sure the new key's
+UID email matches a verified email on your GitHub account
+(`https://github.com/settings/emails`), otherwise GitHub will accept
+the signature but mark the tag **Unverified**, which is not the same
+as signed and will still fail downstream tooling that checks for the
+green badge.
+
+### 3. Point git at the new key
+
+```bash
+# GPG
+git config --global user.signingkey NEWKEYID1234ABCD
+
+# SSH
+git config --global user.signingkey ~/.ssh/id_ed25519_signing.pub
+```
+
+If you have a per-repo override (`git config user.signingkey` without
+`--global`), update that too. Run `git config --get user.signingkey`
+inside the release clone to confirm which value is actually winning.
+
+### 4. Verify against a test branch before cutting a real release
+
+Don't discover a misconfigured key by failing the real `v0.7.x` push.
+Smoke-test it first:
+
+```bash
+git checkout -b key-rotation-smoke-$(date +%s)
+git commit --allow-empty -m "smoke test for signing key rotation"
+git push -u origin HEAD
+
+# Throwaway tag against the smoke branch
+git tag -s v0.0.0-keytest-$(date +%s) -m "key rotation smoke test"
+git push origin v0.0.0-keytest-$(date +%s)
+```
+
+The tag push exercises the **exact** signature path
+`required_signatures` enforces. Outcomes:
+
+- **Push accepted, tag shows "Verified" on github.com/<repo>/tags** —
+  new key works end-to-end, you're cleared to cut releases.
+- **`remote: - Tag must be signed.`** — git is not actually signing
+  (check `tag.gpgSign` is `true` and `user.signingkey` resolves);
+  or the public key was never added to GitHub; or the GPG UID email
+  doesn't match a verified GitHub email.
+- **Push accepted but tag shows "Unverified"** — signature is
+  cryptographically valid but GitHub doesn't trust it (wrong email
+  on the GPG UID, or you added the SSH key as an Authentication key
+  instead of a Signing Key). Re-add the key with the correct type.
+
+Then clean up — the smoke tag matches the `v*` pattern, so it's
+subject to the same rules as a real release tag:
+
+```bash
+git push origin --delete key-rotation-smoke-<timestamp>
+git tag -d v0.0.0-keytest-<timestamp>
+```
+
+Note that `git push origin :refs/tags/v0.0.0-keytest-<timestamp>`
+will be **rejected** — the `release-tag-protection.json` ruleset
+blocks `deletion` on `refs/tags/v*`. That's intentional (see Layer 1
+above) and applies to smoke tags as much as real ones. Either accept
+that the smoke tag stays in the remote tag list forever, or use a
+naming scheme outside `v*` (e.g. `keytest-*`) so the ruleset doesn't
+apply. The `v0.0.0-` prefix above is deliberate — it sorts below any
+real release and makes its purpose obvious.
+
+### Interaction with the `update` rule
+
+`release-tag-protection.json` sets `update: true`, which means **you
+cannot re-sign a tag that's already been pushed.** Force-pushing a
+re-signed tag (`git push --force origin v0.7.x`) is rejected at the
+git-server boundary, and `deletion: true` blocks the
+delete-and-recreate workaround. The practical consequence:
+
+- If a release tag was pushed before the key was lost and it shows
+  "Verified", do nothing — it stays verified. GitHub doesn't
+  re-validate signatures on key removal.
+- If a release tag was pushed under a key that GitHub will not
+  accept (e.g. the push somehow bypassed the rule, or the rule was
+  briefly disabled), **you cannot fix that tag in place.** Cut a new
+  release under the next version number (`v0.7.x+1`) signed with the
+  new key, and treat the bad tag as a known-bad release in the
+  changelog. This is the same constraint as v0.7.222's "you cannot
+  un-publish a release" — the immutability is the point.
+
 ## Why a ruleset and not classic branch protection
 
 Rulesets supersede classic branch protection in the GitHub UI, support
