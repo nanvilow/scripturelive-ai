@@ -13,6 +13,17 @@ code-review the workflows that produce the checks.
   turned CodeQL on, this ruleset makes its result a hard gate so a PR that
   introduces a new high-severity finding cannot be merged without an
   explicit dismissal in the Security tab.
+- `release-tag-protection.json` — protects `refs/tags/v*` (the tags that
+  trigger `release-desktop.yml`). Blocks tag creation unless the tagged
+  commit already has passing CodeQL + gitleaks status. Because
+  `main-branch-protection.json` requires those same checks for anything
+  merged into `main`, the practical effect is "you can only tag a release
+  off a commit that went through the main-branch PR gate." Closes the
+  hole where a contributor with push access could `git tag v0.7.x` on a
+  feature-branch commit that never got scanned, and the release pipeline
+  would ship it anyway. Also blocks tag `deletion` and `update`
+  (force-move) so a tag, once cut, cannot be silently re-pointed at a
+  different commit after the scans have run.
 
 ## Required status checks
 
@@ -48,7 +59,9 @@ change.
 
 1. Repo → **Settings** → **Rules** → **Rulesets** → **New ruleset** →
    **Import a ruleset**.
-2. Upload `main-branch-protection.json`.
+2. Upload each file in this directory in turn
+   (`main-branch-protection.json`, `release-tag-protection.json`).
+   They are independent rulesets and must each be imported once.
 3. Set **Enforcement status** to **Active** (the JSON already sets it,
    but the UI confirms).
 4. Save.
@@ -65,12 +78,49 @@ gh api \
   --input .github/rulesets/main-branch-protection.json
 ```
 
-To update an existing ruleset, swap `POST /rulesets` for
-`PUT /rulesets/{ruleset_id}` (find the id with `gh api /repos/:owner/:repo/rulesets`).
+Repeat for `release-tag-protection.json`. To update an existing ruleset,
+swap `POST /rulesets` for `PUT /rulesets/{ruleset_id}` (find the id with
+`gh api /repos/:owner/:repo/rulesets`).
+
+## How "release tags must come from main" is enforced (two layers)
+
+Two complementary controls work together. Either alone has a gap; the
+pair closes it.
+
+**Layer 1 — `release-tag-protection.json` ruleset (status-check gate).**
+GitHub evaluates `required_status_checks` on a tag ruleset against the
+status checks attached to the **commit the tag points at** at the
+moment the tag is pushed. `git push origin v0.7.x` is rejected if the
+tagged commit doesn't have green `Analyze (javascript-typescript)` and
+`gitleaks` runs recorded against it. The `update` rule blocks
+force-moving a tag with `git push --force`, and `deletion` blocks the
+delete-then-recreate workaround. So whatever SHA a release tag pins,
+that SHA passed the scans and that SHA cannot be silently swapped out
+later.
+
+**Layer 2 — `tag-ancestry` job in `release-desktop.yml`
+(ancestry gate).** The status-check layer alone has a leak: CodeQL and
+gitleaks both run on **PR events** as well as on `main` pushes, so a
+commit that opened a PR but was never merged can still carry the two
+green check runs. That means a contributor with push access could
+`git tag v0.7.x <feature-branch-sha>` on a never-merged commit and
+Layer 1 would let the tag through. The `tag-ancestry` job, which runs
+ahead of every other job in the release pipeline, fails the run if
+`git merge-base --is-ancestor "$GITHUB_SHA" origin/main` returns
+non-zero. That guarantees the tagged commit was reached the only way
+that records `main`-side check history: by being merged into `main`
+via PR through `main-branch-protection.json`.
+
+**Why both:** Layer 1 stops the push at the git-server boundary so the
+pipeline never even starts. Layer 2 fails fast inside the pipeline so
+even if Layer 1 is misconfigured, disabled, or a future GitHub API
+change moves the goalposts on what counts as a "matching" status check,
+no release is published from off-`main`. Defense in depth.
 
 ## Why a ruleset and not classic branch protection
 
 Rulesets supersede classic branch protection in the GitHub UI, support
-JSON import/export (this file), and layer cleanly — a future "release
-tag" ruleset can coexist with this one without overwriting it. Classic
-branch protection has neither property.
+JSON import/export (these files), and layer cleanly — the
+`release-tag-protection.json` ruleset coexists with
+`main-branch-protection.json` without overwriting it. Classic branch
+protection has neither property.
