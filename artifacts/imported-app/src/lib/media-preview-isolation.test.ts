@@ -45,7 +45,7 @@ const verse = (id: string, ref: string, text: string): Slide => ({
   type: 'verse',
   title: ref,
   subtitle: 'KJV',
-  content: text,
+  content: [text],
 })
 
 const mediaSlide = (id: string, name: string): Slide => ({
@@ -53,7 +53,7 @@ const mediaSlide = (id: string, name: string): Slide => ({
   type: 'media',
   title: name,
   subtitle: '',
-  content: '',
+  content: [],
   mediaUrl: 'data:video/mp4;base64,AAAAFGZ0eXBpc29tAAAC',
   mediaKind: 'video',
 })
