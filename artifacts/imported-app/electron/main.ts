@@ -2285,7 +2285,23 @@ function setupIpc() {
         // "did nothing while broadcasting" was this short-circuit.
         const cur = ndi.getStatus()
         const wantLayout = opts.layout === 'ndi' ? 'ndi' : 'mirror'
-        const wantTransparent = wantLayout === 'ndi' && opts.transparent !== false
+        // v0.7.223 — Operator escalation: "NDI output for video background
+        // is transparent — shouldn't be so at all." Pre-fix default was
+        // `opts.transparent !== false` which meant ANY NDI session
+        // defaulted to TRANSPARENT (alpha matte). Receivers that respect
+        // alpha (vMix, Wirecast, OBS with alpha-aware composition) then
+        // showed the video background as see-through whenever the
+        // renderer's compositing produced any non-opaque pixels (which
+        // happens on a video element while it is fetching, between
+        // frames, or in the letterbox area of a contain-fit video).
+        // EW-class behaviour: NDI fullscreen output is OPAQUE by default;
+        // transparency is an explicit opt-in feature exclusively for
+        // lower-third / overlay workflows where the receiver is doing
+        // chromakey-style composition over its own program. We require
+        // `opts.transparent === true` (explicit) to enable. The lower-
+        // third path below still works because operators that turn on
+        // lower-third also explicitly check the transparent toggle.
+        const wantTransparent = wantLayout === 'ndi' && opts.transparent === true
         const wantLT = wantLayout === 'ndi' && Boolean(opts.lowerThird?.enabled)
         const wantLTPos: 'top' | 'bottom' =
           opts.lowerThird?.position === 'top' ? 'top' : 'bottom'
@@ -2331,7 +2347,13 @@ function setupIpc() {
         // a no-op when no sender exists yet (first start of a session).
         ndi.armBridge(3000)
         if (frameCapture) { await frameCapture.stop(); frameCapture = null }
-        await ndi.start(opts)
+        // v0.7.223 — Pass the resolved transparent flag through to the
+        // NDI sender so it can pick BGRX (opaque, EW-class smooth) vs
+        // BGRA (alpha matte preserved) at the FourCC level. Without
+        // this the sender would always advertise BGRX and the
+        // explicit transparent lower-third workflow would lose its
+        // alpha channel on the wire.
+        await ndi.start({ ...opts, transparent: wantTransparent })
         frameCapture = new FrameCapture({
           baseUrl: appBaseUrl,
           onFrame: (buf, w, h) => ndi.sendFrame(buf, w, h),
@@ -2356,7 +2378,20 @@ function setupIpc() {
         params.set('ndi', '1')
         let transparent = false
         if (layout === 'ndi') {
-          transparent = opts.transparent !== false
+          // v0.7.223 — Mirror the explicit-opt-in change at L2307. The
+          // URL-side `?transparent=1` flag (which tells the congregation
+          // renderer to strip its own background colour) MUST follow the
+          // same explicit-opt-in rule as the BrowserWindow's `transparent`
+          // attribute. Pre-fix `opts.transparent !== false` defaulted ON,
+          // so even when the BrowserWindow was opaque the renderer page
+          // was sending a transparent background — Chromium's compositor
+          // would composite the renderer's transparent pixels onto the
+          // BrowserWindow's opaque black, producing visibly darker /
+          // partially-transparent video backgrounds at the receiver.
+          // The two flags MUST stay in lockstep: either both ON (full
+          // alpha matte for lower-third workflows) or both OFF (opaque
+          // fullscreen for normal broadcast).
+          transparent = opts.transparent === true
           const lt = opts.lowerThird || {}
           if (transparent) params.set('transparent', '1')
           if (lt.enabled) params.set('lowerThird', '1')

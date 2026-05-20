@@ -24,6 +24,14 @@ export type NdiStartOptions = {
   width: number
   height: number
   fps: number
+  // v0.7.223 — When true the operator explicitly opted into the
+  // transparent lower-third workflow (alpha matte meaningful to
+  // receivers). When false / omitted (the 99% case — fullscreen
+  // broadcast) the sender advertises BGRX FourCC so receivers
+  // skip the alpha-composite step on every received frame, which
+  // is the canonical EasyWorship-class smoothness trick. See
+  // nativeSendFrame for the FourCC selection.
+  transparent?: boolean
 }
 
 export type NdiStatus = {
@@ -52,6 +60,18 @@ export type NdiStatus = {
 // Field order MUST be preserved or the DLL will read garbage.
 
 const FOURCC_BGRA = 0x41524742 // 'BGRA' little-endian
+// v0.7.223 — BGRX FourCC. Same memory layout as BGRA (4 bytes per pixel,
+// B,G,R,X order) but the trailing byte is explicitly declared as
+// IGNORED-PADDING instead of an alpha channel. Receivers (vMix / OBS /
+// Wirecast / NDI Studio Monitor / Resolume) skip the per-pixel alpha
+// composite step entirely when FourCC is BGRX, which is one of the
+// canonical EasyWorship-class smoothness tricks: their NDI output is
+// BGRX precisely so downstream compositors don't pay alpha-blend cost
+// for a fullscreen video that has no transparent regions. We default
+// to BGRX for opaque NDI output (the 99% case) and only switch to
+// BGRA when the operator has explicitly enabled the transparent
+// lower-third workflow (where the alpha channel is meaningful).
+const FOURCC_BGRX = 0x58524742 // 'BGRX' little-endian
 const FRAME_FORMAT_PROGRESSIVE = 1
 
 // ─── DLL discovery ─────────────────────────────────────────────────
@@ -195,6 +215,14 @@ export class NdiService extends EventEmitter {
   // rationale). 0n sentinel = "uninitialised, set on first frame".
   private senderStartHrTimeNs: bigint = BigInt(0)
   private videoBufferCapacity = 0
+  // v0.7.223 — Tracks whether the operator explicitly opted into the
+  // transparent (alpha-meaningful) lower-third workflow. Drives the
+  // FourCC selection in nativeSendFrame: false = BGRX (opaque,
+  // receivers skip alpha composite — EW-class smoothness), true =
+  // BGRA (alpha matte preserved end-to-end). Set in start() from
+  // NdiStartOptions.transparent; reset in stop() so a subsequent
+  // start() can't inherit a stale flag.
+  private senderTransparent = false
   // v0.7.56 — Tracks whether NDIlib_initialize() is currently active.
   // The operator-initiated stop() path now calls NDIlib_destroy() to
   // fully recycle the NDI runtime — killing the mDNS responder and
@@ -409,13 +437,24 @@ export class NdiService extends EventEmitter {
     // Only when something materially changes (rename, resolution, fps)
     // do we tear down and rebuild.
     const wantedName = opts.name || 'ScriptureLive'
+    // v0.7.223 — Operator-toggling transparent ON↔OFF without a
+    // resolution / fps / name change MUST rebuild the sender so the
+    // FourCC declared on the wire (BGRX vs BGRA) matches the new
+    // mode. Pre-fix the same-format early-return below short-
+    // circuited on (name,w,h,fps) only — so a transparent toggle
+    // would leave `senderTransparent` stale (whatever the prior
+    // start() set), causing nativeSendFrame to pick the wrong
+    // FourCC and sendFrame to apply / skip the alpha-force loop
+    // incorrectly. Architect found this on v0.7.223 code review.
+    const wantedTransparent = opts.transparent === true
     if (
       this.senderInstance &&
       this.status.running &&
       this.status.source === wantedName &&
       this.status.width === opts.width &&
       this.status.height === opts.height &&
-      this.status.fps === opts.fps
+      this.status.fps === opts.fps &&
+      this.senderTransparent === wantedTransparent
     ) {
       return
     }
@@ -483,6 +522,10 @@ export class NdiService extends EventEmitter {
     if (!instance) throw new Error('NDIlib_send_create returned null')
 
     this.senderInstance = instance
+    // v0.7.223 — Capture the operator's transparent-mode opt-in so
+    // nativeSendFrame can pick the right FourCC on every frame. Default
+    // false matches the explicit-opt-in semantics enforced in main.ts.
+    this.senderTransparent = opts.transparent === true
     this.status = {
       running: true,
       source: wantedName,
@@ -596,10 +639,28 @@ export class NdiService extends EventEmitter {
         this.senderStartHrTimeNs = process.hrtime.bigint()
       }
       const tc100ns = (process.hrtime.bigint() - this.senderStartHrTimeNs) / BigInt(100)
+      // v0.7.223 — FourCC selection: BGRX (opaque, alpha ignored) for
+      // every NDI send unless the operator explicitly opted into the
+      // transparent lower-third workflow. The 2 fixes work together:
+      // (a) main.ts now defaults `transparent=false` so the offscreen
+      // BrowserWindow renders OPAQUE pixels (alpha=255 across the
+      // canvas); (b) advertising BGRX tells receivers "do not bother
+      // alpha-compositing — treat the 4th byte as ignored padding."
+      // This is the EW-class smoothness lever: vMix / OBS / Wirecast
+      // skip per-pixel alpha blend on the receive path entirely,
+      // which on a 1920x1080@30fps stream removes ~62M alpha-blend
+      // ops/sec from the receiver's program-mix pipeline. Operator-
+      // visible symptom that this fixes: the receiver-side stutter
+      // that persisted even after v0.7.220 async send + buffer pool
+      // closed the producer-side gaps. We key on `senderTransparent`
+      // which is set in start() from the create-settings caller; when
+      // the operator enables the transparent overlay path the alpha
+      // channel becomes meaningful and we must stay on BGRA so
+      // receivers honour the matte.
       const frame = {
         xres: width,
         yres: height,
-        FourCC: FOURCC_BGRA,
+        FourCC: this.senderTransparent ? FOURCC_BGRA : FOURCC_BGRX,
         frame_rate_N: fps * 1000,
         frame_rate_D: 1000,
         picture_aspect_ratio: width / height,
@@ -668,6 +729,11 @@ export class NdiService extends EventEmitter {
     // v0.7.221 — Reset monotonic timecode anchor on teardown so the
     // next sender re-anchors at 0 on its first frame.
     this.senderStartHrTimeNs = BigInt(0)
+    // v0.7.223 — Reset the transparent-mode opt-in so the NEXT start()
+    // can't inherit a stale flag from a previous session (operator
+    // toggled transparent lower-third on, then off, then started a
+    // new session — pre-fix the FourCC would still be BGRA).
+    this.senderTransparent = false
     this.status = { running: false, frameCount: this.status.frameCount }
 
     // v0.7.56 — Full NDI runtime recycle on operator-initiated stop.
@@ -993,6 +1059,25 @@ export class NdiService extends EventEmitter {
     }
     const slot = this.videoBufferPool[this.videoBufferIndex]!
     bgraBuffer.copy(slot)
+    // v0.7.223 — Force alpha = 0xFF on every pixel of the captured
+    // frame UNLESS the operator opted into the transparent overlay
+    // workflow. Belt-and-suspenders with the BGRX FourCC in
+    // nativeSendFrame: BGRX tells receivers to ignore the 4th byte,
+    // and this loop makes that 4th byte explicitly opaque so any
+    // older NDI 4 receiver (which doesn't know BGRX and falls back
+    // to treating the stream as BGRA) still displays opaque pixels
+    // instead of see-through holes. Cost: one byte write per 4 bytes
+    // = ~2MB of memory writes per 1080p frame at memory bandwidth
+    // (~6GB/s sustained on modern Windows operator PCs), i.e. ~0.3ms
+    // per frame — invisible against the ~33ms frame budget. The
+    // for-loop is hand-rolled rather than using a typed-array view
+    // because Buffer.fill('\xff', ..., 4) doesn't exist and a
+    // Uint32Array.set() with a pre-built pattern would re-allocate
+    // every frame defeating the buffer pool's whole purpose.
+    if (!this.senderTransparent) {
+      const len = slot.length
+      for (let i = 3; i < len; i += 4) slot[i] = 0xff
+    }
     this.lastFrame = { buffer: slot, width, height, ts: Date.now() }
     this.nativeSendFrame(slot, width, height)
     // Advance index AFTER submit. Next sendFrame writes into the OTHER

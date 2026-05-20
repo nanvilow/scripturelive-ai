@@ -1255,6 +1255,88 @@ describe('v0.7.222 — single-click another media tile MUST NOT stall live video
     ).toBe('slide-media-refreshed')
   })
 
+  it('(hh) v0.7.223 SOURCE-GREP — NDI transparent mode MUST be explicit opt-in across every layer + BGRX FourCC MUST be advertised for opaque sends + alpha MUST be forced opaque in opaque mode + start() short-circuit MUST include transparent (architect findings on v0.7.223 code review enforced as a literal guard)', () => {
+    const stripComments = (src: string): string =>
+      src.split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n')
+
+    // ── ndi-service.ts invariants ────────────────────────────────────
+    const ndiSvcRaw = readFileSync(
+      join(process.cwd(), 'electron/ndi-service.ts'),
+      'utf8',
+    )
+    const ndiSvc = stripComments(ndiSvcRaw)
+    expect(
+      /FOURCC_BGRX\s*=\s*0x58524742/.test(ndiSvc),
+      '(hh-1) ndi-service.ts MUST declare FOURCC_BGRX = 0x58524742 (BGRX little-endian) so opaque NDI sends skip per-pixel alpha composite on receivers (EW-class smoothness)',
+    ).toBe(true)
+    expect(
+      /FourCC:\s*this\.senderTransparent\s*\?\s*FOURCC_BGRA\s*:\s*FOURCC_BGRX/.test(ndiSvc),
+      '(hh-2) nativeSendFrame MUST select FourCC via `this.senderTransparent ? FOURCC_BGRA : FOURCC_BGRX` — swapping either re-introduces receiver-side stutter or breaks the transparent overlay workflow',
+    ).toBe(true)
+    expect(
+      /private\s+senderTransparent\s*=\s*false/.test(ndiSvc),
+      '(hh-3) ndi-service.ts MUST hold private senderTransparent field, defaulted false (opaque)',
+    ).toBe(true)
+    expect(
+      /this\.senderTransparent\s*=\s*opts\.transparent\s*===\s*true/.test(ndiSvc),
+      '(hh-4) start() MUST set this.senderTransparent = opts.transparent === true (explicit opt-in, not !== false)',
+    ).toBe(true)
+    expect(
+      /this\.senderTransparent\s*===\s*wantedTransparent/.test(ndiSvc),
+      '(hh-5) start() same-format short-circuit MUST include senderTransparent equality so toggling transparent ON↔OFF (without resolution/fps change) rebuilds the sender — architect found this as a stale-state bug on v0.7.223 review',
+    ).toBe(true)
+    expect(
+      /const\s+wantedTransparent\s*=\s*opts\.transparent\s*===\s*true/.test(ndiSvc),
+      '(hh-6) start() MUST compute wantedTransparent via `opts.transparent === true` (explicit opt-in, mirrors main.ts contract)',
+    ).toBe(true)
+    expect(
+      /for\s*\(\s*let\s+i\s*=\s*3;\s*i\s*<\s*len;\s*i\s*\+=\s*4\s*\)\s*slot\[i\]\s*=\s*0xff/.test(ndiSvc),
+      '(hh-7) sendFrame MUST force alpha = 0xff on every 4th byte after copy when !senderTransparent — belt-and-suspenders for older NDI 4 receivers that fall back to BGRA interpretation',
+    ).toBe(true)
+    expect(
+      /if\s*\(\s*!this\.senderTransparent\s*\)\s*\{[^}]*for\s*\(\s*let\s+i\s*=\s*3/.test(ndiSvc),
+      '(hh-8) the alpha-force loop MUST be gated by `if (!this.senderTransparent)` — running it in transparent mode would silently wipe the alpha matte operators depend on for lower-third overlays',
+    ).toBe(true)
+    expect(
+      /this\.senderTransparent\s*=\s*false/.test(ndiSvc.split('async stop()')[1] ?? ''),
+      '(hh-9) stop() MUST reset this.senderTransparent = false so a subsequent start() cannot inherit a stale transparent flag from the prior session',
+    ).toBe(true)
+
+    // ── main.ts invariants ───────────────────────────────────────────
+    const mainRaw = readFileSync(
+      join(process.cwd(), 'electron/main.ts'),
+      'utf8',
+    )
+    const mainSrc = stripComments(mainRaw)
+    expect(
+      /wantTransparent\s*=\s*wantLayout\s*===\s*'ndi'\s*&&\s*opts\.transparent\s*===\s*true/.test(mainSrc),
+      '(hh-10) main.ts wantTransparent MUST be `opts.transparent === true` (explicit opt-in). Reverting to `!== false` re-opens the see-through video background regression',
+    ).toBe(true)
+    expect(
+      /transparent\s*=\s*opts\.transparent\s*===\s*true/.test(mainSrc),
+      '(hh-11) main.ts URL-param transparent branch MUST also be `opts.transparent === true` — the BrowserWindow attribute and the renderer page CSS background MUST stay in lockstep, mismatch produces partial-transparency artefacts',
+    ).toBe(true)
+    expect(
+      /await\s+ndi\.start\(\s*\{\s*\.\.\.opts,\s*transparent:\s*wantTransparent\s*\}\s*\)/.test(mainSrc),
+      '(hh-12) main.ts MUST pass `transparent: wantTransparent` through to ndi.start() so the FourCC selection in ndi-service is driven by the resolved gate, not by whatever the renderer happened to send',
+    ).toBe(true)
+    expect(
+      /opts\.transparent\s*!==\s*false/.test(mainSrc),
+      '(hh-13) main.ts MUST NOT contain `opts.transparent !== false` anywhere — that was the pre-v0.7.223 default-ON pattern that caused the operator transparency complaint',
+    ).toBe(false)
+
+    // ── renderer call sites MUST not hardcode transparent: true ──────
+    const ewShellRaw = readFileSync(
+      join(process.cwd(), 'src/components/layout/easyworship-shell.tsx'),
+      'utf8',
+    )
+    const ewShell = stripComments(ewShellRaw)
+    expect(
+      /transparent:\s*true\b/.test(ewShell),
+      '(hh-14) easyworship-shell.tsx MUST NOT hardcode `transparent: true` in any desktop.ndi.start call — architect found this as a missed call site that bypassed the explicit-opt-in contract. Must derive from store state (e.g. ndiDisplayMode === "lower-third")',
+    ).toBe(false)
+  })
+
   it('(ff) v0.7.222 BEHAVIOURAL — operator pressing the placard "Play preview" button (setPreviewMediaPaused(false)) MUST release the gate so the real MediaVideoSurface mounts on next render', () => {
     const live = mediaSlide('vid-A', 'Clip A on live')
     live.mediaUrl = 'https://cdn.example/A.mp4'

@@ -229,19 +229,28 @@ function NdiToggleButton() {
         // 'mirror' layout regardless of the operator's transparent
         // toggle. We read live store state at click time.
         //
-        // v0.6.8 — `transparent` is always true here too (NDI is
-        // always alpha-keyed), and `lowerThird.enabled` follows
-        // `ndiDisplayMode` so the header toggle respects the
-        // operator's pick of Full Screen vs Lower-Third. Without
-        // these two changes the header path would broadcast opaque
-        // black AND ignore the displayMode picker — the very two
-        // operator complaints v0.6.8 fixes.
+        // v0.6.8 — `lowerThird.enabled` follows `ndiDisplayMode` so the
+        // header toggle respects the operator's pick of Full Screen vs
+        // Lower-Third.
+        // v0.7.223 — `transparent` MUST follow `ndiDisplayMode` instead
+        // of hardcoded `true`. Pre-fix this entry path always declared
+        // transparent=true (alpha matte) which made the offscreen
+        // BrowserWindow transparent + the renderer page strip its
+        // background + the NDI sender pick BGRA FourCC — receivers
+        // (vMix/OBS/Wirecast) then showed video backgrounds as
+        // see-through in their program composite, AND paid the
+        // alpha-blend cost per pixel even when no transparency was
+        // intentional. Architect found this on v0.7.223 code review
+        // as a missed call site that violated the new explicit-opt-in
+        // contract enforced in main.ts. Lower-third workflow still
+        // gets transparency (operator explicitly picked the overlay
+        // displayMode); fullscreen workflow stays opaque as EW does.
         const settings = useAppStore.getState().settings
         const r = await desktop.ndi.start({
           name: 'ScriptureLive AI',
           width: 1920, height: 1080, fps: 30,
           layout: 'ndi',
-          transparent: true,
+          transparent: settings.ndiDisplayMode === 'lower-third',
           lowerThird: {
             enabled: settings.ndiDisplayMode === 'lower-third',
             // The projector's lowerThirdPosition is shared with NDI;
