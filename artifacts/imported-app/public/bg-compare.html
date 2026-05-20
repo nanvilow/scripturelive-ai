@@ -20,6 +20,9 @@
   /* AFTER — proposed brightened values */
   .after .bg-media{opacity:.6}
   .after .scrim{background:rgba(0,0,0,.2)}
+  /* "No background uploaded" — pure theme gradient state. */
+  .theme-before{background:linear-gradient(135deg,#0a0a0a,#171717)}
+  .theme-after{background:linear-gradient(135deg,#1e1e24,#2a2a35)}
 
   .slide-text{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:6% 8%;color:#fff;text-shadow:0 2px 12px rgba(0,0,0,.4)}
   .verse{font-size:clamp(20px,3.4vw,42px);font-weight:600;letter-spacing:-.005em;line-height:1.2;max-width:90%}
@@ -57,6 +60,22 @@
       <div class="slide-text">
         <div class="verse">And he commanded the multitude to sit down on the grass, and took the five loaves, and the two fishes, and looking up to heaven, he blessed.</div>
         <div class="reference">Matthew 14:19 · KJV</div>
+      </div>
+    </div>
+
+    <div class="row-label">No background uploaded — theme gradient only (theme: Minimal)</div>
+    <div class="panel theme-before">
+      <span class="badge">Before · #0a0a0a → #171717 (near black)</span>
+      <div class="slide-text">
+        <div class="verse">Blessed are the pure in heart: for they shall see God.</div>
+        <div class="reference">Matthew 5:8 · KJV</div>
+      </div>
+    </div>
+    <div class="panel theme-after">
+      <span class="badge after">After · #1e1e24 → #2a2a35 (visible slate)</span>
+      <div class="slide-text">
+        <div class="verse">Blessed are the pure in heart: for they shall see God.</div>
+        <div class="reference">Matthew 5:8 · KJV</div>
       </div>
     </div>
 
