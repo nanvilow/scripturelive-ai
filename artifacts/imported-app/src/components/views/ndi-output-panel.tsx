@@ -22,16 +22,185 @@ import { useState, useEffect, useRef } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Wifi, WifiOff, Radio, AlertTriangle, MonitorPlay } from 'lucide-react'
-import { useNdi } from '@/lib/use-electron'
+import { Wifi, WifiOff, Radio, MonitorPlay, Copy, Check, Globe, Monitor } from 'lucide-react'
+import { useNdi, useDesktop } from '@/lib/use-electron'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/lib/store'
+import QRCode from 'qrcode'
 
 export function NdiOutputPanel() {
-  const { desktop, status, available, unavailableReason } = useNdi()
+  // v0.7.146 — `unavailableReason` is no longer destructured because the amber
+  // "NDI runtime not detected" card that displayed it has been removed (the
+  // DLL is now bundled, so the card never fired in practice). `available` is
+  // still consumed below to compute `ndiOk`, which keeps the Start button
+  // disabled in the pathological case of a corrupted bundled DLL.
+  const { desktop, status, available } = useNdi()
   const [busy, setBusy] = useState(false)
   const [sourceName, setSourceName] = useState('ScriptureLive AI')
+
+  // v0.7.153 — OBS Browser Source URL card state. Fetched once on
+  // mount via the new app:get-server-info IPC. The card renders the
+  // localhost URL (always safe — same-PC OBS) plus a row per
+  // discovered LAN IPv4 (cross-PC OBS via Browser Source — the
+  // zero-plugin alternative to NDI). QR data URL is generated for
+  // the FIRST LAN URL so a phone or second PC can scan it.
+  const desktopBridge = useDesktop()
+  const [serverInfo, setServerInfo] = useState<{
+    port: number
+    localUrl: string
+    lanIps: string[]
+  } | null>(null)
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null)
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (!desktopBridge?.getServerInfo) return
+    let cancelled = false
+    desktopBridge.getServerInfo().then((info) => {
+      if (!cancelled) setServerInfo(info)
+    }).catch(() => { /* leave null — card just falls back to copy-only */ })
+    return () => { cancelled = true }
+  }, [desktopBridge])
+  // Build the OBS Browser Source URLs. We send `?ndi=1` + `?transparent=1`
+  // PLUS the operator's current lower-third params (`lowerThird=1`,
+  // `position`, `lh`, `sc`) BAKED INTO THE URL — exactly the way the
+  // FrameCapture window (electron/main.ts ~line 2316) bakes them for the
+  // actual NDI broadcast and exactly the way NdiPreviewSurface (~line
+  // 1188) bakes them for the in-panel preview. Without baking, OBS first-
+  // paints with default state (Full mode, lh=md, sc=1.0) until SSE catches
+  // up, and OBS aggressively caches that first paint — operator reported
+  // in v0.7.181 "OBS still firing from main App" because the route's
+  // initial server-rendered HTML used `s.displayMode` (the Live Display
+  // body mode) when no `lowerThird=1` URL param was present. Three NDI
+  // surfaces now emit byte-identical params on first paint:
+  //   - FrameCapture (vMix / NDI Tools)        — electron/main.ts
+  //   - NdiPreviewSurface (in-panel preview)   — same file, ~line 1158
+  //   - buildObsUrl / browserFallbackUrl       — here
+  // After first paint, SSE owns subsequent updates so dragging the LT
+  // scale slider or recolouring the typography updates OBS live without
+  // the operator re-pasting the URL. Re-paste is only needed when
+  // ndiDisplayMode / position / height bucket / scale change AND OBS
+  // disconnects + reconnects.
+  // We use `useAppStore.getState()` (lazy read) instead of the captured
+  // hook locals because the URL builders run BEFORE the
+  // lowerThirdHeightSetting hook is declared (~line 245) and we don't
+  // want to restructure the surrounding effect+QR ordering. The component
+  // is already subscribed to all four fields (ndiDisplayMode line 138,
+  // lowerThirdPosition line 169, ndiLowerThirdScale line 174,
+  // lowerThirdHeight line 245) so any change re-renders this component,
+  // re-runs the URL builders, re-reads getState() — fresh values every
+  // render with zero TDZ risk.
+  // v0.7.194-hotfix.4 — Stripped live-mutable lower-third params
+  // (sc, lh, position) from the OBS URL. They were cold-start
+  // fallbacks added in v0.7.5.1, then made functionally redundant
+  // by v0.7.11 (SSE owns slider updates within ~16ms of page load
+  // — invisibly faster than any OBS render). Keeping them in the
+  // URL caused the displayed URL string + QR code to flicker on
+  // every slider tick, confusing operators into thinking they
+  // needed to re-paste.
+  // v0.7.194-hotfix.5 — Operator reported the QR code visibly changed
+  // every time they flipped Full↔Lower-Third. Cause: `lowerThird=1`
+  // was the last live-control param still baked into the URL (kept
+  // since v0.7.11 to avoid a one-frame cold-start flash). The cost
+  // was wrong: OBS/vMix/Wirecast scenes pinned to the OLD URL would
+  // keep showing the old mode forever, and any phone/PC that scanned
+  // the QR before the operator flipped modes ended up with a stale
+  // URL. Route.ts L1103 already prefers the live SSE `ndiDisplayMode`
+  // over `FORCE_LT` on every NDI surface (`?ndi=1`), so removing it
+  // here has zero functional impact during normal operation — the
+  // SSE state push arrives within ~16ms of page load (faster than
+  // any OBS scene render). Cold-start trade-off: one ~16ms frame
+  // of Full layout before SSE swaps to LT — invisible at 30fps.
+  // FORCE_LT remains supported in route.ts for anyone who pasted
+  // an older URL with `?lowerThird=1` still in it (backward compat).
+  const buildCongregationParams = (): string => {
+    const s = useAppStore.getState().settings
+    const p = new URLSearchParams()
+    p.set('ndi', '1')
+    // v0.7.202 — Operator-reported bug: OBS Browser Source rendered
+    // with a transparent background even though the operator had not
+    // selected transparent mode. Root cause was a hardcoded
+    // `p.set('transparent', '1')` here that ignored
+    // `ndiFullScreenBackground`. The hardcoded flag was a leftover
+    // from when this URL was assumed to serve only NDI/alpha-keyed
+    // consumers, but OBS Browser Source is a plain HTTP consumer
+    // that does not strip alpha — it just renders whatever the page
+    // paints. Transparent body + OBS default Custom CSS (`body {
+    // background-color: rgba(0,0,0,0); }`) = transparent feed in
+    // OBS regardless of operator intent. Now `transparent=1` is
+    // gated on operator opt-in: either Full mode with the explicit
+    // `transparent` background choice, or Lower-Third mode (which is
+    // always alpha-keyed because the LT bar is by definition an
+    // overlay). The actual NDI capture window (FrameCapture in
+    // electron/main.ts L2361) keeps its own `transparent=1` for NDI
+    // consumers — that path is unaffected by this change.
+    const wantTransparent =
+      s.ndiFullScreenBackground === 'transparent' ||
+      s.ndiDisplayMode === 'lower-third'
+    if (wantTransparent) {
+      p.set('transparent', '1')
+    }
+    // v0.7.194-hotfix.4 — Operator's per-feed full-screen background
+    // choice. Default 'themed' is omitted from the URL so the existing
+    // OBS Browser-Source URLs operators have pasted don't change shape
+    // (no card-flicker, no "did I re-paste" confusion). Only the opt-in
+    // 'transparent' adds the param. route.ts reads `fsbg=transparent`.
+    if (s.ndiFullScreenBackground === 'transparent') {
+      p.set('fsbg', 'transparent')
+    }
+    return p.toString()
+  }
+  const buildObsUrl = (host: string, port: number) =>
+    `http://${host}:${port}/api/output/congregation?${buildCongregationParams()}`
+  // v0.7.157 — Browser-side fallback so the card NEVER disappears.
+  // Pre-v0.7.157 the OBS Browser Source URL card was conditionally
+  // rendered only when the Electron IPC `app:get-server-info` had
+  // populated `serverInfo`. In the web build (no IPC bridge), in
+  // dev when the renderer mounts before the IPC is ready, OR when
+  // the bundled server bound port=0, the entire card silently
+  // disappeared and operators reported "the OBS card is missing".
+  // Now we ALWAYS render the card. When real Electron server info
+  // is present we use it (preferred — gives the operator a stable
+  // 127.0.0.1:<port> URL plus per-LAN-IP rows). Otherwise we fall
+  // back to whatever the renderer can see in window.location, which
+  // is correct for web-build users and for Electron renderers that
+  // happened to load before IPC settled.
+  const browserFallbackUrl =
+    typeof window !== 'undefined' && window.location?.origin
+      ? `${window.location.origin}/api/output/congregation?${buildCongregationParams()}`
+      : null
+  const localObsUrl = serverInfo && serverInfo.port > 0
+    ? buildObsUrl('127.0.0.1', serverInfo.port)
+    : browserFallbackUrl
+  const lanObsUrls = serverInfo && serverInfo.port > 0
+    ? serverInfo.lanIps.map((ip) => ({ ip, url: buildObsUrl(ip, serverInfo.port) }))
+    : []
+  const usingBrowserFallback =
+    !(serverInfo && serverInfo.port > 0) && !!browserFallbackUrl
+  // Generate QR for the first LAN URL (most useful — phone can scan
+  // it to verify OBS-on-second-PC reachability before wiring it up).
+  // Loopback URL gets no QR (a phone scanning 127.0.0.1 would hit
+  // ITSELF, which is never what the operator wants).
+  useEffect(() => {
+    const target = lanObsUrls[0]?.url
+    if (!target) { setQrDataUrl(null); return }
+    let cancelled = false
+    QRCode.toDataURL(target, { width: 180, margin: 1, color: { dark: '#0f172a', light: '#ffffff' } })
+      .then((url) => { if (!cancelled) setQrDataUrl(url) })
+      .catch(() => { if (!cancelled) setQrDataUrl(null) })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lanObsUrls[0]?.url])
+  const handleCopyUrl = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopiedUrl(url)
+      toast.success('URL copied — paste it into OBS Browser Source')
+      setTimeout(() => setCopiedUrl((c) => (c === url ? null : c)), 2000)
+    } catch {
+      toast.error('Could not copy. Select the URL and press Ctrl+C.')
+    }
+  }
 
   const ndiDisplayMode = useAppStore((s) => s.settings.ndiDisplayMode)
   const updateSettings = useAppStore((s) => s.updateSettings)
@@ -60,6 +229,12 @@ export function NdiOutputPanel() {
   const ndiRefScale = useAppStore((s) => s.settings.ndiRefScale)
   const ndiTranslation = useAppStore((s) => s.settings.ndiTranslation)
   const ndiLowerThirdTransparent = useAppStore((s) => s.settings.ndiLowerThirdTransparent)
+  // v0.7.194-hotfix.4 — Full-screen NDI background mode. 'themed'
+  // (default) preserves v0.6.9 behaviour (themed gradient + custom
+  // bg). 'transparent' strips both so vMix/OBS/Wirecast receive
+  // verse text on a clean alpha matte. SSE pushes the field via
+  // buildCongregationParams so route.ts can branch fsTheme/fsBg.
+  const ndiFullScreenBackground = useAppStore((s) => s.settings.ndiFullScreenBackground ?? 'themed')
   // v0.6.6 — share the projector's lowerThirdPosition for the NDI band
   // too. There is no separate ndiLowerThirdPosition in the store; the
   // projector and NDI feed have always rendered the band at the same
@@ -70,6 +245,18 @@ export function NdiOutputPanel() {
   // broadcast feed can be tuned (smaller for vMix overlays, bigger for
   // full-screen NDI) without disturbing the in-room projection.
   const ndiLowerThirdScale = useAppStore((s) => s.settings.ndiLowerThirdScale)
+  // v0.7.194-hotfix.2 — Operator-tunable NDI capture frame rate.
+  // Defaults to 30 (see store.ts DEFAULT_SETTINGS). Changing it bumps
+  // restartGuardRef so the running NDI capture restarts at the new fps.
+  const ndiCaptureFps = useAppStore((s) => s.settings.ndiCaptureFps) ?? 30
+  // v0.7.194-hotfix.3 — Operator-tunable NDI capture resolution. Defaults
+  // to 1080p (matches typical vMix/OBS/Wirecast scene config). Operators
+  // on older hardware flip to 720p for ~56% per-frame CPU relief.
+  // `?? '1080p'` covers existing-install state where the field is
+  // undefined after persist hydration — same pattern as ndiCaptureFps.
+  const ndiCaptureResolution = useAppStore((s) => s.settings.ndiCaptureResolution) ?? '1080p'
+  const ndiCaptureWidth = ndiCaptureResolution === '720p' ? 1280 : 1920
+  const ndiCaptureHeight = ndiCaptureResolution === '720p' ? 720 : 1080
 
   const ndiHasOverrides =
     ndiFontFamily !== undefined ||
@@ -141,9 +328,31 @@ export function NdiOutputPanel() {
   // flipped (route.ts lines 854 / 871) so live SSE state always wins
   // over the now-stale URL params after first arrival.
   const lowerThirdHeightSetting = useAppStore((s) => s.settings.lowerThirdHeight)
+  // v0.7.194-hotfix.7 — wantTransparent gates the Electron BrowserWindow's
+  // `transparent:true` flag. LT mode is ALWAYS alpha-keyed (the LT bar is
+  // an overlay by design). FULL mode is alpha-keyed only when the operator
+  // picked Background = Transparent; otherwise (default = Themed) the
+  // BrowserWindow is opaque so vMix/OBS/Wirecast receive a fully painted
+  // frame matching the in-app NDI Live Preview. Pre-fix this was hardcoded
+  // `true` so Wirecast saw see-through even when operator picked Themed.
+  const wantTransparent =
+    ndiDisplayMode === 'lower-third' ||
+    (ndiDisplayMode === 'full' && ndiFullScreenBackground === 'transparent')
   useEffect(() => {
     if (!isRunningForEffect || !desktop) return
-    const want = `${ndiDisplayMode}:${lowerThirdPosition}:${sourceName.trim()}`
+    // v0.7.194-hotfix.9 Item E — Restart token now hashes on
+    // wantTransparent (the only BrowserWindow constructor-only flag
+    // that Electron cannot flip at runtime) INSTEAD OF the raw
+    // ndiDisplayMode + ndiFullScreenBackground pair. Net effect:
+    // operator can flip Full ↔ Lower-Third (when both modes are
+    // alpha-keyed, e.g. LT ↔ Full+transparent) without tearing down
+    // the BrowserWindow / NDI sender. OBS / vMix / Wirecast stay
+    // bound to "ScriptureLive AI" across the flip — the renderer
+    // adapts via SSE (route.ts L1103 already prefers live SSE
+    // ndiDisplayMode per hotfix.5). The only restart that remains
+    // is when transparency itself toggles (e.g. LT ↔ Full+themed),
+    // which is genuinely unavoidable.
+    const want = `${wantTransparent}:${lowerThirdPosition}:${sourceName.trim()}:${ndiCaptureFps}:${ndiCaptureResolution}`
     if (restartGuardRef.current === want) return
     if (restartGuardRef.current === '') {
       // First settle — record what's already on the wire so the next
@@ -155,9 +364,13 @@ export function NdiOutputPanel() {
     restartGuardRef.current = want
     void desktop.ndi.start({
       name: sourceName.trim() || 'ScriptureLive AI',
-      width: 1920,
-      height: 1080,
-      fps: 60,
+      // v0.7.194-hotfix.3 — width/height now driven by ndiCaptureResolution
+      // setting. main.ts equality check (L2281-2282) includes width/height so
+      // flipping the dropdown tears down the BrowserWindow and rebuilds at
+      // the new resolution. MUST be in restartGuardRef token + deps below.
+      width: ndiCaptureWidth,
+      height: ndiCaptureHeight,
+      fps: ndiCaptureFps,
       layout: 'ndi',
       // v0.6.8 — ALWAYS broadcast NDI as alpha-keyed (transparent
       // surrounding area). NDI is fundamentally an overlay format
@@ -168,7 +381,10 @@ export function NdiOutputPanel() {
       // that decision is now read from the store directly by the
       // renderer (see route.ts line 845) so the toggle no longer
       // needs to be plumbed through to the BrowserWindow URL.
-      transparent: true,
+      // v0.7.194-hotfix.7 — `transparent` now follows wantTransparent
+      // (see definition above). Themed default → opaque BrowserWindow
+      // → Wirecast sees fully painted frame matching in-app preview.
+      transparent: wantTransparent,
       lowerThird: {
         // v0.6.8 — Honour the operator's display-mode pick. When they
         // choose Full Screen the renderer now actually renders
@@ -186,7 +402,7 @@ export function NdiOutputPanel() {
       },
     }).catch(() => { /* surfaced by the ndi:status broadcast */ })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName])
+  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName, ndiCaptureFps, ndiCaptureResolution, ndiCaptureWidth, ndiCaptureHeight, ndiFullScreenBackground, wantTransparent])
 
   // Reset the guard when NDI stops so the first toggle after the next
   // Start does the right thing (record-then-skip).
@@ -246,11 +462,16 @@ export function NdiOutputPanel() {
         // full rationale.
         const res = await desktop.ndi.start({
           name: sourceName.trim() || 'ScriptureLive AI',
-          width: 1920,
-          height: 1080,
-          fps: 60,
+          // v0.7.194-hotfix.3 — see comment in the persistent restart effect
+          // above for width/height rationale. Both ndi.start callers MUST
+          // read the same ndiCaptureWidth/Height derived from the setting,
+          // otherwise the initial Start and the restart paths would diverge.
+          width: ndiCaptureWidth,
+          height: ndiCaptureHeight,
+          fps: ndiCaptureFps,
           layout: 'ndi',
-          transparent: true,
+          // v0.7.194-hotfix.7 — see wantTransparent definition above.
+          transparent: wantTransparent,
           lowerThird: {
             enabled: ndiDisplayMode === 'lower-third',
             position: lowerThirdPosition === 'top' ? 'top' : 'bottom',
@@ -308,9 +529,7 @@ export function NdiOutputPanel() {
               <CardDescription className="text-xs">
                 {isRunning
                   ? `Live on the LAN as "${status?.source || sourceName}"`
-                  : ndiOk
-                  ? 'Tap the button to start broadcasting'
-                  : 'NDI runtime not detected'}
+                  : 'Tap the button to start broadcasting'}
               </CardDescription>
             </div>
           </div>
@@ -323,18 +542,18 @@ export function NdiOutputPanel() {
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5">
           {/* ── LEFT COLUMN — controls (always visible) ─────────────── */}
           <div className="space-y-4">
-            {!ndiOk && (
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-                <div className="text-xs text-amber-300/90 leading-relaxed">
-                  <strong>NDI runtime not detected.</strong>{' '}
-                  {unavailableReason ? <span className="opacity-80">({unavailableReason})</span> : null}
-                  <br />
-                  Install <a href="https://ndi.video/tools/" target="_blank" rel="noopener noreferrer" className="underline">NDI Tools</a> (free)
-                  from the official site, then restart the desktop app. NDI Tools provides the runtime that lets vMix, Wirecast, and OBS see this source on the network.
-                </div>
-              </div>
-            )}
+            {/* v0.7.146 — The amber "NDI runtime not detected" card
+                that lived here in v0.7.145 is GONE. The NDI runtime
+                DLL now ships INSIDE the installer (extraResources in
+                electron-builder.yml + bundled-first DLL search in
+                electron/ndi-service.ts findNdiDll), so ndiOk is
+                effectively always true on every customer PC — same
+                behaviour as Wirecast / vMix / OBS / Resolume. The
+                only way ndiOk is false post-v0.7.146 is a corrupted
+                install or a 32-bit OS (which we don't support);
+                in that pathological case the Stop/Start button
+                below is still disabled via `disabled={busy || !ndiOk}`,
+                which is a quieter and accurate failure mode. */}
 
             {/* The one button. */}
             <Button
@@ -389,6 +608,135 @@ export function NdiOutputPanel() {
               audio sync rock solid in a live service.
             </div>
 
+            {/* v0.7.153 — OBS Browser Source URL card.
+                Zero-plugin alternative to NDI for OBS users:
+                instead of installing the DistroAV / obs-ndi plugin
+                + NDI Runtime, an operator can drop one URL into OBS's
+                built-in Browser Source and get the verse-only feed
+                with full transparency. The localhost URL works for
+                same-PC OBS (the most common Nigeria-customer setup).
+                LAN URLs work for OBS on a second PC on the same Wi-Fi
+                — Next.js is now bound to 0.0.0.0 (see startNextServer
+                in electron/main.ts). */}
+            {/* v0.7.157 — Card now ALWAYS renders. See browserFallbackUrl
+                comment above buildObsUrl for the rationale. */}
+            <div className="rounded-md border border-sky-500/30 bg-sky-500/5 p-3 space-y-2.5">
+                <div className="flex items-start gap-2">
+                  <Globe className="h-4 w-4 text-sky-300 shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] font-semibold text-foreground">
+                      OBS Browser Source URL
+                    </div>
+                    <p className="text-[10px] text-muted-foreground leading-snug">
+                      Use this if your OBS doesn&apos;t have the NDI plugin.
+                      In OBS click <strong>+</strong> → <strong>Browser</strong>
+                      , paste a URL below, set width <strong>1920</strong> and
+                      height <strong>1080</strong>, click <strong>OK</strong>.
+                      You&apos;ll see only the Bible verse — no app interface.
+                    </p>
+                    {usingBrowserFallback && (
+                      <p className="text-[10px] text-amber-300/90 leading-snug pt-1">
+                        Showing the URL of the page you&apos;re viewing right
+                        now (fallback). For LAN URLs to a second PC, run the
+                        Windows desktop app — it auto-detects every LAN IP on
+                        this machine and lists one Browser Source URL per
+                        interface.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {localObsUrl && (
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      <Monitor className="h-3 w-3" />
+                      Same PC as ScriptureLive AI
+                    </div>
+                    <div className="flex items-stretch gap-1.5">
+                      <input
+                        readOnly
+                        value={localObsUrl}
+                        onFocus={(e) => e.currentTarget.select()}
+                        className="flex-1 min-w-0 h-8 rounded-md border border-border bg-background px-2 text-[11px] font-mono"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleCopyUrl(localObsUrl)}
+                        className="h-8 shrink-0 px-2 gap-1.5 text-[11px]"
+                      >
+                        {copiedUrl === localObsUrl
+                          ? <><Check className="h-3.5 w-3.5 text-emerald-400" /> Copied</>
+                          : <><Copy className="h-3.5 w-3.5" /> Copy</>
+                        }
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {lanObsUrls.length === 0 && !usingBrowserFallback && (
+                  <p className="text-[10px] text-amber-300/90 leading-snug">
+                    No LAN IPv4 interfaces detected on this PC. The localhost
+                    URL above still works for OBS on the SAME PC. To stream
+                    to OBS on another PC, connect this PC to a Wi-Fi or wired
+                    network and reopen this panel.
+                  </p>
+                )}
+                {lanObsUrls.length > 0 && (
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center gap-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      <Wifi className="h-3 w-3" />
+                      OBS on another PC (same Wi-Fi)
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
+                      <div className="space-y-1.5 min-w-0">
+                        {lanObsUrls.map(({ ip, url }) => (
+                          <div key={ip} className="flex items-stretch gap-1.5">
+                            <input
+                              readOnly
+                              value={url}
+                              onFocus={(e) => e.currentTarget.select()}
+                              className="flex-1 min-w-0 h-8 rounded-md border border-border bg-background px-2 text-[11px] font-mono"
+                            />
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleCopyUrl(url)}
+                              className="h-8 shrink-0 px-2 gap-1.5 text-[11px]"
+                              title={`LAN IP ${ip}`}
+                            >
+                              {copiedUrl === url
+                                ? <><Check className="h-3.5 w-3.5 text-emerald-400" /> Copied</>
+                                : <><Copy className="h-3.5 w-3.5" /> Copy</>
+                              }
+                            </Button>
+                          </div>
+                        ))}
+                        <p className="text-[10px] text-muted-foreground leading-snug pt-0.5">
+                          If OBS doesn&apos;t load these from another PC, allow
+                          ScriptureLive AI through Windows Firewall (Private
+                          network) on this machine.
+                        </p>
+                      </div>
+                      {qrDataUrl && (
+                        <div className="flex flex-col items-center gap-1 shrink-0">
+                          <img
+                            src={qrDataUrl}
+                            alt="QR code for the OBS Browser Source LAN URL"
+                            className="h-[120px] w-[120px] rounded border border-border bg-white"
+                          />
+                          <span className="text-[9px] text-muted-foreground uppercase tracking-wider">
+                            Scan to verify
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
             {/* Source name */}
             <div className="rounded-md border border-border bg-muted/10 p-3 space-y-1.5">
               <label className="text-[11px] font-semibold text-foreground">NDI source name</label>
@@ -439,6 +787,49 @@ export function NdiOutputPanel() {
                   </button>
                 </div>
               </div>
+
+              {/* v0.7.194-hotfix.4 — Full-screen NDI background mode.
+                  Only meaningful when Display Mode above = Full Screen.
+                  Themed (default) preserves v0.6.9 — themed gradient +
+                  custom bg render on the NDI feed, identical to the
+                  in-room projector. Transparent strips both so the
+                  switcher receives only the verse text on a clean
+                  alpha matte — same idea as the per-box transparent
+                  toggle for Lower Third mode below. */}
+              {ndiDisplayMode === 'full' && (
+                <div className="flex items-center justify-between gap-3 mt-2 pt-2 border-t border-border/40">
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold text-foreground">Full-screen background</div>
+                    <p className="text-[10px] text-muted-foreground leading-snug">
+                      Themed = render the gradient + custom background on the NDI feed (matches the projector). Transparent = strip both so vMix/OBS/Wirecast receive verse text on a clean alpha matte.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 rounded-md border border-border bg-background overflow-hidden">
+                    <button
+                      onClick={() => updateSettings({ ndiFullScreenBackground: 'themed' })}
+                      className={cn(
+                        'h-7 px-2.5 text-[10px] uppercase tracking-wider transition-colors',
+                        ndiFullScreenBackground === 'themed'
+                          ? 'bg-emerald-500/15 text-emerald-200'
+                          : 'text-muted-foreground hover:bg-muted/40',
+                      )}
+                    >
+                      Themed
+                    </button>
+                    <button
+                      onClick={() => updateSettings({ ndiFullScreenBackground: 'transparent' })}
+                      className={cn(
+                        'h-7 px-2.5 text-[10px] uppercase tracking-wider transition-colors border-l border-border',
+                        ndiFullScreenBackground === 'transparent'
+                          ? 'bg-emerald-500/15 text-emerald-200'
+                          : 'text-muted-foreground hover:bg-muted/40',
+                      )}
+                    >
+                      Transparent
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* v0.6.3 — Transparent lower-third toggle. Only meaningful
                   when the NDI Display Mode above is set to Lower Third.
@@ -531,13 +922,24 @@ export function NdiOutputPanel() {
               )}
             </div>
 
-            {/* NDI Typography (always visible — no more Advanced) */}
+            {/* v0.7.194-hotfix.4 — NDI Typography is now FULLY
+                disconnected from Live Display. Pre-fix each control had
+                a "Mirror Live (X)" first option that resolved to the
+                Live Display setting if left unset; operators reported
+                this as confusing ("why does my NDI font change when I
+                touch the projector font?"). Post-fix the dropdowns show
+                concrete NDI defaults from route.ts NDI_DEFAULTS
+                (sans-serif / xl / on / center) and "Reset all" returns
+                to those defaults explicitly. The underlying store still
+                accepts `undefined` (which route.ts resolves to NDI
+                defaults) so persisted state from older installs migrates
+                with zero behaviour change. */}
             <div className="rounded-md border border-border bg-muted/10 p-3 space-y-3">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <div className="text-[11px] font-semibold text-foreground">NDI Typography</div>
                   <p className="text-[10px] text-muted-foreground leading-snug">
-                    Independent of Live Display. Leave a control on &ldquo;Mirror Live&rdquo; to inherit.
+                    Independent of Live Display. These controls affect the NDI broadcast feed only.
                   </p>
                 </div>
                 {ndiHasOverrides && (
@@ -545,7 +947,7 @@ export function NdiOutputPanel() {
                     onClick={handleResetAllOverrides}
                     className="text-[10px] text-muted-foreground hover:text-foreground underline"
                   >
-                    Reset all
+                    Reset to NDI defaults
                   </button>
                 )}
               </div>
@@ -554,15 +956,11 @@ export function NdiOutputPanel() {
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Font</label>
                   <select
-                    value={ndiFontFamily ?? '__inherit__'}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      updateSettings({ ndiFontFamily: v === '__inherit__' ? undefined : v })
-                    }}
+                    value={ndiFontFamily ?? 'sans'}
+                    onChange={(e) => updateSettings({ ndiFontFamily: e.target.value })}
                     className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
                   >
-                    <option value="__inherit__">Mirror Live ({liveFontFamily})</option>
-                    <option value="sans">Sans-serif</option>
+                    <option value="sans">Sans-serif (NDI default)</option>
                     <option value="serif">Serif</option>
                     <option value="mono">Monospace</option>
                     <option value="playfair">Playfair</option>
@@ -576,52 +974,36 @@ export function NdiOutputPanel() {
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Size</label>
                   <select
-                    value={ndiFontSize ?? '__inherit__'}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      updateSettings({ ndiFontSize: v === '__inherit__' ? undefined : (v as 'sm' | 'md' | 'lg' | 'xl') })
-                    }}
+                    value={ndiFontSize ?? 'xl'}
+                    onChange={(e) => updateSettings({ ndiFontSize: e.target.value as 'sm' | 'md' | 'lg' | 'xl' })}
                     className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
                   >
-                    <option value="__inherit__">Mirror Live ({liveFontSize})</option>
                     <option value="sm">Small</option>
                     <option value="md">Medium</option>
                     <option value="lg">Large</option>
-                    <option value="xl">Extra Large</option>
+                    <option value="xl">Extra Large (NDI default)</option>
                   </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Drop shadow</label>
                   <select
-                    value={ndiTextShadow === undefined ? '__inherit__' : ndiTextShadow ? 'on' : 'off'}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      updateSettings({
-                        ndiTextShadow: v === '__inherit__' ? undefined : v === 'on',
-                      })
-                    }}
+                    value={ndiTextShadow === undefined ? 'on' : ndiTextShadow ? 'on' : 'off'}
+                    onChange={(e) => updateSettings({ ndiTextShadow: e.target.value === 'on' })}
                     className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
                   >
-                    <option value="__inherit__">Mirror Live ({liveTextShadow ? 'On' : 'Off'})</option>
-                    <option value="on">On</option>
+                    <option value="on">On (NDI default)</option>
                     <option value="off">Off</option>
                   </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Align</label>
                   <select
-                    value={ndiTextAlign ?? '__inherit__'}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      updateSettings({
-                        ndiTextAlign: v === '__inherit__' ? undefined : (v as 'left' | 'center' | 'right' | 'justify'),
-                      })
-                    }}
+                    value={ndiTextAlign ?? 'center'}
+                    onChange={(e) => updateSettings({ ndiTextAlign: e.target.value as 'left' | 'center' | 'right' | 'justify' })}
                     className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
                   >
-                    <option value="__inherit__">Mirror Live ({liveTextAlign})</option>
                     <option value="left">Left</option>
-                    <option value="center">Center</option>
+                    <option value="center">Center (NDI default)</option>
                     <option value="right">Right</option>
                     <option value="justify">Justify</option>
                   </select>
@@ -632,6 +1014,110 @@ export function NdiOutputPanel() {
             {/* NDI Layout & Bible Body */}
             <div className="rounded-md border border-border bg-muted/10 p-3 space-y-3">
               <div className="text-[11px] font-semibold text-foreground">NDI Layout &amp; Bible Body</div>
+              {/* v0.7.193-hotfix.4 — Bar Height bucket. Pre-fix this control
+                  did not exist anywhere in the UI; lowerThirdHeight was only
+                  writable via resetSettings(). Operators with persisted
+                  state were stuck at sm/md from older installs and could
+                  not pick the new lg default → bar too narrow → autofit
+                  shrinks long verses to tiny text inside the bar. The
+                  field is SHARED between Live Display and NDI (per
+                  hotfix.1 GR-B), so this writes the shared key directly
+                  with no Mirror Live option. */}
+              {/* v0.7.194-hotfix.3 — Hardware-tip banner for operators on
+                  older PCs. The 720p + lower-fps fallback is invisible
+                  unless surfaced; this banner makes the relief path
+                  discoverable without forcing it on operators whose
+                  hardware can handle 1080p/30fps cleanly. */}
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-[10px] leading-snug text-amber-200">
+                <strong className="font-semibold">Hardware tip:</strong> on older PCs (Ivy
+                Bridge mobile, pre-2015 laptops, integrated graphics) NDI video
+                media or background videos can freeze because Windows can't
+                hardware-decode video on the NDI capture window. If you see
+                stutter in vMix / Wirecast / OBS, switch <strong>Capture resolution</strong> to
+                720p first; if it still lags, drop <strong>Capture frame rate</strong> to 15 fps.
+                Receivers upscale 720→1080 automatically.
+              </div>
+              {/* v0.7.194-hotfix.3 — NDI capture resolution. 720p cuts
+                  per-frame work by ~56% (8.3MB → 3.7MB BGRA buffer,
+                  encoding + memory bandwidth drop in step). Default stays
+                  1080p (no migration; existing installs keep 1080p; the
+                  `?? '1080p'` hook fallback covers undefined persisted
+                  state). Changing this restarts NDI via the restartGuard
+                  above — `ndiCaptureResolution` is in the want token,
+                  effect deps, and both ndi.start callers (see audit
+                  pattern from hotfix.2 GR-C). */}
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Capture resolution
+                </label>
+                <select
+                  value={ndiCaptureResolution}
+                  onChange={(e) => {
+                    const v = e.target.value as '1080p' | '720p'
+                    updateSettings({ ndiCaptureResolution: v })
+                  }}
+                  className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                >
+                  <option value="1080p">1080p (1920×1080) — broadcast standard</option>
+                  <option value="720p">720p (1280×720) — older PC, vMix/OBS upscale</option>
+                </select>
+                <p className="text-[10px] text-muted-foreground leading-snug">
+                  Single biggest relief if NDI video freezes. 720p cuts CPU work in half. vMix/Wirecast/OBS upscale to 1080p — chyron text and Bible verses look identical; full-bleed video is slightly softer but smooth.
+                </p>
+              </div>
+              {/* v0.7.194-hotfix.2 — NDI capture frame rate. The offscreen
+                  Electron capture window uses SOFTWARE video decode (no
+                  GPU offscreen path on Windows), which can't sustain
+                  60fps capture while also decoding 1080p video — operator
+                  reported visible lag/freeze on both foreground media and
+                  background videos. Defaulting to 30 gives the software
+                  decoder ~2× the per-frame budget. 60 stays available for
+                  high-end machines; 25/20/15 for older boxes. Changing
+                  this restarts NDI via the restartGuard above.
+                  v0.7.194-hotfix.3 — 15fps added as the deepest relief
+                  option for very old hardware (Ivy Bridge mobile etc). */}
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Capture frame rate
+                </label>
+                <select
+                  value={String(ndiCaptureFps)}
+                  onChange={(e) => {
+                    const v = Number(e.target.value) as 60 | 30 | 25 | 20 | 15
+                    updateSettings({ ndiCaptureFps: v })
+                  }}
+                  className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                >
+                  <option value="30">30 fps — recommended (smooth video)</option>
+                  <option value="60">60 fps — high-end PC only</option>
+                  <option value="25">25 fps — older PC / EU broadcast</option>
+                  <option value="20">20 fps — minimum / very old PC</option>
+                  <option value="15">15 fps — deepest relief / 2012-era laptops</option>
+                </select>
+                <p className="text-[10px] text-muted-foreground leading-snug">
+                  If video media or background videos still lag/freeze on NDI after switching to 720p above, drop this. NDI capture is software-decoded — 30fps is the sweet spot for almost every PC; 15fps is the floor.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Bar height (Live Display + NDI)
+                </label>
+                <select
+                  value={lowerThirdHeightSetting === 'sm' || lowerThirdHeightSetting === 'md' || lowerThirdHeightSetting === 'lg' ? lowerThirdHeightSetting : 'lg'}
+                  onChange={(e) => {
+                    const v = e.target.value as 'sm' | 'md' | 'lg'
+                    updateSettings({ lowerThirdHeight: v })
+                  }}
+                  className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                >
+                  <option value="sm">Small (22% of frame) — compact</option>
+                  <option value="md">Medium (33% of frame) — balanced</option>
+                  <option value="lg">Large (35% of frame) — recommended for long verses</option>
+                </select>
+                <p className="text-[10px] text-muted-foreground leading-snug">
+                  Taller bar = bigger Bible text (autofit has more room before it has to shrink). If your NDI text looks tiny, pick Large.
+                </p>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Aspect ratio</label>
@@ -895,6 +1381,16 @@ function NdiPreviewSurface(props: NdiPreviewSurfaceProps): React.JSX.Element {
   const NATIVE_H = 1080
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [scale, setScale] = useState<number>(1)
+  // v0.7.193-hotfix.2 — Mount the iframe ONLY when the panel is
+  // actually visible in the viewport. The iframe loads a full
+  // congregation renderer (including a media <video> if the active
+  // slide is a video), and that's a real decoder — historically it
+  // ran 24/7 whenever the operator had Settings → NDI open even if
+  // they had scrolled the preview off-screen, eating one of their
+  // GPU's limited concurrent decode slots for no benefit. With
+  // IntersectionObserver gating, the iframe unmounts when scrolled
+  // away and remounts on-screen — no decoder consumed when invisible.
+  const [isOnScreen, setIsOnScreen] = useState<boolean>(false)
 
   useEffect(() => {
     const el = containerRef.current
@@ -910,7 +1406,17 @@ function NdiPreviewSurface(props: NdiPreviewSurfaceProps): React.JSX.Element {
       }
     })
     ro.observe(el)
-    return () => ro.disconnect()
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) setIsOnScreen(entry.isIntersecting)
+      },
+      { threshold: 0.01 },
+    )
+    io.observe(el)
+    return () => {
+      ro.disconnect()
+      io.disconnect()
+    }
   }, [])
 
   // v0.7.11 — Freeze the iframe src AFTER MOUNT so it never reloads in
@@ -930,7 +1436,34 @@ function NdiPreviewSurface(props: NdiPreviewSurfaceProps): React.JSX.Element {
   const src = (() => {
     const p = new URLSearchParams()
     p.set('ndi', '1')
-    p.set('transparent', '1')
+    // v0.7.198 — This iframe is the OPERATOR-FACING NDI Live Preview
+    // INSIDE the settings panel, NOT the offscreen FrameCapture surface
+    // that feeds OBS/vMix/Wirecast. The operator explicitly does not
+    // want video media playing here — the settings preview should show
+    // ONLY the static background so they can audition typography /
+    // mode / position without 5 simultaneous video decoders chewing
+    // CPU. Real outputs (Main Preview/Live columns, second screen,
+    // OBS via NDI, OBS via Browser Source) keep playing video — they
+    // do NOT pass noMedia=1.
+    p.set('noMedia', '1')
+    // v0.7.221 — Freeze the custom-background <video> on its first
+    // frame. This iframe is the operator-facing Settings NDI Live
+    // Preview, NOT the offscreen FrameCapture surface that feeds
+    // OBS/vMix/Wirecast. Operator escalation: bg video was animating
+    // here alongside 3 other settings previews and the main console,
+    // distracting from the actual live pane. The real NDI output (a
+    // separate Electron offscreen window in electron/frame-capture.ts
+    // + frame-capture/ndi-service.ts) does NOT load this URL and is
+    // unaffected — vMix / OBS / Wirecast still see the animated bg.
+    p.set('freezeBg', '1')
+    // v0.7.159 — DO NOT pass `transparent=1` here. The actual NDI capture
+    // (a hidden FrameCapture BrowserWindow elsewhere in the Electron main
+    // process) keeps `transparent=1` so OBS / vMix get a clean alpha
+    // matte. THIS surface is the operator's WYSIWYG preview pane: they
+    // want to see the user's configured background image / video behind
+    // the lower-third bar, not a transparent void that flashes white
+    // through to the parent card. Dropping the param tells the renderer
+    // to paint customBackground, exactly like Settings PREVIEW does.
     if (props.ndiDisplayMode === 'lower-third') {
       p.set('lowerThird', '1')
       if (props.lowerThirdPosition === 'top') p.set('position', 'top')
@@ -952,9 +1485,24 @@ function NdiPreviewSurface(props: NdiPreviewSurfaceProps): React.JSX.Element {
     return `/api/output/congregation?${p.toString()}`
   })()
 
-  // The iframe's effective src: latest computed value if mode/position
-  // changed (intentional reload), otherwise the frozen first src.
-  const stableKey = `ndi-preview:${props.ndiDisplayMode}:${props.lowerThirdPosition}`
+  // v0.7.198 — The iframe's React key MUST be a stable constant so
+  // flipping Full ↔ Lower-Third (or moving the LT bar top ↔ bottom)
+  // does NOT unmount + remount the iframe. Pre-fix the key included
+  // `ndiDisplayMode` + `lowerThirdPosition`, so every mode flip
+  // re-mounted the iframe → fresh load of /api/output/congregation
+  // → ~200-500ms of empty "ScriptureLive AI" splash placeholder
+  // before SSE caught up. That reload was leftover from before
+  // hotfix.5 taught the renderer to switch displayMode live via SSE
+  // precedence (see route.ts L1103). The renderer now adapts to
+  // ndiDisplayMode in <50ms with no reload — SSE pushes the new
+  // mode, the renderer re-paints — so the iframe MUST stay mounted.
+  // GUARD-RAIL: do NOT re-introduce mode/position into this key
+  // "to be safe" — every axis (height bucket lh, scale sc, position,
+  // mode) flows via SSE and is byte-identical between iframe and
+  // FrameCapture surfaces. The initialSrcRef freeze below bakes the
+  // first-paint URL so the very first frame carries the right mode;
+  // SSE drives every subsequent change.
+  const stableKey = 'ndi-preview'
   const lastKeyRef = useRef<string>(stableKey)
   if (lastKeyRef.current !== stableKey) {
     lastKeyRef.current = stableKey
@@ -994,6 +1542,7 @@ function NdiPreviewSurface(props: NdiPreviewSurfaceProps): React.JSX.Element {
           key={stableKey}
           src={stableSrc}
           title="NDI Live Preview"
+          allow="autoplay; encrypted-media"
           style={{
             border: 0,
             display: 'block',

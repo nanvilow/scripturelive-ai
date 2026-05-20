@@ -35,6 +35,15 @@ export type NdiStatus = {
   frameCount: number
   error?: string
   captureMessage?: string
+  // v0.7.121 — true while the operator clicked Stop but the sender is
+  // being held alive on the wire (linger window) so OBS/vMix don't
+  // drop the source. The Stop button in the UI must flip to "Start"
+  // immediately when this is true, even though `running` may still be
+  // true on the wire-protocol side. main.ts's broadcast normalises
+  // running=false whenever lingering=true so the renderer never has
+  // to know about the distinction.
+  lingering?: boolean
+  lingerRemainingMs?: number
 }
 
 // ─── NDI native types ──────────────────────────────────────────────
@@ -52,15 +61,37 @@ function findNdiDll(): string | null {
   const envOverride = process.env.NDI_DLL_PATH
   if (envOverride && fs.existsSync(envOverride)) return envOverride
 
-  // 2. Standard NDI install locations (NDI Tools sets these env vars)
   const dllName = 'Processing.NDI.Lib.x64.dll'
   const candidates: string[] = []
 
+  // 2. v0.7.146 — BUNDLED DLL (the "just works" path).
+  // electron-builder ships build-resources/ndi/Processing.NDI.Lib.x64.dll
+  // as extraResources to `<resources>/ndi/`, which is process.resourcesPath
+  // in packaged builds. This is what makes NDI work on every customer PC
+  // worldwide WITHOUT a separate NDI Tools install — same approach
+  // vMix / Wirecast / OBS Studio / Resolume use under the NDI SDK
+  // redistribution license (the SDK explicitly allows the runtime DLL
+  // to ship inside an integrated application).
+  // We check this FIRST so even if the customer happens to also have
+  // NDI Tools installed, we pin to OUR known-good copy.
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, 'ndi', dllName))
+  }
+  // Dev-mode fallback (electron . from artifacts/imported-app) — load
+  // straight out of the source build-resources/ndi/ folder. __dirname
+  // when running compiled main.cjs in dist-electron/ resolves to that
+  // dist-electron path, so we walk up to the artifact root.
+  candidates.push(
+    path.join(__dirname, '..', 'build-resources', 'ndi', dllName),
+    path.join(__dirname, '..', '..', 'build-resources', 'ndi', dllName),
+  )
+
+  // 3. Standard NDI install locations (kept as a safety net so a
+  //    corrupted/missing bundled DLL still finds a system copy).
   for (const v of ['NDI_RUNTIME_DIR_V6', 'NDI_RUNTIME_DIR_V5', 'NDI_RUNTIME_DIR_V4']) {
     const dir = process.env[v]
     if (dir) candidates.push(path.join(dir, dllName))
   }
-  // Common install paths if env vars are missing
   candidates.push(
     'C:\\Program Files\\NDI\\NDI 6 Tools\\Runtime\\' + dllName,
     'C:\\Program Files\\NDI\\NDI 5 Tools\\Runtime\\' + dllName,
@@ -90,6 +121,13 @@ type NdiBindings = {
   send_create: (settings: unknown) => unknown
   send_destroy: (instance: unknown) => void
   send_send_video_v2: (instance: unknown, frame: unknown) => void
+  // v0.7.220 — Async video send. NDI SDK contract: the call returns
+  // immediately; the NDI worker thread reads from the supplied buffer
+  // in the background. The buffer MUST remain valid until the NEXT
+  // call to send_send_video_async_v2 (which signals "I'm done with
+  // the previous one"). We honour this via a 2-slot pre-allocated
+  // buffer pool (see videoBufferPool below).
+  send_send_video_async_v2: (instance: unknown, frame: unknown) => void
   send_send_audio_v3: (instance: unknown, frame: unknown) => void
   videoFrameType: unknown
   audioFrameType: unknown
@@ -133,8 +171,30 @@ export class NdiService extends EventEmitter {
   //                          before we re-publish.
   private lastFrame: { buffer: Buffer; width: number; height: number; ts: number } | null = null
   private keepAliveTimer: NodeJS.Timeout | null = null
+  // v0.7.194-hotfix.11 Item #3 — frame-bridge state (see armBridge).
+  private bridgeTimer: NodeJS.Timeout | null = null
+  private bridgeDeadline = 0
   private sendBusy = false
   private lastDestroyAt = 0
+  // v0.7.220 — 2-slot pre-allocated buffer pool for async NDI video
+  // send. send_send_video_async_v2 returns immediately but the NDI
+  // worker thread reads from the supplied buffer asynchronously. The
+  // buffer MUST remain valid until the NEXT async send call. With 2
+  // slots and a `sendBusy` mutex ensuring at most ONE outstanding
+  // async send at a time, the slot NDI is currently reading is never
+  // the slot we are writing into. This eliminates the per-frame
+  // Buffer.allocUnsafe + Buffer.copy that v0.7.219 was paying ~8MB
+  // x 30fps = ~240MB/s of allocator + GC pressure on the main
+  // process — a known stutter source on long-running sessions.
+  // Pool re-allocates lazily on first frame and on any resolution
+  // change (rare). Capacity is recorded so resolution changes
+  // trigger a fresh allocation rather than a buffer-too-small write.
+  private videoBufferPool: Buffer[] = []
+  private videoBufferIndex = 0
+  // v0.7.221 — Monotonic timecode anchor (see nativeSendFrame for full
+  // rationale). 0n sentinel = "uninitialised, set on first frame".
+  private senderStartHrTimeNs: bigint = BigInt(0)
+  private videoBufferCapacity = 0
   // v0.7.56 — Tracks whether NDIlib_initialize() is currently active.
   // The operator-initiated stop() path now calls NDIlib_destroy() to
   // fully recycle the NDI runtime — killing the mDNS responder and
@@ -147,6 +207,31 @@ export class NdiService extends EventEmitter {
   // FFI function pointers stay loaded across runtime recycles —
   // only the live runtime state goes away.
   private runtimeAlive = false
+  // v0.7.103 — "Linger" mode tear-down. When the operator hits
+  // Disconnect, we used to call gracefulStop() which immediately
+  // ran send_destroy + NDIlib_destroy, retracting the mDNS
+  // advertisement and forcing OBS / vMix / Wirecast / Studio
+  // Monitor to drop our source from their lists. If the operator
+  // then hit Reconnect, OBS/vMix had already torn down the
+  // connection — they had to either re-add the source or restart.
+  //
+  // Linger mode keeps the NDI sender ALIVE on the wire for a
+  // grace window (default 60s) after operator-initiated stop:
+  //   • Fade-to-black is still emitted so receivers see the
+  //     source go off-air visually.
+  //   • The cached last frame is REPLACED with black so the
+  //     keep-alive ticker keeps pumping black at the configured
+  //     fps. To OBS/vMix the source is "live, just black".
+  //   • A timer is armed for `lingerSeconds`. If start() is called
+  //     before it fires, the timer is cancelled and the existing
+  //     sender is reused — receivers see fresh frames replace the
+  //     black with NO source-acquire flicker, NO mDNS round-trip,
+  //     NO OBS/vMix reconnect dance.
+  //   • If the timer fires (operator never came back), full
+  //     stop() runs and the sender is torn down for real.
+  private lingerTimer: NodeJS.Timeout | null = null
+  private lingerStartedAt = 0
+  private lingerExpectedMs = 0
 
   constructor() {
     super()
@@ -228,6 +313,20 @@ export class NdiService extends EventEmitter {
       const send_send_video_v2 = lib.func(
         'void NDIlib_send_send_video_v2(void *p_instance, const NDIlib_video_frame_v2_t *p_video_data)',
       ) as (instance: unknown, frame: unknown) => void
+      // v0.7.220 — Async video send. Returns immediately after queueing
+      // the frame onto NDI's internal worker thread. This eliminates the
+      // main-process event-loop blocking that send_send_video_v2 +
+      // clock_video=true imposed (visible to NDI receivers as random
+      // micro-stutters whenever the main process was busy with IPC, GC,
+      // or disk I/O). Buffer lifetime contract: the NDI runtime reads
+      // from `p_data` asynchronously; the caller MUST keep the buffer
+      // valid until the next call to this function (NDI signals "done
+      // with the previous one" by accepting a new submission). We
+      // honour this via a 2-slot pre-allocated buffer pool — see
+      // sendFrame + videoBufferPool.
+      const send_send_video_async_v2 = lib.func(
+        'void NDIlib_send_send_video_async_v2(void *p_instance, const NDIlib_video_frame_v2_t *p_video_data)',
+      ) as (instance: unknown, frame: unknown) => void
       const send_send_audio_v3 = lib.func(
         'void NDIlib_send_send_audio_v3(void *p_instance, const NDIlib_audio_frame_v3_t *p_audio_data)',
       ) as (instance: unknown, frame: unknown) => void
@@ -246,6 +345,7 @@ export class NdiService extends EventEmitter {
         send_create,
         send_destroy,
         send_send_video_v2,
+        send_send_video_async_v2,
         send_send_audio_v3,
         videoFrameType: NDIlib_video_frame_v2_t,
         audioFrameType: NDIlib_audio_frame_v3_t,
@@ -268,12 +368,37 @@ export class NdiService extends EventEmitter {
   }
 
   getStatus(): NdiStatus {
-    return { ...this.status }
+    // v0.7.121 — surface linger state to callers so main.ts can
+    // normalise the wire-side `running:true` into a renderer-facing
+    // `running:false` while the linger window holds the sender alive.
+    // Without this, the Stop NDI button in the panel never visibly
+    // toggles off (operator escalation: "When i tried turning off the
+    // NDI when it on, it dosent want to go off").
+    const lingering = this.lingerTimer !== null
+    return {
+      ...this.status,
+      lingering,
+      lingerRemainingMs: lingering ? this.lingerRemainingMs() : 0,
+    }
   }
 
   async start(opts: NdiStartOptions): Promise<void> {
     if (!this.bindings) {
       throw new Error(this.unavailableReason() || 'NDI not available')
+    }
+    // v0.7.103 — Cancel any pending linger tear-down BEFORE the
+    // persistent-source short-circuit below. The operator is bringing
+    // the source back on-air; we must not let the linger timer fire
+    // mid-broadcast and kill the sender we just resumed. Cancellation
+    // is unconditional — even if the start() call ends up rebuilding
+    // the sender from scratch (rename / resolution change), the linger
+    // timer would only race with the rebuild.
+    if (this.lingerTimer) {
+      clearTimeout(this.lingerTimer)
+      this.lingerTimer = null
+      this.lingerStartedAt = 0
+      this.lingerExpectedMs = 0
+      this.emit('linger-cancelled')
     }
     // Persistent-stream rule: vMix / Wirecast / OBS / Studio Monitor
     // re-acquire a source when our send instance disappears, which
@@ -342,11 +467,16 @@ export class NdiService extends EventEmitter {
     const settings = {
       p_ndi_name: wantedName,
       p_groups: null as unknown as string,
-      // clock_video = true makes NDIlib_send_send_video_v2 block to pace
-      // frames at the declared frame rate. This is what gives NDI its
-      // famously stable, low-jitter output even when our compositor
-      // delivers frames slightly early or late.
-      clock_video: true,
+      // v0.7.220 — clock_video MUST be false now that we use
+      // send_send_video_async_v2. With async send, the NDI worker
+      // thread handles outbound pacing internally; setting clock_video
+      // would queue an additional pacing layer that fights the async
+      // queue and re-introduces the main-thread blocking that v0.7.220
+      // is specifically eliminating. Frame cadence is now driven by
+      // the offscreen BrowserWindow's webContents.setFrameRate(fps)
+      // (frame-capture.ts L93) which gives Chromium-paced, jitter-
+      // free delivery into our send pipeline.
+      clock_video: false,
       clock_audio: false,
     }
     const instance = this.bindings.send_create(settings)
@@ -392,10 +522,17 @@ export class NdiService extends EventEmitter {
     this.stopKeepAlive()
     const fps = this.status.fps || 30
     const intervalMs = Math.max(16, Math.floor(1000 / fps))
-    // Threshold for "stale enough to re-emit". 1.5 frame intervals
-    // means a single missed frame triggers re-emit, but two back-to-
-    // back real frames don't double-up.
-    const staleThresholdMs = Math.floor(intervalMs * 1.5)
+    // v0.7.91 — Tighten the stale window from 1.5 frames to 1.05 frames
+    // so even a SINGLE skipped renderer frame triggers re-emit. With
+    // the previous 1.5x window, OBS/vMix would occasionally see a
+    // sub-100ms gap on top of inherent network jitter and decide our
+    // source was momentarily dead — they'd hold the last frame on
+    // their end (looks fine) but their internal "source healthy" flag
+    // would flip false and the operator's NDI tally would blink red.
+    // Tightening to 1.05x means we re-emit aggressively whenever the
+    // renderer is even one frame behind, so OBS/vMix's source-health
+    // probes never see a gap longer than ~33 ms (one frame at 30 fps).
+    const staleThresholdMs = Math.max(20, Math.floor(intervalMs * 1.05))
     this.keepAliveTimer = setInterval(() => {
       if (!this.senderInstance || !this.bindings) return
       if (this.sendBusy) return
@@ -404,7 +541,12 @@ export class NdiService extends EventEmitter {
       if (Date.now() - last.ts < staleThresholdMs) return
       // Re-emit cached frame. We deliberately do NOT touch lastFrame.ts
       // here — only real renderer frames update it, so successive
-      // stalls keep firing the keep-alive.
+      // stalls keep firing the keep-alive. This is the contract OBS
+      // and vMix rely on: "if the source is alive, frames keep coming
+      // at the advertised cadence". Drop the cadence and they tear
+      // down the connection; maintain it through hiccups and they
+      // hold the connection across renderer crashes, GC pauses,
+      // alt-tab, and Wi-Fi blips.
       this.nativeSendFrame(last.buffer, last.width, last.height)
     }, intervalMs)
     // setInterval keeps the event loop alive in Node — fine, the
@@ -434,6 +576,26 @@ export class NdiService extends EventEmitter {
     this.sendBusy = true
     try {
       const fps = this.status.fps || 30
+      // v0.7.221 — Operator $1600 escalation: "What makes EasyWorship NDI
+      // output play smoothly in other apps? Implement that here." Part of
+      // the answer: stamping a real monotonic timecode on every frame
+      // instead of BigInt(0). NDI timecode is in 100-ns intervals (per
+      // NDI SDK docs). Receivers (OBS / vMix / Wirecast) use timecode
+      // for jitter buffer pacing — when timecode is 0, the receiver
+      // falls back to system-clock arrival times, which drift relative
+      // to the source's true frame cadence (especially under Windows
+      // SwapBuffers + GC pressure on the operator PC). With a real
+      // monotonic timecode the receiver can low-pass filter wire jitter
+      // and present at the source-true cadence — the same trick EW
+      // uses to keep its NDI output silky on overloaded operator
+      // machines. process.hrtime.bigint() is a monotonic high-res clock
+      // unaffected by NTP adjustments or system sleep. Anchor at first
+      // frame so the value starts near 0 (within u63 range for
+      // generations).
+      if (this.senderStartHrTimeNs === BigInt(0)) {
+        this.senderStartHrTimeNs = process.hrtime.bigint()
+      }
+      const tc100ns = (process.hrtime.bigint() - this.senderStartHrTimeNs) / BigInt(100)
       const frame = {
         xres: width,
         yres: height,
@@ -442,13 +604,19 @@ export class NdiService extends EventEmitter {
         frame_rate_D: 1000,
         picture_aspect_ratio: width / height,
         frame_format_type: FRAME_FORMAT_PROGRESSIVE,
-        timecode: BigInt(0) as unknown as number,
+        timecode: tc100ns as unknown as number,
         p_data: bgraBuffer,
         line_stride_in_bytes: width * 4,
         p_metadata: null as unknown as string,
-        timestamp: BigInt(0) as unknown as number,
+        timestamp: tc100ns as unknown as number,
       }
-      this.bindings.send_send_video_v2(this.senderInstance, frame)
+      // v0.7.220 — Async send. Returns immediately; NDI worker thread
+      // reads from `bgraBuffer` until the next async_v2 call. Buffer
+      // lifetime is guaranteed by the 2-slot videoBufferPool in
+      // sendFrame and the keep-alive ticker re-using lastFrame.buffer
+      // (re-submitting the same pointer is explicitly allowed by the
+      // NDI SDK and is how the keep-alive contract has always worked).
+      this.bindings.send_send_video_async_v2(this.senderInstance, frame)
       this.status.frameCount += 1
       if (this.status.frameCount % 30 === 0) {
         this.emit('frame', this.status.frameCount)
@@ -461,10 +629,22 @@ export class NdiService extends EventEmitter {
   }
 
   async stop(): Promise<void> {
+    // v0.7.103 — Clear any pending linger timer so it can't double-
+    // fire after we've already torn the sender down. Safe to call
+    // even when no linger is active (no-op).
+    if (this.lingerTimer) {
+      clearTimeout(this.lingerTimer)
+      this.lingerTimer = null
+      this.lingerStartedAt = 0
+      this.lingerExpectedMs = 0
+    }
     // v0.7.12 — Always stop the keep-alive ticker first so it can't
     // race with send_destroy and crash the native runtime by writing
     // into a freed sender pointer.
     this.stopKeepAlive()
+    // v0.7.194-hotfix.11 Item #3 — Same race applies to the bridge
+    // timer; disarm before sender teardown.
+    this.disarmBridge()
     if (this.senderInstance && this.bindings) {
       try {
         this.bindings.send_destroy(this.senderInstance)
@@ -475,6 +655,19 @@ export class NdiService extends EventEmitter {
       this.lastDestroyAt = Date.now()
     }
     this.lastFrame = null
+    // v0.7.220 — Release the 2-slot video buffer pool (~16MB at 1080p)
+    // on sender teardown. Next start() will lazy-allocate fresh slots
+    // on the first frame at whatever resolution is active. Without
+    // this, an operator who switches projector resolution between
+    // sessions would keep the old-resolution pool alive in memory
+    // (small leak, but adds up across many resolution changes during
+    // a long event day).
+    this.videoBufferPool = []
+    this.videoBufferIndex = 0
+    this.videoBufferCapacity = 0
+    // v0.7.221 — Reset monotonic timecode anchor on teardown so the
+    // next sender re-anchors at 0 on its first frame.
+    this.senderStartHrTimeNs = BigInt(0)
     this.status = { running: false, frameCount: this.status.frameCount }
 
     // v0.7.56 — Full NDI runtime recycle on operator-initiated stop.
@@ -520,6 +713,138 @@ export class NdiService extends EventEmitter {
    * have only milliseconds before the process exits and the fadeout
    * would add user-perceptible latency.
    */
+  /**
+   * v0.7.103 — Linger stop. The operator-initiated Disconnect path
+   * (renderer ndi:stop). Behaves like gracefulStop in that we emit
+   * a brief fade-to-black, but instead of then running send_destroy
+   * + NDIlib_destroy (which would retract the mDNS advertisement
+   * and drop the source from OBS / vMix / Wirecast / Studio Monitor)
+   * we leave the NDI sender ALIVE on the wire for `lingerSeconds`,
+   * with the keep-alive ticker pumping the cached black frame at the
+   * configured fps. To downstream receivers the source remains
+   * "live, currently black" — they keep the connection open, keep
+   * the source listed, and never need a manual re-add.
+   *
+   * If start() is called inside the linger window with a matching
+   * source name + geometry + fps, we cancel the timer and reuse
+   * the existing sender — fresh real frames replace the black with
+   * zero source-acquire flicker.
+   *
+   * If the timer fires (operator never came back), full stop() runs
+   * and the sender is torn down for real.
+   *
+   * Trade-offs vs. the previous gracefulStop-everywhere policy:
+   *   + Reconnect within ~60s is instant and seamless to receivers.
+   *   + OBS/vMix never need to be touched on the operator's
+   *     downstream machine.
+   *   + The Disconnect button still gives a clean fade-to-black
+   *     event on the wire so operators downstream visually see
+   *     "they went off-air".
+   *   – ~60s of NDI runtime + worker threads + mDNS responder are
+   *     held alive after Disconnect. No CPU impact (keep-alive
+   *     pumps ~33ms BGRA copies of a single black buffer); ~8 MB
+   *     RAM at 1080p (one black BGRA buffer + sender state).
+   */
+  async lingerStop(blackFrameMs = 200, lingerSeconds = 60): Promise<void> {
+    if (!this.senderInstance || !this.bindings) {
+      return this.stop()
+    }
+    // Cancel any in-flight linger first (e.g., operator double-clicked
+    // Disconnect, or hit Disconnect→Reconnect→Disconnect rapidly).
+    if (this.lingerTimer) {
+      clearTimeout(this.lingerTimer)
+      this.lingerTimer = null
+    }
+    const w = this.status.width ?? 1280
+    const h = this.status.height ?? 720
+    const fps = this.status.fps || 30
+    const frameMs = Math.max(1, Math.floor(1000 / fps))
+    const totalFrames = Math.max(1, Math.ceil(blackFrameMs / frameMs))
+    // BGRA opaque black: B=0,G=0,R=0,A=255. Held for the duration of
+    // the linger window via keep-alive re-emission.
+    const black = Buffer.alloc(w * h * 4)
+    for (let i = 3; i < black.length; i += 4) black[i] = 255
+    // Stream the fade-to-black at the configured frame cadence so
+    // receivers see a clean, paced go-dark transition rather than a
+    // single-tick burst.
+    // v0.7.220 — Pre-fix this was a tight `for` loop relying on
+    // clock_video=true to BLOCK each send_video_v2 for ~frameMs.
+    // Under async_v2 + clock_video=false the FFI returns instantly,
+    // so the same tight loop would dump every fade frame into NDI's
+    // async queue in one tick — receivers might coalesce them down
+    // to a single black flash instead of a paced fade. We pace
+    // explicitly via setTimeout-await between sends.
+    for (let i = 0; i < totalFrames; i++) {
+      this.nativeSendFrame(black, w, h)
+      if (i < totalFrames - 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, frameMs))
+      }
+    }
+    // Pin the cached frame to BLACK so the keep-alive ticker keeps
+    // emitting black at the configured fps for the linger window —
+    // the source stays "alive but black" to receivers, the mDNS
+    // advertisement stays published, and OBS/vMix retain their
+    // open connection.
+    this.lastFrame = { buffer: black, width: w, height: h, ts: Date.now() }
+    // Schedule the real tear-down. clamp to [1s, 10min] for safety.
+    const lingerMs = Math.max(1000, Math.min(600_000, Math.floor(lingerSeconds * 1000)))
+    this.lingerStartedAt = Date.now()
+    this.lingerExpectedMs = lingerMs
+    this.lingerTimer = setTimeout(() => {
+      this.lingerTimer = null
+      const heldMs = Date.now() - this.lingerStartedAt
+      this.lingerStartedAt = 0
+      this.lingerExpectedMs = 0
+      console.log(`[ndi] linger window expired after ${heldMs}ms — running full stop()`)
+      void this.stop().catch(() => undefined)
+      this.emit('linger-expired')
+    }, lingerMs)
+    console.log(`[ndi] linger started — sender held alive for ${lingerMs}ms`)
+    this.emit('linger-started', { lingerMs })
+    // NOTE: do NOT change this.status.running here. From the
+    // wire/protocol perspective the sender IS still running; only
+    // the visual content is now black. main.ts will emit its own
+    // ndi:status with running=true so the renderer UI can show
+    // an appropriate "off-air (holding source)" indicator if it
+    // wants to (it doesn't have to — the existing UI just sees
+    // the source still listed in Studio Monitor and is happy).
+  }
+
+  /**
+   * v0.7.103 — Cancel an in-flight linger window without calling
+   * start(). Useful for shutdown paths where we want to skip the
+   * linger entirely and tear down immediately. Returns true if
+   * a linger was actually cancelled.
+   */
+  cancelLinger(): boolean {
+    if (this.lingerTimer) {
+      clearTimeout(this.lingerTimer)
+      this.lingerTimer = null
+      this.lingerStartedAt = 0
+      this.lingerExpectedMs = 0
+      this.emit('linger-cancelled')
+      return true
+    }
+    return false
+  }
+
+  /** v0.7.103 — Whether the sender is currently in linger mode. */
+  isLingering(): boolean {
+    return this.lingerTimer !== null
+  }
+
+  /**
+   * v0.7.103 — Diagnostic: how much of the linger window remains.
+   * Returns 0 when not lingering. Useful for surfacing a countdown
+   * to operators in the future ("source held for OBS/vMix — 47s
+   * left until full disconnect").
+   */
+  lingerRemainingMs(): number {
+    if (!this.lingerTimer) return 0
+    const elapsed = Date.now() - this.lingerStartedAt
+    return Math.max(0, this.lingerExpectedMs - elapsed)
+  }
+
   async gracefulStop(blackFrameMs = 500): Promise<void> {
     if (!this.senderInstance || !this.bindings) {
       return this.stop()
@@ -532,13 +857,21 @@ export class NdiService extends EventEmitter {
     const totalFrames = Math.max(1, Math.ceil(blackFrameMs / frameMs))
     // BGRA opaque black: B=0,G=0,R=0,A=255. Allocating once is fine
     // (1080p = ~8MB, lives only for the fadeout). We reuse the same
-    // buffer across all the fadeout sends — NDI copies it internally
-    // before send_send_video_v2 returns (clock_video=true blocks
-    // until the slot is consumed).
+    // buffer across all the fadeout sends — NDI's async send accepts
+    // the same buffer pointer repeatedly (each submission means
+    // "process again"); the buffer stays valid for the lifetime of
+    // gracefulStop's stack frame which outlives every send.
+    // v0.7.220 — Same pacing rationale as lingerStop above: under
+    // async_v2 + clock_video=false we MUST pace fade frames via
+    // setTimeout-await; tight loop would coalesce into a single
+    // black flash on the receiver instead of a visible fade.
     const black = Buffer.alloc(w * h * 4)
     for (let i = 3; i < black.length; i += 4) black[i] = 255
     for (let i = 0; i < totalFrames; i++) {
       this.nativeSendFrame(black, w, h)
+      if (i < totalFrames - 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, frameMs))
+      }
     }
     return this.stop()
   }
@@ -570,21 +903,101 @@ export class NdiService extends EventEmitter {
     }
   }
 
+  /**
+   * v0.7.194-hotfix.11 Item #3 — Frame bridge for Wirecast/OBS/vMix
+   * continuity across FrameCapture rebuilds.
+   *
+   * Called by main.ts BEFORE the await chain that destroys the old
+   * BrowserWindow and constructs a new one (Full↔LT flip, transparent
+   * toggle, etc.). During that window, no fresh frames arrive at
+   * sendFrame() so receivers normally see the cached lastFrame held
+   * by the keep-alive ticker — BUT clock_video=true blocks
+   * send_send_video_v2 to the wire cadence, and any sub-second event-
+   * loop hiccup during BrowserWindow.destroy() / create / loadURL
+   * can stretch the gap past Wirecast's 1s "no signal" detector. The
+   * bridge spawns a SEPARATE tight setInterval (16 ms) that re-emits
+   * lastFrame ignoring the keep-alive's stale-window check, so even
+   * if the keep-alive timer is starved by GC or sync work, the bridge
+   * timer keeps the wire alive. Self-disarms after armBridge's ms
+   * window OR on disarmBridge(), whichever comes first.
+   *
+   * Safe to call when no sender exists: no-op. Safe to call when
+   * already armed: extends the window to the new deadline.
+   */
+  armBridge(ms = 3000): void {
+    if (!this.senderInstance || !this.bindings) return
+    const deadline = Date.now() + Math.max(100, Math.min(10_000, ms))
+    if (deadline > this.bridgeDeadline) this.bridgeDeadline = deadline
+    if (this.bridgeTimer) return
+    this.bridgeTimer = setInterval(() => {
+      if (!this.senderInstance || !this.bindings) {
+        this.disarmBridge()
+        return
+      }
+      if (Date.now() >= this.bridgeDeadline) {
+        this.disarmBridge()
+        return
+      }
+      if (this.sendBusy) return
+      const last = this.lastFrame
+      if (!last) return
+      this.nativeSendFrame(last.buffer, last.width, last.height)
+      // v0.7.220 — Bridge tick interval MUST be paced to configured
+      // fps. Pre-fix it was 16ms (62fps) which was implicitly capped
+      // by the SYNC send_video_v2 blocking under clock_video=true.
+      // Under async_v2 + clock_video=false the FFI returns instantly,
+      // so a 16ms ticker would burst-send duplicate frames at 62fps
+      // — wasting NDI worker thread cycles and confusing receiver
+      // jitter buffers. Cap at fps (33ms @ 30fps, 16ms @ 60fps).
+    }, Math.max(16, Math.floor(1000 / (this.status.fps || 30))))
+  }
+
+  disarmBridge(): void {
+    if (this.bridgeTimer) {
+      clearInterval(this.bridgeTimer)
+      this.bridgeTimer = null
+    }
+    this.bridgeDeadline = 0
+  }
+
   sendFrame(bgraBuffer: Buffer, width: number, height: number): void {
     if (!this.senderInstance || !this.bindings) return
-    // v0.7.12 — Cache the frame BEFORE pushing so even if the native
-    // call is currently blocked (sendBusy), the keep-alive ticker has
-    // a fresh frame to emit on its next tick. We make a defensive
-    // COPY because the BrowserWindow frame subscription's bitmap is
-    // owned by Chromium's compositor — it's reused for the next
-    // capture immediately after our callback returns, so retaining a
-    // reference for keep-alive re-emit would race against Chromium
-    // overwriting it. Copy is cheap (1080p = ~8MB / 30fps) compared
-    // to the alternative of dropping frames or showing tearing.
-    const copy = Buffer.allocUnsafe(bgraBuffer.length)
-    bgraBuffer.copy(copy)
-    this.lastFrame = { buffer: copy, width, height, ts: Date.now() }
-    this.nativeSendFrame(copy, width, height)
+    // v0.7.12 — Cache the frame BEFORE pushing so even if a native
+    // send is currently in flight (sendBusy), the keep-alive ticker
+    // has a fresh frame to emit on its next tick. We must COPY because
+    // the BrowserWindow frame subscription's bitmap is owned by
+    // Chromium's compositor — it is reused for the next capture
+    // immediately after our callback returns, so retaining a
+    // reference would race against Chromium overwriting it.
+    //
+    // v0.7.220 — The copy now lands in a 2-slot pre-allocated buffer
+    // pool instead of a fresh Buffer.allocUnsafe per frame. Rationale:
+    //   • Allocator + GC pressure: 1080p BGRA = ~8.3MB/frame. At 30fps
+    //     that is ~250MB/s of allocate-then-discard churn on the main
+    //     process. Empirically this is one of the top main-thread
+    //     stutter sources on long-running sessions (V8 young-gen GC
+    //     pauses scale with allocation rate, not live set).
+    //   • Async send buffer-lifetime contract: send_send_video_async_v2
+    //     requires the buffer to stay valid until the NEXT async send.
+    //     With 2 slots and a sendBusy mutex (at most ONE outstanding
+    //     async send at a time), the slot NDI is currently reading is
+    //     never the slot we are about to write into next.
+    // The pool is lazy-allocated on first frame and re-allocated only
+    // on a resolution change (rare; e.g. operator switches projector
+    // from 1080p to 4K).
+    const needed = bgraBuffer.length
+    if (this.videoBufferCapacity !== needed || this.videoBufferPool.length !== 2) {
+      this.videoBufferPool = [Buffer.allocUnsafe(needed), Buffer.allocUnsafe(needed)]
+      this.videoBufferCapacity = needed
+      this.videoBufferIndex = 0
+    }
+    const slot = this.videoBufferPool[this.videoBufferIndex]!
+    bgraBuffer.copy(slot)
+    this.lastFrame = { buffer: slot, width, height, ts: Date.now() }
+    this.nativeSendFrame(slot, width, height)
+    // Advance index AFTER submit. Next sendFrame writes into the OTHER
+    // slot, which is the one NDI is NOT currently reading from.
+    this.videoBufferIndex = (this.videoBufferIndex + 1) % 2
   }
 
   /**

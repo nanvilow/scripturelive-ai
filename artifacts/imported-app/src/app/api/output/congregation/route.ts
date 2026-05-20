@@ -45,9 +45,57 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 #output.ratio-16x9{aspect-ratio:16/9;width:min(100vw,calc(100vh*16/9));height:min(100vh,calc(100vw*9/16))}
 #output.ratio-4x3{aspect-ratio:4/3;width:min(100vw,calc(100vh*4/3));height:min(100vh,calc(100vw*3/4))}
 #output.ratio-21x9{aspect-ratio:21/9;width:min(100vw,calc(100vh*21/9));height:min(100vh,calc(100vw*9/21))}
-.bg-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;pointer-events:none}
-.bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);pointer-events:none}
-.slide-content{position:relative;z-index:1;text-align:center;width:90%;max-width:90vw;padding:4vh 3vw;display:flex;flex-direction:column;align-items:center;justify-content:center}
+/* v0.7.221 — Operator escalation: image AND video backgrounds were too
+   dark to read on the projector / NDI feed. Effective brightness was
+   .4 * (1 - .3) = .28 of source pixel value (bg opacity * (1 - scrim
+   alpha)). Operator side-by-side proof approved opacity .4 → .6 +
+   scrim .3 → .2, taking effective brightness to .6 * .8 = .48 (~70%
+   brighter) while keeping enough contrast for white verse text +
+   text-shadow to stay WCAG-AA legible. Same pair applied to .lt-bg
+   / .lt-bg-overlay (lower-third surface) so chyron and full-screen
+   modes match. The legacy .bg-image class shares the .bg-overlay
+   stack so it follows the same axis. */
+.bg-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.6;pointer-events:none}
+.bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.2);pointer-events:none;z-index:1}
+/* v0.7.187 — Persistent BG VIDEO layer (PERFORMANCE FIX). Pre-fix, the
+   verse-background <video> was inlined into #output's innerHTML on every
+   render. Because the renderer reassigns $('output').innerHTML on every
+   SSE/poll tick (see L665-696 lifecycle note), the <video> was destroyed
+   and recreated several times per second — restarting from t=0 each time,
+   which the operator perceived as constant judder/freezing across all 6
+   surfaces (preview iframe, Live Display, secondary screen, NDI, projector,
+   OBS browser source). The setVid() cache pattern below (~L1062) protects
+   FOREGROUND media but never covered BG.
+   Fix: a sibling layer #bgLayer that is NEVER touched by output.innerHTML.
+   setBgVid(url) (defined just above render()) rebuilds the cached <video>
+   ONLY when the URL changes — same-URL calls are no-op, so successive
+   renders leave playback continuous. Sized identically to #output via the
+   same ratio classes so the bg fills the same letterboxed inner area
+   (no leaking into the black surround when viewport != displayRatio). */
+#bgLayer{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:100%;height:100%;pointer-events:none;z-index:0;overflow:hidden}
+#bgLayer.ratio-16x9{aspect-ratio:16/9;width:min(100vw,calc(100vh*16/9));height:min(100vh,calc(100vw*9/16))}
+#bgLayer.ratio-4x3{aspect-ratio:4/3;width:min(100vw,calc(100vh*4/3));height:min(100vh,calc(100vw*3/4))}
+#bgLayer.ratio-21x9{aspect-ratio:21/9;width:min(100vw,calc(100vh*21/9));height:min(100vh,calc(100vw*9/21))}
+/* v0.7.221 — GPU compositing hints for the background <video>/<img>.
+   #bgLayer sits at z:0 with #output painting opaque slide content at
+   z:1 on top. Without an explicit compositing hint Chromium puts both
+   layers on the same paint surface, so every text re-render (slide
+   transition, animation, anti-aliasing pass) invalidates the bg
+   pixels too and the bg video has to repaint from scratch. That is
+   the dominant source of judder operators saw on the Live Display
+   pane + Secondary Screen popup, and the dominant source of dropped
+   frames on the NDI offscreen capture. translateZ(0) promotes the bg
+   to its own GPU layer (independent of #output's paint), will-change
+   tells the compositor to keep it on the GPU between frames, and
+   backface-visibility:hidden avoids subpixel snap glitches on scaled
+   surfaces (Secondary Screen popup at non-integer DPRs). These are
+   the same primitives EasyWorship/ProPresenter use for their bg
+   video layers. Cheap (1 extra compositor layer) and broadcast-safe. */
+/* v0.7.221 — opacity:.4 → .6 (brightness fix, see .bg-image comment
+   above). GPU compositing hints unchanged (also v0.7.221). */
+#bgLayer > video, #bgLayer > img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.6;display:block;transform:translateZ(0);will-change:transform,opacity;backface-visibility:hidden}
+#output{position:relative;z-index:1}
+.slide-content{position:relative;z-index:1;text-align:center;width:90%;max-width:90vw;height:100%;max-height:100%;min-height:0;box-sizing:border-box;overflow:hidden;padding:4vh 3vw;display:flex;flex-direction:column;align-items:center;justify-content:center}
 /* v0.6.3 — Bible reference text: BOLD by default + full opacity. The
    previous .55 opacity + default 500 weight made the chapter / verse
    line whisper-soft on the projector and effectively invisible on the
@@ -55,7 +103,7 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    for the reference to read clearly so the congregation sees what
    chapter is being read. Bound to ALL surfaces (live display,
    secondary screen, NDI lower-third) since they share this engine. */
-.slide-reference{font-size:clamp(.85rem,1.4vw,1.6rem);opacity:1;font-weight:700;margin-bottom:1.4vh;letter-spacing:.06em}
+.slide-reference{font-size:clamp(.85rem,1.4vw,1.6rem);opacity:1;font-weight:700;margin-bottom:1.4vh;letter-spacing:.06em;width:100%;display:block;box-sizing:border-box}
 .slide-text{font-weight:500;line-height:1.4;margin:0;padding:0;word-wrap:break-word;overflow-wrap:break-word}
 /* When the verse splitter hands us multiple short lines, render them
    as a single flowing paragraph so words wrap on a consistent baseline
@@ -68,7 +116,17 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 .theme-easter{background:linear-gradient(135deg,#0a3c2a,#042f2e)}
 .theme-christmas{background:linear-gradient(135deg,#3c0a0a,#4c0519)}
 .theme-praise{background:linear-gradient(135deg,#3c3a0a,#451a03)}
-.theme-minimal{background:linear-gradient(135deg,#0a0a0a,#171717)}
+/* v0.7.221 — Operator escalation: "I can't see anything when no
+   background uploaded". With Minimal as the default theme and no
+   customBackground configured, the surface was a near-black void
+   (#0a0a0a → #171717). Brightened to a visible slate (#1e1e24 →
+   #2a2a35) so the projector / NDI feed reads as an actual surface
+   even when the operator has not yet uploaded a custom background.
+   Still firmly in the modern dark-UI register — keeps high text
+   contrast and reads as intentional design, not a fade-to-black.
+   Same value applied to .lt-box.theme-minimal so the lower-third
+   chyron card matches the full-screen Minimal surface. */
+.theme-minimal{background:linear-gradient(135deg,#1e1e24,#2a2a35)}
 /* v0.7.15 — Lower-third stretched to fill ~95% of the frame width.
    Operator screenshot (red box covering near-edge-to-edge of preview)
    showed the v0.7.8-restored 68rem max-width was capping the card at
@@ -78,7 +136,28 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    ~95vw on every surface (preview iframe + secondary screen + NDI
    capture, since they share this renderer). Pixel-WYSIWYG is
    preserved because the same defaults apply everywhere. */
-.lower-third{position:absolute;left:0;right:0;display:flex;align-items:center;justify-content:center;padding:0 2.5%;container-type:size}
+/* v0.7.173 — align-items: stretch (was: center). Operator complaint:
+   the lower-third frame on the in-app Live Display, secondary screen
+   and OBS browser source was visibly shrinking to hug the verse text
+   instead of staying frozen at the height bucket (sm/md/lg =
+   22/33/45 percent of the 16:9 frame). Root cause: align-items:center
+   on this flex parent let the .lt-box child collapse to its intrinsic
+   content height in some layout passes (Chromium recomputes percent
+   heights against the cross-axis, and height:100% on a centred flex
+   child can resolve to auto when the parent main-axis sizing is in
+   flight). Switching to stretch forces the .lt-box to fill the parent
+   bucket height on every surface — pixel-identical to the Lower Third
+   Settings preview, which already happened to render correctly because
+   its tighter aspect made the centred-vs-stretched difference invisible.
+   The .lt-box already carries justify-content:center so the verse text
+   continues to centre inside the (now properly stretched) frame. */
+/* v0.7.176 — Tighten horizontal padding so the .lt-box renders as a
+   centred chyron card (matching the operator's target screenshot
+   pvktjHxy + the in-app Lower Third Settings preview), not a near
+   edge-to-edge bar. Also keeps align-items:stretch from v0.7.173
+   Fix D so the box height is driven by the parent bucket and never
+   shrinks/expands to hug the verse text. */
+.lower-third{position:absolute;left:0;right:0;display:flex;align-items:stretch;justify-content:center;padding:0;container-type:size}
 .lower-third.bottom{bottom:6%}.lower-third.top{top:6%}
 /* Lower-third is now a rounded "card" that holds the verses. The
    upper area outside it stays transparent (#000) so any background
@@ -86,6 +165,18 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    v0.7.15 — max-width cap removed (was 68rem). Width is now driven
    by the .lower-third side padding above, so the card scales from
    small previews up to full 1920px frames consistently. */
+/* v0.7.176 — REVERT v0.7.173 Fix B. The pre-v0.7.173 dark plate
+   (linear gradient + drop-shadow) is restored as the .lt-box default
+   on every output surface. Operator field-report after v0.7.173:
+   "you have destroyed it completely. The main background is
+   transparent while the main background frame of the NDI lower
+   third and text are visible." The plate IS the lower-third —
+   without it the verse text floats unreadably over the video.
+   Operators who want a fully-transparent NDI matte continue to
+   opt IN via the legacy .lt-box.transparent flag (v0.6.3, NDI tab
+   "Transparent lower-third" toggle). Operator-uploaded background
+   images via .lt-bg / .lt-bg-overlay still layer on top of the
+   plate as before. */
 .lt-box{position:relative;width:100%;padding:3% 5%;display:flex;flex-direction:column;justify-content:center;overflow:hidden;height:100%;box-sizing:border-box;border-radius:1.25rem;box-shadow:0 8px 28px rgba(0,0,0,.45);background:linear-gradient(135deg,#0a0a0a,#171717)}
 /* v0.7.15 — .ndi-full class kept as a no-op for backwards-compat
    with any persisted SSE state that still tries to add it. The base
@@ -93,12 +184,28 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    longer need a separate "full" variant. */
 .lower-third.ndi-full{}
 .lt-box.ndi-full{}
+/* v0.7.176 — REVERT v0.7.173 theme-* neutraliser. Theme gradients
+   apply to the lower-third box again (matching the pre-v0.7.173
+   behaviour the operator confirmed correct). The .lt-box.transparent
+   opt-in remains the only way to drop the plate. */
 .lt-box.theme-worship{background:linear-gradient(135deg,#1e0a3c,#1e1b4b)}
 .lt-box.theme-sermon{background:linear-gradient(135deg,#3c1a0a,#451a03)}
 .lt-box.theme-easter{background:linear-gradient(135deg,#0a3c2a,#042f2e)}
 .lt-box.theme-christmas{background:linear-gradient(135deg,#3c0a0a,#4c0519)}
 .lt-box.theme-praise{background:linear-gradient(135deg,#3c3a0a,#451a03)}
-.lt-box.theme-minimal{background:linear-gradient(135deg,#0a0a0a,#171717)}
+/* v0.7.221 — Lower-third Minimal MUST be an explicit compound
+   selector .lt-box.theme-minimal (no space, no comment between),
+   NOT a descendant selector .lt-box .theme-minimal nor a comment-
+   collapsed .lt-box/**/.theme-minimal (architect medium-risk
+   caveat: comment-collapsed compound selectors are technically
+   valid per CSS tokenizer but rely on cascade ordering and are
+   brittle to unrelated reorders). Value MUST match the full-screen
+   .theme-minimal slate gradient defined at L132 so the lower-third
+   chyron and the full-screen Minimal surface stay pixel-identical
+   when the operator toggles Display Mode mid-event. (ASCII quotes
+   only — this CSS lives inside a JS template literal and backticks
+   in the comment would close the outer string.) */
+.lt-box.theme-minimal{background:linear-gradient(135deg,#1e1e24,#2a2a35)}
 /* v0.6.3 — NDI lower-third transparent matte. When the operator flips
    "Transparent lower-third" on the NDI tab, the rounded card drops
    its gradient + drop-shadow so vMix / OBS receive a clean alpha
@@ -108,8 +215,12 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 .lt-box.transparent{background:transparent !important;box-shadow:none !important}
 .lt-box.transparent .lt-bg,.lt-box.transparent .lt-bg-overlay{display:none !important}
 /* Custom background image — clipped to the rounded box only. */
-.lt-box .lt-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;border-radius:inherit;pointer-events:none}
-.lt-box .lt-bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);border-radius:inherit;pointer-events:none}
+/* v0.7.221 — Operator brightness fix (see .bg-image comment at top
+   of CSS): opacity .4 → .6, scrim alpha .3 → .2. Lower-third bg
+   stack mirrors the full-screen bg stack so chyron and full
+   surfaces stay visually consistent. */
+.lt-box .lt-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.6;border-radius:inherit;pointer-events:none}
+.lt-box .lt-bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.2);border-radius:inherit;pointer-events:none}
 .lt-box .lt-content{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;width:100%;height:100%;overflow:hidden;min-height:0}
 /* v0.7.5 — Hard clamp the verse text to N lines inside the FIXED
    lower-third frame (T503). Combined with the auto-fit ltFs clamp
@@ -127,7 +238,7 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 /* v0.6.3 — lower-third reference: same bold default as full-screen so
    broadcast viewers see the chapter clearly even at lower-third sizes. */
 .lt-box .slide-reference{font-size:clamp(.7rem,min(2cqw,4cqh),1.4rem);opacity:1;font-weight:700;line-height:1.2;margin-bottom:.6cqh}
-.lt-box .slide-text,.lt-box .slide-title{font-weight:600;line-height:1.25}
+.lt-box .slide-text,.lt-box .slide-title{font-weight:700;line-height:1.25}
 .align-left{text-align:left;align-items:flex-start}
 .align-right{text-align:right;align-items:flex-end}
 .align-center{text-align:center;align-items:center}
@@ -156,7 +267,7 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 <!-- v0.5.33 — bake the splash watermark into the initial body so the
      surface is NEVER visually blank, even before SSE connects or the
      first poll lands. The renderer replaces this on first state. -->
-<div id="stage"><div id="output"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;color:#fff;text-align:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif"><div style="font-size:clamp(2rem,7vmin,7rem);font-weight:600;letter-spacing:-.01em;line-height:1.05;opacity:.4">Scripture AI</div><div style="margin-top:1.4vmin;font-size:clamp(.85rem,1.8vmin,1.6rem);opacity:.3;font-weight:500">Powered By WassMedia (+233246798526)</div></div></div></div>
+<div id="stage"><div id="bgLayer"></div><div id="output"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;color:#fff;text-align:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif"><div style="font-size:clamp(2rem,7vmin,7rem);font-weight:600;letter-spacing:-.01em;line-height:1.05;opacity:.4">Scripture AI</div><div style="margin-top:1.4vmin;font-size:clamp(.85rem,1.8vmin,1.6rem);opacity:.3;font-weight:500">Powered By WassMedia (+233246798526)</div></div></div></div>
 <script>
 // Surface any uncaught script error as a visible red banner instead of
 // silently leaving the splash up forever (which is exactly how the
@@ -209,6 +320,23 @@ var IS_NDI=false;
 var FORCE_TRANSPARENT=false;
 var FORCE_LT=false;
 var FORCE_POS=null;
+// v0.7.127 — Settings-page Preview iframe mode. When ?preview=1 is
+// set, this page does NOT connect to SSE / poll. Instead it listens
+// for postMessage from the parent window with payloads built by the
+// SAME buildOutputPayload() the broadcaster uses, then hands them to
+// the SAME applyRender() the live secondary screen + NDI capture
+// use. Result: the preview is the live renderer running off-screen,
+// so what the operator sees in Settings is byte-identical to what
+// the projector + NDI feed will paint. ?fullScreen=1 forces the
+// full-screen layout regardless of operator's displayMode (used by
+// the side-by-side "Preview (Full Screen)" + "Preview (Lower Third)"
+// cards on Display & Output so both modes render simultaneously
+// without the operator having to toggle their actual setting).
+var IS_PREVIEW=false;
+var FORCE_FULL=false;
+var IS_NO_MEDIA=false;
+// v0.7.221 — see freezeBg parser block below.
+var IS_FROZEN_BG=false;
 // v0.7.5.1 — FORCE_LH / FORCE_SC let the Electron NDI capture pin the
 // operator's lower-third HEIGHT bucket and SCALE multiplier into the
 // URL itself, so the captured BrowserWindow renders the right box
@@ -220,10 +348,19 @@ var FORCE_POS=null;
 // by the renderer below with PRIORITY over st.* so URL wins.
 var FORCE_LH=null;
 var FORCE_SC=null;
+// v0.7.194-hotfix.4 — Per-feed full-screen background override pushed
+// from the NDI panel via buildCongregationParams. Default = themed
+// (v0.6.9 behaviour: themed gradient + custom bg rendered into NDI,
+// identical to the in-room projector). When set to 'transparent' we
+// strip both so vMix/OBS/Wirecast receive verse text on a clean alpha
+// matte. Lower-third has the equivalent toggle (ndiLowerThirdTransparent
+// + ltTransparentClass) for its surrounding area.
+var FS_BG_TRANSPARENT=false;
 try{
   var __qp=new URLSearchParams(location.search);
   IS_NDI=(__qp.get('ndi')==='1');
   FORCE_TRANSPARENT=(__qp.get('transparent')==='1');
+  FS_BG_TRANSPARENT=(__qp.get('fsbg')==='transparent');
   FORCE_LT=(__qp.get('lowerThird')==='1');
   var __p=__qp.get('position');
   if(__p==='top'||__p==='bottom')FORCE_POS=__p;
@@ -231,22 +368,78 @@ try{
   if(__lh==='sm'||__lh==='md'||__lh==='lg')FORCE_LH=__lh;
   var __sc=parseFloat(__qp.get('sc')||'');
   if(isFinite(__sc)&&__sc>=0.5&&__sc<=2)FORCE_SC=__sc;
+  IS_PREVIEW=(__qp.get('preview')==='1');
+  FORCE_FULL=(__qp.get('fullScreen')==='1');
+  // v0.7.198 — When ?noMedia=1 is set, the renderer skips the
+  // <video>/<img> branch entirely and falls through to the standard
+  // verse/background path. Used by the SETTINGS preview iframes
+  // (Display & Output Live Preview, Typography preview, NDI Live
+  // Preview inside the NDI panel) where the operator wants to see
+  // ONLY the background — not 5 simultaneous video decoders running
+  // for what is essentially a typography auditioning UI. The actual
+  // outputs (Main Preview/Live columns, secondary screen, offscreen
+  // NDI FrameCapture, Browser Source) do NOT pass this flag, so
+  // operator + congregation + OBS still see video.
+  IS_NO_MEDIA=(__qp.get('noMedia')==='1');
+  // v0.7.221 — When ?freezeBg=1 is set, the custom-background <video>
+  // in #bgLayer mounts WITHOUT autoplay/loop and is paused on the
+  // first frame so the surface shows a still poster instead of a
+  // playing clip. Used by every operator-facing PREVIEW surface that
+  // is NOT the real broadcast target: Settings PREVIEW (TYPOGRAPHY),
+  // Settings Custom Background thumbnail, Settings NDI LIVE PREVIEW,
+  // Settings Display & Output LIVE PREVIEW, and the Main Console
+  // PREVIEW pane (the middle column in the operator view). Operator
+  // escalation: a background video was animating in 5+ places on a
+  // single screen, distracting the operator from the actual live
+  // pane and chewing decoder slots/CPU. Real broadcast targets do
+  // NOT pass this flag and keep playing: Main Console LIVE DISPLAY
+  // pane (OutputPreview mirrorLive=true), Secondary Screen popup
+  // window (opened with no query params), Offscreen NDI FrameCapture
+  // (its own URL builder in electron/, no freezeBg). This is a
+  // separate axis from noMedia: noMedia hides media-video SLIDES
+  // (foreground content); freezeBg pauses the BACKGROUND layer.
+  IS_FROZEN_BG=(__qp.get('freezeBg')==='1');
 }catch(e){}
-// Drop body / stage / output backgrounds when running as an NDI
-// alpha-keyed overlay so vMix/OBS receives a clean matte. Done at
-// load time (not in render) so the very first paint already carries
-// the transparent fill — preventing a one-frame black flash. The
-// stylesheet sets html / body / #stage / #output to solid #000 by
-// default (so the projector window is opaque), so all four surfaces
-// must be flipped here when transparent mode is requested.
-if(FORCE_TRANSPARENT){
-  try{
-    document.documentElement.style.background='transparent';
-    document.body.style.background='transparent';
-    var __st=document.getElementById('stage');if(__st)__st.style.background='transparent';
-    var __op=document.getElementById('output');if(__op)__op.style.background='transparent';
-  }catch(e){}
-}
+// v0.7.209 — Force the operator-chosen background with !important
+// inline so it beats OBS Browser Source default Custom CSS
+//   body { background-color: rgba(0,0,0,0); }
+// which OBS appends AFTER our page style and which previously won
+// the cascade (same specificity, later declaration wins) — silently
+// making the OBS feed transparent even when the operator had picked
+// themed full-screen mode. v0.7.202 gated the URL transparent=1
+// param but the underlying CSS override was untouched, so OBS still
+// applied its alpha rule on top of our stylesheet background #000
+// (line 31). Inline style + important beats any stylesheet rule,
+// important or not, so this is the only fix that consistently wins
+// regardless of what OBS / vMix / Wirecast inject into the page.
+// FORCE_TRANSPARENT=true  → operator opted in: paint transparent.
+// FORCE_TRANSPARENT=false → operator did NOT opt in: paint solid #000
+//   so the OBS Browser Source receives the same opaque frame the
+//   in-room projector shows. Done at load time (not in render) so the
+//   very first paint already carries the right fill — preventing a
+//   one-frame flash before render() catches up.
+// v0.7.211 — REVISED v0.7.209. The previous block pinned #output to
+// the same opaque __bgInit as html/body/#stage, but #output is the
+// z-index:1 sibling that sits ON TOP of #bgLayer (z:0, where the
+// operator customBackground video/image lives). Inline #000 on
+// #output therefore COVERED the customBackground entirely — operator
+// reported background image not showing AND OBS/Wirecast not showing
+// the themed background. Fix: #output MUST always be inline transparent
+// so #bgLayer shows through; the wrapper div emitted into output.innerHTML
+// carries the theme gradient itself (L1354, L1516, L1892) when no
+// customBg, or stays transparent (L1352, L1514) when a customBg is
+// mounted. OBS Custom CSS body background-color rgba 0 0 0 0 only
+// targets the body element, so html + body + #stage still need their
+// opaque pin to beat that injection; #output is not a target so
+// transparent is safe. important still required so a later plain
+// style.background empty-string in render() can never clear our intent.
+try{
+  var __bgInit=FORCE_TRANSPARENT?'transparent':'#000';
+  document.documentElement.style.setProperty('background',__bgInit,'important');
+  document.body.style.setProperty('background',__bgInit,'important');
+  var __st=document.getElementById('stage');if(__st)__st.style.setProperty('background',__bgInit,'important');
+  var __op=document.getElementById('output');if(__op)__op.style.setProperty('background','transparent','important');
+}catch(e){}
 let es=null,reconnects=0;
 const $=id=>document.getElementById(id);
 // Hash of the last rendered payload — render() bails out if the next
@@ -291,6 +484,44 @@ function slideFingerprint(s){
     s.displayMode||'',
   ].join('|');
 }
+// v0.7.155 — Detect whether the operator's customBackground URL points
+// at a video file (mp4/webm/mov/mkv/avi/m4v/ogv) or data:video/* URI.
+// Mirrors isVideoBackground() in src/lib/utils.ts; duplicated here
+// because this script is injected into the standalone congregation
+// page and cannot import from the app bundle.
+function isVideoBg(u){
+  if(!u) return false;
+  var s=String(u).toLowerCase();
+  if(s.indexOf('data:video/')===0) return true;
+  return /\\.(mp4|webm|mov|mkv|avi|m4v|ogv)(?:$|[?#])/.test(s);
+}
+// v0.7.155 — Escape a string for safe interpolation inside an HTML
+// double-quoted attribute. Pre-v0.7.155 the customBackground URL was
+// concatenated raw into innerHTML attribute strings; a value
+// containing a double-quote (or angle bracket) could break out of
+// the src attribute and inject arbitrary markup. /api/output
+// state-push is unauthenticated on the local network, so this is the
+// correct surface to harden. We also reject anything that does not
+// look like a safe scheme/path (allow http(s), data:image/*,
+// data:video/*, and root-relative URLs; strip everything else --
+// most importantly javascript: URIs).
+function escAttr(v){
+  return String(v==null?'':v)
+    .replace(/&/g,'&amp;')
+    .replace(/"/g,'&quot;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/'/g,'&#39;');
+}
+function safeBgUrl(u){
+  if(!u) return '';
+  var s=String(u);
+  if(/^https?:\\/\\//i.test(s)) return s;
+  if(/^data:(image|video)\\//i.test(s)) return s;
+  if(s.charAt(0)==='/') return s;
+  return '';
+}
+
 // Subset of settings that actually change what render() draws. Used
 // in the render-key so the captured page only rebuilds DOM when one
 // of these changes — not when an unrelated setting (OpenAI key,
@@ -345,6 +576,21 @@ function settingsRenderKey(st){
     ndRfPos: st.ndiRefPosition,
     ndRfTs: st.ndiRefScale,
     ndTr: st.ndiTranslation,
+    /* v0.7.167 -- Lower-third typography pile (parallel to ndi-star
+       above). Honoured server-side only when USE_LT_OVERRIDES=true
+       (non-NDI && dm starts with lower-third), but included in the
+       key for every surface so any LT-only edit triggers an
+       immediate repaint on the preview/live/secondary/OBS without
+       waiting on an unrelated field to change. Without these the
+       render bails on key===lastRenderKey and the operator's slider
+       drag does nothing until the next slide swap. */
+    ltFf: st.lowerThirdFontFamily,
+    ltFs: st.lowerThirdFontSize,
+    ltSh: st.lowerThirdTextShadow,
+    ltTs: st.lowerThirdTextScale,
+    ltTa: st.lowerThirdTextAlign,
+    ltBc: st.lowerThirdBibleColor,
+    ltBlh: st.lowerThirdBibleLineHeight,
     // v0.6.4 — operator's NDI lower-third size multiplier. Re-render
     // the captured NDI window when the operator drags the slider so
     // vMix/OBS see the new bar height + text scale on the next tick.
@@ -406,6 +652,17 @@ function applyRatio(r){
   if(r==='16:9')o.classList.add('ratio-16x9');
   else if(r==='4:3')o.classList.add('ratio-4x3');
   else if(r==='21:9')o.classList.add('ratio-21x9');
+  // v0.7.187 — mirror the ratio onto #bgLayer so the persistent BG
+  // video/image fills the same letterboxed inner area as #output. If
+  // they diverged, a 4:3 projector with a 16:9 viewport would show the
+  // bg leaking past the slide content into the black surround.
+  var bl=document.getElementById('bgLayer');
+  if(bl){
+    bl.classList.remove('ratio-16x9','ratio-4x3','ratio-21x9');
+    if(r==='16:9')bl.classList.add('ratio-16x9');
+    else if(r==='4:3')bl.classList.add('ratio-4x3');
+    else if(r==='21:9')bl.classList.add('ratio-21x9');
+  }
 }
 
 // Drop the cached live <video> reference whenever the renderer is
@@ -416,6 +673,228 @@ function applyRatio(r){
 function dropLiveVideoCache(){
   window.__liveVideoEl=null;
   window.__liveVideoKey='';
+}
+
+// v0.7.187 — Persistent BG video/image cache (PERFORMANCE FIX for
+// Bible-verse video backgrounds). See the CSS comment at #bgLayer
+// (~L53) for the full rationale. Sibling layer #bgLayer holds a
+// long-lived <video> or <img> element that survives every #output
+// innerHTML rewrite. setBgVid(url) is keyed by URL: same URL on
+// successive renders is a no-op so playback stays continuous.
+// Hard-cut on URL change (operator-explicit choice — instant swap, no
+// fade). Pass '' to clear the layer (blanked / cleared / no bg).
+var __bgUrl='';
+// v0.7.189 — Persistent LT (lower-third) bg cache. Mirrors __bgUrl /
+// setBgVid for the fullscreen path but kept SEPARATE because the LT bg
+// lives INSIDE the chyron card (.lt-box), not behind the whole stage.
+// The cached element is MOVED into the freshly-rebuilt .lt-box on every
+// render via mountLtBg() so it survives the innerHTML rewrite — fixing
+// the t=0 restart-flash on every speech tick that the v0.7.187 #bgLayer
+// hoist missed for LT mode.
+var __ltBgUrl=''; var __ltBgEl=null; var __ltBgOverlay=null;
+// v0.7.194-hotfix.10 — Rewrite legacy /api/upload?file=<uuid> URLs to the
+// scripturelive-media:// custom protocol when running inside Electron.
+// Mirrors resolveMediaUrl() in src/lib/utils.ts. Bypasses the Next.js
+// single-threaded /api/upload route so 5 concurrent <video> decoders
+// (Preview, Live, NDI preview, NDI capture, secondary kiosk) read straight
+// off disk via the OS file cache. Gates on window.scriptureLive.isDesktop
+// so the browser dev-preview pane (no protocol handler) keeps using HTTP.
+// v0.7.194-hotfix.10 GR — Detection MUST tolerate BOTH "has scriptureLive
+// preload" (mainWindow) AND "Electron UA, no preload" (frame-capture NDI
+// offscreen window + createKioskOutput secondary screen). Pre-fix this
+// helper only checked window.scriptureLive — the NDI/kiosk windows have
+// no preload script (verified electron/frame-capture.ts L66-91 +
+// electron/main.ts L2525-2537 — no preload: key), so window.scriptureLive
+// was undefined and the rewrite was silently skipped on the two surfaces
+// operators care MOST about (NDI to OBS/vMix + projector). UA sniff via
+// /Electron/i is the safe additional signal because the global protocol
+// handler is registered in main.ts whenReady and is available to every
+// BrowserWindow in the app session — not just the ones with preload.
+// Browser-based remote OBS Browser Sources (pasted URLs from before this
+// hotfix) have neither scriptureLive nor "Electron" in their UA → fall
+// through to HTTP, preserving backward compat.
+// v0.7.196 — Re-enabled scripturelive-media protocol rewrite using ONLY
+// string ops (indexOf/substring). The previous regex-literal version
+// (hotfix.10) had its escaped slashes stripped by Next.js/SWC when this
+// helper lives inside the outer const-html template literal, producing
+// an invalid regex at runtime that threw Unterminated-group at parse
+// time and killed the ENTIRE inline render script on every congregation
+// BrowserWindow. String operations are immune to template-literal
+// escape mangling because there are no escapes to mangle.
+//
+// Detection MUST tolerate BOTH window.scriptureLive (preload-script flag
+// on mainWindow) AND Electron in navigator.userAgent (NDI offscreen
+// capture and secondary-screen kiosk BrowserWindows have no preload, so
+// scriptureLive is undefined there). Without the UA fallback the rewrite
+// silently skips exactly the two surfaces operators care MOST about.
+//
+// DIAGNOSTIC: first successful rewrite per page logs once to console so
+// any future regression where rewrite silently stops happening is
+// immediately visible in DevTools.
+//
+// GUARD-RAIL A: do NOT re-introduce a regex literal inside this
+// template-literal-embedded helper. String ops only.
+// GUARD-RAIL B: do NOT put backtick characters in comments inside this
+// template literal — even inside JS line comments, a stray backtick
+// terminates the outer const-html template and breaks TS parsing.
+var __scrMediaLogged=false;
+function __scrMedia(u){
+  if(!u) return u||'';
+  try{
+    var sl=window.scriptureLive;
+    var ua=(typeof navigator!=='undefined')?(navigator.userAgent||''):'';
+    var inElectron=(sl&&sl.isDesktop)||(ua.indexOf('Electron')>=0);
+    if(!inElectron) return u;
+    if(u.indexOf('data:')===0) return u;
+    if(u.indexOf('scripturelive-media://')===0) return u;
+    var key='/api/upload?file=';
+    var idx=u.indexOf(key);
+    if(idx<0) return u;
+    var rest=u.substring(idx+key.length);
+    var amp=rest.indexOf('&');
+    var hash=rest.indexOf('#');
+    var end=-1;
+    if(amp>=0&&hash>=0) end=Math.min(amp,hash);
+    else if(amp>=0) end=amp;
+    else if(hash>=0) end=hash;
+    var fn=(end<0)?rest:rest.substring(0,end);
+    if(!fn) return u;
+    var out='scripturelive-media://uploads/'+fn;
+    if(!__scrMediaLogged){__scrMediaLogged=true;try{console.log('[__scrMedia] first rewrite:',u,'->',out);}catch(e){}}
+    return out;
+  }catch(e){return u;}
+}
+function ensureLtBgEl(url){
+  var u=url||'';
+  if(u===__ltBgUrl && __ltBgEl) return {bg:__ltBgEl,ov:__ltBgOverlay};
+  // URL changed (or cleared) — release any prior element.
+  if(__ltBgEl){try{if(__ltBgEl.tagName==='VIDEO'){__ltBgEl.pause();__ltBgEl.removeAttribute('src');__ltBgEl.load();}}catch(e){}
+    if(__ltBgEl.parentNode) __ltBgEl.parentNode.removeChild(__ltBgEl);
+    __ltBgEl=null;}
+  if(__ltBgOverlay){if(__ltBgOverlay.parentNode) __ltBgOverlay.parentNode.removeChild(__ltBgOverlay); __ltBgOverlay=null;}
+  __ltBgUrl=u;
+  if(!u) return null;
+  if(isVideoBg(u)){
+    var v=document.createElement('video');
+    v.className='lt-bg'; v.src=__scrMedia(u);
+    v.autoplay=true;v.loop=true;v.muted=true;v.playsInline=true;v.preload='auto';
+    try{v.setAttribute('crossorigin','anonymous');}catch(e){}
+    v.onerror=function(){try{v.style.display='none';}catch(_e){}};
+    __ltBgEl=v;
+  } else {
+    var im=document.createElement('img');
+    im.className='lt-bg'; im.src=__scrMedia(u); im.alt='';
+    try{im.setAttribute('crossorigin','anonymous');}catch(e){}
+    im.onerror=function(){try{im.style.display='none';}catch(_e){}};
+    __ltBgEl=im;
+  }
+  var ov=document.createElement('div');
+  ov.className='lt-bg-overlay';
+  __ltBgOverlay=ov;
+  return {bg:__ltBgEl,ov:__ltBgOverlay};
+}
+function mountLtBg(box,url){
+  var pair=ensureLtBgEl(url);
+  if(!pair||!box) return;
+  // Insert bg + overlay at the FRONT of .lt-box (before .lt-content) so
+  // z-order matches the legacy inline pattern (bg behind text). insertBefore
+  // moves the existing node — does NOT clone — so decoder state is preserved.
+  box.insertBefore(pair.ov, box.firstChild);
+  box.insertBefore(pair.bg, pair.ov);
+  if(pair.bg.tagName==='VIDEO'){var pp=pair.bg.play();if(pp&&pp.catch)pp.catch(function(){});}
+}
+function setBgVid(url){
+  var layer=document.getElementById('bgLayer');
+  if(!layer) return;
+  var u=url||'';
+  if(u===__bgUrl) return; // already mounted with this URL — no-op
+  __bgUrl=u;
+  // Stop & detach old element (release decoder + network buffer)
+  while(layer.firstChild){
+    var old=layer.firstChild;
+    if(old.tagName==='VIDEO'){try{old.pause();old.removeAttribute('src');old.load();}catch(e){}}
+    layer.removeChild(old);
+  }
+  if(!u) return;
+  if(isVideoBg(u)){
+    var v=document.createElement('video');
+    // v0.7.221 — IS_FROZEN_BG path: settings/preview surfaces mount the
+    // bg <video> as a still poster, not a playing clip. We append
+    // a "#t=0.1" media-fragment so the browser fetches and paints
+    // the frame at 0.1 seconds and sits there (avoids the all-black
+    // first-frame poster many codecs ship with). preload="metadata"
+    // is the cheapest mode that still produces a visible frame — no
+    // decoder slot is held for ongoing playback. Real broadcast
+    // surfaces fall through to the historical autoplay/loop path.
+    // NOTE: backticks are forbidden anywhere inside this inline JS
+    // because the entire script lives inside the outer template
+    // literal at L20 (const html = ...), and an un-escaped backtick
+    // here would close that template literal mid-string and fail
+    // typecheck (TS1005). Use plain ASCII quotes in comments.
+    if(IS_FROZEN_BG){
+      v.src=__scrMedia(u)+'#t=0.1';
+      v.autoplay=false;v.loop=false;v.muted=true;v.playsInline=true;
+      v.preload='metadata';
+      try{v.setAttribute('crossorigin','anonymous');}catch(e){}
+      v.onerror=function(){try{v.style.display='none';}catch(_e){}};
+      // Defensive: some Electron/Chromium versions still start playing
+      // when autoplay=false but the element has been added to the DOM
+      // and previously played. Pause on every loadeddata + once
+      // immediately so we never animate.
+      v.addEventListener('loadeddata',function(){try{v.pause();}catch(_e){}});
+      v.addEventListener('play',function(){try{v.pause();}catch(_e){}});
+      layer.appendChild(v);
+      try{v.pause();}catch(_e){}
+    } else {
+      v.src=__scrMedia(u);
+      v.autoplay=true;v.loop=true;v.muted=true;v.playsInline=true;
+      v.preload='auto';
+      // v0.7.221 — Broadcast-smoothness hardening for the three real
+      // output surfaces (Live Display pane, Secondary Screen popup,
+      // NDI offscreen FrameCapture). Together these mirror what
+      // ProPresenter/EasyWorship do for their bg video layers.
+      //
+      // (1) disablePictureInPicture + disableRemotePlayback — kill
+      //     the Chromium overlay buttons that periodically repaint
+      //     the video surface (and silently steal a compositor pass).
+      //     The operator never wants PiP on the projector output.
+      // (2) playbackRate=1 explicit — guards against the rare case
+      //     where a previous element on the same compositor left a
+      //     non-1.0 rate cached at the codec layer.
+      // (3) controls=false, controlsList=nodownload — defence in
+      //     depth; controls were never on, but if Electron flips
+      //     them on by default in a future Chromium bump the video
+      //     surface would repaint on hover.
+      // (4) waiting/stalled/error self-heal — if the network hiccups
+      //     and Chromium suspends playback, re-issue play() so the
+      //     projector doesn't freeze for the operator. The "loop"
+      //     attribute alone doesn't handle the stall case.
+      try{v.disablePictureInPicture=true;}catch(_e){}
+      try{v.disableRemotePlayback=true;}catch(_e){}
+      try{v.controls=false;}catch(_e){}
+      try{v.setAttribute('controlslist','nodownload noremoteplayback noplaybackrate');}catch(_e){}
+      try{v.setAttribute('crossorigin','anonymous');}catch(e){}
+      v.onerror=function(){try{v.style.display='none';}catch(_e){}};
+      var __bgResume=function(){try{var p=v.play();if(p&&p.catch)p.catch(function(){});}catch(_e){}};
+      v.addEventListener('waiting',__bgResume);
+      v.addEventListener('stalled',__bgResume);
+      v.addEventListener('pause',function(){
+        // Chromium briefly pauses on tab-throttle / decoder reset; only
+        // self-heal if the operator-visible looping playback was
+        // expected (i.e. we did NOT mount this in IS_FROZEN_BG mode).
+        if(!IS_FROZEN_BG)__bgResume();
+      });
+      layer.appendChild(v);
+      try{v.playbackRate=1;}catch(_e){}
+      var pp=v.play();if(pp&&pp.catch)pp.catch(function(){});
+    }
+  } else {
+    var img=document.createElement('img');
+    img.src=__scrMedia(u);img.alt='';
+    try{img.setAttribute('crossorigin','anonymous');}catch(e){}
+    img.onerror=function(){try{img.style.display='none';}catch(_e){}};
+    layer.appendChild(img);
+  }
 }
 
 // applyAudio — pushes the operator's audio toggles down to the live
@@ -505,8 +984,296 @@ function applyRender(s){
   }
 }
 
+// v0.7.182 — Verse-text autofit (operator-spec, REVISED).
+//   Goal: keep the user's chosen typography UNCHANGED. Only when a
+//   single verse genuinely overflows its frame, scale ONLY that
+//   .slide-paragraph element down by the smallest amount that makes
+//   it fit. Reset on every render so the previous shrink never
+//   carries into the next verse. NO global font-size changes, NO
+//   container-wide transforms, NO touching .slide-content/.lt-box/
+//   .slide-reference — only the verse paragraph itself.
+//
+//   Selector: '#output .slide-paragraph' is the verse text element
+//   (see line 1016 fullscreen render and line 1188 lower-third
+//   render via .lt-content). Both surfaces use the same class so a
+//   single function covers Live Display + secondary screen +
+//   projector + Settings preview + NDI broadcast + OBS.
+//
+//   Algorithm: SINGLE-SHOT MATH (no loop, no lag).
+//   1. Reset transform so we measure the paragraph's natural size.
+//   2. Read parent.clientHeight (visible) + parent.scrollHeight (full).
+//   3. If scrollHeight <= clientHeight → no overflow → bail at scale(1).
+//   4. Otherwise compute k = (clientHeight / scrollHeight) * 0.98
+//      (the 0.98 leaves a 2% safety margin so we don't kiss the edge).
+//   5. Clamp to floor 0.60 — operator-explicit: "not even small."
+//      Text never shrinks below 60% so it always stays readable on a
+//      projector. Pathologically long verses (>1.66× overflow) WILL
+//      overflow the bottom of the frame; operator manually adjusts
+//      typography or splits the slide for those rare cases.
+//   6. Apply ONE transform: scale(k) and we're done.
+//
+//   Why math, not iteration: transform: scale() is a PAINT-only op —
+//   it does NOT change layout, so parent.scrollHeight is identical
+//   before and after the transform. An iterative shrink loop would
+//   either run forever or never converge. The ratio
+//   clientHeight/scrollHeight is exact: a paragraph that's 1.8× too
+//   tall fits perfectly at scale(0.555). One read, one write, ~0.3ms
+//   on a Raspberry Pi 4 — zero perceptible lag even on the lowest-end
+//   projector PCs operators run.
+//
+//   Why transform-origin: top center — anchors the shrink to the top
+//   of the text box so the first line stays where the operator
+//   placed it. center-center would float text upward as it shrinks
+//   and felt jumpy on slide change in v0.7.182's first cut.
+// v0.7.184 — PER-VERSE LOCK with MODULE-LEVEL cache. Once we've fit a
+// verse to its frame at a given container size, we DON'T re-measure on
+// subsequent renders that re-render the same verse text into the
+// same-size frame. Operator reported a flash on every SSE tick (font
+// color tweak, bg tweak, etc.) because each render re-ran fitVerseText,
+// and tiny scrollHeight rounding flips between paint cycles caused k
+// to oscillate by 0.5–2% per tick — visible as a micro-flash on the
+// projector.
+//
+// IMPORTANT lifecycle note (cost-of-doing-business with this renderer):
+// every render reassigns the output container's innerHTML which DESTROYS
+// and recreates the verse paragraph element. So a data- attribute on the
+// element itself can't survive across renders. We therefore keep the
+// lock in MODULE-LEVEL closure state (__fitKey + __fitScale) initialised
+// once when the renderer script runs.
+// (No backticks anywhere in this comment block — the surrounding script
+// is itself a tagged template literal; see v0.5.55 note ~L483.)
+//
+// Key = (verse textContent length + parent W×H). Different verse →
+// different length → recompute. Window resize → different W/H →
+// recompute. Same verse same frame on a style-only SSE tick → key match
+// → REAPPLY the cached scale directly (no measurement, no rounding
+// flip, no flash).
+//
+// Why textContent.length, not the full string: cheap (no allocation),
+// good enough as a discriminator (different verses ≠ identical length
+// in 99.9% of cases; in the rare collision the worst outcome is the
+// new verse renders at the previous verse's scale until the next
+// genuine slide change corrects it).
+// v0.7.187.1 — autofit now SCALES TO FILL on the NDI lower-third
+// surface (operator complaint: "autofit shrinks but text is too small
+// to read; let it spread across the whole lower-third frame"). The
+// fullscreen branch keeps shrink-only behaviour (no balloon for short
+// verses on the main display).
+//
+// Implementation: binary search on font-size rather than transform-
+// scale. Reasons:
+//   (1) transform: scale(k>1) doesn't change the layout box, so the
+//       wrap width stays at clientWidth and the visual width spills
+//       horizontally. Font-size growth re-flows correctly inside
+//       clientWidth — which is what we want for "fill the bar".
+//   (2) Both height AND width constraints are honoured naturally
+//       (search rejects any size where scrollHeight>avail OR
+//       scrollWidth>clientWidth) — fullscreen branch already cared
+//       about width too (long single-line refs).
+//   (3) Cache key includes parent dimensions so a re-render at the
+//       same key reapplies the cached pixel size without re-searching.
+//
+// Bounds:
+//   isLT  → [0.60, 2.50]  (grow short verses up to 2.5× the CSS base)
+//   else  → [0.60, 1.00]  (shrink-only, identical to v0.7.184.2)
+var __fitKey='', __fitScale=1, __fitBase=0, __lastIsLT=null;
+// v0.7.207 — Typography-settings fingerprint stamped by render() on
+// every paint. Included in __fitKey so any settings change (Display &
+// Output Typography, NDI Full Typography, NDI Lower-Third Typography,
+// Reference Label fields, line-height, text-scale, aspect-ratio,
+// align, drop-shadow, etc.) invalidates the autofit cache. Pre-fix
+// the cache key was only text-length + parent.clientWidth/Height —
+// so changing a typography setting did NOT invalidate the cache,
+// fitVerseText hit the early-return at L963 and reapplied the STALE
+// __fitBase*__fitScale pixel value, silently overwriting the operator's
+// new clamp() and making every NDI/Display typography knob look dead.
+var __renderSettingsFP='';
+function fitVerseText(){
+  try{
+    // v0.7.192-hotfix.2 Fix 3 — Reference autofit (LT only).
+    // .slide-reference uses CSS clamp capped at 1.4rem which floors to
+    // ~15 px inside the LT bar. Binary-search a larger size up to 2.0×
+    // the computed base, with a smaller cap than the body so the verse
+    // remains the visual anchor. Use getComputedStyle (NOT el.style.fontSize)
+    // per v0.7.190-hotfix.2 GR-A to resolve the clamp() to real pixels.
+    // Runs BEFORE the body fit so the body's sibling-height subtraction
+    // (L860-862) picks up the ref's new offsetHeight on the same pass.
+    try{
+      var rEl=document.querySelector('#output .lt-box .slide-reference');
+      if(rEl && rEl.parentElement){
+        var rPar=rEl.parentElement;
+        var rBase=parseFloat(window.getComputedStyle(rEl).fontSize)||14;
+        var rAvailW=rPar.clientWidth;
+        // v0.7.194-hotfix.11 Item #2 — reference autofit upper bound
+        // dropped from 2.0× → 1.10× so the reference cannot eat the LT
+        // box and collide with the body text (operator screenshot:
+        // "COMP OVE / ASV" fragments behind the verse). The body
+        // autofit is capped at 1.00× per hotfix.9; allowing the
+        // reference to grow to 2× broke the "verse is the visual
+        // anchor" contract. 1.10× = small allowance to recover from
+        // the CSS clamp() floor (~14–15px) without ever ballooning.
+        var rLo=0.60, rHi=1.10, rBest=1.0;
+        rEl.style.transform='';
+        for(var ri=0;ri<10;ri++){
+          var rMid=(rLo+rHi)/2;
+          rEl.style.fontSize=(rBase*rMid).toFixed(2)+'px';
+          if(rEl.scrollWidth<=rAvailW){ rBest=rMid; rLo=rMid; } else { rHi=rMid; }
+        }
+        rEl.style.fontSize=(rBase*rBest).toFixed(2)+'px';
+        // Invalidate body cache: parent.clientHeight is unchanged but ref's
+        // offsetHeight just grew — body must re-binary-search for the new
+        // available height. Without this, cached __fitKey would short-circuit
+        // and the body would render at the OLD (smaller-ref) scale.
+        __fitKey='';
+      }
+    }catch(re){}
+    var p=document.querySelector('#output .slide-paragraph');
+    if(!p)return;
+    var parent=p.parentElement;
+    if(!parent)return;
+    var key=(p.textContent||'').length+'|'+parent.clientWidth+'x'+parent.clientHeight+'|'+__renderSettingsFP;
+    if(key===__fitKey && __fitBase>0){
+      // LOCKED — same verse + same frame. Reapply cached pixel size
+      // directly without re-searching. Must rewrite because the <p>
+      // was just recreated by the latest innerHTML assignment.
+      p.style.transform='';
+      p.style.fontSize=(__fitBase*__fitScale).toFixed(2)+'px';
+      return;
+    }
+    __fitKey=key;
+    p.style.transform='';
+    // v0.7.190-hotfix.2 — The renderer at L1435 sets font-size to a
+    // CSS clamp() expression as an inline style. p.style.fontSize
+    // returns the AUTHORED string ("clamp(1rem, min(7cqw,12cqh), 4rem)")
+    // which parseFloat cannot read (NaN -> baseSize=16). Use computed
+    // style instead — it RESOLVES clamp/cqw/cqh to actual pixels in
+    // the iframe's 1920x1080 viewport, which is what we need to seed
+    // the binary search. baseSize then properly reflects the operator's
+    // bucket pick (Small/Medium/Large/XL) because FS_MULT is baked into
+    // ltBand/ltCap upstream of the clamp.
+    var baseSize=parseFloat(window.getComputedStyle(p).fontSize)||16;
+    __fitBase=baseSize;
+    // Available height: parent.clientHeight minus sibling heights
+    // (.slide-reference chyron sits above-or-below the verse inside
+    // the same flex container; its layout box is fixed even when we
+    // grow the verse). Width bound is parent.clientWidth — both LT
+    // and fullscreen wrap at parent width.
+    var avail=parent.clientHeight;
+    for(var i=0;i<parent.children.length;i++){
+      if(parent.children[i]!==p) avail-=parent.children[i].offsetHeight;
+    }
+    var availW=parent.clientWidth;
+    if(avail<=0||availW<=0){ __fitScale=1; return; }
+    // Detect LT context. The verse <p>'s parent is .lt-content (flex
+    // column, overflow:hidden) when rendered through the LT branch in
+    // route.ts ~L1359. Fullscreen verses live inside .slide-content.
+    // closest() includes self so this catches both .lt-content and
+    // any .lt-box ancestor reliably.
+    var isLT=!!(parent.closest && (parent.closest('.lt-content')||parent.closest('.lt-box')));
+    // v0.7.194-hotfix.6 — Force cache invalidation on layout-context flip.
+    // Pre-fix: operator flips NDI Full→Lower-Third in the panel, the
+    // SSE state push rebuilds DOM, but the first rAF pass measures the
+    // freshly-injected .lt-box BEFORE the Electron offscreen surface
+    // has settled the container-query units (.lt-box uses cqw/cqh and
+    // has a sibling bg-video <div> that re-flows on mount). The ref
+    // binary search at L851-857 then picks rBest=2.0 against an
+    // inflated rPar.clientWidth, "NKJV" renders huge, body fit locks
+    // against that bad reference height → operator-visible disorganised
+    // text until they nudge the LT scale slider (which mutates
+    // parent.clientHeight → cache key differs → re-runs full search
+    // against the now-settled layout). __lastIsLT tracks the previous
+    // pass's context; on flip we force ALL caches clear so the next
+    // pass re-measures from scratch instead of trusting stale numbers.
+    if(__lastIsLT!==null && __lastIsLT!==isLT){
+      __fitKey=''; __fitBase=0; __fitScale=1;
+    }
+    __lastIsLT=isLT;
+    var minK=0.60;
+    // v0.7.194-hotfix.9 Item A — Shrink-only autofit. Previous LT
+    // branch grew up to 3.5× of baseSize which (a) ignored the
+    // operator's Text Size slider and (b) overflowed the LT chyron
+    // producing the "garbled fragments behind ASV" visual bug
+    // operator reported on 2026-05-17. maxK=1.00 means autofit only
+    // intervenes to SHRINK text that would overflow; it never grows
+    // past the natural clamp size the operator dialed in. Applies
+    // identically to Full and Lower-Third — both surfaces now
+    // respect the Typography slider as the upper bound.
+    var maxK=1.00;
+    // Binary search the largest scale factor where BOTH dimensions
+    // fit. 10 iterations gives ~0.001 precision on [0.60, 2.50] which
+    // is well below a single-pixel rounding error at typical sizes.
+    // Each iteration writes fontSize and reads scrollHeight/Width —
+    // forces one layout pass on this <p> only, ~0.05 ms per pass on
+    // the secondary screen. Total work per verse change: ~0.5 ms.
+    var lo=minK, hi=maxK, best=minK;
+    var safety=0.98;
+    for(var j=0;j<10;j++){
+      var mid=(lo+hi)/2;
+      p.style.fontSize=(baseSize*mid).toFixed(2)+'px';
+      var h=p.scrollHeight;
+      var w=p.scrollWidth;
+      if(h<=avail*safety && w<=availW){
+        best=mid; lo=mid;
+      } else {
+        hi=mid;
+      }
+    }
+    __fitScale=best;
+    p.style.fontSize=(baseSize*best).toFixed(2)+'px';
+  }catch(e){}
+}
+// Resize is throttled to 16 ms (one frame) — fitVerseText itself is
+// O(1) so we don't need the 80 ms debounce v1 had; we just want to
+// coalesce within a single rAF tick.
+var __fitTimer=0;
+function fitVerseTextDebounced(){
+  if(__fitTimer)return;
+  __fitTimer=setTimeout(function(){__fitTimer=0;fitVerseText();},16);
+}
+function fitVerseTextForce(){__fitKey='';fitVerseTextDebounced();}
+window.addEventListener('resize',fitVerseTextDebounced);
+// v0.7.193-hotfix.2 — Settings round-trip text-shrink fix.
+//
+// Repro: operator on Live with a long verse, opens Settings, comes
+// back without touching anything → the same verse renders SMALLER
+// than before (image 2 in the report). Cause: the in-app Preview/
+// Live iframes remount when Settings is opened/closed (Settings is a
+// full-screen overlay that REPLACES the live-console shell). The
+// freshly-loaded iframe runs fitVerseText() on the FIRST paint —
+// before web fonts have finished loading — using fallback font
+// metrics that are wider per character than the eventual web font.
+// Autofit picks a smaller scale so the wider fallback fits, caches
+// it in __fitKey, then web font loads + reflows narrower → the verse
+// has lots of unused space but autofit never re-runs (cached key is
+// still valid). End result: persistent smaller text.
+//
+// Fix (3 belts):
+//   (a) Re-fit when web fonts finish loading (document.fonts.ready) —
+//       handles the FOIT/FOUT race directly.
+//   (b) ResizeObserver on the verse parent: any container-size change
+//       (Settings overlay closing, panel resize, dev-tools, etc.)
+//       triggers a forced re-fit. Window resize alone misses iframe-
+//       internal layout changes that don't bubble a window resize.
+//   (c) One extra forced re-fit after 250ms as a belt-and-braces for
+//       slow font CDNs / async layout settling on first paint.
+try{
+  if(document && document.fonts && document.fonts.ready && document.fonts.ready.then){
+    document.fonts.ready.then(function(){fitVerseTextForce();});
+  }
+}catch(fe){}
+// v0.7.193-hotfix.3 — ResizeObserver REMOVED. The hotfix.2 RO observed
+// the verse parent and called fitVerseTextForce on any size change. In
+// practice each SSE-driven render (live slides tick frequently) nudges
+// parent.clientHeight by sub-pixels during reflow → RO fires → forced
+// re-fit → that re-fit causes another reflow → RO fires again → visible
+// "keeps searching" pumping reported by the operator. The two remaining
+// belts (document.fonts.ready + 250ms safety) are sufficient for the
+// original Settings round-trip text-shrink bug because both are ONE-SHOT
+// and fire only on iframe (re)load, not per render.
+setTimeout(function(){fitVerseTextForce();},250);
+
 function render(s){
-  if(!s){$('output').innerHTML='';$('output').classList.add('hidden');lastRenderKey='';dropLiveVideoCache();return}
+  if(!s){$('output').innerHTML='';$('output').classList.add('hidden');lastRenderKey='';dropLiveVideoCache();setBgVid('');return}
   // BLACK / HIDDEN — operator has hit the "Black" transport button or
   // toggled the Live Display HIDDEN switch. We paint a solid black
   // frame while keeping the NDI connection alive, so vMix/OBS don't
@@ -518,8 +1285,14 @@ function render(s){
     if(bkey===lastRenderKey)return;
     lastRenderKey=bkey;
     dropLiveVideoCache();
+    setBgVid(''); // v0.7.187 — clear persistent BG layer when blanked
     $('output').innerHTML='';
-    $('output').style.background='#000';
+    // v0.7.211 — see load-time block at ~L367. #output MUST stay
+    // transparent so #stage (z:0, paints #000) shows through; setting
+    // #output to #000 with plain assignment would also strip the
+    // load-time setProperty important pin and re-cover #bgLayer for
+    // any subsequent themed render in the same session.
+    $('output').style.setProperty('background','transparent','important');
     $('output').classList.remove('hidden');
     return;
   }
@@ -533,6 +1306,7 @@ function render(s){
     // The flag flips false the first time a slide is broadcast and
     // never comes back.
     dropLiveVideoCache();
+    setBgVid(''); // v0.7.187 — clear persistent BG layer on type:'clear'
     // v0.5.33 — same change as the fingerprint above. We now show the
     // splash watermark on every clear state UNLESS the operator
     // explicitly disabled it via showStartupLogo===false.
@@ -544,7 +1318,12 @@ function render(s){
       // matches the operator's Live Display splash and the spec
       // calling for a logo-less Live Display intro.
       $('output').innerHTML='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;color:#fff;text-align:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif"><div style="font-size:clamp(2rem,7vmin,7rem);font-weight:600;letter-spacing:-.01em;line-height:1.05;opacity:.4">Scripture AI</div><div style="margin-top:1.4vmin;font-size:clamp(.85rem,1.8vmin,1.6rem);opacity:.3;font-weight:500">Powered By WassMedia (+233246798526)</div></div>';
-      $('output').style.background='#000';
+      // v0.7.211 — splash sits on transparent #output so #stage (z:0,
+      // #000) shows through. Original comment at L1176 said
+      // "transparent (#000) backdrop" — the intent was always
+      // transparent; the plain-assignment #000 was a v0.5.33 bug that
+      // covered any customBackground operator had configured.
+      $('output').style.setProperty('background','transparent','important');
       $('output').classList.remove('hidden');
       return;
     }
@@ -552,7 +1331,8 @@ function render(s){
     if(ckey===lastRenderKey)return;
     lastRenderKey=ckey;
     $('output').innerHTML='';
-    $('output').style.background='#000';
+    // v0.7.211 — see splash branch comment above for full rationale.
+    $('output').style.setProperty('background','transparent','important');
     $('output').classList.remove('hidden');
     return;
   }
@@ -569,11 +1349,26 @@ function render(s){
   // (and re-assert #stage transparency) on every render so a
   // subsequent media slide that briefly forced #000 doesn't leave
   // the alpha matte tinted black on the next text slide.
+  // v0.7.209 — Re-assert with important on every render so the
+  // load-time inline-with-important set above stays inline (a later
+  // plain style.background empty-string would clear it and let OBS
+  // Custom CSS re-win). FORCE_TRANSPARENT=true: keep transparent
+  // matte; else hold #000 so OBS Browser Source never falls back to alpha.
+  // v0.7.211 — #output stays TRANSPARENT in both branches so the
+  // operator customBackground (mounted in #bgLayer, sibling z:0)
+  // shows through #output (z:1). The wrapper div emitted into the
+  // output innerHTML carries the theme gradient itself when no
+  // customBg, or stays transparent when a customBg is mounted. See
+  // load-time block ~L367 for the full rationale. #stage continues
+  // to mirror FORCE_TRANSPARENT (opaque #000 for normal, alpha for
+  // vMix overlay) because #stage IS the letterbox layer the operator
+  // chose to expose.
   if(FORCE_TRANSPARENT){
-    $('output').style.background='transparent';
-    var __stR=document.getElementById('stage');if(__stR)__stR.style.background='transparent';
+    $('output').style.setProperty('background','transparent','important');
+    var __stR=document.getElementById('stage');if(__stR)__stR.style.setProperty('background','transparent','important');
   }else{
-    $('output').style.background='';
+    $('output').style.setProperty('background','transparent','important');
+    var __stR2=document.getElementById('stage');if(__stR2)__stR2.style.setProperty('background','#000','important');
   }
   // Skip the rebuild entirely if the payload is identical to what's
   // already on screen. Without this guard the secondary display
@@ -589,7 +1384,16 @@ function render(s){
   // refreshes whenever ndiDisplayMode flips, even if the projector's
   // displayMode and slide are otherwise unchanged.
   try{
-    var key=JSON.stringify({sl:s.slide,dm:s.displayMode,st:settingsRenderKey(s.settings),ndi:IS_NDI});
+    // v0.7.198 — nm field tracks IS_NO_MEDIA so settings previews
+    // (which pass ?noMedia=1) get their own cache slot. Without this,
+    // a single payload would hash identically across the noMedia and
+    // playable surfaces; whichever rendered first would block the
+    // other rebuild. Also mirrored in the no-media early-bail (L1490)
+    // and media-reuse (L1562) branch writes so all three sites
+    // produce shape-identical keys. NO BACKTICKS in this comment —
+    // see v0.7.196 GUARD-RAIL D (we are inside the outer const-html
+    // template literal so any backtick terminates the literal).
+    var key=JSON.stringify({sl:s.slide,dm:s.displayMode,st:settingsRenderKey(s.settings),ndi:IS_NDI,nm:IS_NO_MEDIA?1:0});
     // v0.5.32 — bypass the cache-key bailout when the DOM is visually
     // empty. If the previous render left #output with no innerHTML
     // (rare race condition or watchdog-cleared state), the cache
@@ -600,6 +1404,9 @@ function render(s){
     var domEmpty=elCk && (!elCk.innerHTML || elCk.innerHTML.trim().length===0);
     if(key===lastRenderKey && !domEmpty)return;
     lastRenderKey=key;
+    // v0.7.207 — Stamp typography fingerprint for fitVerseText cache
+    // invalidation. See __renderSettingsFP declaration comment at L922.
+    try{__renderSettingsFP=settingsRenderKey(s.settings)||'';}catch(e){}
   }catch(e){}
   var slide=s.slide;
   // Display mode resolution — single source of truth across all
@@ -610,12 +1417,83 @@ function render(s){
   //   2. NDI surface (?ndi=1) → independent ndiDisplayMode if set.
   //   3. Projector / secondary screen → operator's main displayMode.
   // Falls back to 'full' when nothing else is set.
-  var dm=FORCE_LT
-    ?'lower-third'
-    :((IS_NDI&&s.settings&&s.settings.ndiDisplayMode)
+  // v0.7.127 — FORCE_FULL wins over FORCE_LT so the side-by-side
+  // Settings preview cards can pin the layout per card without the
+  // operator's projector displayMode bleeding through.
+  // v0.7.192-hotfix.2 Fix 2 — On IS_NDI surfaces (NDI capture, NDI Preview,
+  // OBS Browser Source — all three carry ?ndi=1) the live SSE ndiDisplayMode
+  // wins over FORCE_LT (URL ?lowerThird=1). Pre-fix the URL param pinned the
+  // mode forever, so a stale OBS URL pasted in LT mode would never auto-flip
+  // when the operator switched the app to Full Display. Settings PREVIEW
+  // cards are unaffected — they use ?lowerThird=1 WITHOUT ?ndi=1, so they
+  // fall through to the FORCE_LT branch and stay pinned per card as before.
+  var dm=FORCE_FULL
+    ?'full'
+    :((IS_NDI && s.settings && (s.settings.ndiDisplayMode==='full'||s.settings.ndiDisplayMode==='lower-third'))
       ?s.settings.ndiDisplayMode
-      :(s.displayMode||'full'));
+      :(FORCE_LT
+        ?'lower-third'
+        :(s.displayMode||'full')));
   var st=s.settings||{};
+  // v0.7.165 — Unified lower-third typography. Operator complaint:
+  // the "PREVIEW (LOWER THIRD)" designer card (which sets
+  // ?lowerThird=1 only, NOT ?ndi=1) read the standard textAlign /
+  // referenceTextAlign / referenceFontSize fields, while the
+  // congregation NDI capture, OBS Browser Source, and second-screen
+  // surfaces (which set ?ndi=1) read the parallel ndi* override
+  // fields. Two different field stores → preview painted one layout,
+  // every actual output painted another. Same root cause for the
+  // Live Display / Main Preview iframe panes: they don't pass ?ndi=1
+  // either, so they tracked the projector's standard fields, not the
+  // ndi* overrides that the OBS Browser Source / NDI capture used.
+  // Conceptually the lower-third *is* the NDI/OBS chyron output —
+  // there's only ONE lower-third look — so when the renderer
+  // resolves dm==='lower-third', every surface paints with the same
+  // ndi* override pile. Outside of lower-third (full-screen
+  // projector, hymn slides, etc.) IS_NDI still gates the overrides
+  // on the NDI surface alone, so the projector keeps its branded
+  // typography unchanged.
+  /* v0.7.167 -- Carved lower-third typography off the NDI overrides.
+     Before this version, the v0.7.166 USE_NDI_OVERRIDES predicate
+     ORed in dm === lower-third so every lower-third surface (in-app
+     preview, live display, secondary screen, OBS Browser Source URL)
+     inherited the NDI broadcast typography. Operators wanted the
+     in-app lower-third independently controllable from the broadcast
+     lower-third. Now NDI keeps its own ndi-star override pile
+     (broadcast feed only), and the four non-NDI lower-third surfaces
+     read a parallel lowerThird-star pile that the operator controls
+     from Settings -> Display and Output -> Lower Third Typography.
+     Full-screen mode reads neither (body settings only).
+     GUARD-RAIL (replaces v0.7.166 GR-C): any new lower-third-like
+     display mode must propagate via dm.indexOf("lower-third")===0
+     -- that pattern catches lower-third AND lower-third-black. */
+  var USE_NDI_OVERRIDES = IS_NDI;
+  var USE_LT_OVERRIDES = !IS_NDI && dm && dm.indexOf('lower-third')===0;
+  // v0.7.191 — NDI factory defaults. The NDI broadcast feed must NEVER
+  // inherit the operator's in-app typography settings. Pre-v0.7.191 every
+  // ndi* knob fell back to the matching app setting when unset
+  // ("st.ndiFontSize ? st.ndiFontSize : st.fontSize"), so any tweak in
+  // Settings → Typography silently bled through to the NDI capture window
+  // — exactly what the operator complained about. Now the chain is:
+  //   IS_NDI=true   → ndi* override OR NDI_DEFAULTS (NEVER touches body/LT)
+  //   IS_NDI=false  → existing LT-or-body chain (unchanged)
+  // To make NDI different from the defaults, the operator sets the
+  // parallel ndi* field via the NDI Output panel; an unset ndi* now means
+  // "use NDI_DEFAULTS", not "copy from app".
+  var NDI_DEFAULTS = {
+    fontFamily: 'sans-serif',
+    fontSize: 'xl',
+    textShadow: true,
+    textScale: 1.0,
+    textAlign: 'center',
+    bibleColor: '#FFFFFF',
+    bibleLineHeight: 1.4,
+    refSize: 'lg',
+    refStyle: 'normal',
+    refPosition: 'top',
+    refScale: 1.2,
+    lowerThirdScale: 1.0
+  };
   // v0.5.57 — NDI surface gets its own aspect ratio when set.
   // 'auto' or undefined → fall back to displayRatio (Live Display).
   var AR=(IS_NDI && st.ndiAspectRatio && st.ndiAspectRatio!=='auto')
@@ -627,6 +1505,7 @@ function render(s){
     // on air so vMix/OBS sees a clean alpha frame instead of a themed
     // gradient panel covering its program output.
     if(FORCE_TRANSPARENT){
+      setBgVid(''); // v0.7.187 — clear persistent BG layer for NDI alpha-key path
       $('output').innerHTML='';
       $('output').classList.remove('hidden');
       return;
@@ -634,8 +1513,16 @@ function render(s){
     // Render themed background only — never a black void
     var tkE=(st.congregationScreenTheme||'minimal');
     var tcE=themes[tkE]||'theme-minimal';
-    var bgE=st.customBackground?'<img class="bg-image" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>':'';
-    $('output').innerHTML='<div class="'+tcE+'" style="width:100%;height:100%;position:relative;">'+bgE+'</div>';
+    var safeBgE=safeBgUrl(st.customBackground);
+    // v0.7.187 — BG video/image now lives in the persistent #bgLayer
+    // (sibling of #output). We only emit the dim .bg-overlay inline so
+    // the slide content reads against any custom bg. When a bg is set,
+    // the theme gradient is forced transparent so the bgLayer beneath
+    // shows through; otherwise the theme gradient remains visible.
+    var bgOverlayE=safeBgE?'<div class="bg-overlay"></div>':'';
+    var themeBgE=safeBgE?'background:transparent;':'';
+    setBgVid(safeBgE);
+    $('output').innerHTML='<div class="'+tcE+'" style="'+themeBgE+'width:100%;height:100%;position:relative;">'+bgOverlayE+'</div>';
     $('output').classList.remove('hidden');
     return;
   }
@@ -647,34 +1534,81 @@ function render(s){
   // use it. Otherwise fall back to the Live Display setting. The
   // reference typography (rf*) keeps its existing fallback chain
   // (rf || body), but the "body" source is now NDI-aware via T_*.
-  var T_FF=(IS_NDI && st.ndiFontFamily) ? st.ndiFontFamily : st.fontFamily;
-  var T_FS=(IS_NDI && st.ndiFontSize) ? st.ndiFontSize : (st.fontSize||'lg');
-  var T_SH_BOOL=(IS_NDI && (typeof st.ndiTextShadow==='boolean')) ? st.ndiTextShadow : (st.textShadow!==false);
-  var T_TS=(IS_NDI && (typeof st.ndiTextScale==='number')) ? st.ndiTextScale : (typeof st.textScale==='number'?st.textScale:1);
-  var T_TA=(IS_NDI && st.ndiTextAlign) ? st.ndiTextAlign : (st.textAlign||'center');
+  // v0.7.167 — Each typography slot now resolves through a 3-tier
+  // chain: NDI override (broadcast feed only) → LT override (in-app
+  // lower-third surfaces only) → body setting (full-screen + base
+  // fallback). Exactly one of USE_NDI_OVERRIDES / USE_LT_OVERRIDES
+  // can be true at a time, and full-screen mode passes through to
+  // body unchanged.
+  var T_FF=USE_NDI_OVERRIDES
+    ? (st.ndiFontFamily || NDI_DEFAULTS.fontFamily)
+    : ((USE_LT_OVERRIDES && st.lowerThirdFontFamily) ? st.lowerThirdFontFamily : st.fontFamily);
+  var T_FS=USE_NDI_OVERRIDES
+    ? (st.ndiFontSize || NDI_DEFAULTS.fontSize)
+    : ((USE_LT_OVERRIDES && st.lowerThirdFontSize) ? st.lowerThirdFontSize : (st.fontSize||'lg'));
+  var T_SH_BOOL=USE_NDI_OVERRIDES
+    ? (typeof st.ndiTextShadow==='boolean' ? st.ndiTextShadow : NDI_DEFAULTS.textShadow)
+    : ((USE_LT_OVERRIDES && (typeof st.lowerThirdTextShadow==='boolean')) ? st.lowerThirdTextShadow : (st.textShadow!==false));
+  var T_TS=USE_NDI_OVERRIDES
+    ? (typeof st.ndiTextScale==='number' ? st.ndiTextScale : NDI_DEFAULTS.textScale)
+    : ((USE_LT_OVERRIDES && (typeof st.lowerThirdTextScale==='number')) ? st.lowerThirdTextScale : (typeof st.textScale==='number'?st.textScale:1));
+  var T_TA=USE_NDI_OVERRIDES
+    ? (st.ndiTextAlign || NDI_DEFAULTS.textAlign)
+    : ((USE_LT_OVERRIDES && st.lowerThirdTextAlign) ? st.lowerThirdTextAlign : (st.textAlign||'center'));
   // v0.5.57 — NDI-only bible body color + line-height. Both are
   // pure CSS overrides applied to the .slide-text node only when
   // IS_NDI is true; the secondary screen keeps the theme defaults.
-  var T_COLOR=(IS_NDI && st.ndiBibleColor) ? st.ndiBibleColor : '';
+  // v0.7.167 — LT surfaces get their own color/line-height overrides
+  // too, gated on USE_LT_OVERRIDES.
+  var T_COLOR=USE_NDI_OVERRIDES
+    ? (st.ndiBibleColor || NDI_DEFAULTS.bibleColor)
+    : ((USE_LT_OVERRIDES && st.lowerThirdBibleColor) ? st.lowerThirdBibleColor : '');
   // v0.6.9 — Bible line-height now has a Live Display source too.
-  // NDI override > Live Display setting > 0 (no override). Previously
-  // this only honoured the NDI value, so the new operator-facing
-  // bibleLineHeight slider in the Typography panel had no effect
-  // on the secondary screen.
-  var T_LH=(IS_NDI && typeof st.ndiBibleLineHeight==='number')
-    ? Math.min(2.5, Math.max(0.9, st.ndiBibleLineHeight))
-    : (typeof st.bibleLineHeight==='number'
-      ? Math.min(2.5, Math.max(0.9, st.bibleLineHeight))
-      : 0);
+  // NDI override > LT override > Live Display setting > 0 (no
+  // override). Previously this only honoured the NDI value, so the
+  // new operator-facing bibleLineHeight slider in the Typography
+  // panel had no effect on the secondary screen.
+  // v0.7.177 — LT-only line-height floor + default raised to 1.4 so
+  // verses on the in-app LT preview / Live Display / secondary screen
+  // / OBS browser source get breathing room between lines without
+  // touching the frame size (operator-explicit: "adjust only the
+  // text, not the frame is ok"). NDI branch (st.ndiBibleLineHeight)
+  // is UNCHANGED — broadcast feed keeps 0.9 floor so vMix/OBS-NDI
+  // operators can still go tight when their own framing demands it.
+  var T_LH=USE_NDI_OVERRIDES
+    ? (typeof st.ndiBibleLineHeight==='number'
+        ? Math.min(2.5, Math.max(0.9, st.ndiBibleLineHeight))
+        : NDI_DEFAULTS.bibleLineHeight)
+    : (USE_LT_OVERRIDES
+      ? (typeof st.lowerThirdBibleLineHeight==='number'
+          ? Math.min(2.5, Math.max(1.2, st.lowerThirdBibleLineHeight))
+          : 1.4)
+      : (typeof st.bibleLineHeight==='number'
+        ? Math.min(2.5, Math.max(0.9, st.bibleLineHeight))
+        : 0));
   var bibleExtra=(T_COLOR?'color:'+T_COLOR+';':'')+(T_LH?'line-height:'+T_LH+';':'');
   var sh=T_SH_BOOL?'text-shadow:0 2px 12px rgba(0,0,0,.4);':'';
-  var bg=st.customBackground?'<img class="bg-image" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="bg-overlay"></div>':'';
+  var safeBg=safeBgUrl(st.customBackground);
+  // v0.7.187 — BG image/video moved to persistent #bgLayer (see ~L562
+  // setBgVid). Only the dim overlay is emitted inline so the slide
+  // content stays readable against custom backgrounds. setBgVid is
+  // invoked at every render exit so the layer always matches the
+  // currently-rendered bg URL. The .lt-bg path below (LT branch) keeps
+  // its OWN inline tag — it sits inside the chyron card, not behind it,
+  // so the persistent-layer architecture does not apply.
+  var bg=safeBg?'<div class="bg-overlay"></div>':'';
+  var themeBg=safeBg?'background:transparent;':'';
   // Reference typography (Bug #5): the operator now has independent
   // controls for the reference label. Each field falls back to the
   // body equivalent when unset so persisted settings keep working.
   // (NDI body fallback is honoured via T_FF / T_FS / T_SH_BOOL etc.)
-  var rfFam=resolveFont(st.referenceFontFamily||T_FF);
-  var rfShOn=(typeof st.referenceTextShadow==='boolean')?st.referenceTextShadow:T_SH_BOOL;
+  // v0.7.191 — NDI ignores st.referenceFontFamily / st.referenceTextShadow
+  // / st.referenceTextScale / st.referenceFontSize / st.referenceTextAlign
+  // (those are app-only). NDI reference typography derives entirely from
+  // the NDI body chain (T_FF / T_SH_BOOL / T_TS / T_FS / T_TA) plus the
+  // dedicated ndiRef* overrides resolved below.
+  var rfFam=resolveFont(USE_NDI_OVERRIDES ? T_FF : (st.referenceFontFamily||T_FF));
+  var rfShOn=USE_NDI_OVERRIDES ? T_SH_BOOL : ((typeof st.referenceTextShadow==='boolean')?st.referenceTextShadow:T_SH_BOOL);
   var rfShCss=rfShOn?'text-shadow:0 2px 12px rgba(0,0,0,.4);':'';
   // v0.5.57 — NDI-only reference overrides win over the body
   // fallbacks above when IS_NDI is true. Style ('italic'|'normal'),
@@ -682,15 +1616,21 @@ function render(s){
   // bucket so the broadcast deck can run a tiny italic chyron-style
   // reference while the in-room projector keeps the standard
   // body-aligned label.
-  var rfTsRaw=(IS_NDI && typeof st.ndiRefScale==='number')
-    ? st.ndiRefScale
+  var rfTsRaw=USE_NDI_OVERRIDES
+    ? (typeof st.ndiRefScale==='number' ? st.ndiRefScale : NDI_DEFAULTS.refScale)
     : ((typeof st.referenceTextScale==='number')?st.referenceTextScale:T_TS);
   var rfTs=Math.min(2,Math.max(.5,rfTsRaw));
-  var rfBucket=(IS_NDI && st.ndiRefSize) ? st.ndiRefSize : (st.referenceFontSize||T_FS);
+  var rfBucket=USE_NDI_OVERRIDES
+    ? (st.ndiRefSize || NDI_DEFAULTS.refSize)
+    : (st.referenceFontSize||T_FS);
   var rfScale=rfTs*(FS_MULT[rfBucket]||1);
-  var rfStyle=(IS_NDI && st.ndiRefStyle==='italic') ? 'italic' : 'normal';
-  var rfPosition=(IS_NDI && st.ndiRefPosition) ? st.ndiRefPosition : 'top';
-  var rfHidden=(IS_NDI && st.ndiRefPosition==='hidden');
+  var rfStyle=USE_NDI_OVERRIDES
+    ? ((st.ndiRefStyle||NDI_DEFAULTS.refStyle)==='italic' ? 'italic' : 'normal')
+    : 'normal';
+  var rfPosition=USE_NDI_OVERRIDES
+    ? (st.ndiRefPosition || NDI_DEFAULTS.refPosition)
+    : 'top';
+  var rfHidden=(USE_NDI_OVERRIDES && st.ndiRefPosition==='hidden');
   // Reference clamp — same shape as the LT body clamp below, but a
   // narrower band so the reference label stays subordinate to the
   // verse body. Mirrors lowerThirdClamp() in src/lib/fonts.ts so the
@@ -700,7 +1640,7 @@ function render(s){
   var rfCap=Math.max(1,1.4*rfScale);
   var rfMin=Math.max(.35,.5*rfScale);
   var rfFs='clamp('+rfMin+'rem,min('+(rfBand*0.5)+'cqw,'+rfBand+'cqh),'+rfCap+'rem)';
-  var rfTa=st.referenceTextAlign||T_TA;
+  var rfTa=USE_NDI_OVERRIDES ? T_TA : (st.referenceTextAlign||T_TA);
   var refStyle='font-family:'+rfFam+';font-size:'+rfFs+';text-align:'+rfTa+';font-style:'+rfStyle+';'+rfShCss;
   // Same Strong's-strip + HTML-escape used for the body — keeps the
   // reference line ("Galatians 2:5 — KJV") safe even if a translation
@@ -730,6 +1670,27 @@ function render(s){
   var fontFam=resolveFont(T_FF);
   var fontStyle='font-family:'+fontFam+';';
   var txt='';
+  if(slide.type==='media'&&slide.mediaUrl&&IS_NO_MEDIA){
+    // v0.7.198 — Settings preview wants background-only on media
+    // slides. Without this short-circuit, falling through to the
+    // standard text-slide branch would render slide.title (the
+    // media filename) as dim text — operator wants pure background.
+    // Mirrors the !slide themed-bg path at L1294-1316: paint the
+    // operator's customBackground via #bgLayer, lay the theme card
+    // + bg-overlay over it, and skip the verse/text DOM entirely.
+    var tkM=(st.congregationScreenTheme||'minimal');
+    var tcM=themes[tkM]||'theme-minimal';
+    var safeBgM=safeBgUrl(st.customBackground);
+    var bgOverlayM=safeBgM?'<div class="bg-overlay"></div>':'';
+    var themeBgM=safeBgM?'background:transparent;':'';
+    setBgVid(safeBgM);
+    $('output').innerHTML='<div class="'+tcM+'" style="'+themeBgM+'width:100%;height:100%;position:relative;">'+bgOverlayM+'</div>';
+    $('output').classList.remove('hidden');
+    window.__liveVideoEl=null;
+    window.__liveVideoKey='';
+    try{lastRenderKey=JSON.stringify({sl:slide,dm:s.displayMode,st:settingsRenderKey(s.settings),ndi:IS_NDI,nm:IS_NO_MEDIA?1:0});}catch(e){}
+    return;
+  }
   if(slide.type==='media'&&slide.mediaUrl){
     // Mirror the in-app resolveMediaPresentation() helper so the
     // congregation/NDI feed honours the operator's per-asset Fit /
@@ -762,12 +1723,37 @@ function render(s){
     if(slide.mediaKind==='video'&&canReuse){
       // Same source — just honour the transport flag, do not rebuild.
       try{
-        // Re-sync to the master clock if drift > 0.4s. This keeps the
-        // congregation screen on the same frame as the operator's Live
-        // pane after a pause / scrub.
-        if(typeof slide.mediaCurrentTime==='number'&&slide.mediaCurrentTime>0){
+        // v0.7.193-hotfix.2 — Drift tolerance was originally 0.4s, then
+        // tightened to 0.20s for frame-accurate sync.
+        // v0.7.194-hotfix.2 — NDI surface exempted (software decode on
+        // offscreen Windows compositor drifts past tolerance within ~1s
+        // and every drift-seek flushes the decode pipeline → keyframe
+        // re-decode → 100-300ms freeze).
+        //
+        // v0.7.216 follow-up #4 — Operator $1600-customer escalation:
+        // "Fix the output video freezing for main app output and NDI
+        // output make it play smoothly live Easyworship". Same root
+        // cause as the NDI exemption, but on the SECONDARY DISPLAY
+        // surface too: SSE / IPC jitter between the Live broadcast and
+        // the secondary-display BrowserWindow regularly exceeds 0.20s
+        // even on healthy machines (Chromium's SSE delivery + the
+        // 16ms broadcaster debounce + Electron IPC scheduling stack up
+        // to 100-300ms of jitter under load). Every jitter spike past
+        // 0.20s forced existingVid.currentTime = mediaCurrentTime → HW
+        // decoder pipeline flush → visible freeze. EasyWorship is
+        // smooth because it doesn't have a network-based sync loop at
+        // all — its outputs share the same decoder. We can't share
+        // decoders without a major rewrite, but raising tolerance to
+        // 1.5s eliminates the seek thrash entirely: routine SSE jitter
+        // never crosses it, while real transport events (operator
+        // scrub, GO LIVE promotion with a non-zero start time, jump
+        // to chapter) always exceed it by far and still get corrected.
+        // Pairs with logos-shell.tsx L420 (writeback throttle 0.10s →
+        // 0.50s) which already keeps local→broadcast latency inside
+        // 0.50s, well under the new tolerance.
+        if(!IS_NDI&&typeof slide.mediaCurrentTime==='number'&&slide.mediaCurrentTime>0){
           var drift=Math.abs((existingVid.currentTime||0)-slide.mediaCurrentTime);
-          if(drift>0.4){try{existingVid.currentTime=slide.mediaCurrentTime;}catch(e){}}
+          if(drift>1.5){try{existingVid.currentTime=slide.mediaCurrentTime;}catch(e){}}
         }
         if(slide.mediaPaused){existingVid.pause();}
         else{var p=existingVid.play();if(p&&p.catch)p.catch(function(){});}
@@ -779,7 +1765,7 @@ function render(s){
       // shape mismatch, fails the early-bail check, and rebuilds the
       // DOM unnecessarily — costing us the very flicker-avoidance
       // this branch exists to provide.
-      try{lastRenderKey=JSON.stringify({sl:slide,dm:s.displayMode,st:settingsRenderKey(s.settings),ndi:IS_NDI});}catch(e){}
+      try{lastRenderKey=JSON.stringify({sl:slide,dm:s.displayMode,st:settingsRenderKey(s.settings),ndi:IS_NDI,nm:IS_NO_MEDIA?1:0});}catch(e){}
       return;
     }
     // NDI surface stays muted: the NDI sender captures raw frames, not
@@ -790,12 +1776,14 @@ function render(s){
     // post-render applyAudio() step then honours the operator's
     // broadcast/volume/mute toggles and drops the mute on the next
     // tick once the operator's gesture (Go Live) has flowed through.
+    var __slMU=__scrMedia(slide.mediaUrl);
     var mediaTag=slide.mediaKind==='video'
-      ? '<video id="liveVideo" src="'+slide.mediaUrl+'" '+(slide.mediaPaused?'':'autoplay ')+'loop muted playsinline preload="auto" style="'+mediaStyle+'"></video>'
-      : '<img src="'+slide.mediaUrl+'" alt="" style="'+mediaStyle+'">';
+      ? '<video id="liveVideo" src="'+__slMU+'" '+(slide.mediaPaused?'':'autoplay ')+'loop muted playsinline preload="auto" style="'+mediaStyle+'"></video>'
+      : '<img src="'+__slMU+'" alt="" style="'+mediaStyle+'">';
     var inner=ar
       ? '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#000"><div style="aspect-ratio:'+ar+';max-width:100%;max-height:100%;width:100%">'+mediaTag+'</div></div>'
       : mediaTag;
+    setBgVid(''); // v0.7.187 — foreground media owns the surface; hide BG layer
     $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:#000">'+inner+'</div>';
     $('output').classList.remove('hidden');
     if(slide.mediaKind==='video'){
@@ -859,7 +1847,7 @@ function render(s){
     // Map the lowerThirdHeight enum ('sm'|'md'|'lg') to the same
     // percentage the operator preview uses so all three surfaces
     // (preview, secondary screen, NDI) render identical bar heights.
-    var hMap={sm:22,md:33,lg:45};
+    var hMap={sm:22,md:33,lg:35};
     // v0.7.5.1 — FORCE_LH (URL ?lh=sm|md|lg) wins over SSE state so the
     // captured NDI BrowserWindow paints the operator's exact bucket on
     // its very first frame. Pre-fix it always rendered with the default
@@ -874,8 +1862,28 @@ function render(s){
     // flash). The fix: prefer the live SSE state when present, fall
     // back to FORCE_LH only when state has not arrived yet (cold-start
     // first paint). Same change applied to ndiLtScale below.
-    var __lhKey=st.lowerThirdHeight||FORCE_LH;
-    var hPct=hMap[__lhKey]||33;
+    // v0.7.176 — Operator's bucket (sm/md/lg) IS respected across every
+    // surface served by this route (in-app preview, Live Display,
+    // secondary screen, OBS browser source, NDI), so what they pick in
+    // Settings → Lower Third is exactly what every receiver gets. The
+    // align-items:stretch fix on .lower-third (v0.7.173 Fix D) keeps
+    // the rendered height frozen at the chosen bucket on every surface
+    // — Chromium will no longer collapse height:100% to intrinsic on
+    // any layout pass, so the frame stops shrinking to hug the text.
+    // FORCE_LH (URL ?lh=sm|md|lg) is the cold-start fallback for the
+    // NDI BrowserWindow's first paint before SSE arrives.
+    var __lhKey='sm';
+    var hPct=22;
+    // v0.7.192-hotfix.1 — Resolve the height bucket from live SSE state
+    // (st.lowerThirdHeight) with FORCE_LH (URL ?lh=) as the cold-start
+    // fallback. Pre-fix __lhKey/hPct were declared but NEVER reassigned,
+    // so hMap was dead code and every LT surface was pinned to sm/22%
+    // regardless of the operator's pick. v0.7.11 precedence: live SSE
+    // state wins; FORCE_LH only used when SSE has not arrived yet.
+    __lhKey=(st.lowerThirdHeight==='sm'||st.lowerThirdHeight==='md'||st.lowerThirdHeight==='lg')
+      ? st.lowerThirdHeight
+      : (FORCE_LH || 'sm');
+    hPct = hMap[__lhKey] || 22;
     // v0.7.0 — Compute the NDI lower-third size multiplier UP FRONT so
     // we can scale the BOX itself in lockstep with the verse text. Pre-
     // v0.7.0 only the font multiplied with ndiLtScale; the box height
@@ -894,10 +1902,10 @@ function render(s){
     // v0.7.11 — FLIPPED PRECEDENCE (see __lhKey above for full
     // rationale). Live SSE state wins; FORCE_SC is now only the
     // first-paint fallback before SSE arrives.
-    var ndiLtScale = IS_NDI
+    var ndiLtScale = USE_NDI_OVERRIDES
       ? (typeof st.ndiLowerThirdScale === 'number'
           ? Math.min(2, Math.max(0.5, st.ndiLowerThirdScale))
-          : (FORCE_SC !== null ? FORCE_SC : 1))
+          : (FORCE_SC !== null ? FORCE_SC : NDI_DEFAULTS.lowerThirdScale))
       : 1;
     // v0.7.5 — Frame is FIXED (T503). Operator screenshot showed the
     // box growing past the bottom band of the camera frame (the
@@ -910,12 +1918,18 @@ function render(s){
     // shrink to fit INSIDE that fixed frame, never expand it. The
     // text-band auto-fit math (ltFs clamp + line-clamp below) does
     // the shrinking; we just pin the box height here.
-    var hPctScaled = hPct;
+    // v0.7.194-hotfix.11 Item #1 — Apply the operator's LT Height
+    // slider (ndiLtScale) to the BAR HEIGHT itself, not just the
+    // text band below. Pre-fix this line was a plain passthrough
+    // (hPctScaled = hPct) so the bar stayed at the bucket default
+    // (sm 22% / md 33% / lg 45%) regardless of slider position.
+    // Capped at 85% so the bar can never eat the whole frame.
+    var hPctScaled = Math.min(85, hPct * ndiLtScale);
     // The upper area outside the bar must always be transparent
     // (#000), per spec. Theme colour and custom background image
     // both render *inside* the rounded card only.
-    var ltStyle='position:absolute;left:0;right:0;height:'+hPctScaled+'%;'+(pos==='top'?'top:6%;':'bottom:6%;');
-    var alignClass='align-'+(st.textAlign||'center');
+    var ltStyle='position:absolute;left:1%;right:1%;height:'+hPctScaled+'%;border-radius:.5rem;'+(pos==='top'?'top:3%;':'bottom:3%;');
+    var alignClass='align-'+(T_TA||'center');
     // Re-size body text inside the bar based on character density so
     // long verses shrink to fit. We also bake in the operator's
     // fontSize bucket and textScale multiplier so Settings → Typography
@@ -923,10 +1937,10 @@ function render(s){
     // visibly steps the lower-third bar text on the secondary screen
     // and NDI feed — previously this path was hardcoded and ignored
     // both controls.
-    var ltBand=totalChars>320?5:totalChars>180?7:totalChars>90?9:11;
+    var ltBand=totalChars>320?7:totalChars>180?9:totalChars>90?12:15;
     ltBand=ltBand*scale;
-    var ltCap=Math.max(1.4,2*scale);
-    var ltMin=Math.max(.4,.6*scale);
+    var ltCap=Math.max(2.0,3.2*scale);
+    var ltMin=Math.max(.5,.8*scale);
     /* v0.6.4 — Apply the operator's NDI lower-third size multiplier
        on the NDI surface only. Stays at 1x for the in-room projector
        and the operator preview, so the broadcast feed can be tuned
@@ -944,7 +1958,12 @@ function render(s){
     // it reads like a broadcast caption regardless of theme.
     var boxThemeClass=(dm==='lower-third-black')?'':tc;
     var boxStyleExtra=(dm==='lower-third-black')?'background:#000;':'';
-    var ltInnerBg=(dm==='lower-third-black')?'':(st.customBackground?'<img class="lt-bg" src="'+st.customBackground+'" alt="" crossorigin="anonymous" onerror="this.style.display=\\'none\\'"><div class="lt-bg-overlay"></div>':'');
+    var safeLtBg=safeBgUrl(st.customBackground);
+    // v0.7.189 — LT bg is no longer inlined. The cached <video>/<img>
+    // element is moved into the freshly-built .lt-box AFTER innerHTML
+    // via mountLtBg() so the decoder survives the rewrite — no more
+    // t=0 restart-flash on every speech tick / SSE poll.
+    var ltInnerBg='';
     // v0.6.3 — Transparent NDI lower-third matte. When the operator
     // flips ndiLowerThirdTransparent ON the rounded card drops its
     // gradient + drop shadow so vMix/OBS receive a clean alpha matte
@@ -963,7 +1982,7 @@ function render(s){
     // the operator's control: the surrounding frame is always alpha
     // (NDI as designed) but the lower-third card keeps or drops its
     // themed gradient backdrop based on the operator's preference.
-    var ltTransparent=IS_NDI && st.ndiLowerThirdTransparent===true;
+    var ltTransparent=IS_NDI && st.ndiLowerThirdTransparent===true; // intentionally IS_NDI-only: only the actual NDI capture surface drops the themed backdrop for vMix/OBS keying.
     var ltTransparentClass=ltTransparent?' transparent':'';
     // v0.7.8 — REVERTED v0.6.5. The .ndi-full class (which removed
     // the max-width cap and shrank side padding from 6% → 2%) was the
@@ -994,17 +2013,30 @@ function render(s){
     // honours the URL flag (always-on for v0.6.8 NDI) while the BOX class
     // (ltTransparentClass class on lt-box) continues to honour only the operator's
     // toggle. Two settings, two effects, no cross-contamination.
+    // v0.7.209 — setProperty background important so this
+    // surrounding-area paint beats OBS Browser Source Custom CSS
+    // (body background-color rgba 0 0 0 0) the same way the load-
+    // time block and render-time reset above do. Without important
+    // OBS would re-introduce alpha here on every lower-third repaint.
     try{
       var __bg=(FORCE_TRANSPARENT||ltTransparent)?'transparent':'#000';
-      document.documentElement.style.background=__bg;
-      document.body.style.background=__bg;
-      var __st2=document.getElementById('stage');if(__st2)__st2.style.background=__bg;
-      var __op2=document.getElementById('output');if(__op2)__op2.style.background=__bg;
+      document.documentElement.style.setProperty('background',__bg,'important');
+      document.body.style.setProperty('background',__bg,'important');
+      var __st2=document.getElementById('stage');if(__st2)__st2.style.setProperty('background',__bg,'important');
+      var __op2=document.getElementById('output');if(__op2)__op2.style.setProperty('background',__bg,'important');
     }catch(e){}
     var ltOrdered=refOrderTop?(ref+ltTxt):(ltTxt+ref);
     $('output').innerHTML='<div style="width:100%;height:100%;position:relative;background:transparent;'+fontStyle+'"><div class="lower-third '+pos+ndiFullClass+'" style="'+ltStyle+'"><div class="lt-box '+boxThemeClass+ltTransparentClass+ndiFullClass+' '+alignClass+'" style="'+boxStyleExtra+fontStyle+'">'+ltInnerBg+'<div class="lt-content '+alignClass+'">'+ltOrdered+'</div></div></div></div>';
+    // v0.7.189 — Mount the persistent LT bg into the freshly-built .lt-box.
+    // Same URL as last render = element is MOVED (not recreated) so video
+    // decoder keeps running uninterrupted. URL change = old released, new
+    // built. lower-third-black or no bg = release any cached element.
+    setBgVid(''); // fullscreen #bgLayer is irrelevant in LT mode
+    var __ltBox=document.querySelector('#output .lt-box');
+    if(__ltBox && dm!=='lower-third-black' && safeLtBg){ mountLtBg(__ltBox, safeLtBg); }
+    else { ensureLtBgEl(''); }
   }else{
-    var ta=st.textAlign||'center';
+    var ta=T_TA||'center';
     var jc=ta==='left'?'flex-start':ta==='right'?'flex-end':'center';
     // v0.6.9 — REVERT v0.6.8 background-stripping in full-screen NDI.
     // Operator video showed full-screen NDI broadcasting the verse on
@@ -1021,12 +2053,60 @@ function render(s){
     // the FULL-SCREEN branch was over-zealously stripping. The legacy
     // overlay use case is still served by lower-third mode + the
     // operator's per-box ndiLowerThirdTransparent toggle.
-    var fsTheme=tc;
-    var fsBg=bg;
+    // v0.7.194-hotfix.4 — Per-feed full-screen background gate. When
+    // the operator picked "Transparent" in the NDI Output panel
+    // (fsbg=transparent on the URL), strip the theme class AND the
+    // background-image string so vMix/OBS/Wirecast receive verse text
+    // on a clean alpha matte. Default ('themed') keeps the v0.6.9
+    // behaviour — themed gradient + custom bg render identical to the
+    // in-room projector. The themeBg inline style is also nulled when
+    // transparent so the gradient doesn't leak through.
+    var fsTheme=FS_BG_TRANSPARENT?'':tc;
+    var fsBg=FS_BG_TRANSPARENT?'':bg;
+    var fsThemeBg=FS_BG_TRANSPARENT?'':themeBg;
     var fsOrdered=refOrderTop?(ref+txt):(txt+ref);
-    $('output').innerHTML='<div class="'+fsTheme+'" style="width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';'+fontStyle+'">'+fsBg+'<div class="slide-content" style="text-align:'+ta+';'+fontStyle+'">'+fsOrdered+'</div></div>';
+    setBgVid(FS_BG_TRANSPARENT?'':safeBg);
+    $('output').innerHTML='<div class="'+fsTheme+'" style="'+fsThemeBg+'width:100%;height:100%;position:relative;display:flex;align-items:center;justify-content:'+jc+';text-align:'+ta+';'+fontStyle+'">'+fsBg+'<div class="slide-content" style="text-align:'+ta+';'+fontStyle+'">'+fsOrdered+'</div></div>';
   }
   $('output').classList.remove('hidden');
+  // v0.7.182 — fire autofit AFTER layout settles. rAF guarantees the
+  // browser has run layout for the freshly-injected innerHTML before
+  // we measure scrollHeight. Fallback to setTimeout(0) keeps the
+  // call ordering identical when rAF is unavailable (extremely old
+  // Electron / SSR test).
+  // v0.7.194-hotfix.4 — Triple-pass autofit. Pre-fix a single rAF
+  // measured scrollHeight too early when the injected HTML contained
+  // (a) custom web-font (Playfair/Merriweather/etc still loading),
+  // (b) a background <video> element changing the layout context, or
+  // (c) the new .slide-reference{width:100%} chyron that re-flows
+  // text wrap on second paint. Operators saw verses occasionally clip
+  // at the bottom or run off-screen on first show, then "snap" to the
+  // correct size on the next slide. Now: rAF #1 lets layout settle,
+  // rAF #2 covers post-font-swap re-measure, and a 120ms setTimeout
+  // catches video-decoder ready + Chromium offscreen compositor pass
+  // (the NDI capture surface in particular needs that extra beat).
+  // fitVerseText itself is idempotent so triple-firing is safe.
+  // v0.7.194-hotfix.6 — Added 4th pass at 350ms specifically for the
+  // Full↔Lower-Third mode flip case on the Electron offscreen NDI
+  // surface. The .lt-box container-query units (cqw/cqh) and its
+  // sibling bg-video <div> can take ~250-300ms to settle their
+  // measured dimensions on the offscreen compositor (longer than the
+  // 120ms 3rd pass covers). The __lastIsLT cache-invalidator in
+  // fitVerseText (L926-928) ensures this final pass re-measures from
+  // scratch against the now-stable layout. fitVerseText is idempotent
+  // so the 4th firing is free if the layout had already settled by
+  // the 120ms pass on faster machines.
+  if(typeof requestAnimationFrame==='function'){
+    requestAnimationFrame(function(){
+      requestAnimationFrame(fitVerseText);
+      setTimeout(fitVerseText,120);
+      setTimeout(fitVerseText,350);
+    });
+  }else{
+    setTimeout(fitVerseText,0);
+    setTimeout(fitVerseText,120);
+    setTimeout(fitVerseText,350);
+  }
 }
 
 // Polling fallback. Server-Sent Events break when the deployment is
@@ -1053,7 +2133,15 @@ function pollOnce(){
 }
 // SSE handles the realtime push; this poll is a 1.5s safety net for
 // autoscale deployments where SSE can land on a different replica.
-setInterval(pollOnce,1500);
+// v0.7.205 — GATED behind !IS_PREVIEW. Preview iframes receive their
+// payload via parent postMessage (see IS_PREVIEW handler below) and
+// MUST NOT pull live state from /api/output — doing so was painting
+// the LIVE slide over the preview every 1.5 s, which is the true
+// "preview snaps back to live on single-click" bug operators have
+// been reporting since v0.7.158. Every previous fix (v0.7.200..204)
+// chased the postMessage pipeline; the postMessage was always
+// correct — the poll fallback was silently clobbering it.
+if(!IS_PREVIEW) setInterval(pollOnce,1500);
 
 // v0.5.37 -- Chromium background-throttling defence. The kiosk window
 // is fullscreen on a secondary display and is NOT the focused window
@@ -1066,6 +2154,17 @@ setInterval(pollOnce,1500);
 // becomes visible OR comes back into focus, so any missed update
 // catches up immediately. This is in ADDITION to the 1.5 s interval.
 function wakeAndPoll(){
+  // v0.7.205 — Wake/poll path MUST short-circuit in preview iframes.
+  // pollOnce fetches /api/output (LIVE state) and applyRenders it —
+  // doing that in a preview iframe would clobber the preview slide
+  // with live whenever the operator's tab regains focus, the OS goes
+  // online, or the browser fires pageshow. Preview iframes are
+  // repainted by the parent OutputPreview's Zustand subscriber, which
+  // posts a fresh payload (with lastRenderKey='' reset) on every
+  // store change — that is the ONLY repaint path preview surfaces
+  // need. See the IS_PREVIEW gate on setInterval(pollOnce,1500) at
+  // L1935 and the empty-DOM watchdog at L1994 for the same rationale.
+  if(IS_PREVIEW)return;
   // Reset cache keys so the next payload always paints, even if
   // it's byte-identical to whatever we last drew before throttle.
   lastRenderKey='';
@@ -1106,7 +2205,13 @@ setInterval(function(){
 // repaints. This is the operator's safety net for the "I see black"
 // report — the surface self-heals to the latest broadcast state.
 let emptySince=0;
-setInterval(function(){
+// v0.7.205 — Watchdog also gated behind !IS_PREVIEW. Preview iframes
+// must never re-pull live state via pollOnce (would clobber the
+// preview slide with live). If a preview iframe's DOM goes empty,
+// the next parent postMessage will repaint it — the parent's
+// subscriber fires on every store change and the lastRenderKey=''
+// reset on every preview payload guarantees a re-paint.
+if(!IS_PREVIEW) setInterval(function(){
   if(!lastPolled)return; // never received state — splash is acceptable
   var el=$('output');
   if(!el)return;
@@ -1208,7 +2313,57 @@ document.addEventListener('mousemove',function(){
   clearTimeout(window._ht);
   window._ht=setTimeout(function(){$('status').classList.remove('visible')},3000);
 });
-connect();
+// v0.7.127 — Preview iframe mode. Skip SSE / poll entirely. Listen
+// for {__sl_preview:1, payload} messages from the parent Settings
+// page, then hand the payload to the SAME applyRender() the live
+// secondary screen + NDI capture use. The handshake ping tells the
+// parent we are ready so it can flush its first snapshot — without
+// it the very first paint after the iframe loads would be the
+// splash watermark until the operator next mutated a setting.
+if(IS_PREVIEW){
+  // v0.7.204 — Rev gate REMOVED. The v0.7.200-hotfix.3 rev gate
+  // (drop messages with __rev <= lastPreviewRev) was theorised to
+  // protect against out-of-order delivery, but postMessage between
+  // a parent window and its direct iframe is FIFO per spec — there
+  // is no real reordering source. Meanwhile the rev gate created a
+  // silent-drop failure mode: any time the parent OutputPreview
+  // component remounted (React StrictMode dev double-mount, layout
+  // -driven re-render that preserves the iframe DOM node, hot
+  // reload), its useRef-backed revRef restarted at 0 while the
+  // iframe's lastPreviewRev was still at some high value from the
+  // old session — every subsequent post was silently dropped and
+  // the iframe stayed on whatever it last rendered (typically the
+  // live slide), which is the operator-visible "preview snaps back
+  // to live on single click" bug.
+  //
+  // v0.7.204 trusts the parent: it only posts when state actually
+  // changed (rAF-coalesced) and postMessage delivers FIFO, so the
+  // iframe simply renders every payload it receives. The
+  // lastRenderKey='' force-reset (the part that ACTUALLY fixed the
+  // shape-equivalent cache collision) is preserved.
+  window.addEventListener('message',function(ev){
+    try{
+      var d=ev&&ev.data;
+      if(!d||typeof d!=='object')return;
+      if(d.__sl_preview!==1)return;
+      if(d.payload){
+        // Force-bypass the render cache for every preview payload —
+        // the parent only sends when state actually changed, so
+        // re-rendering unconditionally is safe and prevents any
+        // shape-equivalent cache collisions.
+        lastRenderKey='';
+        try{ applyRender(d.payload); }catch(_err){}
+      }
+    }catch(e){}
+  });
+  try{
+    if(window.parent&&window.parent!==window){
+      window.parent.postMessage({__sl_preview_ready:1},'*');
+    }
+  }catch(e){}
+} else {
+  connect();
+}
 </script>
 </body>
 </html>`

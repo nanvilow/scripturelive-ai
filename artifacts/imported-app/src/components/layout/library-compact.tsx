@@ -44,7 +44,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn, isVideoBackground } from '@/lib/utils'
 import { toast } from 'sonner'
 
 // ════════════════════════════════════════════════════════════════════════
@@ -58,6 +58,7 @@ export function BibleLookupCompact() {
     addToVerseHistory,
     settings,
     addScheduleItem,
+    addScheduleItemQuiet,
     navigatorRequestedRef,
     clearNavigatorRequestedRef,
   } = useAppStore()
@@ -132,29 +133,45 @@ export function BibleLookupCompact() {
       const v = chap.verses.find((x) => x.verse === verseNum)
       if (!v) return
       const reference = `${chap.book} ${chap.chapter}:${verseNum}`
+      // v0.7.194-hotfix.7 — STABLE slide id (book-ch-v-tr) so re-clicking
+      // the same verse reconciles the existing React element instead of
+      // remounting → no black flash. `Date.now()` was the flash source.
+      const slideId = `verse-${chap.book.replace(/\s+/g, '-')}-${chap.chapter}-${verseNum}-${chap.translation}`
       const slide: Slide = {
-        id: `slide-${Date.now()}`,
+        id: slideId,
         type: 'verse',
         title: reference,
         subtitle: chap.translation,
         content: v.text.split('\n').filter(Boolean),
         background: settings.congregationScreenTheme,
       }
-      addScheduleItem({
-        type: 'verse',
-        title: reference,
-        subtitle: chap.translation,
-        slides: [slide],
-      })
+      // v0.7.194-hotfix.8 — live path uses addScheduleItem (resets
+      // slides/live index by design — operator explicitly chose to go
+      // live); preview path uses addScheduleItemQuiet so the on-air
+      // slide is preserved by the subsequent stageVersePreviewOnly.
       const s = useAppStore.getState()
-      s.setSlides([slide])
-      s.setPreviewSlideIndex(0)
       if (live) {
+        addScheduleItem({
+          type: 'verse',
+          title: reference,
+          subtitle: chap.translation,
+          slides: [slide],
+        })
+        s.setSlides([slide])
+        s.setPreviewSlideIndex(0)
         s.setLiveSlideIndex(0)
         s.setIsLive(true)
+      } else {
+        addScheduleItemQuiet({
+          type: 'verse',
+          title: reference,
+          subtitle: chap.translation,
+          slides: [slide],
+        })
+        s.stageVersePreviewOnly(slide)
       }
     },
-    [addScheduleItem, settings.congregationScreenTheme],
+    [addScheduleItem, addScheduleItemQuiet, settings.congregationScreenTheme],
   )
 
   // Reload current chapter when translation changes.
@@ -224,8 +241,11 @@ export function BibleLookupCompact() {
       const v = chap.verses.find((x) => x.verse === verseNum)
       if (!v) return
       const reference = `${chap.book} ${chap.chapter}:${verseNum}`
+      // v0.7.194-hotfix.7 — STABLE id (see stageVerse) eliminates flash
+      // on ◀ ▶ navigation. v0.5.57 live-follow semantics preserved.
+      const slideId = `verse-${chap.book.replace(/\s+/g, '-')}-${chap.chapter}-${verseNum}-${chap.translation}`
       const slide: Slide = {
-        id: `slide-${Date.now()}`,
+        id: slideId,
         type: 'verse',
         title: reference,
         subtitle: chap.translation,
@@ -377,12 +397,12 @@ export function BibleLookupCompact() {
         const sel = suggestions[highlight]
         setSearchQuery(sel.reference)
         setShowSuggest(false)
-        // Treat picking a suggestion as the operator's "first Enter":
-        // load the chapter and stage the focused verse to PREVIEW.
-        const res = await lookupAndStage(sel.reference, false)
-        if (res) {
-          lastEnterRef.current = { query: sel.reference, at: Date.now() }
-        }
+        // Operator request (May 2026): a single Enter on the bottom
+        // search bar must push the verse straight to the Live Display
+        // — no preview-first, no two-press pattern. Picking a
+        // suggestion follows the same rule.
+        await lookupAndStage(sel.reference, true)
+        lastEnterRef.current = { query: sel.reference, at: Date.now() }
         return
       }
     }
@@ -390,24 +410,24 @@ export function BibleLookupCompact() {
       e.preventDefault()
       const q = searchQuery.trim()
       if (!q) return
+      // Operator request (May 2026): single Enter = LIVE.
+      // Previously the first press staged a preview and a second
+      // press within 1.5 s was required to push to the projector;
+      // operators wanted the keyboard to behave like a one-shot
+      // "go live" so the congregation sees the verse immediately.
+      // If the chapter is already loaded for this exact query (i.e.
+      // a real "second press"), skip the network round-trip and
+      // just re-fire the focused verse to live.
       const last = lastEnterRef.current
-      const isSecondPress =
-        last.query === q && Date.now() - last.at < 1500 && chapter !== null
-      if (isSecondPress) {
-        // Second Enter on the same query → push the focused verse
-        // straight to the Live Display.
+      const sameQueryAlreadyLoaded =
+        last.query === q && chapter !== null
+      if (sameQueryAlreadyLoaded) {
         const verseNum = activeVerse ?? chapter!.verses[0].verse
         stageVerse(chapter!, verseNum, true)
-        // Reset so a third Enter doesn't keep retriggering.
-        lastEnterRef.current = { query: '', at: 0 }
       } else {
-        // First Enter (or first after a long pause) → look up the
-        // chapter and stage the focused verse in PREVIEW only.
-        const res = await lookupAndStage(q, false)
-        if (res) {
-          lastEnterRef.current = { query: q, at: Date.now() }
-        }
+        await lookupAndStage(q, true)
       }
+      lastEnterRef.current = { query: q, at: Date.now() }
     }
   }
 
@@ -611,6 +631,7 @@ export function ScriptureDetectionCompact() {
     settings,
     updateSettings,
     addScheduleItem,
+    addScheduleItemQuiet,
   } = useAppStore()
 
   const processed = useRef<Set<string>>(new Set())
@@ -656,6 +677,8 @@ export function ScriptureDetectionCompact() {
         const verse = await fetchBibleVerse(ref, selectedTranslation)
         if (verse) {
           found++
+          // v0.7.104 — Operator-typed reference is the most explicit
+          // detection signal possible → column 1.
           const det: DetectedVerse = {
             id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             reference: ref,
@@ -663,6 +686,7 @@ export function ScriptureDetectionCompact() {
             translation: selectedTranslation,
             detectedAt: new Date(),
             confidence: 0.95,
+            source: 'explicit',
           }
           addDetectedVerse(det)
           addToVerseHistory(verse)
@@ -1136,7 +1160,7 @@ interface MediaItem {
 const MEDIA_KEY = 'scripturelive.media.v1'
 
 export function MediaLibraryCompact() {
-  const { addScheduleItem, updateSettings, settings } = useAppStore()
+  const { addScheduleItem, addScheduleItemQuiet, updateSettings, settings } = useAppStore()
   const [items, setItems] = useState<MediaItem[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -1221,26 +1245,97 @@ export function MediaLibraryCompact() {
     })
   }
 
+  // v0.7.190 — Build a proper `media`-type slide (not `custom` with
+  // background:dataUrl). The whole audio-meter + freeze-preview-on-
+  // go-live + anti-echo machinery added in v0.7.186 is gated on
+  // slide.type === 'media' && mediaUrl. Stuffing the video into the
+  // background field made every uploaded clip invisible to that
+  // gate, so the VU meter never mounted, both Preview and Live
+  // iframes played the same <video> simultaneously (echo + decoder
+  // fight = freeze), and `mediaPaused:true` was never spliced in
+  // when the operator hit Go Live.
+  const buildMediaSlide = (m: MediaItem): Slide => ({
+    id: `slide-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    type: 'media',
+    title: m.name,
+    subtitle: '',
+    content: [],
+    mediaUrl: m.dataUrl,
+    mediaKind: m.kind,
+  })
+
   const addToSchedule = (m: MediaItem) => {
-    const slide: Slide = {
-      id: `slide-${Date.now()}`,
-      type: 'custom',
-      title: m.name,
-      subtitle: '',
-      content: [],
-      background: m.dataUrl,
-    }
+    const slide = buildMediaSlide(m)
     addScheduleItem({ type: 'slides', title: m.name, slides: [slide] })
     toast.success(`${m.name} added to schedule`)
   }
 
-  const useAsBackground = (m: MediaItem) => {
-    if (m.kind !== 'image') {
-      toast.info('Only images can be used as a background right now')
-      return
+  // v0.7.210 — Operator $1600-customer escalation: single-clicking a
+  // video tile in Media was killing the live feed (live went blank /
+  // "video in live wont go off" + lag spike). Root cause: the prior
+  // sendMediaToPreview called `setSlides([slide])` which (store.ts
+  // L1182) ALSO sets `liveSlideIndex:-1, liveSlide:null` — wiping
+  // the on-air slide AND the AI direct ref. Plus the
+  // `addScheduleItemQuiet` call serialised the entire base64 video
+  // dataURL into the schedule on every click, triggering an SSE
+  // broadcast of MB-sized payload → operator-visible lag. Fix: use
+  // the `pinPreviewSlide` direct-ref pathway (v0.7.201 pattern, same
+  // architecture as v0.7.208's setLiveAuto for live). Preview reads
+  // pinnedPreviewSlide first (logos-shell L967, output-preview L200);
+  // slides[] and live are NEVER touched, so live keeps playing
+  // whatever it was already showing.
+  // v0.7.216 — Operator $1600-customer escalation: single-clicking a
+  // DIFFERENT media-video tile while one is on LIVE was stalling the
+  // live video. v0.7.210 fixed the store-mutation path (pinPreviewSlide
+  // doesn't touch live state) and v0.7.212 fixed the iframe sendNow
+  // dedup, but the React MediaVideoSurface for the new preview clip
+  // still mounts a 2nd <video> with autoPlay=true — adding a 2nd HW
+  // decoder slot that competes for the GPU's 2-4 stream cap and
+  // pauses the live decoder. Fix: when LIVE is already playing a
+  // DIFFERENT media-video, flip `previewMediaPaused=true` (and reset
+  // the preview clock to 0) BEFORE the pin so the new MediaVideoSurface
+  // mounts with autoPlay disabled (v0.7.216 gate in logos-shell.tsx
+  // L434). Operator scrubs/plays via the VideoTransport bar when ready.
+  // Same-media case is unchanged — it already short-circuits at the
+  // PreviewCard "ON AIR" placard (v0.7.193-hotfix.2) and never mounts
+  // a 2nd <video>.
+  const sendMediaToPreview = (m: MediaItem) => {
+    const slide = buildMediaSlide(m)
+    const st = useAppStore.getState()
+    const liveSlide = st.liveSlide ?? (st.liveSlideIndex >= 0 ? st.slides[st.liveSlideIndex] : null)
+    const liveIsPlayingDifferentMediaVideo = !!(
+      liveSlide &&
+      liveSlide.type === 'media' &&
+      liveSlide.mediaKind === 'video' &&
+      liveSlide.mediaUrl &&
+      m.kind === 'video' &&
+      slide.mediaUrl &&
+      liveSlide.mediaUrl !== slide.mediaUrl
+    )
+    if (liveIsPlayingDifferentMediaVideo) {
+      st.setPreviewMediaPaused(true)
+      st.setPreviewMediaCurrentTime(0)
     }
+    st.pinPreviewSlide(slide)
+  }
+
+  // v0.7.210 — Symmetric fix: double-click "send to live" uses the
+  // setLiveAuto direct ref (v0.7.203/v0.7.208 pathway) instead of
+  // `setSlides + setLiveSlideIndex + setIsLive(true)`, which yanked
+  // the operator's preview pin and clobbered any AI-pushed live ref.
+  // Operator preview survives a video promote-to-live now.
+  const sendMediaToLive = (m: MediaItem) => {
+    const slide = buildMediaSlide(m)
+    useAppStore.getState().setLiveAuto(slide)
+  }
+
+  const useAsBackground = (m: MediaItem) => {
+    // v0.7.155 — Both images AND videos can be used as backgrounds
+    // now. The legacy "only images" guard was removed; render sites
+    // (slide renderer, logos shell, congregation route) all use
+    // isVideoBackground() to pick <video> vs <img> at draw time.
     updateSettings({ customBackground: m.dataUrl })
-    toast.success('Background updated')
+    toast.success(`${m.kind === 'video' ? 'Video' : 'Image'} background applied`)
   }
 
   return (
@@ -1269,16 +1364,41 @@ export function MediaLibraryCompact() {
         </p>
         {settings.customBackground && (
           <div className="flex items-center gap-1.5 rounded border border-border bg-card/40 p-1">
-            <Image
-              src={settings.customBackground}
-              alt="Current bg"
-              width={32}
-              height={20}
-              className="rounded object-cover"
-              style={{ height: 'auto' }}
-              unoptimized
-            />
-            <span className="text-[9px] text-muted-foreground flex-1 truncate">Current background</span>
+            {isVideoBackground(settings.customBackground) ? (
+              /* v0.7.221 — Library customBackground thumbnail MUST render
+                 as a FROZEN poster (t=0.1 media fragment + preload=metadata
+                 + defensive pause), NOT autoplay/loop. Pre-fix this 32x20
+                 chip was spinning up a HW decoder slot on every render and
+                 competing with the Live Display / Secondary Screen / NDI
+                 capture decoders — same decoder-budget regression class as
+                 v0.7.216-219 (decoder slots are global to the process,
+                 size of the surface is irrelevant). Mirror of the
+                 `freezeBg=1` branch in route.ts `setBgVid`. */
+              <video
+                src={`${settings.customBackground}${settings.customBackground.includes('#') ? '&' : '#'}t=0.1`}
+                muted
+                playsInline
+                preload="metadata"
+                disablePictureInPicture
+                onLoadedMetadata={(e) => { try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ } }}
+                onPlay={(e) => { try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ } }}
+                className="rounded object-cover"
+                style={{ width: 32, height: 20 }}
+              />
+            ) : (
+              <Image
+                src={settings.customBackground}
+                alt="Current bg"
+                width={32}
+                height={20}
+                className="rounded object-cover"
+                style={{ height: 'auto' }}
+                unoptimized
+              />
+            )}
+            <span className="text-[9px] text-muted-foreground flex-1 truncate">
+              {isVideoBackground(settings.customBackground) ? 'Video background' : 'Current background'}
+            </span>
             <button
               onClick={() => updateSettings({ customBackground: null })}
               className="text-[10px] text-muted-foreground hover:text-red-400"
@@ -1299,7 +1419,13 @@ export function MediaLibraryCompact() {
         ) : (
           <div className="p-2 grid grid-cols-2 gap-1.5">
             {items.map((m) => (
-              <div key={m.id} className="group relative rounded overflow-hidden border border-border bg-black">
+              <div
+                key={m.id}
+                onClick={() => sendMediaToPreview(m)}
+                onDoubleClick={() => sendMediaToLive(m)}
+                title="Click → preview · Double-click → send live"
+                className="group relative rounded overflow-hidden border border-border bg-black cursor-pointer select-none"
+              >
                 {m.kind === 'image' ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={m.dataUrl} alt={m.name} className="w-full aspect-video object-cover" />
@@ -1309,7 +1435,7 @@ export function MediaLibraryCompact() {
                 <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-1">
                   <div className="flex justify-end">
                     <button
-                      onClick={() => removeItem(m.id)}
+                      onClick={(e) => { e.stopPropagation(); removeItem(m.id) }}
                       className="h-5 w-5 rounded bg-red-600/80 hover:bg-red-600 flex items-center justify-center"
                       aria-label="Delete"
                     >
@@ -1318,14 +1444,14 @@ export function MediaLibraryCompact() {
                   </div>
                   <div className="flex flex-col gap-0.5">
                     <button
-                      onClick={() => addToSchedule(m)}
+                      onClick={(e) => { e.stopPropagation(); addToSchedule(m) }}
                       className="text-[9px] py-0.5 rounded bg-amber-500 hover:bg-amber-400 text-black font-bold"
                     >
                       + Schedule
                     </button>
                     {m.kind === 'image' && (
                       <button
-                        onClick={() => useAsBackground(m)}
+                        onClick={(e) => { e.stopPropagation(); useAsBackground(m) }}
                         className="text-[9px] py-0.5 rounded bg-muted hover:bg-muted text-foreground"
                       >
                         Set BG

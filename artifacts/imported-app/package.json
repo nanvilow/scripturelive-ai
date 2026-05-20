@@ -1,6 +1,6 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.7.62",
+  "version": "0.7.221",
   "private": true,
   "main": "dist-electron/main.js",
   "repository": {
@@ -31,7 +31,8 @@
     "package:mac": "cross-env NEXT_OUTPUT_STANDALONE=1 pnpm run build && pnpm run electron:build && pnpm run strip:workspace-symlinks && electron-builder --config electron-builder.yml --mac && pnpm run downloads:manifest",
     "downloads:manifest": "node scripts/update-download-manifest.mjs",
     "postbuild": "node scripts/copy-standalone-assets.mjs",
-    "training:generate": "node scripts/voice-training/generate.mjs"
+    "training:generate": "node scripts/voice-training/generate.mjs",
+    "verify:release-files": "node scripts/verify-release-files.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.11.1",
@@ -75,6 +76,7 @@
     "nodemailer": "^8.0.6",
     "openai": "^6.34.0",
     "prisma": "^6.11.1",
+    "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
@@ -97,6 +99,7 @@
     "@tailwindcss/postcss": "^4",
     "@types/node": "^22",
     "@types/nodemailer": "^8.0.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/ws": "^8.18.1",

@@ -329,27 +329,93 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
           'Cloud transcription is temporarily unavailable. Please contact your administrator.',
         )
       }
-      // Bias the speech model toward Bible book names so chapter:
-      // verse references survive the transcription. `keyterm` accepts
-      // multiple values via repetition.
-      const KEY_TERMS = [
-        'Genesis','Exodus','Leviticus','Numbers','Deuteronomy','Joshua','Judges','Ruth',
-        'Samuel','Kings','Chronicles','Ezra','Nehemiah','Esther','Job','Psalms','Proverbs',
-        'Ecclesiastes','Song of Solomon','Isaiah','Jeremiah','Lamentations','Ezekiel',
-        'Daniel','Hosea','Joel','Amos','Obadiah','Jonah','Micah','Nahum','Habakkuk',
-        'Zephaniah','Haggai','Zechariah','Malachi','Matthew','Mark','Luke','John','Acts',
-        'Romans','Corinthians','Galatians','Ephesians','Philippians','Colossians',
-        'Thessalonians','Timothy','Titus','Philemon','Hebrews','James','Peter','Jude',
-        'Revelation','chapter','verse','Jesus','Christ','Lord','God',
+      // v0.7.165 — Bring the renderer's direct Deepgram URL in line
+      // with the api-server proxy (artifacts/api-server/src/routes/
+      // transcribe-stream.ts + lib/deepgram-keyterms.ts). Operator
+      // complaint after v0.7.92's autoGainControl removal: "the LLM
+      // and AI are not listening well, transcribing rubbish, was
+      // good at first, now difficult to use." Three concrete
+      // regressions vs the api-server proxy were:
+      //
+      //   (a) MISSING `endpointing`. Without this param Nova-3
+      //       defaults to ~10 ms silence detection, which fragments
+      //       natural speech into many short interim results that
+      //       look garbled because half-formed words flicker on the
+      //       Live Transcription panel before the final correction
+      //       lands. `endpointing=300` groups syllables into proper
+      //       sentence-length utterances — exactly what the api-server
+      //       proxy uses and what Deepgram's own docs recommend for
+      //       sermon / lecture audio.
+      //
+      //   (b) MISSING `vad_events`. Helps Nova-3 discriminate
+      //       speech-vs-noise on quiet stretches, reducing the
+      //       "phantom word" emissions that make the panel look like
+      //       it's making things up.
+      //
+      //   (c) `language: 'en'` (generic) instead of `'en-US'`. The
+      //       en-US model has a stronger acoustic prior for North
+      //       American + West African pulpit accents than the generic
+      //       multi-region 'en' bucket. Same string the proxy uses.
+      //
+      // Combined with v0.7.92's AGC-off (which is correct — the
+      // operator's gain slider must win), these three params restore
+      // the segmentation + acoustic-prior quality the operator
+      // remembers as "good at first."
+      //
+      // Keyterms list expanded to match api-server's BIBLE_KEYTERMS
+      // verbatim: numbered books in BOTH "1 Samuel" AND "First
+      // Samuel" forms (Deepgram boosts the exact phrase, not the
+      // substring), preacher trigger phrases ("the Bible says",
+      // "open your Bibles"), and Christian vocabulary ("Holy Spirit",
+      // "covenant", "grace", etc.). Without the multi-word numbered
+      // forms, "First Samuel chapter 3" got transcribed as "First
+      // Sample chapter 3" or "Versammeln chapter 3" because the
+      // model wasn't biased toward the exact spoken phrase.
+      const KEY_TERMS: readonly string[] = [
+        // Old Testament
+        'Genesis', 'Exodus', 'Leviticus', 'Numbers', 'Deuteronomy',
+        'Joshua', 'Judges', 'Ruth',
+        '1 Samuel', '2 Samuel', 'First Samuel', 'Second Samuel',
+        '1 Kings', '2 Kings', 'First Kings', 'Second Kings',
+        '1 Chronicles', '2 Chronicles', 'First Chronicles', 'Second Chronicles',
+        'Ezra', 'Nehemiah', 'Esther',
+        'Job', 'Psalms', 'Psalm', 'Proverbs', 'Ecclesiastes', 'Song of Solomon',
+        'Isaiah', 'Jeremiah', 'Lamentations', 'Ezekiel', 'Daniel',
+        'Hosea', 'Joel', 'Amos', 'Obadiah', 'Jonah', 'Micah',
+        'Nahum', 'Habakkuk', 'Zephaniah', 'Haggai', 'Zechariah', 'Malachi',
+        // New Testament
+        'Matthew', 'Mark', 'Luke', 'John', 'Acts', 'Romans',
+        '1 Corinthians', '2 Corinthians', 'First Corinthians', 'Second Corinthians',
+        'Galatians', 'Ephesians', 'Philippians', 'Colossians',
+        '1 Thessalonians', '2 Thessalonians', 'First Thessalonians', 'Second Thessalonians',
+        '1 Timothy', '2 Timothy', 'First Timothy', 'Second Timothy',
+        'Titus', 'Philemon', 'Hebrews', 'James',
+        '1 Peter', '2 Peter', 'First Peter', 'Second Peter',
+        '1 John', '2 John', '3 John', 'First John', 'Second John', 'Third John',
+        'Jude', 'Revelation',
+        // Reference vocabulary — boosts the colon ("John 3:16") and
+        // verbose ("chapter X verse Y") forms the bible-api parser
+        // commits on.
+        'chapter', 'verse', 'verses',
+        'the Bible says', 'scripture says', 'according to scripture',
+        'turn to', 'let us read', 'open your Bibles',
+        // Christian vocabulary
+        'Jesus', 'Christ', 'Lord', 'God', 'Holy Spirit',
+        'gospel', 'salvation', 'righteousness', 'kingdom',
+        'covenant', 'prophet', 'apostle', 'disciple',
+        'faith', 'grace', 'mercy', 'repentance', 'amen', 'hallelujah',
       ]
       const params = new URLSearchParams({
         model: 'nova-3',
-        language: 'en',
+        language: 'en-US',
         smart_format: 'true',
         interim_results: 'true',
         punctuate: 'true',
         encoding: 'linear16',
         sample_rate: String(TARGET_SAMPLE_RATE),
+        channels: '1',
+        endpointing: '300',
+        vad_events: 'true',
       })
       for (const k of KEY_TERMS) params.append('keyterm', k)
       const wssUrl = `wss://api.deepgram.com/v1/listen?${params.toString()}`
@@ -408,12 +474,26 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
           // a WebSocket upgrade handler attached (e.g. pointing at
           // the imported-app's Next.js domain instead of the
           // api-server). Spell that out so the operator can fix it.
+          // v0.7.81 — Operator-facing message. Pre-v0.7.81 we leaked
+          // server-side terminology (WebSocket / DEEPGRAM_API_KEY /
+          // /api/transcribe-stream) into the live transcription panel
+          // for code 1006 — the operator complaint was that this
+          // looked like a crash report mid-service. The overwhelmingly
+          // common cause of 1006 in the field is the operator's PC
+          // being offline (no Wi-Fi, captive portal, ISP blip), so we
+          // now surface a plain "check your internet" message and
+          // keep the technical reason only when the server actually
+          // sent one.
           const reason =
             ev.reason ||
             (code === 1006
-              ? 'WebSocket could not be established — verify the streaming endpoint hosts the api-server (DEEPGRAM_API_KEY, /api/transcribe-stream upgrade handler).'
+              ? 'Check your internet — connect to a network and try Detect again.'
               : 'connection closed')
-          setError(`Live transcription disconnected (${code}: ${reason}).`)
+          setError(
+            code === 1006 && !ev.reason
+              ? reason
+              : `Live transcription disconnected (${code}: ${reason}).`,
+          )
           teardown()
         }
       }
@@ -455,9 +535,21 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
 
       const win = window as unknown as { __selectedMicrophoneId?: string | null }
       const deviceId = win.__selectedMicrophoneId || undefined
+      // v0.7.92 — autoGainControl:false is REQUIRED for two reasons:
+      //   1. Without it, Chromium's AGC continuously renormalizes the
+      //      input level, completely overriding the operator's mic-gain
+      //      slider (the slider IS hooked up to a GainNode in the audio
+      //      graph, but AGC sits upstream and undoes our scaling on
+      //      every block). With AGC off, the GainNode actually moves
+      //      the needle the operator sees.
+      //   2. AGC writes to the OS mic-input volume slider, which is
+      //      system-wide on Windows. Result: OBS / vMix / Zoom / Teams
+      //      all suddenly see their mic level dropped the moment we
+      //      capture audio. Disabling AGC keeps the OS slider where the
+      //      operator put it.
       const constraints: MediaStreamConstraints = deviceId
-        ? { audio: { deviceId: { exact: deviceId }, echoCancellation: true, noiseSuppression: true } }
-        : { audio: { echoCancellation: true, noiseSuppression: true } }
+        ? { audio: { deviceId: { exact: deviceId }, echoCancellation: true, noiseSuppression: true, autoGainControl: false } }
+        : { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false } }
 
       // Open WS + capture mic in parallel — they're independent and
       // the audio backlog buffers any frames captured before WS opens.

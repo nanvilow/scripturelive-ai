@@ -1,0 +1,180 @@
+<!doctype html>
+<html><head><meta charset="utf-8"/><title>v0.7.193-hotfix.2 — Preview/Live transport independence</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:Inter,system-ui,sans-serif}
+body{background:#0a0e1a;color:#e5e7eb;padding:32px;min-height:100vh}
+h1{font-size:22px;margin-bottom:6px}
+.sub{color:#9ca3af;font-size:13px;margin-bottom:28px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:36px}
+.panel{background:#0f1422;border:1px solid #1f2937;border-radius:10px;padding:18px}
+.panel h2{font-size:13px;color:#9ca3af;text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.panel h2 .badge{background:#7f1d1d;color:#fecaca;font-size:10px;padding:2px 8px;border-radius:4px;letter-spacing:.05em}
+.panel.ok h2 .badge{background:#14532d;color:#bbf7d0}
+.video{aspect-ratio:16/9;background:linear-gradient(135deg,#3b2a18,#7c5a1a);border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fde68a;font-size:36px;position:relative;overflow:hidden}
+.video::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 30% 40%,rgba(255,200,80,.55),transparent 50%),radial-gradient(circle at 70% 60%,rgba(255,160,40,.5),transparent 55%)}
+.video span{position:relative;z-index:1;text-shadow:0 2px 8px rgba(0,0,0,.6)}
+.transport{display:flex;align-items:center;gap:8px;border-top:1px solid #1f2937;padding:10px 4px 2px;margin-top:10px}
+.btn{width:28px;height:28px;border-radius:5px;background:#1f2937;border:1px solid #374151;display:inline-flex;align-items:center;justify-content:center;color:#e5e7eb;font-size:11px}
+.btn.active-play{background:#16a34a;border-color:#22c55e;color:white}
+.btn.active-pause{background:#ea580c;border-color:#f97316;color:white}
+.btn.loop-on{background:rgba(56,189,248,.2);border-color:rgba(56,189,248,.4);color:#7dd3fc}
+.scrub{flex:1;height:6px;background:#1f2937;border-radius:3px;position:relative;margin:0 6px}
+.scrub::before{content:"";position:absolute;left:0;top:0;height:100%;background:#3b82f6;border-radius:3px}
+.scrub.p38::before{width:38%}
+.scrub.p72::before{width:72%}
+.scrub.p0::before{width:0}
+.scrub.p100::before{width:100%}
+.scrub::after{content:"";position:absolute;top:50%;width:12px;height:12px;border-radius:50%;background:#fff;transform:translate(-50%,-50%);box-shadow:0 0 0 2px #3b82f6}
+.scrub.p38::after{left:38%}
+.scrub.p72::after{left:72%}
+.scrub.p0::after{left:0}
+.scrub.p100::after{left:100%}
+.time{font-family:ui-monospace,SFMono-Regular,monospace;font-size:10px;color:#9ca3af;width:34px;text-align:right}
+.label{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.55);padding:3px 8px;border-radius:3px;font-size:11px;letter-spacing:.05em;font-weight:600}
+.label.preview{color:#93c5fd}
+.label.live{color:#fca5a5}
+.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#ef4444;margin-right:6px;animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.4}}
+.note{color:#9ca3af;font-size:12px;margin-top:10px;line-height:1.5}
+.arrow{position:relative;text-align:center;color:#ef4444;font-size:14px;margin:-8px 0 18px;font-weight:600}
+.arrow::before,.arrow::after{content:"";position:absolute;top:50%;width:38%;height:2px;background:#ef4444;opacity:.5}
+.arrow::before{left:0}.arrow::after{right:0}
+.section{font-size:14px;color:#fbbf24;margin:0 0 14px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+.callout{background:#0a1f2a;border:1px solid #0e7490;border-radius:8px;padding:14px 16px;margin-top:8px;font-size:13px;color:#a5f3fc;line-height:1.6}
+.callout b{color:#fff}
+</style></head><body>
+
+<h1>v0.7.193-hotfix.2 — Preview / Live transport independence</h1>
+<p class="sub">Operator request: each deck controls only its own pane. No cross-mirror.</p>
+
+<p class="section">Before — current v0.7.193-hotfix.1 behaviour (BUG)</p>
+<p class="arrow">↓ Press Play on Preview → Live also flips to Play. Both decks share one master clock. ↓</p>
+<div class="row">
+  <div class="panel">
+    <h2>Preview <span class="badge">SHARED STATE</span></h2>
+    <div class="video"><span class="label preview">PREVIEW</span><span>🪔</span></div>
+    <div class="transport">
+      <div class="btn active-play">▶</div>
+      <div class="btn">■</div>
+      <div class="btn">↻</div>
+      <span class="time">0:32</span>
+      <div class="scrub p38"></div>
+      <span class="time">1:21</span>
+    </div>
+    <p class="note">Operator pressed Play here…</p>
+  </div>
+  <div class="panel">
+    <h2>Live Display <span class="badge">SHARED STATE</span></h2>
+    <div class="video"><span class="label live"><span class="live-dot"></span>LIVE</span><span>🪔</span></div>
+    <div class="transport">
+      <div class="btn active-play">▶</div>
+      <div class="btn">■</div>
+      <div class="btn">↻</div>
+      <span class="time">0:32</span>
+      <div class="scrub p38"></div>
+      <span class="time">1:21</span>
+    </div>
+    <p class="note">…and Live mirrored to Play at the same timestamp. Cannot run them independently.</p>
+  </div>
+</div>
+
+<p class="section">After — v0.7.193-hotfix.2 (FIX)</p>
+<p style="text-align:center;color:#22c55e;font-size:14px;margin:-8px 0 18px;font-weight:600">↓ Each deck owns its own play/pause/stop/loop/scrub. Zero cross-talk. ↓</p>
+<div class="row">
+  <div class="panel ok">
+    <h2>Preview <span class="badge">OWN STATE</span></h2>
+    <div class="video"><span class="label preview">PREVIEW</span><span>🪔</span></div>
+    <div class="transport">
+      <div class="btn active-pause">⏸</div>
+      <div class="btn">■</div>
+      <div class="btn loop-on">↻</div>
+      <span class="time">0:48</span>
+      <div class="scrub p72"></div>
+      <span class="time">1:21</span>
+    </div>
+    <p class="note">Operator scrubbed to 0:48, hit Pause, turned Loop on — <b>Preview only</b>. Live stayed playing on its own clock.</p>
+  </div>
+  <div class="panel ok">
+    <h2>Live Display <span class="badge">OWN STATE</span></h2>
+    <div class="video"><span class="label live"><span class="live-dot"></span>LIVE</span><span>🪔</span></div>
+    <div class="transport">
+      <div class="btn active-play">▶</div>
+      <div class="btn">■</div>
+      <div class="btn">↻</div>
+      <span class="time">0:14</span>
+      <div class="scrub p38" style="width:100%"></div>
+      <span class="time">1:21</span>
+    </div>
+    <p class="note">Live keeps playing from 0:14 with Loop OFF — completely unaffected by what Preview just did.</p>
+  </div>
+</div>
+
+<p class="section">Plus — Send-to-Live auto-stops Preview (NEW)</p>
+<p style="text-align:center;color:#22c55e;font-size:14px;margin:-8px 0 18px;font-weight:600">↓ The instant a media slide is promoted to Live, the Preview pane auto-pauses. Clean stop, no background ticking. ↓</p>
+<div class="row">
+  <div class="panel ok">
+    <h2>Preview <span class="badge">AUTO-PAUSED</span></h2>
+    <div class="video" style="opacity:.55"><span class="label preview">PREVIEW (paused)</span><span>🪔</span></div>
+    <div class="transport">
+      <div class="btn active-pause">⏸</div>
+      <div class="btn">■</div>
+      <div class="btn">↻</div>
+      <span class="time">0:32</span>
+      <div class="scrub p38"></div>
+      <span class="time">1:21</span>
+    </div>
+    <p class="note">Operator hit <b>Send to Live</b> while Preview was at 0:32. Preview <b>automatically paused</b> on the same frame — no more silent background playback.</p>
+  </div>
+  <div class="panel ok">
+    <h2>Live Display <span class="badge">JUST PROMOTED</span></h2>
+    <div class="video"><span class="label live"><span class="live-dot"></span>LIVE</span><span>🪔</span></div>
+    <div class="transport">
+      <div class="btn active-play">▶</div>
+      <div class="btn">■</div>
+      <div class="btn">↻</div>
+      <span class="time">0:33</span>
+      <div class="scrub p38"></div>
+      <span class="time">1:21</span>
+    </div>
+    <p class="note">Live picks up at 0:32 (Preview's last frame) and auto-plays seamlessly to the congregation.</p>
+  </div>
+</div>
+
+<p class="section">Plus — Output now matches Live Display (NEW)</p>
+<p style="text-align:center;color:#22c55e;font-size:14px;margin:-8px 0 18px;font-weight:600">↓ NDI / OBS / secondary screen now snap back to Live's frame within ~3-4 frames at 30fps. ↓</p>
+<div class="row">
+  <div class="panel ok">
+    <h2>Live Display (operator) <span class="badge">MASTER CLOCK</span></h2>
+    <div class="video"><span class="label live"><span class="live-dot"></span>LIVE</span><span>🪔</span></div>
+    <div class="transport">
+      <div class="btn active-play">▶</div>
+      <div class="btn">■</div>
+      <div class="btn">↻</div>
+      <span class="time">0:24</span>
+      <div class="scrub p38"></div>
+      <span class="time">1:21</span>
+    </div>
+    <p class="note">In-app Live writes its currentTime to the broadcast clock every <b>0.10s</b> (was 0.25s).</p>
+  </div>
+  <div class="panel ok">
+    <h2>Output (NDI / OBS / Secondary) <span class="badge">FOLLOWS</span></h2>
+    <div class="video"><span class="label live"><span class="live-dot"></span>OUTPUT</span><span>🪔</span></div>
+    <div class="transport">
+      <div class="btn active-play">▶</div>
+      <div class="btn">■</div>
+      <div class="btn">↻</div>
+      <span class="time">0:24</span>
+      <div class="scrub p38"></div>
+      <span class="time">1:21</span>
+    </div>
+    <p class="note">Renderer snaps to broadcast clock if drift > <b>0.12s</b> (was 0.4s) — output never gets ahead of operator.</p>
+  </div>
+</div>
+
+<div class="callout">
+  <b>What changed:</b> the three shared store fields (<code>mediaPaused</code>, <code>mediaCurrentTime</code>, <code>mediaLoop</code>) were split into <code>previewMediaPaused / liveMediaPaused</code>, <code>previewMediaCurrentTime / liveMediaCurrentTime</code>, <code>previewMediaLoop / liveMediaLoop</code>. The Preview transport reads/writes only the <code>preview*</code> trio; the Live transport only the <code>live*</code> trio.<br><br>
+  <b>External feeds (NDI / OBS / secondary screen):</b> these always show the LIVE pane to the congregation, so they follow the <code>live*</code> trio — unchanged behaviour from the operator's point of view.<br><br>
+  <b>Go-Live handoff:</b> still smooth — when you send a media slide to Live, the live deck seeds itself with the preview pane's current frame and auto-plays from there. Preview keeps ticking on its own (so you can still scrub it) but is muted to prevent echo.
+</div>
+
+</body></html>

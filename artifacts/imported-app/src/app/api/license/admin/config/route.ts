@@ -9,8 +9,9 @@
 //        so changes apply without a process restart.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getConfig, saveConfig, type RuntimeConfig } from '@/lib/licensing/storage'
+import { getConfig, saveConfig, getFile, type RuntimeConfig } from '@/lib/licensing/storage'
 import { requireAdmin, revokeAllSessions, buildClearCookie } from '@/lib/licensing/admin-auth'
+import { cloudPullAdminLedgerCached } from '@/lib/licensing/cloud-pull-cache'
 import {
   PLANS,
   MOMO_RECIPIENT,
@@ -46,6 +47,12 @@ function defaults(): Defaults {
 export async function GET(req: NextRequest) {
   const guard = requireAdmin(req)
   if (guard) return guard
+  // v0.7.160 — Cross-device admin sync also pulls config (prices,
+  // momo recipient, trial duration, notification targets, etc.) so
+  // an operator who tweaks pricing on the cloud / phone admin sees
+  // the updated values on their desktop the next time the Settings
+  // tab opens. v0.7.173 — TTL-cached + coalesced; see cloud-pull-cache.ts.
+  try { await cloudPullAdminLedgerCached() } catch { /* never block */ }
   const config = getConfig() ?? {}
   return NextResponse.json(
     { config, defaults: defaults() },
@@ -67,6 +74,9 @@ interface SavePayload {
   /** v0.7.29 — Phase 2 v0.8.0 — LLM voice classifier opt-in. */
   enableLlmClassifier?: boolean | null
   llmClassifierConfidenceFloor?: number | null
+  /** v0.7.153 — Cross-device admin sync credential (the cloud
+   *  install's masterCode). Per-PC; never leaves this device. */
+  cloudAdminCode?: string | null
 }
 
 function clean(v: unknown): unknown {
@@ -104,6 +114,11 @@ export async function POST(req: NextRequest) {
   }
   if ('adminOpenAIKey' in body) patch.adminOpenAIKey = clean(body.adminOpenAIKey)
   if ('adminDeepgramKey' in body) patch.adminDeepgramKey = clean(body.adminDeepgramKey)
+  // v0.7.153 — Cross-device admin sync credential. Operator pastes
+  // the cloud install's masterCode here (visible on the cloud's Admin
+  // → Overview tab). Strictly per-PC; the storage layer's snapshot
+  // extractor strips this from any cloud push.
+  if ('cloudAdminCode' in body) patch.cloudAdminCode = clean(body.cloudAdminCode)
 
   // v0.7.29 — LLM voice classifier opt-in. Boolean: explicit null
   // clears the override; explicit boolean overrides; missing key is

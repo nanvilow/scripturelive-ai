@@ -3,29 +3,95 @@ import type { BibleTranslation, BibleVerse } from './store'
 // ──────────────────────────────────────────────
 // Book aliases and names
 // ──────────────────────────────────────────────
+// v0.7.154 — Comprehensive 3-letter alias coverage for ALL 66 books.
+// Operators only type the first 3 letters of a book + chapter (+ verse)
+// in the bottom search bar — e.g. "joh 3 16", "est 7 8", "mat 5 9".
+// Every book below has at least one 3-letter alias; numbered books also
+// accept the no-space form ("1sa", "2co", "3jn") and the spaced form
+// ("1 sa", "2 co", "3 jn").
+//
+// Collision policy (deliberate):
+//   jud → Jude       (Judges uses jdg)
+//   php → Philippians (Philemon uses phm)
+//   jon → Jonah       (Jonah is one chapter, no number book conflict)
 const BOOK_ALIASES: Record<string, string> = {
-  gen: 'Genesis', ex: 'Exodus', exo: 'Exodus', lev: 'Leviticus',
-  num: 'Numbers', deut: 'Deuteronomy', jos: 'Joshua', judg: 'Judges',
-  ruth: 'Ruth', '1 sam': '1 Samuel', '2 sam': '2 Samuel',
-  '1 ki': '1 Kings', '2 ki': '2 Kings', '1 chron': '1 Chronicles',
-  '2 chron': '2 Chronicles', ezra: 'Ezra', neh: 'Nehemiah',
-  esth: 'Esther', job: 'Job', ps: 'Psalms', psalm: 'Psalms',
-  prov: 'Proverbs', eccl: 'Ecclesiastes', song: 'Song of Solomon',
-  isa: 'Isaiah', jer: 'Jeremiah', lam: 'Lamentations',
-  eze: 'Ezekiel', dan: 'Daniel', hos: 'Hosea', joel: 'Joel',
-  amos: 'Amos', obad: 'Obadiah', jonah: 'Jonah', mic: 'Micah',
-  nah: 'Nahum', hab: 'Habakkuk', zeph: 'Zephaniah', hag: 'Haggai',
-  zech: 'Zechariah', mal: 'Malachi', matt: 'Matthew', mt: 'Matthew',
-  mark: 'Mark', mk: 'Mark', lk: 'Luke', luke: 'Luke',
-  jn: 'John', john: 'John', acts: 'Acts', rom: 'Romans',
-  '1 cor': '1 Corinthians', '2 cor': '2 Corinthians',
-  gal: 'Galatians', eph: 'Ephesians', phil: 'Philippians',
-  col: 'Colossians', '1 thess': '1 Thessalonians',
-  '2 thess': '2 Thessalonians', '1 tim': '1 Timothy',
-  '2 tim': '2 Timothy', tit: 'Titus', phlm: 'Philemon',
-  heb: 'Hebrews', jas: 'James', '1 pet': '1 Peter',
-  '2 pet': '2 Peter', '1 john': '1 John', '2 john': '2 John',
-  '3 john': '3 John', jude: 'Jude', rev: 'Revelation',
+  // ─── Old Testament ──────────────────────────────────────────────
+  gen: 'Genesis', ge: 'Genesis',
+  ex: 'Exodus', exo: 'Exodus', exod: 'Exodus',
+  lev: 'Leviticus', lv: 'Leviticus',
+  num: 'Numbers', nu: 'Numbers', nm: 'Numbers',
+  deu: 'Deuteronomy', deut: 'Deuteronomy', dt: 'Deuteronomy',
+  jos: 'Joshua', josh: 'Joshua',
+  jdg: 'Judges', judg: 'Judges',
+  rut: 'Ruth', ruth: 'Ruth',
+  '1 sa': '1 Samuel', '1sa': '1 Samuel', '1 sam': '1 Samuel', '1sam': '1 Samuel',
+  '2 sa': '2 Samuel', '2sa': '2 Samuel', '2 sam': '2 Samuel', '2sam': '2 Samuel',
+  '1 ki': '1 Kings', '1ki': '1 Kings', '1 kgs': '1 Kings', '1kgs': '1 Kings',
+  '2 ki': '2 Kings', '2ki': '2 Kings', '2 kgs': '2 Kings', '2kgs': '2 Kings',
+  '1 ch': '1 Chronicles', '1ch': '1 Chronicles', '1 chr': '1 Chronicles', '1chr': '1 Chronicles',
+  '1 chron': '1 Chronicles', '1chron': '1 Chronicles',
+  '2 ch': '2 Chronicles', '2ch': '2 Chronicles', '2 chr': '2 Chronicles', '2chr': '2 Chronicles',
+  '2 chron': '2 Chronicles', '2chron': '2 Chronicles',
+  ezr: 'Ezra', ezra: 'Ezra',
+  neh: 'Nehemiah',
+  est: 'Esther', esth: 'Esther',
+  job: 'Job',
+  psa: 'Psalms', ps: 'Psalms', psalm: 'Psalms', pss: 'Psalms',
+  pro: 'Proverbs', prov: 'Proverbs', prv: 'Proverbs',
+  ecc: 'Ecclesiastes', eccl: 'Ecclesiastes',
+  sng: 'Song of Solomon', sos: 'Song of Solomon', song: 'Song of Solomon',
+  isa: 'Isaiah',
+  jer: 'Jeremiah',
+  lam: 'Lamentations',
+  ezk: 'Ezekiel', eze: 'Ezekiel', ezek: 'Ezekiel',
+  dan: 'Daniel', dn: 'Daniel',
+  hos: 'Hosea',
+  jol: 'Joel', joel: 'Joel',
+  amo: 'Amos', amos: 'Amos',
+  oba: 'Obadiah', obad: 'Obadiah',
+  jon: 'Jonah', jonah: 'Jonah',
+  mic: 'Micah',
+  nah: 'Nahum',
+  hab: 'Habakkuk',
+  zep: 'Zephaniah', zeph: 'Zephaniah',
+  hag: 'Haggai',
+  zec: 'Zechariah', zech: 'Zechariah',
+  mal: 'Malachi',
+  // ─── New Testament ──────────────────────────────────────────────
+  mat: 'Matthew', matt: 'Matthew', mt: 'Matthew',
+  mar: 'Mark', mrk: 'Mark', mark: 'Mark', mk: 'Mark',
+  luk: 'Luke', luke: 'Luke', lk: 'Luke',
+  joh: 'John', jhn: 'John', john: 'John', jn: 'John',
+  act: 'Acts', acts: 'Acts',
+  rom: 'Romans',
+  '1 co': '1 Corinthians', '1co': '1 Corinthians', '1 cor': '1 Corinthians', '1cor': '1 Corinthians',
+  '2 co': '2 Corinthians', '2co': '2 Corinthians', '2 cor': '2 Corinthians', '2cor': '2 Corinthians',
+  gal: 'Galatians',
+  eph: 'Ephesians',
+  php: 'Philippians', phi: 'Philippians', phil: 'Philippians',
+  col: 'Colossians',
+  '1 th': '1 Thessalonians', '1th': '1 Thessalonians',
+  '1 thes': '1 Thessalonians', '1thes': '1 Thessalonians',
+  '1 thess': '1 Thessalonians', '1thess': '1 Thessalonians',
+  '2 th': '2 Thessalonians', '2th': '2 Thessalonians',
+  '2 thes': '2 Thessalonians', '2thes': '2 Thessalonians',
+  '2 thess': '2 Thessalonians', '2thess': '2 Thessalonians',
+  '1 ti': '1 Timothy', '1ti': '1 Timothy', '1 tim': '1 Timothy', '1tim': '1 Timothy',
+  '2 ti': '2 Timothy', '2ti': '2 Timothy', '2 tim': '2 Timothy', '2tim': '2 Timothy',
+  tit: 'Titus',
+  phm: 'Philemon', phlm: 'Philemon', phile: 'Philemon',
+  heb: 'Hebrews',
+  jas: 'James', jam: 'James',
+  '1 pe': '1 Peter', '1pe': '1 Peter', '1 pet': '1 Peter', '1pet': '1 Peter',
+  '2 pe': '2 Peter', '2pe': '2 Peter', '2 pet': '2 Peter', '2pet': '2 Peter',
+  '1 jn': '1 John', '1jn': '1 John', '1 jo': '1 John', '1jo': '1 John',
+  '1 john': '1 John', '1john': '1 John',
+  '2 jn': '2 John', '2jn': '2 John', '2 jo': '2 John', '2jo': '2 John',
+  '2 john': '2 John', '2john': '2 John',
+  '3 jn': '3 John', '3jn': '3 John', '3 jo': '3 John', '3jo': '3 John',
+  '3 john': '3 John', '3john': '3 John',
+  jud: 'Jude', jude: 'Jude',
+  rev: 'Revelation',
 }
 
 const BOOK_NAMES = Object.values(BOOK_ALIASES)
@@ -92,6 +158,13 @@ export async function fetchBibleChapterFromAPI(
 ): Promise<BibleChapter | null> {
   try {
     const info = TRANSLATIONS_INFO[translation]
+    // v0.7.77 — Twi via wldeh/bible-api. No fallback: the operator
+    // explicitly asked for Twi, and substituting KJV would silently
+    // put the wrong language on the projector during a service.
+    if (info?.source === 'wldeh') {
+      const { fetchWldehChapter } = await import('@/lib/bibles/twi-bible')
+      return await fetchWldehChapter(book, chapter, translation)
+    }
     // Modern translations via bolls.life
     if (info?.source === 'bolls') {
       const bolls = await fetchChapterFromBolls(book, chapter, info.abbreviation)
@@ -152,7 +225,7 @@ export async function fetchBibleChapter(
 // proxied through bolls.life when available; KJV/ASV/WEB/etc. use bible-api.com
 // directly. All entries here return their *actual* translation text — no silent
 // KJV fallback for the user.
-export const TRANSLATIONS_INFO: Record<string, { name: string; full: string; abbreviation: string; source: 'bible-api' | 'bolls' }> = {
+export const TRANSLATIONS_INFO: Record<string, { name: string; full: string; abbreviation: string; source: 'bible-api' | 'bolls' | 'wldeh' }> = {
   KJV: { name: 'KJV', full: 'King James Version', abbreviation: 'kjv', source: 'bible-api' },
   ASV: { name: 'ASV', full: 'American Standard Version', abbreviation: 'asv', source: 'bible-api' },
   WEB: { name: 'WEB', full: 'World English Bible', abbreviation: 'web', source: 'bible-api' },
@@ -170,6 +243,23 @@ export const TRANSLATIONS_INFO: Record<string, { name: string; full: string; abb
   CSB: { name: 'CSB', full: 'Christian Standard Bible', abbreviation: 'CSB', source: 'bolls' },
   MSG: { name: 'MSG', full: 'The Message', abbreviation: 'MSG', source: 'bolls' },
   RSV: { name: 'RSV', full: 'Revised Standard Version', abbreviation: 'RSV', source: 'bolls' },
+  // v0.7.163 — TWI (Akuapem, tw-wakna) entry removed per operator
+  // request: "remove this TWI, so that only TWIASANTE will be on the
+  // app". The earlier v0.7.77 TWI offering plus v0.7.137 TWIASANTE
+  // confused operators into thinking there were two competing Twi
+  // Bibles; we now ship only Asante Twi (Twerɛ Kronkron) and route
+  // every Twi/Akan/Akuapem alias to it. The wldeh `tw-wakna` chapter
+  // fetcher is gone with the TWI key — see twi-bible.ts.
+  // v0.7.137 — Twerɛ Kronkron (Asante Twi). Operator request:
+  // "add Ghanaian Twere Kronkron version". "Twerɛ Kronkron" is the
+  // generic Twi name for "Holy Scripture"; the only Asante Twi
+  // dataset on wldeh/bible-api is `tw-wasna` (Biblica Open Asante
+  // Twi Contemporary Bible 2020) so we surface it under that label.
+  TWIASANTE: { name: 'TWIASANTE', full: 'Twerɛ Kronkron (Asante Twi)', abbreviation: 'tw-wasna', source: 'wldeh' },
+  // v0.7.137 — Ewe Bible. Operator request: "add … EWE bible
+  // version". Sourced from the public-domain wldeh/bible-api
+  // dataset `ee-oal` (Biblica Open Agbenya La 2020, Ghana).
+  EWE: { name: 'EWE', full: 'Agbenya La (Ewe)', abbreviation: 'ee-oal', source: 'wldeh' },
 }
 
 // API translation mapping (bible-api.com slugs only; bolls translations use the key directly)
@@ -183,7 +273,17 @@ export const TRANSLATION_MAP: Record<string, string> = {
 // ──────────────────────────────────────────────
 const BOOK_NAMES_PATTERN = 'Genesis|Exodus|Leviticus|Numbers|Deuteronomy|Joshua|Judges|Ruth|1\\s*Samuel|2\\s*Samuel|1\\s*Kings|2\\s*Kings|1\\s*Chronicles|2\\s*Chronicles|Ezra|Nehemiah|Esther|Job|Psalms?|Proverbs|Ecclesiastes|Song\\s*of\\s*Solomon|Isaiah|Jeremiah|Lamentations|Ezekiel|Daniel|Hosea|Joel|Amos|Obadiah|Jonah|Micah|Nahum|Habakkuk|Zephaniah|Haggai|Zechariah|Malachi|Matthew|Mark|Luke|John|Acts|Romans|1\\s*Corinthians|2\\s*Corinthians|Galatians|Ephesians|Philippians|Colossians|1\\s*Thessalonians|2\\s*Thessalonians|1\\s*Timothy|2\\s*Timothy|Titus|Philemon|Hebrews|James|1\\s*Peter|2\\s*Peter|1\\s*John|2\\s*John|3\\s*John|Jude|Revelation'
 
-const BOOK_ABBR_PATTERN = 'Gen|Exo?|Lev|Num|Deut|Josh?|Judg|Ruth|1?\\s*Sam|2?\\s*Sam|1?\\s*Ki|2?\\s*Ki|1?\\s*Chron|2?\\s*Chron|Ezra?|Neh|Esth|Job|Ps|Prov|Eccl|Song|Isa|Jer|Lam|Eze|Dan|Hos|Joel|Amos|Obad|Jonah|Mic|Nah|Hab|Zeph|Hag|Zech|Mal|Matt?|Mark?|LK?|Jn|John|Acts?|Rom|1?\\s*Cor|2?\\s*Cor|Gal|Eph|Phil|Col|1?\\s*Thess|2?\\s*Thess|1?\\s*Tim|2?\\s*Tim|Tit|Phlm|Heb|Jas|1?\\s*Pet|2?\\s*Pet|1?\\s*Jn|2?\\s*Jn|3?\\s*Jn|Jude|Rev'
+// v0.7.154 — Auto-derived from BOOK_ALIASES so every alias added above
+// is automatically available to the regex-based detectors. Keys with a
+// space (e.g. "1 sam") have the space relaxed to `\s*` so both "1sam"
+// and "1 sam" match. Sorted by length DESC so longer aliases are tried
+// before shorter prefixes (so "Esth" wins over "Est" when both appear
+// in the same alternation).
+const BOOK_ABBR_PATTERN = Object.keys(BOOK_ALIASES)
+  .slice()
+  .sort((a, b) => b.length - a.length)
+  .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s*'))
+  .join('|')
 
 // v0.5.32 — STRICT verse number: requires the colon-form
 // "chapter:verse" so plain "John 3" (without context) NEVER matches.
@@ -254,11 +354,15 @@ function formatReference(book: string, chapter: number, verseStart: number, vers
 // Speech transcript detection still uses the strict VERSE_PATTERNS
 // above — those are intentionally stricter so conversational chatter
 // like "John had 3 apples" never commits as a Bible reference.
+// v0.7.154 — Verse separator accepts BOTH the colon ("joh 3:16") AND
+// whitespace ("joh 3 16") so operators can type either form. Range
+// dash still requires "-" / "–" so "joh 3 16 18" (would be ambiguous)
+// is NOT silently parsed as a range — only "joh 3 16-18" is.
 const LOOKUP_PATTERNS = [
-  // Full book name + chapter (+ optional :verse(-range))
-  new RegExp(`^([1-3]?\\s*(?:${BOOK_NAMES_PATTERN}))\\s+(\\d{1,3})(?::(\\d{1,3})(?:\\s*[-\\u2013]\\s*(\\d{1,3}))?)?\\s*$`, 'i'),
-  // Abbreviated book name + chapter (+ optional :verse(-range))
-  new RegExp(`^(${BOOK_ABBR_PATTERN})\\s+(\\d{1,3})(?::(\\d{1,3})(?:\\s*[-\\u2013]\\s*(\\d{1,3}))?)?\\s*$`, 'i'),
+  // Full book name + chapter (+ optional separator + verse(-range))
+  new RegExp(`^([1-3]?\\s*(?:${BOOK_NAMES_PATTERN}))\\s+(\\d{1,3})(?:(?:\\s*:\\s*|\\s+)(\\d{1,3})(?:\\s*[-\\u2013]\\s*(\\d{1,3}))?)?\\s*$`, 'i'),
+  // Abbreviated book name + chapter (+ optional separator + verse(-range))
+  new RegExp(`^(${BOOK_ABBR_PATTERN})\\s+(\\d{1,3})(?:(?:\\s*:\\s*|\\s+)(\\d{1,3})(?:\\s*[-\\u2013]\\s*(\\d{1,3}))?)?\\s*$`, 'i'),
 ]
 
 export function parseVerseReference(input: string): {
@@ -419,10 +523,67 @@ function wordsToNumbers(parts: string[]): number[] {
  * still match. Ordinal "first/second/third" prefix to a book is also
  * normalized so "first John" → "1 John".
  */
+// v0.7.174 — Bible-book homophone normaliser (Deepgram/Whisper mishears).
+// Even with `keyterm=Ruth` biasing on Nova-3, short single-syllable book
+// names like "Ruth" still come back as their acoustic neighbours
+// ("root", "roach", "roof", "route") — operator field-report:
+// "Ruth chapter 6 verse 1" transcribed as "Roach top touch is best.
+// Root chapter 6 verses." We can't fix Deepgram's acoustic model from
+// here, but every false hit follows the SAME structural pattern: the
+// mishear sits immediately before "chapter", a digit, or a spoken
+// number-word. That context window is unique to verse references —
+// no English sentence other than a verse reference says "root chapter"
+// or "roach chapter" — so a tightly-scoped regex rewrite is safe.
+//
+// Each entry: [misheard pattern (regex-source, case-insensitive),
+//              correct book name]. Patterns MUST require either
+// "chapter" or a digit / number-word follower so we never false-positive
+// on legitimate uses ("the root of the problem", "Mark the date").
+const BOOK_HOMOPHONES: ReadonlyArray<[string, string]> = Object.freeze([
+  // "Ruth" → root / roach / roof / route / rooth / ruse
+  ['(?:roo?th|root|roots|roach|roof|route|ruse)', 'Ruth'],
+  // "Job" with long-O is sometimes heard as "joe" / "jobe"
+  ['(?:joe|jobe)', 'Job'],
+  // "Jude" → dude / jewed
+  ['(?:dude|jewed)', 'Jude'],
+  // "Amos" → famous (rare but seen); "ammos"
+  ['(?:ammos)', 'Amos'],
+  // "Titus" → tightest
+  ['(?:tightest)', 'Titus'],
+  // "Habakkuk" → "had a cook" / "have a cook" — phrase-level
+  ['(?:ha[dv]e?\\s+a\\s+cook)', 'Habakkuk'],
+  // "Malachi" → malarkey
+  ['(?:malarkey)', 'Malachi'],
+  // "Joel" → jewel
+  ['(?:jewel)', 'Joel'],
+  // "Acts" → axe / ax (only when followed by chapter/digit)
+  ['(?:axe|ax)', 'Acts'],
+  // "Hosea" → hoseah / hosier
+  ['(?:hoseah|hosier)', 'Hosea'],
+])
+// Number-word stem matches one/two/.../twenty/thirty/.../hundred and
+// ordinals so "Root chapter six verse one" / "Root six twelve" both fire.
+const NUM_WORD_STEM = '(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|first|second|third)'
+function normalizeBookHomophones(text: string): string {
+  if (!text) return text
+  let out = text
+  for (const [pat, book] of BOOK_HOMOPHONES) {
+    // Trigger when the mishear is followed (allowing punctuation) by
+    // either: " chapter ", a 1-3 digit number, or a spoken number-word.
+    const re = new RegExp(`\\b${pat}\\b([\\s,.:;!?]+)(chapter\\b|\\d{1,3}\\b|${NUM_WORD_STEM}\\b)`, 'gi')
+    out = out.replace(re, `${book}$1$2`)
+  }
+  return out
+}
+
 function normalizeSpokenNumbers(text: string): string {
   if (!text) return text
+  // v0.7.174 — defensive homophone fix BEFORE the ordinal prefix pass,
+  // so e.g. "root chapter six" first becomes "Ruth chapter six" and
+  // then number-word collapsing turns "six" → "6" downstream.
+  let t = normalizeBookHomophones(text)
   // Ordinal prefixes for book numbers
-  let t = text
+  t = t
     .replace(/\b(first|1st)\s+/gi, '1 ')
     .replace(/\b(second|2nd)\s+/gi, '2 ')
     .replace(/\b(third|3rd)\s+/gi, '3 ')
@@ -835,6 +996,14 @@ export async function fetchBibleVerseFromAPI(
     if (!parsed) return null
 
     const info = TRANSLATIONS_INFO[translation]
+    // v0.7.77 — Twi via wldeh/bible-api. We do NOT fall through to
+    // KJV when Twi is missing for a passage — silently substituting
+    // English for an explicitly-requested Twi verse would be worse
+    // than returning null (which short-circuits the slide push).
+    if (info?.source === 'wldeh') {
+      const { fetchWldehVerse } = await import('@/lib/bibles/twi-bible')
+      return await fetchWldehVerse(parsed, reference, translation)
+    }
     // Modern translations (NIV/ESV/NLT/...) are served by bolls.life
     if (info?.source === 'bolls') {
       const bolls = await fetchVerseFromBolls(parsed, info.abbreviation, reference)

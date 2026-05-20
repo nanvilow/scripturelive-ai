@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>v0.7.194-hotfix.4 — Remove "Output Destination" UI (functionality preserved)</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background:#0b0d10; color:#e7e9ec; padding:20px; }
+  h1 { font-size: 18px; margin: 0 0 6px; color: #fcd34d; }
+  .sub { margin: 0 0 18px; color: #9aa0a6; font-size: 12px; max-width: 1200px; line-height:1.55; }
+  code { background:#1f2937; padding:1px 5px; border-radius:3px; color:#fbbf24; font-size:10.5px; font-family: 'Menlo', 'Monaco', monospace; }
+
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 18px; }
+  .col h2 { font-size: 13px; letter-spacing:.05em; text-transform:uppercase; margin:0 0 4px; }
+  .col h2.bad { color:#f87171; }
+  .col h2.good { color:#34d399; }
+  .col .why { font-size: 11px; color:#9aa0a6; margin-bottom:10px; line-height:1.5; }
+
+  .panel {
+    background: #14181f;
+    border: 1px solid #1f242b;
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .panel-head { display:flex; align-items:center; gap:8px; margin-bottom: 4px; }
+  .panel-head .icon { width: 18px; height: 18px; color: #fbbf24; }
+  .panel-head .title { font-size: 14px; font-weight: 700; color: #f3f4f6; }
+  .panel-desc { font-size: 11px; color: #9aa0a6; margin-bottom: 14px; }
+
+  .sep { height: 1px; background: #232830; margin: 14px 0; }
+
+  .group-label { font-size: 12px; font-weight: 600; color: #e5e7eb; margin-bottom: 6px; }
+
+  .tile-row { display:flex; gap:8px; flex-wrap:wrap; }
+  .tile {
+    display:flex; align-items:center; gap:8px;
+    border:1px solid #2a313a; background: rgba(60,70,85,.18);
+    border-radius: 8px; padding: 8px 12px; min-width: 140px;
+  }
+  .tile.active { background: rgba(252,191,36,.10); border-color: rgba(252,191,36,.35); }
+  .tile.ratio { flex-direction: column; align-items:flex-start; min-width: 130px; }
+  .tile .ico { width:14px; height:14px; color:#fbbf24; }
+  .tile .label { font-size: 12px; font-weight: 600; color: #f3f4f6; }
+  .tile .desc { font-size: 9.5px; color: #9aa0a6; }
+
+  .strike-overlay {
+    position:relative;
+  }
+  .strike-overlay::after {
+    content: '';
+    position: absolute; inset: -8px;
+    border: 2px dashed rgba(248,113,113,.7);
+    border-radius: 10px;
+    pointer-events: none;
+  }
+  .strike-overlay::before {
+    content: 'REMOVE';
+    position: absolute; top: -16px; right: -8px;
+    background: rgba(248,113,113,.92); color: #1a0808;
+    font-size: 9px; font-weight: 800; letter-spacing:.08em;
+    padding: 2px 6px; border-radius: 3px; z-index: 5;
+  }
+
+  .slider-row { display:flex; align-items:center; justify-content:space-between; margin-top: 10px; }
+  .slider-row .label { font-size: 12px; font-weight: 600; color: #f3f4f6; }
+  .slider-row .val { font-size: 11px; color: #fbbf24; font-weight: 700; }
+  .slider {
+    height: 4px; background: #2a313a; border-radius: 999px; margin-top: 6px; position: relative;
+  }
+  .slider .fill { position:absolute; left:0; top:0; bottom:0; width: 38%; background:#fbbf24; border-radius:999px; }
+  .slider .knob { position:absolute; left: 38%; top:50%; transform: translate(-50%, -50%); width: 12px; height: 12px; border-radius: 50%; background:#fbbf24; }
+  .slider-ends { display:flex; justify-content:space-between; font-size: 9.5px; color:#9aa0a6; margin-top: 4px; }
+
+  .info-panel { background:#11151a; border:1px solid #1f242b; border-radius:8px; padding:14px; }
+  .info-panel h3 { font-size:11px; letter-spacing:.05em; color:#e7e9ec; margin:0 0 8px; font-weight:700; }
+  .key-row { display:flex; gap:8px; padding:3px 0; font-size:11px; }
+  .key-row .label { color:#9aa0a6; min-width:200px; }
+  .key-row .val { color:#fbbf24; font-family: 'Menlo', 'Monaco', monospace; }
+  .key-row .good { color:#34d399; }
+
+  pre { background:#0a0d11; border:1px solid #1f242b; border-radius:5px; padding:10px; font-size:10.5px; color:#cbd5e1; overflow:auto; margin:6px 0; }
+  pre .minus { color:#f87171; }
+  pre .plus { color:#34d399; }
+  pre .note { color:#9aa0a6; }
+
+  .legend { padding:12px; background:#11151a; border:1px solid #1f242b; border-radius:6px; font-size:11px; color:#cbd5e1; line-height:1.6; }
+  .legend strong { color:#fcd34d; }
+</style>
+</head>
+<body>
+  <h1>v0.7.194-hotfix.4 — Hide "Output Destination" trio (Window / NDI / Both) without breaking anything</h1>
+  <p class="sub">
+    Operator wants the <strong>Output Destination</strong> picker gone from the Display &amp; Output panel. NDI activation is already handled by the dedicated NDI Output panel's own toggle, so this trio is redundant and confusing. We hide the UI block but keep <code>settings.outputDestination</code> in the store, keep the persisted value, and keep all consumers (<code>logos-shell.tsx</code> L3568, <code>easyworship-shell.tsx</code> L1547) untouched — so the auto-start behavior for operators who previously picked NDI / Both stays exactly as it was.
+  </p>
+
+  <div class="row">
+    <div class="col">
+      <h2 class="bad">BEFORE — trio visible (cluttered, redundant with NDI panel)</h2>
+      <div class="why">Output Destination card sits between the panel header and the Secondary Screen Ratio card.</div>
+      <div class="panel">
+        <div class="panel-head">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 22h8M12 18v4"/></svg>
+          <span class="title">Display &amp; Output</span>
+        </div>
+        <div class="panel-desc">Configure output display mode and destination</div>
+        <div class="sep"></div>
+
+        <div class="strike-overlay" style="margin-bottom:14px;">
+          <div class="group-label">Output Destination</div>
+          <div class="tile-row">
+            <div class="tile active">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="14" rx="2"/></svg>
+              <div><div class="label">Window</div><div class="desc">New browser window</div></div>
+            </div>
+            <div class="tile">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14 0M2 8.82a15 15 0 0 1 20 0M8.5 16.43a6 6 0 0 1 7 0M12 20h.01"/></svg>
+              <div><div class="label">NDI / Wireless</div><div class="desc">Share display wirelessly</div></div>
+            </div>
+            <div class="tile">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+              <div><div class="label">Both</div><div class="desc">Window + wireless</div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="group-label">Secondary Screen Ratio</div>
+        <div class="tile-row">
+          <div class="tile ratio active"><div class="label">Fill Screen</div><div class="desc">Use full window</div></div>
+          <div class="tile ratio"><div class="label">16:9</div><div class="desc">Broadcast / NDI</div></div>
+          <div class="tile ratio"><div class="label">4:3</div><div class="desc">Legacy projector</div></div>
+          <div class="tile ratio"><div class="label">21:9</div><div class="desc">Ultrawide stage</div></div>
+        </div>
+
+        <div class="slider-row" style="margin-top:18px;"><span class="label">Text Size on Secondary Screen</span><span class="val">80%</span></div>
+        <div class="slider"><div class="fill"></div><div class="knob"></div></div>
+        <div class="slider-ends"><span>Smaller</span><span>100%</span><span>Larger</span></div>
+      </div>
+    </div>
+
+    <div class="col">
+      <h2 class="good">AFTER — trio removed, panel flows directly to Ratio</h2>
+      <div class="why">Output Destination card hidden. Separators rebalanced so the section spacing stays clean. Store field <code>settings.outputDestination</code> stays put.</div>
+      <div class="panel">
+        <div class="panel-head">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 22h8M12 18v4"/></svg>
+          <span class="title">Display &amp; Output</span>
+        </div>
+        <div class="panel-desc">Configure output display mode and destination</div>
+        <div class="sep"></div>
+
+        <div class="group-label">Secondary Screen Ratio</div>
+        <div class="tile-row">
+          <div class="tile ratio active"><div class="label">Fill Screen</div><div class="desc">Use full window</div></div>
+          <div class="tile ratio"><div class="label">16:9</div><div class="desc">Broadcast / NDI</div></div>
+          <div class="tile ratio"><div class="label">4:3</div><div class="desc">Legacy projector</div></div>
+          <div class="tile ratio"><div class="label">21:9</div><div class="desc">Ultrawide stage</div></div>
+        </div>
+
+        <div class="slider-row" style="margin-top:18px;"><span class="label">Text Size on Secondary Screen</span><span class="val">80%</span></div>
+        <div class="slider"><div class="fill"></div><div class="knob"></div></div>
+        <div class="slider-ends"><span>Smaller</span><span>100%</span><span>Larger</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col">
+      <div class="info-panel">
+        <h3>What we change (1 file, ~3 places)</h3>
+        <div style="font-size:11px; color:#cbd5e1; line-height:1.7;">
+          <strong style="color:#fcd34d;">1. <code>settings.tsx</code> L805-833</strong> — delete the entire Output Destination block (the Separator above + the Label + the 3 tile buttons + the trailing Separator at L835 collapses to one Separator to keep the spacing). Also remove now-unused icon imports <code>Wifi</code> + <code>Layers</code> if not used elsewhere (verify; <code>Monitor</code> stays for the Window mode badge elsewhere).
+        </div>
+<pre><span class="minus">- &lt;Separator /&gt;
+- &lt;div className="space-y-2"&gt;
+-   &lt;Label&gt;Output Destination&lt;/Label&gt;
+-   &lt;div className="flex flex-wrap gap-2"&gt;
+-     {[{value:'window',...},{value:'ndi',...},{value:'both',...}].map((dest) =&gt; (
+-       &lt;button onClick={() =&gt; updateSettings({ outputDestination: dest.value })}&gt;...&lt;/button&gt;
+-     ))}
+-   &lt;/div&gt;
+- &lt;/div&gt;
+- &lt;Separator /&gt;
+</span><span class="plus">+ &lt;Separator /&gt;</span>
+<span class="note">  // Keep ONE Separator so the Lower Third Settings card above
+  // and Secondary Screen Ratio below still get a clean divider.</span></pre>
+
+        <div style="font-size:11px; color:#cbd5e1; line-height:1.7; margin-top:8px;">
+          <strong style="color:#fcd34d;">2. <code>settings.tsx</code> L1062</strong> — update the help text that references the removed control:
+        </div>
+<pre><span class="minus">- Go to &lt;strong&gt;Live Presenter&lt;/strong&gt; and click the &lt;strong&gt;Output&lt;/strong&gt; button.
+-  Or set the Output Destination to "NDI / Wireless" or "Both" above.</span>
+<span class="plus">+ Go to &lt;strong&gt;Live Presenter&lt;/strong&gt; and click the &lt;strong&gt;Output&lt;/strong&gt; button.
++  For NDI, open the &lt;strong&gt;NDI Output&lt;/strong&gt; panel and flip its toggle on.</span></pre>
+
+        <div style="font-size:11px; color:#cbd5e1; line-height:1.7; margin-top:8px;">
+          <strong style="color:#fcd34d;">3. <code>settings.tsx</code> L399</strong> — leave the Reset-defaults call alone. <code>outputDestination:'window'</code> stays so Reset still falls back to a safe default for operators who had it on NDI/Both. (No removal — just noting we DON'T touch it.)
+        </div>
+        </div>
+    </div>
+
+    <div class="col">
+      <div class="info-panel">
+        <h3>What we don't touch (functionality preserved)</h3>
+        <div class="key-row"><span class="label">Store field:</span><span class="val">settings.outputDestination</span> <span class="good">kept</span></div>
+        <div class="key-row"><span class="label">Persisted operator value:</span><span class="val">'window' | 'ndi' | 'both'</span> <span class="good">unchanged</span></div>
+        <div class="key-row"><span class="label">logos-shell.tsx L3568:</span><span class="val">auto-start NDI on 'ndi'/'both'</span> <span class="good">kept</span></div>
+        <div class="key-row"><span class="label">easyworship-shell.tsx L1547:</span><span class="val">same auto-start branch</span> <span class="good">kept</span></div>
+        <div class="key-row"><span class="label">Default for new installs:</span><span class="val">'window'</span> <span class="good">safe (no auto NDI)</span></div>
+        <div class="key-row"><span class="label">Reset-all behavior:</span><span class="val">restores 'window'</span> <span class="good">unchanged</span></div>
+        <div class="key-row"><span class="label">NDI Output panel toggle:</span><span class="val">primary NDI control</span> <span class="good">already exists</span></div>
+        <div class="key-row"><span class="label">Live Presenter "Output" button:</span><span class="val">starts window output</span> <span class="good">unchanged</span></div>
+
+        <div style="font-size:11px; color:#cbd5e1; line-height:1.6; margin-top:12px; padding-top:12px; border-top:1px solid #1f242b;">
+          <strong style="color:#fcd34d;">Why it's safe:</strong> The trio was just a UI shortcut into <code>settings.outputDestination</code>. The dedicated <strong>NDI Output</strong> panel already gives operators a direct on/off toggle for NDI — operationally redundant with the trio. Existing operators on 'ndi' / 'both' keep auto-starting NDI on app launch via the shell effects; they just can't change it back to 'window' from this panel anymore. If they want to disable NDI, they flip the NDI Output toggle off (which is the primary control they're already using).
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <strong>Net change:</strong> 1 file (<code>settings.tsx</code>), ~29 lines removed (the Output Destination block) + 1 help-string updated. Zero changes to store, shells, defaults, or the NDI activation pipeline. The cluttered trio disappears; everything keeps working.
+  </div>
+</body>
+</html>

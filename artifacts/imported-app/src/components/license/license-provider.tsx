@@ -15,6 +15,9 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useAppStore } from '@/lib/store'
+import { LowTimeWarning } from './low-time-warning'
+import { ActivationSuccessDialog } from './activation-success-dialog'
+import { TransferSuccessDialog } from './transfer-success-dialog'
 
 export type LicenseState = 'active' | 'trial' | 'trial_expired' | 'expired' | 'never_activated' | 'unknown'
 
@@ -185,101 +188,28 @@ export function LicenseProvider({ children }: { children: React.ReactNode }) {
     setLicenseLocked(isLocked)
   }, [isLocked, setLicenseLocked])
 
-  // ─── v0.7.5 — Activity-gated trial timer (T502) ───────────────────
+  // ─── v0.7.194 — Wall-clock trial countdown ────────────────────────
   //
-  // Pre-v0.7.5 the trial was calendar-based: 30 minutes of WALL-CLOCK
-  // time from firstLaunchAt, regardless of whether the user ever
-  // started the mic. So an operator who installed at 5pm to evaluate
-  // the app, ran it for 2 minutes, then waited until Sunday's service
-  // arrived to a 0-minute trial they hadn't used.
+  // Pre-v0.7.194 we ran an activity-gated tick: every 5 seconds while
+  // the mic was on we POSTed deltaMs to /api/license/trial-tick which
+  // accumulated trialMsUsed; the trial expired when trialMsUsed
+  // reached trialDurationMs. The countdown only moved while the user
+  // was actively detecting.
   //
-  // v0.7.5 makes the trial USAGE-based: it only counts seconds the
-  // mic is actually running. We watch the Zustand `isListening` flag
-  // (set by speech-provider when recognition starts/stops) and:
-  //   • on START   → record the wall-clock timestamp + start a 5s tick
-  //   • each tick  → POST /api/license/trial-tick { deltaMs } to add
-  //                  the elapsed slice into trialMsUsed; update local
-  //                  status from the response so the countdown widget
-  //                  reflects the new msLeft within seconds
-  //   • on STOP    → fire one final tick with the remaining partial
-  //                  delta + clear the interval
+  // v0.7.194 switches to wall-clock: the trial is 72 hours from
+  // firstLaunchAt regardless of usage. The existing 30-second status
+  // poller above (refresh useEffect at L117-128) is the ONLY polling
+  // loop — it already refreshes the displayed countdown often enough
+  // for D/H/M UI precision. We do NOT add a second poller here
+  // (v0.7.194-hotfix.1 removed a duplicate 60s loop that ran in
+  // parallel and caused redundant requests). The server is the
+  // source of truth for ALL transitions (trial→expired, expired→
+  // active after operator activates a code in another tab/window)
+  // via the existing 30s refresh + window-focus refresh.
   //
-  // We skip the tick entirely once the user is on a real subscription
-  // (state==='active') — trial is dormant in that case, and the
-  // server-side addTrialUsage is also a no-op for safety.
-  const isListening = useAppStore((s) => s.isListening)
-  const tickStartRef = useRef<number | null>(null)
-  const tickLastSentRef = useRef<number>(0)
-  const tickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const trialActive = status.state === 'trial'
-
-  useEffect(() => {
-    // Only run the trial-tick machinery while the user is genuinely
-    // on a free trial. Active subscriptions, expired trials, and
-    // unknown state all skip — no point burning HTTP calls.
-    if (!trialActive) {
-      // Cleanup if we were ticking and just transitioned out of trial
-      // (e.g. operator just activated a paid code).
-      if (tickTimerRef.current) {
-        clearInterval(tickTimerRef.current)
-        tickTimerRef.current = null
-      }
-      tickStartRef.current = null
-      tickLastSentRef.current = 0
-      return
-    }
-
-    const sendTick = async (deltaMs: number) => {
-      if (deltaMs <= 0) return
-      try {
-        const r = await fetch('/api/license/trial-tick', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ deltaMs: Math.floor(deltaMs) }),
-        })
-        if (!r.ok) return
-        const j = (await r.json()) as { ok: boolean; status: LicenseStatus }
-        if (j?.status) setStatus(j.status)
-      } catch {
-        // Offline / rate-limited / server restart — silently skip;
-        // the next tick will catch up the missed delta.
-      }
-    }
-
-    if (isListening) {
-      // Mic just started (or this effect is mounting while the mic was
-      // already running) — anchor the start time and begin pinging
-      // every 5 seconds. Each tick sends the delta since the last
-      // successful send, NOT since the start, so a missed tick (offline
-      // blip) doesn't double-count when the next one lands.
-      const now = Date.now()
-      tickStartRef.current = now
-      tickLastSentRef.current = now
-      tickTimerRef.current = setInterval(() => {
-        const t = Date.now()
-        const delta = t - tickLastSentRef.current
-        tickLastSentRef.current = t
-        void sendTick(delta)
-      }, 5_000)
-
-      return () => {
-        // Mic stopped (or component unmounted) — flush the partial
-        // delta accumulated since the last 5s tick so the user gets
-        // credit for the final 0-5s of listening. Clear the interval
-        // so we don't keep ticking after the mic is off.
-        if (tickTimerRef.current) {
-          clearInterval(tickTimerRef.current)
-          tickTimerRef.current = null
-        }
-        const final = Date.now() - tickLastSentRef.current
-        tickStartRef.current = null
-        tickLastSentRef.current = 0
-        if (final > 0) void sendTick(final)
-      }
-    }
-    // isListening = false branch: nothing to do — the cleanup above
-    // fired when the previous (true) effect tore down.
-  }, [isListening, trialActive])
+  // No activity-tick effect lives here anymore — `isListening` is
+  // intentionally not consumed by the trial path (the timer must
+  // never pause; see the operator's v0.7.194 sign-off).
 
   const value: LicenseContextValue = {
     status,
@@ -293,5 +223,22 @@ export function LicenseProvider({ children }: { children: React.ReactNode }) {
     ui: { subscribeOpen, adminOpen, setSubscribeOpen, setAdminOpen },
   }
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>
+  return (
+    <Ctx.Provider value={value}>
+      {children}
+      {/* v0.7.122 — Two globally-mounted license dialogs.
+          • <ActivationSuccessDialog> celebrates a freshly-activated
+            paid code on the FIRST page load after the activation
+            modal hard-reloaded the app. Tracked once per code via
+            localStorage so it never re-pops on subsequent launches.
+          • <LowTimeWarning> watches the active subscription's
+            expiresAt and pops a Radix AlertDialog at 24h / 6h / 1h
+            / 15m / 5m bands, each at most once per code. Both are
+            inside the provider so they can read status via
+            useLicense() directly. */}
+      <ActivationSuccessDialog />
+      <TransferSuccessDialog />
+      <LowTimeWarning />
+    </Ctx.Provider>
+  )
 }

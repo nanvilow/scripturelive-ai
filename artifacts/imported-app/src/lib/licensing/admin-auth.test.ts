@@ -71,8 +71,13 @@ describe('resolveAdminPassword', () => {
     expect(resolveAdminPassword()).toBe('baked')
   })
 
-  it('Tier 4 — falls back to legacy "admin" only when nothing is configured', () => {
-    expect(resolveAdminPassword()).toBe('admin')
+  it('Tier 4 — falls back to fixed "241190" default when nothing is configured', () => {
+    // v0.7.78 — Hard-coded fallback was changed from legacy "admin"
+    // to "241190" so every fresh install opens with the same known
+    // credential without needing a baked secret. Test pinned to that
+    // value (was previously asserting "admin", which silently
+    // regressed when v0.7.78 shipped).
+    expect(resolveAdminPassword()).toBe('241190')
   })
 
   it('treats an empty per-PC override as unset and falls through', () => {
@@ -87,8 +92,8 @@ describe('resolveAdminPassword', () => {
     expect(resolveAdminPassword()).toBe('baked')
   })
 
-  it('survives the baked module throwing — falls through to "admin"', () => {
+  it('survives the baked module throwing — falls through to "241190"', () => {
     mockedGetBaked.mockImplementation(() => { throw new Error('baked module gone') })
-    expect(resolveAdminPassword()).toBe('admin')
+    expect(resolveAdminPassword()).toBe('241190')
   })
 })

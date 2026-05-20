@@ -389,8 +389,29 @@ export function UpdateNotifier() {
           toast.dismiss(downloadingToastIdRef.current)
           downloadingToastIdRef.current = null
         }
+      } else if (s.status === 'idle') {
+        // v0.7.70 — Operator-driven cancel arrives as an `idle` push
+        // from the main process (`updater:cancel` → broadcast idle).
+        // Without this branch the downloading toast — INCLUDING its
+        // Cancel button — stayed on screen forever, so the operator
+        // saw "Cancel doesn't work" even though the underlying
+        // download was already aborted. Dismiss every actionable
+        // toast on idle so the UI matches the main-process state.
+        if (downloadingToastIdRef.current != null) {
+          toast.dismiss(downloadingToastIdRef.current)
+          downloadingToastIdRef.current = null
+        }
+        if (availableToastIdRef.current != null) {
+          toast.dismiss(availableToastIdRef.current)
+          availableToastIdRef.current = null
+          // Allow the next safeCheck() to re-announce — the operator
+          // explicitly told us they don't want THIS download right
+          // now, but the next periodic check should still surface
+          // the popup so they can change their mind.
+          announcedAvailableRef.current.clear()
+        }
       }
-      // Silent for: idle, checking, not-available — those are normal
+      // Silent for: checking, not-available — those are normal
       // background states and the Settings card surfaces them for
       // operators who are actively looking.
     }

@@ -76,18 +76,23 @@ import {
 } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { useLicense } from '@/components/license/license-provider'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { toast } from 'sonner'
-import { cn } from '@/lib/utils'
+import { cn, isVideoBackground } from '@/lib/utils'
 import { NdiOutputPanel } from './ndi-output-panel'
 import { StartupCard } from './startup-card'
 import { OutputPreview } from '@/components/settings/output-preview'
 import { FONT_REGISTRY } from '@/lib/fonts'
-import { quickStartUrl, troubleshootingUrl, newIssueUrl } from '@/lib/github-repo'
+// v0.7.132 — Operator: "Do not show GitHub anywhere in the app again."
+// Removed quickStartUrl / troubleshootingUrl / newIssueUrl imports (all
+// resolved to https://github.com/...) along with the three help-card
+// links that consumed them. Operators reach support via the website
+// link above, which is white-label and stays inside our domain.
 import { APP_VERSION } from '@/lib/app-version'
 import { WEBSITE_URL } from '@/lib/website-url'
 import { useNdi } from '@/lib/use-electron'
@@ -99,6 +104,14 @@ export function SettingsView() {
   // "Deactivate" can trigger a refresh after the server-side clear.
   const { status, refresh, openSubscribe } = useLicense()
   const [licBusy, setLicBusy] = useState(false)
+  // v0.7.125 — useConfirm replaces the three native window.confirm /
+  // window.alert callsites in this view (Deactivate, Move-to-PC, and
+  // the post-transfer code receipt) with styled Radix dialogs so the
+  // operator no longer sees raw Chromium chrome titled
+  // "@workspace/imported-app". The post-transfer receipt is delivered
+  // by <TransferSuccessDialog> on the FRESH page load after the hard-
+  // reload (same proven pattern as <ActivationSuccessDialog>).
+  const confirm = useConfirm()
   const handleCopyLic = (text: string) => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       navigator.clipboard.writeText(text).then(
@@ -129,16 +142,48 @@ export function SettingsView() {
   //     in a modal with a Copy button.
   const handleDeactivate = async () => {
     if (!status.subscription) return
-    if (!confirm('Deactivate this subscription on this PC?\n\nThe activation code is released — you can re-enter it on this or any other PC and the SAME remaining time will be restored (provided it has not expired). Live Transcription will stop on this PC immediately.\n\nIf you also want the code displayed for easy copy/paste, use "Move to Another PC" instead.')) return
+    if (!(await confirm({
+      title: 'Deactivate this subscription on this PC?',
+      description:
+        'The activation code is released — you can re-enter it on this or any other PC and the same remaining time will be restored (provided it has not expired). Live Transcription will stop on this PC immediately.\n\nIf you also want the code displayed for easy copy/paste, use "Move to Another PC" instead.',
+      confirmText: 'Deactivate',
+      destructive: true,
+    }))) return
     setLicBusy(true)
     try {
       const r = await fetch('/api/license/deactivate', { method: 'POST' })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      toast.success('Subscription deactivated on this device')
-      await refresh()
+      // v0.7.100 — IMMEDIATE hard reset, no toast, no delay.
+      //
+      // v0.7.99's 700 ms toast-delay reintroduced the exact race we
+      // were trying to fix: in that 700 ms window the React tree was
+      // still mounted, the license context was still updating from a
+      // 30 s polling timer (license-provider.tsx:118), and any
+      // useEffect that fired during the window could throw into an
+      // unhandled boundary — chrome-error painted before the reload.
+      // Architect review caught this BEFORE the operator did.
+      //
+      // The success feedback the operator needs is "the app reloaded
+      // and now shows the unlocked / re-activate prompt" — that IS
+      // the toast, rendered as the actual landing page after reload.
+      // A success toast that paints for 700 ms then disappears with
+      // the reload was never adding meaningful UX.
+      //
+      // Hard reload synchronously — kills every in-flight fetch,
+      // every pending useEffect, every Next.js router transition,
+      // every SWR cache. The next render starts from a fresh / with
+      // a deactivated license. Zero chrome-error window.
+      try { window.location.assign('/') } catch { /* hard-fall */ window.location.href = '/' }
+      // Safety: if for any reason the navigation is blocked (CSP,
+      // Electron beforeunload veto, renderer mid-shutdown, etc.),
+      // clear the busy spinner after 8 s so the UI isn't permanently
+      // stuck. Architect-flagged HIGH risk on v0.7.99 where the
+      // success path never re-enabled the button if reload failed.
+      setTimeout(() => setLicBusy(false), 8000)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to deactivate')
-    } finally { setLicBusy(false) }
+      setLicBusy(false)
+    }
   }
 
   // v0.7.11 — Move-to-another-PC dialog state. After a successful
@@ -155,7 +200,13 @@ export function SettingsView() {
       toast.error('The master code is already valid on every PC — no transfer needed.')
       return
     }
-    if (!confirm('Move your license to another PC?\n\nThis will release the code from this device while keeping your remaining time intact. You can then type the same code into the new installation and it will activate with the SAME remaining days you have now.\n\nLive Transcription will stop on this PC immediately.')) return
+    if (!(await confirm({
+      title: 'Move your license to another PC?',
+      description:
+        'This will release the code from this device while keeping your remaining time intact. You can then type the same code into the new installation and it will activate with the same remaining days you have now.\n\nLive Transcription will stop on this PC immediately. After the app reloads you will see your activation code in a copy-friendly dialog.',
+      confirmText: 'Release & show code',
+      destructive: true,
+    }))) return
     setLicBusy(true)
     try {
       const r = await fetch('/api/license/deactivate', {
@@ -172,13 +223,96 @@ export function SettingsView() {
       if (!r.ok || !j.ok || !j.code) {
         throw new Error(j.error || `HTTP ${r.status}`)
       }
-      setTransferCode(j.code)
-      setTransferMsLeft(typeof j.msLeft === 'number' ? j.msLeft : 0)
-      setTransferOpen(true)
-      await refresh()
+      // v0.7.102 — Skip the React success dialog entirely. Use a
+      // native window.alert + auto-clipboard-copy + hard reload.
+      //
+      // Operator confirmed (third re-occurrence after v0.7.101) that
+      // Move-to-Another-PC STILL produced chrome-error even with the
+      // hard-reload-on-dismiss in the transferOpen Dialog onOpenChange.
+      // Same root cause as the v0.7.101 Activate fix:
+      //   API resolves
+      //   → setTransferCode / setTransferMsLeft → React commits new tree
+      //   → setTransferOpen(true)              → dialog renders, lock-
+      //                                          overlay starts mounting
+      //   → await refresh()                    → license-provider mutates
+      //   → render Dialog with deactivated state
+      //   → ONE downstream useEffect throws against an in-flight fetch
+      //     made with the old auth context → renderer crashes
+      //   → chrome-error painted BEFORE operator could click "Got it"
+      //
+      // The transferOpen React Dialog was the trigger. We replace it
+      // with a window.alert (native OS-level dialog rendered by Chromium
+      // outside the React tree — cannot crash the renderer) plus an
+      // automatic clipboard write. The operator gets:
+      //   1. The activation code in their clipboard automatically
+      //      (for paste into the new PC).
+      //   2. A native alert showing the code as plain text (read out
+      //      loud, write down, paste into WhatsApp, etc.).
+      //   3. A backup copy stashed in localStorage in case clipboard
+      //      write was blocked — they can copy it manually after the
+      //      reload from the unlocked Settings page if needed.
+      //   4. Hard reload after they click OK on the alert.
+      //
+      // The transferOpen state + Dialog JSX below are kept as
+      // defensive dead code in case any external automation still
+      // sets transferOpen=true.
+      const code = j.code
+      const msLeft = typeof j.msLeft === 'number' ? j.msLeft : 0
+      const remainingText = formatRemaining(msLeft)
+      // Auto-copy to clipboard (best-effort — may be blocked by some
+      // clipboard policies; we have the alert text as fallback).
+      try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard) {
+          await navigator.clipboard.writeText(code)
+        }
+      } catch { /* clipboard blocked — operator reads from alert below */ }
+      // Backup: stash code in localStorage so we can show it on the
+      // freshly-reloaded landing page if the operator dismissed the
+      // alert without copying. Keyed with a timestamp so it expires
+      // naturally (the landing page only shows it if <10 min old).
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('sl.lastTransferCode', JSON.stringify({
+            code,
+            msLeft,
+            at: Date.now(),
+          }))
+        }
+      } catch { /* private mode / storage full — alert is still shown */ }
+      // v0.7.125 — Removed the native window.alert receipt that
+      // showed the activation code in raw Chromium chrome ("@workspace/
+      // imported-app" title bar, plain serif body, OS OK button —
+      // looked like a system error to congregants seated near the
+      // operator's console).
+      //
+      // We CANNOT just swap the alert for an in-tree React Dialog —
+      // v0.7.102 explicitly removed the React transferOpen Dialog
+      // because rendering it after the deactivation API resolved
+      // triggered chrome-error mid-paint (license-provider's 30 s
+      // status poll mutated context just as the dialog mounted).
+      //
+      // Instead we keep the localStorage stash above (now PROMOTED
+      // from "fallback for clipboard failure" to "primary delivery
+      // channel") and hard-reload IMMEDIATELY. On the FRESH page load
+      // <TransferSuccessDialog> (mounted inside <LicenseProvider>)
+      // reads sl.lastTransferCode and pops a styled Radix Dialog with
+      // a Copy button. The fresh page has a settled license context
+      // post-deactivation, so the v0.7.102 race cannot recur — same
+      // proven pattern as <ActivationSuccessDialog>.
+      //
+      // remainingText is intentionally unused here now (the dialog
+      // recomputes it from msLeft) but the variable is kept so the
+      // formatRemaining helper below stays exercised.
+      void remainingText
+      // Hard reload — same synchronous pattern as v0.7.101 Activate.
+      try { window.location.assign('/') } catch { window.location.href = '/' }
+      // Safety: clear busy spinner after 8 s if navigation is vetoed.
+      setTimeout(() => setLicBusy(false), 8000)
+      return // do NOT fall through to old setTransferOpen / refresh path
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to transfer license')
-    } finally { setLicBusy(false) }
+      setLicBusy(false)
+    }
   }
   // Format ms → "12 days, 3 hours" (or "3 hours, 14 minutes" for short
   // remaining periods) for the transfer-success dialog. Covers the
@@ -226,13 +360,24 @@ export function SettingsView() {
         body: file,
       })
 
+      // v0.7.78 — Defensive response parsing. Pre-v0.7.78 the client
+      // called response.json() directly on the failure path; if the
+      // server returned an HTML error page (Next 500 doc, dev overlay,
+      // antivirus block page, etc.) the JSON parse threw "Unexpected
+      // token '<'…" and the operator saw that opaque message instead
+      // of a useful error. We now read as text first and try-parse,
+      // so any non-JSON body is reported with the HTTP status text.
+      const raw = await response.text()
+      let body: { error?: string; url?: string } = {}
+      try { body = raw ? JSON.parse(raw) : {} } catch { /* HTML / empty / non-JSON */ }
       if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || 'Upload failed')
+        throw new Error(
+          body.error
+            || `Upload failed (${response.status} ${response.statusText || ''}).`.trim()
+        )
       }
-
-      const data = await response.json()
-      updateSettings({ customBackground: data.url })
+      if (!body.url) throw new Error('Upload succeeded but server returned no URL')
+      updateSettings({ customBackground: body.url })
       toast.success('Background uploaded successfully')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to upload background')
@@ -267,7 +412,13 @@ export function SettingsView() {
       autoGoLiveOnDetection: false,
       autoGoLiveOnLookup: false,
       displayRatio: 'fill',
-      textScale: 1,
+      // v0.7.97 — Reset returns to the same fresh-install defaults
+      // (textScale 0.9 / bibleLineHeight 0.95) so "Reset" and "first
+      // install" produce the same screen. The slider's per-button
+      // "Smaller / 100% / Larger" and "Tight / Default (1.40) / Airy"
+      // shortcuts still let an operator jump to typographic anchors.
+      textScale: 0.9,
+      bibleLineHeight: 0.95,
       // Reset the NDI-only display mode alongside the projector's so
       // the "Reset to defaults" button returns the feed to a clean
       // Full Screen state (v0.5.5 additions).
@@ -438,34 +589,32 @@ export function SettingsView() {
                   <RefreshCw className="h-3.5 w-3.5" /> Renew / Extend
                 </Button>
                 {!status.subscription.isMaster && (
-                  <>
-                    {/* v0.7.11 — primary lossless flow: keeps remaining time, returns the code */}
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={handleTransfer}
-                      disabled={licBusy}
-                      className="gap-1.5 text-sky-300 hover:text-sky-200 border-sky-500/40 hover:border-sky-500/70 hover:bg-sky-500/10"
-                    >
-                      <Send className="h-3.5 w-3.5" /> Move to Another PC
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={handleDeactivate}
-                      disabled={licBusy}
-                      className="gap-1.5 text-rose-400 hover:text-rose-300 border-rose-500/30 hover:border-rose-500/60 hover:bg-rose-500/10"
-                    >
-                      <Power className="h-3.5 w-3.5" /> Deactivate on this PC
-                    </Button>
-                  </>
+                  // v0.7.101 — Single consolidated "Move to Another PC"
+                  // button per operator request. The previous two-button
+                  // layout (Move + Deactivate) caused operator confusion
+                  // about which one was safe — both are lossless, the
+                  // only meaningful difference was whether the activation
+                  // code was shown in the success dialog. We now always
+                  // show the code (handleTransfer flow), so the operator
+                  // can paste it into the new install OR re-enter it on
+                  // this PC, regardless of intent. handleDeactivate is
+                  // kept in the file as defensive dead code in case any
+                  // automated test or external caller still references
+                  // it, but no UI invokes it anymore.
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleTransfer}
+                    disabled={licBusy}
+                    className="gap-1.5 text-sky-300 hover:text-sky-200 border-sky-500/40 hover:border-sky-500/70 hover:bg-sky-500/10"
+                  >
+                    <Send className="h-3.5 w-3.5" /> Move to Another PC
+                  </Button>
                 )}
               </div>
               {!status.subscription.isMaster && (
                 <p className="text-[10px] text-muted-foreground leading-snug pt-1">
-                  Both options release the license while preserving your remaining time, so you can re-enter the same code later on this or another PC.{' '}
-                  <span className="text-sky-300">Move to Another PC</span> additionally shows the code in a copy-friendly dialog.{' '}
-                  <span className="text-rose-300">Deactivate</span> just stops the app on this PC; use it when you already know your code.
+                  Releases the license on this PC while preserving your remaining time. The activation code is shown in a copy-friendly dialog so you can paste it into the new install — or re-enter it here later — and the SAME remaining days will be restored.
                 </p>
               )}
             </div>
@@ -614,118 +763,55 @@ export function SettingsView() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {/* WYSIWYG preview — mirrors the secondary screen / NDI feed
-              so operators can see display-mode + position changes
-              instantly without opening the projector. Updates live as
-              they tweak any setting. */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <OutputPreview mode="full" label="Preview (Full Screen)" />
-            <OutputPreview mode="lower-third" label="Preview (Lower Third)" />
-          </div>
-          <Separator className="my-2" />
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">Display Mode</Label>
-            <div className="flex flex-wrap gap-2">
-              {([
-                { value: 'full' as DisplayMode, label: 'Full Screen', desc: 'Full slide display' },
-                { value: 'lower-third' as DisplayMode, label: 'Lower Third', desc: 'Bottom bar overlay' },
-                { value: 'lower-third-black' as DisplayMode, label: 'Lower Third (Black)', desc: 'Black bg overlay' },
-              ]).map((mode) => (
-                <button
-                  key={mode.value}
-                  onClick={() => updateSettings({ displayMode: mode.value })}
-                  className={cn(
-                    'flex flex-col items-start rounded-lg px-3 py-2.5 transition-colors border min-w-[140px]',
-                    settings.displayMode === mode.value
-                      ? 'bg-primary/10 border-primary/30'
-                      : 'bg-muted/30 border-border hover:bg-muted/50'
-                  )}
-                >
-                  <span className="text-xs font-medium">{mode.label}</span>
-                  <span className="text-[10px] text-muted-foreground">{mode.desc}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+        <CardContent>
+          {/* v0.7.172 — Two-column layout matching the NDI Output panel
+              (lg:grid-cols-[1fr_360px]). Controls on the left, single
+              compact preview on the right that sticks to the top while
+              the operator scrolls the controls. The previous layout
+              had two giant side-by-side preview boxes (Full + Lower
+              Third) at the TOP of the card eating ~40% of the viewport
+              before the operator could see any controls — and the
+              Lower Third preview here was redundant with the dedicated
+              "Lower Third Settings" card directly below this one. The
+              right-side compact 360px preview is the same pattern
+              every other "Settings + Preview" card now uses, so the
+              operator's eyes don't have to retrain per-card. */}
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5">
+            {/* ── LEFT COLUMN — controls ─────────────────────────── */}
+            <div className="space-y-4">
+          {/* v0.7.184 — Display Mode picker DELETED. In-app surfaces are
+              Full Screen ONLY now. NDI broadcast keeps its independent
+              ndiDisplayMode picker on the NDI Output panel. Operator:
+              "remove the lower third from the app, leaving only the
+              lower third that can be operated in NDI settings only." */}
 
-          {settings.displayMode.startsWith('lower-third') && (
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">Lower Third Position</Label>
-              <div className="flex gap-2">
-                {(['bottom', 'top'] as const).map((pos) => (
-                  <button
-                    key={pos}
-                    onClick={() => updateSettings({ lowerThirdPosition: pos })}
-                    className={cn(
-                      'px-3 py-1.5 rounded-md text-xs font-medium transition-colors border capitalize',
-                      settings.lowerThirdPosition === pos
-                        ? 'bg-primary/15 border-primary/30 text-primary'
-                        : 'bg-muted border-border text-muted-foreground hover:bg-muted/80'
-                    )}
-                  >
-                    {pos}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* v0.7.172 — Lower Third Position, Height, and Typography
+              moved out of "Display & Output" into the dedicated
+              always-visible "Lower Third Settings" card directly
+              below this one. Two operator-facing wins: (a) operators
+              no longer have to switch displayMode to lower-third
+              first just to discover that the controls exist (the v0.7.167
+              `displayMode.startsWith('lower-third')` gate hid them
+              completely on a fresh install / Full Screen mode);
+              (b) Full Screen settings now contain ZERO lower-third-only
+              controls — exactly as the operator requested ("remove
+              anything that applies to lower third settings from the
+              full-screen display setting"). */}
+          {/* v0.7.172 — All Lower Third controls (Position, Height,
+              7-field Typography) extracted to the dedicated, always-
+              visible "Lower Third Settings" card placed directly after
+              this Card closes. See the comment above. */}
 
-          {settings.displayMode.startsWith('lower-third') && (
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">Lower Third Height</Label>
-              <div className="flex gap-2">
-                {([
-                  { value: 'sm' as const, label: 'Small' },
-                  { value: 'md' as const, label: 'Medium' },
-                  { value: 'lg' as const, label: 'Large' },
-                ]).map((h) => (
-                  <button
-                    key={h.value}
-                    onClick={() => updateSettings({ lowerThirdHeight: h.value })}
-                    className={cn(
-                      'px-3 py-1.5 rounded-md text-xs font-medium transition-colors border',
-                      settings.lowerThirdHeight === h.value
-                        ? 'bg-primary/15 border-primary/30 text-primary'
-                        : 'bg-muted border-border text-muted-foreground hover:bg-muted/80'
-                    )}
-                  >
-                    {h.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <Separator />
-
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">Output Destination</Label>
-            <div className="flex flex-wrap gap-2">
-              {([
-                { value: 'window' as OutputDestination, label: 'Window', desc: 'New browser window', icon: <Monitor className="h-3.5 w-3.5" /> },
-                { value: 'ndi' as OutputDestination, label: 'NDI / Wireless', desc: 'Share display wirelessly', icon: <Wifi className="h-3.5 w-3.5" /> },
-                { value: 'both' as OutputDestination, label: 'Both', desc: 'Window + wireless', icon: <Layers className="h-3.5 w-3.5" /> },
-              ]).map((dest) => (
-                <button
-                  key={dest.value}
-                  onClick={() => updateSettings({ outputDestination: dest.value })}
-                  className={cn(
-                    'flex items-center gap-2 rounded-lg px-3 py-2.5 transition-colors border min-w-[140px]',
-                    settings.outputDestination === dest.value
-                      ? 'bg-primary/10 border-primary/30'
-                      : 'bg-muted/30 border-border hover:bg-muted/50'
-                  )}
-                >
-                  {dest.icon}
-                  <div className="text-left">
-                    <span className="text-xs font-medium block">{dest.label}</span>
-                    <span className="text-[10px] text-muted-foreground">{dest.desc}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
+          {/* v0.7.194-hotfix.4 — Output Destination trio (Window /
+              NDI / Both) removed from this Settings card. Operators
+              now choose the destination contextually from the Live
+              Presenter (the Output button + the NDI Output panel)
+              rather than via a global toggle that frequently caused
+              "I picked NDI here but nothing's coming out" confusion
+              when they'd forgotten the NDI Output panel was the
+              actual source of truth. Field kept in the store +
+              consumers untouched so existing workflows keep working
+              — this just hides the duplicate, conflicting UI. */}
 
           <Separator />
 
@@ -764,7 +850,10 @@ export function SettingsView() {
             <Label className="text-sm font-medium flex items-center justify-between">
               <span>Text Size on Secondary Screen</span>
               <span className="text-[11px] font-mono text-primary">
-                {Math.round((settings.textScale ?? 1) * 100)}%
+                {/* v0.7.97 — Fallback now mirrors the new install
+                    default (0.9 = 90%) so the slider reads correctly
+                    on a fresh install before the store hydrates. */}
+                {Math.round((settings.textScale ?? 0.9) * 100)}%
               </span>
             </Label>
             <input
@@ -772,7 +861,7 @@ export function SettingsView() {
               min={0.5}
               max={2}
               step={0.05}
-              value={settings.textScale ?? 1}
+              value={settings.textScale ?? 0.9}
               onChange={(e) => updateSettings({ textScale: parseFloat(e.target.value) })}
               className="w-full h-2 rounded-full bg-muted accent-primary cursor-pointer"
             />
@@ -810,7 +899,10 @@ export function SettingsView() {
             <Label className="text-sm font-medium flex items-center justify-between">
               <span>Bible Line-Height</span>
               <span className="text-[11px] font-mono text-primary">
-                {(settings.bibleLineHeight ?? 1.4).toFixed(2)}
+                {/* v0.7.97 — Fallback now mirrors the new install
+                    default (0.95) so the slider reads correctly on
+                    a fresh install before the store hydrates. */}
+                {(settings.bibleLineHeight ?? 0.95).toFixed(2)}
               </span>
             </Label>
             <input
@@ -818,7 +910,7 @@ export function SettingsView() {
               min={0.9}
               max={2.5}
               step={0.05}
-              value={settings.bibleLineHeight ?? 1.4}
+              value={settings.bibleLineHeight ?? 0.95}
               onChange={(e) => updateSettings({ bibleLineHeight: parseFloat(e.target.value) })}
               className="w-full h-2 rounded-full bg-muted accent-primary cursor-pointer"
             />
@@ -850,29 +942,58 @@ export function SettingsView() {
             </p>
           </div>
 
-          <Separator />
+          {/* v0.7.194-hotfix.4 — Standalone "Congregation Screen
+              Theme" picker removed. Theme is now chosen via the
+              Theme Designer card below (with live preview + preset
+              thumbnails) so operators have ONE place to set the
+              look of the projection screen. Field + consumers
+              untouched; this just hides the duplicate UI. */}
+            </div>{/* end LEFT COLUMN */}
 
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">Congregation Screen Theme</Label>
-            <div className="flex flex-wrap gap-2">
-              {['minimal', 'worship', 'sermon', 'easter', 'christmas', 'praise'].map((theme) => (
-                <button
-                  key={theme}
-                  onClick={() => updateSettings({ congregationScreenTheme: theme })}
-                  className={cn(
-                    'px-3 py-1.5 rounded-md text-xs font-medium transition-colors border capitalize',
-                    settings.congregationScreenTheme === theme
-                      ? 'bg-primary/15 border-primary/30 text-primary'
-                      : 'bg-muted border-border text-muted-foreground hover:bg-muted/80'
-                  )}
-                >
-                  {theme}
-                </button>
-              ))}
+            {/* ── RIGHT COLUMN — sticky compact preview ─────────── */}
+            <div className="space-y-1.5 lg:sticky lg:top-2 self-start">
+              <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
+                Live Preview
+              </div>
+              <OutputPreview mode="full" hideModeBadge noMedia />
+              <p className="text-[10px] text-muted-foreground/80 px-1 leading-snug">
+                Mirrors the secondary screen / NDI feed. Updates instantly
+                as you change any setting on the left.
+              </p>
             </div>
-          </div>
+          </div>{/* end grid-cols-[1fr_360px] */}
         </CardContent>
       </Card>
+
+      {/* ───────────────────────────────────────────────────────────────
+          v0.7.172 — Dedicated, ALWAYS-VISIBLE "Lower Third Settings" card.
+
+          Operator pain v0.7.171 fixed: pre-v0.7.172 the LT controls
+          (Position, Height, 7-field Typography) were nested inside the
+          "Display & Output" card AND gated on
+          `displayMode.startsWith('lower-third')`. On a fresh install
+          (Full Screen mode), the operator literally could not see ANY
+          Lower Third settings at all — the gate hid them completely.
+          Operator could not "find them on the app".
+
+          Fix: dedicated card here, no displayMode gate. Operator can
+          design their lower-third look while still on Full Screen, then
+          flip the display mode and the design is already in place.
+
+          Wiring (verified end-to-end with curl): every control writes
+          to `lowerThird*` keys → `buildOutputPayload()` → consumed by
+          `/api/output/congregation` whenever
+          `USE_LT_OVERRIDES = !IS_NDI && dm.indexOf('lower-third')===0`.
+      {/* v0.7.184 — Lower Third Settings card DELETED. The entire card
+          (~330 lines: Position / Height / Typography / Bible color /
+          Line height / Text scale + LIVE PREVIEW) lived here. Operator:
+          "remove the lower third from the app, leaving only the lower
+          third that can be operated in NDI settings only." All LT
+          controls now live exclusively on the NDI Output panel. The
+          persisted `lowerThird*` keys remain on disk untouched (no
+          destructive migration) — they're just no longer surfaced in
+          this UI. The route.ts LT branch is retained but driven
+          exclusively by `IS_NDI && st.ndiDisplayMode === 'lower-third'`. */}
 
       {/* v0.5.52 — Voice Control & Speaker-Follow */}
       <VoiceControlCard />
@@ -993,7 +1114,7 @@ export function SettingsView() {
             <CardContent className="p-3 flex items-start gap-2">
               <Wifi className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
               <p className="text-xs text-amber-300/80 leading-relaxed">
-                <strong>Wireless display:</strong> Open the congregation URL on any browser that can reach this app, then capture that screen with NDI Tools, AirPlay, Chromecast, OBS, vMix, or Wirecast. For a private local network install, use your machine&apos;s local IP plus <code className="bg-amber-500/20 px-1 rounded">/api/output/congregation</code>.
+                <strong>Wireless display:</strong> Open the congregation URL on any browser that can reach this app, then capture that screen with NDI Tools, AirPlay, or Chromecast. For a private local network install, use your machine&apos;s local IP plus <code className="bg-amber-500/20 px-1 rounded">/api/output/congregation</code>.
               </p>
             </CardContent>
           </Card>
@@ -1187,7 +1308,7 @@ export function SettingsView() {
               <Label className="text-xs text-muted-foreground flex items-center justify-between">
                 <span>Reference Text Scale</span>
                 <span className="text-[11px] font-mono text-primary">
-                  {Math.round((settings.referenceTextScale ?? settings.textScale ?? 1) * 100)}%
+                  {Math.round((settings.referenceTextScale ?? settings.textScale ?? 0.9) * 100)}%
                 </span>
               </Label>
               <input
@@ -1195,7 +1316,7 @@ export function SettingsView() {
                 min={0.5}
                 max={2}
                 step={0.05}
-                value={settings.referenceTextScale ?? settings.textScale ?? 1}
+                value={settings.referenceTextScale ?? settings.textScale ?? 0.9}
                 onChange={(e) =>
                   updateSettings({ referenceTextScale: parseFloat(e.target.value) })
                 }
@@ -1325,8 +1446,13 @@ export function SettingsView() {
                 is passed, so dropping the prop wires both previews to
                 whatever Genesis 2:5 / John 3:16 / etc. the operator
                 clicked in the search results. */}
-            <OutputPreview mode="full" />
-            <OutputPreview mode="lower-third" />
+            {/* v0.7.172 — Lower-Third preview removed from this card.
+                LT now has its own dedicated "Lower Third Settings" card
+                directly below the "Display & Output" card with its own
+                compact right-side preview, so duplicating the LT
+                preview here forced the operator to scroll past two
+                near-identical preview boxes for no reason. */}
+            <OutputPreview mode="full" hideModeBadge noMedia />
           </div>
         </CardContent>
       </Card>
@@ -1351,11 +1477,42 @@ export function SettingsView() {
                   other controls. Capped to a compact 240px thumbnail so
                   it behaves like a confirmation chip rather than a banner. */}
               <div className="relative rounded-lg overflow-hidden border border-border aspect-video bg-muted max-w-[240px]">
-                <img
-                  src={settings.customBackground}
-                  alt="Custom background"
-                  className="w-full h-full object-cover"
-                />
+                {isVideoBackground(settings.customBackground) ? (
+                  // v0.7.221 — Operator $1600 escalation: bg video was
+                  // animating in this Custom Background thumbnail
+                  // alongside 4 other previews on the same screen,
+                  // distracting from the LIVE pane. Freeze on first
+                  // frame: no autoPlay/loop, preload only metadata,
+                  // and append `#t=0.1` to the src so the browser
+                  // paints the frame at 0.1s as a static poster
+                  // instead of the codec's all-black first frame.
+                  // ref-based pause guards against the rare browser
+                  // that ignores autoPlay=false after a previous
+                  // session left the element in a playing state.
+                  <video
+                    src={`${settings.customBackground}#t=0.1`}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    ref={(el) => {
+                      if (!el) return
+                      try { el.pause() } catch { /* ignore */ }
+                    }}
+                    onLoadedData={(e) => {
+                      try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
+                    }}
+                    onPlay={(e) => {
+                      try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
+                    }}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <img
+                    src={settings.customBackground}
+                    alt="Custom background"
+                    className="w-full h-full object-cover"
+                  />
+                )}
                 <Button
                   variant="destructive"
                   size="icon"
@@ -1366,13 +1523,36 @@ export function SettingsView() {
                 </Button>
               </div>
               <div className="flex items-center gap-2">
-                <Badge variant="secondary" className="text-xs">Active</Badge>
+                <Badge variant="secondary" className="text-xs">
+                  {isVideoBackground(settings.customBackground) ? 'Video · Active' : 'Active'}
+                </Badge>
                 <span className="text-xs text-muted-foreground truncate">{settings.customBackground}</span>
               </div>
             </div>
           ) : (
-            <div
-              onClick={() => fileInputRef.current?.click()}
+            // v0.7.180 — Native <label htmlFor> pattern instead of the
+            // pre-v0.7.180 div+onClick+ref.click() relay. Operator bug
+            // (postimg V5NMM6kx): in the packaged Electron build the
+            // file picker opened, the operator picked a file, and then
+            // NOTHING happened (no spinner, no toast). Root cause was
+            // the hidden file input (`className="hidden"` → CSS
+            // display:none) intermittently dropping its `change` event
+            // when the picker was triggered by a programmatic .click()
+            // — a Chromium 130+ "trusted UI" hardening that suppresses
+            // change events on inputs not in the layout tree, which
+            // bites packaged apps but not Turbopack dev (different
+            // Chromium build channel). The native label-for pairing
+            // bypasses the JS relay entirely: Chromium routes the
+            // click straight from the label to the input through the
+            // "labelable element" semantics it has supported since
+            // forever, and the input now uses `sr-only` (positioned
+            // off-screen but still in the layout tree) so the change
+            // event fires reliably in production. The dropzone visual
+            // is byte-identical — only the wrapper element changed
+            // from <div onClick=…> to <label htmlFor=…> and the input
+            // class from "hidden" to "sr-only".
+            <label
+              htmlFor="bg-upload-input"
               className="border-2 border-dashed border-border rounded-lg p-8 flex flex-col items-center justify-center cursor-pointer hover:border-primary/30 hover:bg-muted/30 transition-colors"
             >
               {isUploading ? (
@@ -1381,19 +1561,19 @@ export function SettingsView() {
                 <>
                   <Upload className="h-8 w-8 text-muted-foreground mb-2" />
                   <p className="text-sm font-medium text-foreground">Click to upload background</p>
-                  <p className="text-xs text-muted-foreground mt-1">PNG, JPEG, or WebP (max 10MB)</p>
+                  <p className="text-xs text-muted-foreground mt-1">Image (PNG, JPEG, WebP) or Video (MP4, WebM, MOV) — up to 3 GB</p>
                 </>
               )}
-            </div>
+              <input
+                id="bg-upload-input"
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,video/x-matroska"
+                onChange={handleUploadBackground}
+                className="sr-only"
+              />
+            </label>
           )}
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            onChange={handleUploadBackground}
-            className="hidden"
-          />
         </CardContent>
       </Card>
 
@@ -1570,7 +1750,23 @@ export function SettingsView() {
           over WhatsApp / phone or paste it into the new install. The
           preserved remaining time is spelled out so they understand
           the transfer did NOT renew their subscription. */}
-      <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
+      <Dialog open={transferOpen} onOpenChange={(next) => {
+        // v0.7.99 / v0.7.100 — When the operator dismisses the
+        // "License released" dialog (clicks "Got it", the X, hits
+        // Escape, or clicks the backdrop), HARD RELOAD the window
+        // immediately. Same reasoning as handleDeactivate: the React
+        // tree is holding freshly-released license context, and a
+        // downstream useEffect that fires a /api/license/* request
+        // can crash the renderer → chrome-error. Hard reload gives
+        // a guaranteed-clean tree on /, with no stale activation
+        // state. The operator has already read+copied the activation
+        // code (it's still on screen via local state) so we don't
+        // lose anything by tearing the tree down immediately.
+        setTransferOpen(next)
+        if (!next) {
+          try { window.location.assign('/') } catch { window.location.href = '/' }
+        }
+      }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1852,12 +2048,12 @@ function HelpAndUpdatesCard() {
       case 'not-available':
         return `You're on the latest version (v${appVersion}).`
       case 'checking':
-        return 'Checking GitHub Releases…'
+        return 'Checking for updates…'
       case 'error':
         return `Last check failed: ${state.message}`
       case 'idle':
       default:
-        return `Installed: v${appVersion}. Click Check Now to query GitHub Releases.`
+        return `Installed: v${appVersion}. Click Check Now to check for updates.`
     }
   })()
 
@@ -2026,7 +2222,7 @@ function HelpAndUpdatesCard() {
                         <AlertDialogDescription>
                           Restarting will drop the NDI feed for about 10
                           seconds while ScriptureLive AI installs the update
-                          and relaunches. vMix / OBS / Wirecast will lose the
+                          and relaunches. NDI receivers will lose the
                           source for the duration of the restart.
                           <br />
                           <br />
@@ -2111,35 +2307,11 @@ function HelpAndUpdatesCard() {
           <ExternalLink className="h-3 w-3 opacity-60" />
         </a>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <a
-            href={quickStartUrl()}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border hover:bg-muted/40 text-xs"
-          >
-            <span className="font-medium">Quick Start</span>
-            <ExternalLink className="h-3 w-3 opacity-60" />
-          </a>
-          <a
-            href={troubleshootingUrl()}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border hover:bg-muted/40 text-xs"
-          >
-            <span className="font-medium">Troubleshooting</span>
-            <ExternalLink className="h-3 w-3 opacity-60" />
-          </a>
-          <a
-            href={newIssueUrl()}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border hover:bg-muted/40 text-xs"
-          >
-            <span className="font-medium">Report a Bug</span>
-            <ExternalLink className="h-3 w-3 opacity-60" />
-          </a>
-        </div>
+        {/* v0.7.132 — Removed Quick Start / Troubleshooting / Report
+            a Bug grid. All three resolved to https://github.com/...
+            URLs and the operator's directive is "do not show GitHub
+            anywhere in the app again." Support is reachable via the
+            white-label website link above. */}
       </CardContent>
     </Card>
   )
@@ -2213,9 +2385,11 @@ function ThemeDesignerCard({ updateSettings, settings }: {
 }) {
   const customThemes = useAppStore((s) => s.customThemes)
   const setCustomThemes = useAppStore((s) => s.setCustomThemes)
-  const highlightColor = useAppStore((s) => s.highlightColor)
-  const setHighlightColor = useAppStore((s) => s.setHighlightColor)
   const [newName, setNewName] = useState('')
+  // v0.7.194-hotfix.4 — `highlightColor` picker removed (it was a dead
+  // control with no operator-visible effect anywhere in the projection
+  // path). Hooks intentionally not consumed here so the lint/tsc audit
+  // catches any accidental re-introduction.
 
   const HARD_PRESETS: Array<{ id: string; name: string; settings: Partial<AppSettings> }> = [
     {
@@ -2253,7 +2427,34 @@ function ThemeDesignerCard({ updateSettings, settings }: {
     },
   ]
 
-  const HIGHLIGHTS = ['amber', 'red', 'emerald', 'sky', 'violet', 'rose']
+  // v0.7.194-hotfix.4 — Mini preview swatch shared by built-in presets
+  // and saved-custom-themes rows. Uses the same theme gradient + font
+  // sample the projector will render, so operators recognise the look
+  // before applying. Pure-render — no store reads, no side effects.
+  const ThemeSwatch = ({ s }: { s: Partial<AppSettings> }) => {
+    const themeBg: Record<string, string> = {
+      worship: 'linear-gradient(135deg,#1e0a3c,#1e1b4b)',
+      sermon: 'linear-gradient(135deg,#3c1a0a,#451a03)',
+      easter: 'linear-gradient(135deg,#0a3c2a,#042f2e)',
+      christmas: 'linear-gradient(135deg,#3c0a0a,#4c0519)',
+      praise: 'linear-gradient(135deg,#3c3a0a,#451a03)',
+      minimal: 'linear-gradient(135deg,#0a0a0a,#171717)',
+    }
+    const fontStack =
+      s.fontFamily === 'serif' ? 'Georgia, serif'
+      : s.fontFamily === 'mono' ? 'ui-monospace, Menlo, monospace'
+      : 'ui-sans-serif, system-ui, sans-serif'
+    const bg = themeBg[(s.congregationScreenTheme as string) ?? 'minimal'] ?? themeBg.minimal
+    return (
+      <div
+        className="w-full h-14 rounded-md border border-border overflow-hidden flex flex-col items-center justify-center px-2 text-white"
+        style={{ background: bg, textShadow: s.textShadow ? '0 1px 6px rgba(0,0,0,0.5)' : 'none', fontFamily: fontStack }}
+      >
+        <span className="text-[8px] opacity-70 leading-tight">John 3:16</span>
+        <span className="text-[11px] font-semibold leading-tight truncate w-full text-center">For God so loved</span>
+      </div>
+    )
+  }
 
   const saveCurrent = () => {
     const name = newName.trim()
@@ -2268,12 +2469,24 @@ function ThemeDesignerCard({ updateSettings, settings }: {
         id,
         name,
         settings: {
+          // v0.7.194-hotfix.4 — Capture the full caption + subtitle
+          // typography surface so re-applying a saved theme produces
+          // a pixel-identical projection screen. Pre-fix this only
+          // saved 6 fields and operators reported "I saved my theme
+          // but the reference alignment / line height didn't come
+          // back when I re-applied it."
           congregationScreenTheme: settings.congregationScreenTheme,
           fontSize: settings.fontSize,
           fontFamily: settings.fontFamily,
           textShadow: settings.textShadow,
-          showReferenceOnOutput: settings.showReferenceOnOutput,
+          textAlign: settings.textAlign,
           textScale: settings.textScale,
+          bibleLineHeight: settings.bibleLineHeight,
+          showReferenceOnOutput: settings.showReferenceOnOutput,
+          referenceFontSize: settings.referenceFontSize,
+          referenceTextAlign: settings.referenceTextAlign,
+          referenceTextShadow: settings.referenceTextShadow,
+          referenceTextScale: settings.referenceTextScale,
         } as Partial<AppSettings>,
       },
     ]
@@ -2296,40 +2509,29 @@ function ThemeDesignerCard({ updateSettings, settings }: {
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Theme Designer</CardTitle>
         <CardDescription>
-          Highlight colour, presets, and save / load your own themes.
+          Pick a preset or save your own — each thumbnail shows the actual look.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
-        <div className="space-y-2">
-          <Label className="text-sm font-medium">Active-verse highlight color</Label>
-          <div className="flex flex-wrap gap-2">
-            {HIGHLIGHTS.map((c) => (
-              <button
-                key={c}
-                onClick={() => setHighlightColor(c)}
-                className={cn(
-                  'px-3 py-1.5 rounded-md text-xs font-medium transition-colors border capitalize flex items-center gap-2',
-                  highlightColor === c
-                    ? 'bg-primary/15 border-primary/30 text-primary'
-                    : 'bg-muted border-border text-muted-foreground hover:bg-muted/80',
-                )}
-              >
-                <span className={cn('inline-block h-3 w-3 rounded-full',
-                  c === 'amber' && 'bg-amber-400',
-                  c === 'red' && 'bg-red-400',
-                  c === 'emerald' && 'bg-emerald-400',
-                  c === 'sky' && 'bg-sky-400',
-                  c === 'violet' && 'bg-violet-400',
-                  c === 'rose' && 'bg-rose-400',
-                )} />
-                {c}
-              </button>
-            ))}
-          </div>
+        {/* v0.7.194-hotfix.4 — Live preview of the operator's CURRENT
+            settings, sitting at the top of the card so every change
+            elsewhere on the page is reflected here in real time. */}
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Live preview (current settings)</Label>
+          <ThemeSwatch s={{
+            congregationScreenTheme: settings.congregationScreenTheme,
+            fontFamily: settings.fontFamily,
+            fontSize: settings.fontSize,
+            textShadow: settings.textShadow,
+          }} />
         </div>
 
         <Separator />
 
+        {/* v0.7.194-hotfix.4 — Preset thumbnails replace the old text-
+            only buttons. Each preset renders ThemeSwatch with its own
+            settings so operators see the bg + font + shadow combination
+            before they click Apply. */}
         <div className="space-y-2">
           <Label className="text-sm font-medium">Built-in presets</Label>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -2337,12 +2539,15 @@ function ThemeDesignerCard({ updateSettings, settings }: {
               <button
                 key={p.id}
                 onClick={() => applyTheme(p.settings, p.name)}
-                className="px-3 py-2 rounded-md border border-border bg-muted text-left hover:bg-muted/80 transition-colors"
+                className="rounded-md border border-border bg-muted text-left hover:bg-muted/80 transition-colors p-2 space-y-1.5"
               >
-                <p className="text-sm font-medium">{p.name}</p>
-                <p className="text-[10px] text-muted-foreground capitalize">
-                  {(p.settings.congregationScreenTheme as string) ?? 'minimal'} · {p.settings.fontFamily as string} · {p.settings.fontSize as string}
-                </p>
+                <ThemeSwatch s={p.settings} />
+                <div className="px-1 pb-0.5">
+                  <p className="text-xs font-medium">{p.name}</p>
+                  <p className="text-[10px] text-muted-foreground capitalize">
+                    {(p.settings.congregationScreenTheme as string) ?? 'minimal'} · {p.settings.fontFamily as string} · {p.settings.fontSize as string}
+                  </p>
+                </div>
               </button>
             ))}
           </div>
@@ -2364,15 +2569,18 @@ function ThemeDesignerCard({ updateSettings, settings }: {
           {customThemes.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
               {customThemes.map((t) => (
-                <div key={t.id} className="flex items-center gap-2 px-3 py-2 rounded-md border border-border bg-muted/30">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{t.name}</p>
-                    <p className="text-[10px] text-muted-foreground capitalize truncate">
-                      {(t.settings.congregationScreenTheme as string) ?? 'minimal'} · {t.settings.fontFamily as string} · {t.settings.fontSize as string}
-                    </p>
+                <div key={t.id} className="rounded-md border border-border bg-muted/30 p-2 space-y-1.5">
+                  <ThemeSwatch s={t.settings} />
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium truncate">{t.name}</p>
+                      <p className="text-[10px] text-muted-foreground capitalize truncate">
+                        {(t.settings.congregationScreenTheme as string) ?? 'minimal'} · {t.settings.fontFamily as string} · {t.settings.fontSize as string}
+                      </p>
+                    </div>
+                    <Button size="sm" variant="ghost" onClick={() => applyTheme(t.settings, t.name)}>Apply</Button>
+                    <Button size="sm" variant="ghost" onClick={() => deleteTheme(t.id)}>Delete</Button>
                   </div>
-                  <Button size="sm" variant="ghost" onClick={() => applyTheme(t.settings, t.name)}>Apply</Button>
-                  <Button size="sm" variant="ghost" onClick={() => deleteTheme(t.id)}>Delete</Button>
                 </div>
               ))}
             </div>

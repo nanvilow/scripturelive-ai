@@ -59,6 +59,22 @@ const enableStandalone = process.env.NEXT_OUTPUT_STANDALONE === "1";
 // `stream` resolution.
 const nextConfig: NextConfig = {
   ...(enableStandalone ? { output: "standalone" as const } : {}),
+  // v0.7.168 — Force Next's standalone tracer to copy the bundled
+  // bible JSONs into `.next/standalone/...`. Without this, large
+  // (4 MB each) JSON imports can be split out of the webpack chunk
+  // graph at production-build time and end up referenced by chunks
+  // that the tracer DOESN'T copy, leaving the packaged Electron app
+  // with empty translations and silently dropping the operator to
+  // the online fetch path. Companion fix lives in
+  // src/lib/bibles/local-bible.ts (fs fallback at runtime).
+  outputFileTracingIncludes: {
+    "/api/bible/**/*": [
+      "./src/data/bibles/*.json",
+    ],
+    "/**/*": [
+      "./src/data/bibles/*.json",
+    ],
+  },
   // In a pnpm monorepo, Next traces deps from the workspace root (where the
   // hoisted node_modules lives). Both must be pinned to the same value in
   // Next 16+ — and they must match the Turbopack root, otherwise Turbopack

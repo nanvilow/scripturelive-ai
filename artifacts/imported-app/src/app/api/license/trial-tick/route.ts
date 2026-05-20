@@ -1,34 +1,35 @@
-// v0.7.5 — Activity-gated trial counter (Apr 29, 2026).
+// v0.7.194 — No-op trial tick endpoint.
 //
-// The renderer pings this endpoint every few seconds while the mic is
-// actively detecting (and once on stop, with the final partial delta).
-// We add `deltaMs` into the persisted `trialMsUsed`; when the cumulative
-// total exceeds the install's trialDurationMs the next /status call
-// will return state: 'trial_expired' and lockdown kicks in.
+// Pre-v0.7.194 this endpoint added `deltaMs` of mic-listening time
+// into the persisted `trialMsUsed`. The trial model was activity-
+// gated: only seconds the user was actively detecting consumed the
+// trial budget; refresh / overnight wait / never opening AI Detection
+// did NOT consume it.
 //
-// This endpoint is intentionally UNAUTHENTICATED — the trial timer is
-// per-install (not per-user), and there's no login flow before trial
-// expiry. The worst a malicious caller can do is consume their OWN
-// trial faster, which is fine.
+// v0.7.194 changes the trial to a wall-clock 72-hour window from
+// firstLaunchAt — the countdown runs continuously regardless of
+// usage. `trialMsUsed` is no longer consulted by computeStatus().
 //
-// Body: { deltaMs: number } — milliseconds elapsed since the last tick
+// We keep this endpoint as a 200-returning no-op for backward
+// compatibility: any old desktop build still pinging this URL gets
+// a clean response and the server simply returns the current
+// wall-clock status. New builds (v0.7.194+) stop pinging entirely
+// (see license-provider.tsx — the activity-tick effect was replaced
+// with a 60-second status poller).
+//
+// Body: { deltaMs: number } — accepted but ignored
 // Resp: { ok: true, status: SubscriptionStatus }
 
 import { NextRequest, NextResponse } from 'next/server'
-import { addTrialUsage } from '@/lib/licensing/storage'
+import { computeStatus } from '@/lib/licensing/storage'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function POST(req: NextRequest) {
-  let body: unknown
-  try { body = await req.json() } catch {
-    return NextResponse.json({ error: 'Body must be JSON' }, { status: 400 })
-  }
-  const deltaMs = Number((body as Record<string, unknown>)?.deltaMs)
-  if (!Number.isFinite(deltaMs) || deltaMs < 0) {
-    return NextResponse.json({ error: 'deltaMs must be a non-negative number' }, { status: 400 })
-  }
-  const status = addTrialUsage(deltaMs)
+export async function POST(_req: NextRequest) {
+  // Body intentionally not parsed — any payload is acceptable and
+  // ignored. We always return the current wall-clock status so old
+  // clients can still update their UI from the response.
+  const status = computeStatus()
   return NextResponse.json({ ok: true, status })
 }

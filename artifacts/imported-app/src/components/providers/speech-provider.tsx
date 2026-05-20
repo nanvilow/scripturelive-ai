@@ -5,6 +5,10 @@ import { toast } from 'sonner'
 import { bootstrapRuntimeKeys } from '@/lib/runtime-keys'
 import { detectBestReference, parseExplicitReference } from '@/lib/bibles/reference-engine'
 import { lookupRange, lookupVerse, isTranslationBundled } from '@/lib/bibles/local-bible'
+// v0.7.65 — Curated preacher-phrase dictionary (~190 unaddressed
+// quotations like "the heavens declare the glory of God" or
+// "trouble don't last always"). Runs strictly local, no network.
+import { detectBestPreacherPhrase } from '@/lib/bibles/preacher-phrases'
 // v0.7.4 — chapter metadata for "next chapter" / "previous chapter"
 // voice commands. Same JSON the reference engine uses for validation.
 import bibleStructure from '@/data/bible-structure.json'
@@ -602,7 +606,17 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       case 'next_verse':
       case 'previous_verse': {
         const dir = cmd.kind === 'next_verse' ? 1 : -1
-        const slide = liveIdx >= 0 ? slides[liveIdx] : null
+        // v0.7.214 — Voice nav reads from LIVE direct-ref FIRST.
+        // Pre-214 this read `slides[liveIdx]` only, ignoring the
+        // AI-detected verse held in `s.liveSlide` (which is what's
+        // actually rendering on the live display per output-payload
+        // L19's `liveSlide ?? slides[liveSlideIndex]` read). Operator
+        // bug: AI auto-detected John 3:16 onto live (liveSlide ref set,
+        // liveSlideIndex=-1), operator says "next verse" → this branch
+        // saw `null` from slides[-1], fell through to slide-deck
+        // fallback, and either did nothing or stepped a stale deck
+        // entry. Mirror logos-shell.tsx L3929 read pattern.
+        const slide = s.liveSlide ?? (liveIdx >= 0 ? slides[liveIdx] : null)
 
         // (1) Multi-verse passage: try to advance highlight first.
         if (slide && slide.type === 'verse' && (slide.content?.length ?? 0) > 1) {
@@ -681,13 +695,23 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   content: textOut.split('\n').filter(Boolean),
                   background: s.settings.congregationScreenTheme,
                 }
-                const curSlides = useAppStore.getState().slides
-                const nextSlides = curSlides.length > 0 ? [...curSlides, slideNew] : [slideNew]
-                const idx = nextSlides.length - 1
-                useAppStore.getState().setSlides(nextSlides)
-                useAppStore.getState().setPreviewSlideIndex(idx)
-                useAppStore.getState().setLiveSlideIndex(idx)
-                useAppStore.getState().setIsLive(true)
+                // v0.7.208 — Voice commands target LIVE ONLY. Preview
+                // is reserved for operator manual control. Use the
+                // setLiveAuto direct-ref path (same one the AI auto-
+                // detect useEffect uses in logos-shell.tsx) so the
+                // operator's previewSlideIndex / pinnedPreviewSlide
+                // are NEVER touched by a voice-triggered verse push.
+                //
+                // Pre-208 this branch did setSlides + setPreviewSlideIndex
+                // + setLiveSlideIndex, which clobbered the operator's
+                // preview. The v0.7.194-hotfix.11 "preserve manual
+                // preview" guard tried to mitigate by routing to
+                // addScheduleItemQuiet when preview was off-live, but
+                // that meant the voice-stepped verse silently went to
+                // the schedule instead of live — operator's actual
+                // ask ("next verse" → put John 3:4 on screen) failed.
+                // setLiveAuto fixes both: live updates, preview stays.
+                useAppStore.getState().setLiveAuto(slideNew)
                 useAppStore.getState().setLiveActiveVerseIndex(0)
                 // v0.7.24 — Surface a small toast when we rolled
                 // over so the operator knows the chapter changed.
@@ -708,11 +732,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         }
 
         // (3) Fallback: slide-deck advance (legacy behaviour).
+        // v0.7.208 — Voice "next slide" no longer drags previewSlideIndex
+        // along; it only advances LIVE. Operator's preview stays put
+        // unless they manually move it.
         if (slides.length) {
           const nextI = dir === 1
             ? Math.min(slides.length - 1, Math.max(0, liveIdx + 1))
             : Math.max(0, liveIdx - 1)
-          s.setPreviewSlideIndex(nextI)
           s.setLiveSlideIndex(nextI)
           s.setLiveActiveVerseIndex(0)
         }
@@ -749,13 +775,10 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             content: textOut.split('\n').filter(Boolean),
             background: s.settings.congregationScreenTheme,
           }
-          const cur = useAppStore.getState().slides
-          const next = cur.length > 0 ? [...cur, slide] : [slide]
-          const idx = next.length - 1
-          useAppStore.getState().setSlides(next)
-          useAppStore.getState().setPreviewSlideIndex(idx)
-          useAppStore.getState().setLiveSlideIndex(idx)
-          useAppStore.getState().setIsLive(true)
+          // v0.7.208 — Voice "go to <ref>" targets LIVE ONLY via the
+          // setLiveAuto direct-ref path. See the matching block in
+          // next_verse for the full rationale. Operator preview stays.
+          useAppStore.getState().setLiveAuto(slide)
           useAppStore.getState().setLiveActiveVerseIndex(0)
         }
         break
@@ -776,14 +799,20 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       case 'find_by_quote': {
         const quote = (cmd.quoteText || '').trim()
         if (!quote) {
-          toast.error('No quote to search', { duration: 1500, position: 'bottom-right' })
+          // v0.7.111 — silent on empty (operator complaint about
+          // toast spam from misfired voice commands).
           break
         }
-        toast.loading(`AI: searching for "${quote.length > 40 ? quote.slice(0, 38) + '…' : quote}"…`, {
-          id: 'ai-verse-search',
-          duration: 4000,
-          position: 'bottom-right',
-        })
+        // v0.7.111 — Silenced the always-on loading toast. It only
+        // ever told the operator something they could already see in
+        // the detection panel, and on failures combined with the
+        // "No match" error toast to triple-stack noise on a single
+        // misfired utterance. Loading state is now console-only;
+        // the success toast at the bottom of this case is the only
+        // user-visible signal.
+        if (typeof console !== 'undefined') {
+          console.log('[voice] find_by_quote searching:', quote)
+        }
         let match: {
           reference: string
           book: string
@@ -826,11 +855,18 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           /* network error — fall through to "no match" toast */
         }
         if (!match) {
-          toast.error(`No match for "${quote.length > 32 ? quote.slice(0, 30) + '…' : quote}"`, {
-            id: 'ai-verse-search',
-            duration: 2500,
-            position: 'bottom-right',
-          })
+          // v0.7.111 — Silent failure (operator complaint: red
+          // "No match for ..." toasts on every misfired voice
+          // command were clutter). The semantic matcher only knows
+          // the POPULAR_VERSES_KJV shortlist, so the fail rate on
+          // arbitrary preacher questions ("in the bible Jesus was
+          // crucified", "where was Stephen stoned") is naturally
+          // high. Failure path is console-only; the operator can
+          // see the detection card if they want to debug.
+          toast.dismiss('ai-verse-search')
+          if (typeof console !== 'undefined') {
+            console.log('[voice] find_by_quote: no match for', quote)
+          }
           break
         }
         const refKey = `${match.book} ${match.chapter}:${match.verseStart}${
@@ -870,13 +906,18 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           content: textOut.split('\n').filter(Boolean),
           background: s.settings.congregationScreenTheme,
         }
-        const cur = useAppStore.getState().slides
-        const next = cur.length > 0 ? [...cur, slide] : [slide]
-        const idx = next.length - 1
-        useAppStore.getState().setSlides(next)
-        useAppStore.getState().setPreviewSlideIndex(idx)
-        useAppStore.getState().setLiveSlideIndex(idx)
-        useAppStore.getState().setIsLive(true)
+        // v0.7.214 — AI / voice verse search targets LIVE ONLY via
+        // setLiveAuto. Pre-214 this used the legacy
+        // `setSlides + setPreviewSlideIndex + setLiveSlideIndex + setIsLive`
+        // combo, which clobbered the operator's preview (yanked their
+        // pin to the AI-loaded verse). The v0.7.194-hotfix.11 "preserve
+        // manual preview" guard above tried to mitigate by routing to
+        // addScheduleItemQuiet when preview was off-live, but the
+        // operator's actual ask ("find this quote → put on live") was
+        // silently going to the schedule instead. v0.7.208 / v0.7.210
+        // already proved setLiveAuto is the canonical direct-ref
+        // primitive for "AI/voice → live without touching preview".
+        useAppStore.getState().setLiveAuto(slide)
         useAppStore.getState().setLiveActiveVerseIndex(0)
         toast.success(
           `${refKey} (${match.confidence === 'high' ? 'AI: high match' : 'AI: best match'})`,
@@ -905,7 +946,8 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       // no live verse-passage to anchor against.
       case 'next_chapter':
       case 'previous_chapter': {
-        const slide = liveIdx >= 0 ? slides[liveIdx] : null
+        // v0.7.214 — read LIVE direct-ref first (see L609 note).
+        const slide = s.liveSlide ?? (liveIdx >= 0 ? slides[liveIdx] : null)
         if (!slide || slide.type !== 'verse' || !slide.title) {
           toast.error('Chapter navigation needs a live Bible passage', { duration: 2000, position: 'bottom-right' })
           break
@@ -925,12 +967,16 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           )
           break
         }
-        const verseCount = struct[targetChapter - 1] ?? 1
+        // v0.7.114 — Operator complaint: "next chapter brings a bunch
+        // of scriptures and live displays them, which is very
+        // embarrassing." Pre-114 we loaded the WHOLE chapter range
+        // (e.g. John 2:1-25) into one slide. Operator wants the same
+        // jump pattern as Bible study apps: from John 1:51 → "next
+        // chapter" lands on John 2:1 (single verse). They can use
+        // "next verse" / "verse N" to walk forward from there.
         const tx = s.selectedTranslation
-        const refKey = `${ref.book} ${targetChapter}:1${verseCount > 1 ? `-${verseCount}` : ''}`
-        let textOut: string | null = null
-        const r = lookupRange(ref.book, targetChapter, 1, verseCount, tx)
-        if (r) textOut = r.text
+        const refKey = `${ref.book} ${targetChapter}:1`
+        let textOut: string | null = lookupVerse(ref.book, targetChapter, 1, tx)
         if (!textOut && !isTranslationBundled(tx)) {
           try {
             const v = await fetchBibleVerse(refKey, tx)
@@ -949,13 +995,9 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           content: textOut.split('\n').filter(Boolean),
           background: s.settings.congregationScreenTheme,
         }
-        const cur = useAppStore.getState().slides
-        const next = cur.length > 0 ? [...cur, slideNew] : [slideNew]
-        const idx = next.length - 1
-        useAppStore.getState().setSlides(next)
-        useAppStore.getState().setPreviewSlideIndex(idx)
-        useAppStore.getState().setLiveSlideIndex(idx)
-        useAppStore.getState().setIsLive(true)
+        // v0.7.214 — Voice next/previous_chapter → LIVE only via setLiveAuto
+        // (see L905 note). Preview is never touched.
+        useAppStore.getState().setLiveAuto(slideNew)
         useAppStore.getState().setLiveActiveVerseIndex(0)
         break
       }
@@ -1063,7 +1105,10 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         const next = cur.slice(0, -1)
         const newIdx = next.length - 1
         useAppStore.getState().setSlides(next)
-        useAppStore.getState().setPreviewSlideIndex(newIdx)
+        // v0.7.214 — voice commands target LIVE ONLY. Preview is the
+        // operator's surface and MUST NOT be reseated by a voice path.
+        // Pre-214 this also wrote previewSlideIndex which yanked the
+        // operator's pinned preview to the new last-deck slot.
         useAppStore.getState().setLiveSlideIndex(newIdx)
         useAppStore.getState().setLiveActiveVerseIndex(0)
         if (newIdx < 0) {
@@ -1089,7 +1134,8 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       case 'show_verse_n': {
         if (!cmd.verseNumber) break
         const n = cmd.verseNumber
-        const slide = liveIdx >= 0 ? slides[liveIdx] : null
+        // v0.7.214 — read LIVE direct-ref first (see L609 note).
+        const slide = s.liveSlide ?? (liveIdx >= 0 ? slides[liveIdx] : null)
         // We need to know the passage anchor (book/chapter/verseStart)
         // for BOTH branches: Case A uses verseStart to map "show verse
         // 17" against a "John 3:16-18" slide to range-index 1 (NOT
@@ -1157,13 +1203,8 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           content: textOut.split('\n').filter(Boolean),
           background: s.settings.congregationScreenTheme,
         }
-        const cur = useAppStore.getState().slides
-        const next = cur.length > 0 ? [...cur, slideNew] : [slideNew]
-        const idx = next.length - 1
-        useAppStore.getState().setSlides(next)
-        useAppStore.getState().setPreviewSlideIndex(idx)
-        useAppStore.getState().setLiveSlideIndex(idx)
-        useAppStore.getState().setIsLive(true)
+        // v0.7.214 — show_verse_n → LIVE only via setLiveAuto (see L905 note).
+        useAppStore.getState().setLiveAuto(slideNew)
         useAppStore.getState().setLiveActiveVerseIndex(0)
         break
       }
@@ -1266,14 +1307,42 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       //   • >= live            → full pipeline as before.
       // Defaults: drop 0.30 / live 0.70. Operator-tunable in Settings.
       const dropT = state.settings.transcriptDropThreshold ?? 0.30
-      const liveT = state.settings.transcriptLiveThreshold ?? 0.70
-      if (confidence < liveT) {
-        // Both DROP and PREVIEW tiers terminate here. The hook has
-        // already appended the chunk to its internal transcript ref;
-        // we deliberately leave it visible to the operator (helps
-        // them notice when the mic is being mis-heard) but skip all
-        // command + reference processing. _dropT is read so future
-        // diagnostics or visual styling can use it without churn.
+      const liveT = state.settings.transcriptLiveThreshold ?? 0.65
+      // v0.7.112 — Voice commands MUST run even at low transcript
+      // confidence. Operators reported "nothing works" when preaching
+      // in noisy church environments where Deepgram returns chunk
+      // confidence < 0.65. The pre-112 gate dropped the entire
+      // pipeline (commands AND verses) in that case, so even a
+      // perfectly-spoken "next verse" was silently swallowed when the
+      // surrounding music dragged the chunk confidence down. We now
+      // always run the command pre-pass; only the heavier verse-
+      // detection / semantic-match pipeline is gated on liveT.
+      const lowConfidence = confidence < liveT
+      if (state.voiceControlEnabled) {
+        const tail0 = text.trim().slice(-200)
+        const cmd0 = detectCommand(tail0)
+        if (cmd0 && cmd0.confidence >= 80) {
+          const refSig0 = cmd0.reference
+            ? `${cmd0.reference.book}|${cmd0.reference.chapter}|${cmd0.reference.verseStart}|${cmd0.reference.verseEnd ?? ''}`
+            : ''
+          const sig0 = `${cmd0.kind}|${refSig0}|${cmd0.translation ?? ''}|${cmd0.verseNumber ?? ''}`
+          const now0 = Date.now()
+          if (cmd0.wakeWord || lastVoiceCmdRef.current.sig !== sig0 || now0 - lastVoiceCmdRef.current.at > 4000) {
+            lastVoiceCmdRef.current = { sig: sig0, at: now0 }
+            speakerFollowSuspendedUntilRef.current = Date.now() + 2000
+            await dispatchVoiceCommand(cmd0)
+            state.setDetectionStatus('detected')
+            if (cmd0.kind !== 'find_by_quote') {
+              toast.message(cmd0.label, { duration: 1500, position: 'bottom-right' })
+            }
+            return
+          }
+        }
+      }
+      if (lowConfidence) {
+        // Below the live tier — verse detection / semantic match
+        // pipeline is suppressed but the command pre-pass above
+        // already ran. Visible in transcript for operator diagnostics.
         void dropT
         state.setDetectionStatus('idle')
         return
@@ -1361,7 +1430,15 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             speakerFollowSuspendedUntilRef.current = Date.now() + 2000
             await dispatchVoiceCommand(cmd)
             state.setDetectionStatus('detected')
-            toast.message(cmd.label, { duration: 1500, position: 'bottom-right' })
+            // v0.7.111 — Skip the outer "Find: ..." label toast for
+            // find_by_quote because the dispatcher above manages its
+            // own success / silent-failure messaging. Pre-111 the
+            // outer label toast surfaced things like
+            // `Find: in the bible Jesus was crucified` on EVERY
+            // misfire, even when the dispatcher then went quiet.
+            if (cmd.kind !== 'find_by_quote') {
+              toast.message(cmd.label, { duration: 1500, position: 'bottom-right' })
+            }
             // Suppress the rest of the pipeline for this transcript.
             return
           }
@@ -1400,8 +1477,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           try {
             const slides = state.slides
             const liveIdx = state.liveSlideIndex
+            // v0.7.214 — LLM classifier context reads LIVE direct-ref first.
+            // Pre-214 the classifier only saw `slides[liveIdx]`, so when the
+            // current live verse came from AI auto-detect (liveSlide ref set,
+            // liveIdx=-1) the LLM was given NO context and couldn't resolve
+            // "next verse" / "show verse 17" against the actual live passage.
             const liveSlide =
-              liveIdx >= 0 && liveIdx < slides.length ? slides[liveIdx] : undefined
+              state.liveSlide ?? (liveIdx >= 0 && liveIdx < slides.length ? slides[liveIdx] : undefined)
             // For verse slides, the reference text lives in `title`
             // (e.g. "John 3:16"). Other slide types don't carry a
             // reference — we just omit the field rather than feeding
@@ -1410,8 +1492,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               liveSlide && liveSlide.type === 'verse' && typeof liveSlide.title === 'string'
                 ? liveSlide.title
                 : undefined
+            // v0.7.93 — Outer fetch timeout dropped 2000 → 1000 ms so a
+            // hung classifier round-trip never blocks the next utterance
+            // by more than a second. classifyIntent itself now caps at
+            // 800 ms (was 1500 ms), so 1000 ms here gives the network
+            // 200 ms headroom and still fails fast.
             const ac = new AbortController()
-            const timer = setTimeout(() => ac.abort(), 2000)
+            const timer = setTimeout(() => ac.abort(), 1000)
             let resp: Response
             try {
               resp = await fetch('/api/voice/classify', {
@@ -1494,6 +1581,22 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         const dedupKey = `v2:${refKey}`
         const now = Date.now()
         const lastAt = processedRefsRef.current.get(dedupKey) ?? 0
+        // v0.7.184.2 — RE-MENTION NAVIGATOR FIRE. When the same explicit
+        // reference is spoken again WITHIN the 30s dedupe window, the
+        // big block below correctly suppresses the duplicate column
+        // entry, BUT pre-v0.7.184.2 it also silently dropped the
+        // navigator update because addDetectedVerse was never reached.
+        // Operator bug: "speaker says Amos 1:3, then John 3:4, then
+        // Amos 1:3 again — third one doesn't auto-send because it's
+        // already in the column." Fix: fire requestNavigatorRef on
+        // the suppress path so the Chapter Navigator re-routes to the
+        // re-mentioned verse, while the column stays clean (no dup).
+        // Only fires when lastAt > 0 (= we actually have a prior hit;
+        // guards against firing on the very-first-ever mention which
+        // also lands in the `now - lastAt >= TTL` branch below).
+        if (lastAt > 0 && now - lastAt < REF_DEDUPE_TTL_MS) {
+          try { useAppStore.getState().requestNavigatorRef(refKey) } catch { /* defensive */ }
+        }
         if (now - lastAt >= REF_DEDUPE_TTL_MS) {
           // Prune stale entries opportunistically so the map doesn't grow
           // unbounded across a long service.
@@ -1521,6 +1624,9 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             } catch { /* fall through */ }
           }
           if (textOut) {
+            // v0.7.104 — Reference Engine v2 produces deterministic
+            // address-based hits ("Amos 1:3"); these belong in the
+            // Auto Verse Match (column 1) explicit pipeline.
             const detected: DetectedVerse = {
               id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
               reference: refKey,
@@ -1528,6 +1634,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               translation: tx,
               detectedAt: new Date(),
               confidence: v2.confidence / 100,
+              source: 'explicit',
             }
             const tBefore = useAppStore.getState().liveTranscript
             useAppStore.getState().pushTranscriptBreak(tBefore.length)
@@ -1544,54 +1651,133 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             state.setDetectionStatus('detected')
             // Reset speaker-follow / auto-scroll cursor on new passage.
             useAppStore.getState().setLiveActiveVerseIndex(0)
-            const autoLiveOn2 = state.autoLive || state.settings.autoGoLiveOnDetection
-            // v0.7.4 — Auto-go-live threshold lowered 90 → 70 to
-            // align with the new transcriptLiveThreshold tier.
-            // The transcript chunk that produced this v2 detection
-            // already passed the 0.70 confidence gate above, and v2
-            // adds its own ≥80 detection floor; the prior 90 cutoff
-            // was an artifact of pre-tier days when low-confidence
-            // chunks reached this code path. 70 matches the operator
-            // spec ("≥70% live").
-            // v0.7.60 — Lowered floor 70 → 50 per operator spec
-            // ("display 50–100% to live"). The v2 detector still
-            // applies its own ≥80 in-engine gate before we get here,
-            // so in practice this branch only fires for very strong
-            // matches; the change just unblocks the rare 50–69 band
-            // that the engine occasionally produces on noisy audio.
-            if (autoLiveOn2 && v2.confidence >= 50) {
-              const slide = {
-                id: `slide-${Date.now()}`,
-                type: 'verse' as const,
-                title: refKey,
-                subtitle: tx,
-                content: textOut.split('\n').filter(Boolean),
-                background: state.settings.congregationScreenTheme,
-              }
-              const cur = useAppStore.getState().slides
-              const next = cur.length > 0 ? [...cur, slide] : [slide]
-              const idx = next.length - 1
-              useAppStore.getState().setSlides(next)
-              useAppStore.getState().setPreviewSlideIndex(idx)
-              useAppStore.getState().setLiveSlideIndex(idx)
-              useAppStore.getState().setIsLive(true)
-            }
+            // v0.7.105 — REMOVED inline auto-go-live block.
+            // Per pastebin spec t5B6FGSD all auto-live decisions
+            // must clear the new 0.85 floor + 3-frame stability gate.
+            // The centralized auto-fire effect in logos-shell.tsx
+            // (shouldFireAutoLiveStable + PerSourceStabilityState) is
+            // now the SOLE authority for pushing verses to the
+            // projector. The pre-v0.7.105 inline path here fired at
+            // v2.confidence ≥ 40 with no stability tracking, which
+            // bypassed both rules.
             return
           }
         }
       }
 
+      // ── v0.7.65 — Preacher Phrase Engine ───────────────────────────
+      // Catches the un-addressed quotations the explicit-reference
+      // engines (regex + Reference Engine v2) cannot — phrases like
+      // "Jesus wept", "the heavens declare the glory of God", "trouble
+      // don't last always", "Lazarus come forth". Same dispatch shape
+      // as the v2 block above: detect → fetch verse text → push
+      // DetectedVerse → optionally auto-go-live. Sermon-only entries
+      // ("say amen somebody") are skipped — they have no Bible address
+      // to project. Dedupe via the existing processedTextHitsRef so a
+      // single phrase doesn't refire on every transcript chunk.
+      try {
+        const phraseHit = detectBestPreacherPhrase(text, {
+          excludeReferences: processedTextHitsRef.current,
+        })
+        if (phraseHit && !phraseHit.sermonOnly) {
+          processedTextHitsRef.current = new Set(processedTextHitsRef.current).add(
+            phraseHit.reference,
+          )
+          const params = new URLSearchParams({
+            reference: phraseHit.reference,
+            translation: state.selectedTranslation,
+          })
+          const r = await fetch(`/api/bible?${params.toString()}`)
+          if (r.ok) {
+            // /api/bible?reference= returns a single verse object:
+            //   { reference, text, translation, book, chapter, verseStart, ... }
+            // (the ?search= path is the one that returns { hits: [] })
+            const v = (await r.json()) as {
+              reference?: string; text?: string; translation?: string
+              book?: string; chapter?: number; verseStart?: number
+            }
+            if (v?.reference && v.text && v.translation) {
+              // v0.7.104 — Preacher-phrase catalogue hits are
+              // paraphrase / quotation matches, not address parses,
+              // so they belong in the Bible Reference Quoted column
+              // (semantic pipeline).
+              // v0.7.116 + v0.7.117 — Tag-then-route with refined
+              // exact-match promotion. Operator complaint after
+              // v0.7.116: "Sometimes accurate Bible detections go to
+              // Suggested Verses. Why is it so?" Root cause: v0.7.116
+              // demoted ALL auto-derived hits to 'suggestion', even
+              // when an EXACT verbatim substring was matched (which is
+              // accurate by construction — there's no fuzz, the
+              // preacher said the literal phrase). v0.7.117 refines:
+              //
+              //   • Hand-curated EXACT  → semantic  conf 0.95
+              //   • Hand-curated FUZZY  → semantic  conf 0.85
+              //   • Auto-derived EXACT  → semantic  conf 0.65
+              //                           (clears 0.55 floor, lands
+              //                           in COL 2 live-eligible)
+              //   • Auto-derived FUZZY  → suggestion conf 0.42
+              //                           (COL 3 only — operator
+              //                           clicks to promote)
+              //
+              // This keeps the v0.7.116 false-positive guard (fuzzy
+              // matches on generic 5-7-word slices stay in suggestions)
+              // while letting verbatim quotations of POPULAR_VERSES_KJV
+              // entries auto-fire as the operator expects.
+              const isAuto = phraseHit.autoDerived === true
+              const isExact = phraseHit.matchType === 'exact'
+              const conf = isAuto
+                ? (isExact ? 0.65 : 0.42)
+                : (isExact ? 0.95 : 0.85)
+              const detected: DetectedVerse = {
+                id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                reference: v.reference,
+                text: v.text,
+                translation: v.translation,
+                detectedAt: new Date(),
+                confidence: conf,
+                source: isAuto && !isExact ? 'suggestion' : 'semantic',
+              }
+              const tBefore = useAppStore.getState().liveTranscript
+              useAppStore.getState().pushTranscriptBreak(tBefore.length)
+              useAppStore.getState().addDetectedVerse(detected)
+              useAppStore.getState().addToVerseHistory({
+                reference: v.reference,
+                text: v.text,
+                translation: v.translation,
+                book: v.book ?? '',
+                chapter: v.chapter ?? 0,
+                verseStart: v.verseStart ?? 0,
+              })
+              // v0.7.105 — REMOVED inline auto-go-live block.
+              // Preacher-phrase hits now route through the
+              // centralized stability gate in logos-shell.tsx via
+              // the 'semantic' source tag set above. The pre-v0.7.105
+              // inline path here fired immediately on any
+              // catalogue match when autoGoLiveOnDetection was on,
+              // bypassing the 3-frame stability requirement.
+              state.setDetectionStatus('detected')
+              return
+            }
+          }
+        }
+      } catch {
+        /* phrase-engine failures are silent — keyword + AI paths still run */
+      }
+
       const detectedRefs = detectVersesInTextWithScore(text)
       const references = detectedRefs.map((r) => r.reference)
       const autoLiveOn = state.autoLive || state.settings.autoGoLiveOnDetection
-      // v0.7.60 — HARD CLAMP to 0.5 floor regardless of persisted
-      // setting. The operator's rule: anything ≥50% confidence is
-      // eligible to auto-go-live, anything below is a candidate-only
-      // suggestion. An upgrader whose localStorage still holds 0.9
-      // (the previous default) would otherwise be stuck at the old
-      // behaviour; clamping here makes the new floor apply on the
-      // very next service.
-      const threshold = Math.min(state.autoLiveThreshold ?? 0.5, 0.5)
+      // v0.7.73 — Honour the operator's autoLiveThreshold setting EXACTLY,
+      // floored at 0.50 so an accidental 0 doesn't auto-live every fuzzy
+      // hit and ceilinged at 1.0. v0.7.60's hard-cap at 0.50 was the
+      // primary cause of "displays random scriptures even when nobody
+      // is quoting one" — operators who tightened the slider in Settings
+      // were silently ignored. Default 0.78 (high-confidence band) when
+      // the operator never touched the slider — matches the semantic
+      // matcher's CONFIDENCE_HIGH_THRESHOLD so AI hits only auto-live
+      // when they're near-verbatim quotations.
+      const operatorThreshold = state.autoLiveThreshold ?? 0.78
+      const threshold = Math.max(0.50, Math.min(1.0, operatorThreshold))
 
       // ── Voice text detection ─────────────────────────────────────────
       // When the speaker quotes a passage (e.g. "In the beginning God
@@ -1646,14 +1832,36 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               ? references.includes(top.reference) ||
                 processedRefsRef.current.has(top.reference)
               : false
+            // v0.7.184.2 — RE-MENTION NAVIGATOR FIRE on the keyword
+            // text-search (sticky-live) path. When the top hit IS
+            // already in one of the dedupe sets, the if-block below
+            // skips column add (correct) but pre-v0.7.184.2 also
+            // silently skipped navigator update. Fire it here so a
+            // re-quoted paraphrase still routes the Chapter Navigator
+            // back to the matched verse.
+            if (top && (willHandleBelow || processedTextHitsRef.current.has(top.reference))) {
+              try { useAppStore.getState().requestNavigatorRef(top.reference) } catch { /* defensive */ }
+            }
             if (top && !willHandleBelow && !processedTextHitsRef.current.has(top.reference)) {
-              const minSim = hasAttribution ? 0.32 : 0.4
+              // v0.7.73 — Raised minSim 0.32/0.40 → 0.55/0.60. The
+              // previous floor matched any verse sharing two content
+              // words with the spoken tail, which is why "thank you for
+              // coming today" could surface a verse about thanksgiving.
+              // 0.55+ requires a real overlap of distinctive words, so
+              // only actual quotations (or close paraphrases) survive
+              // this gate. Attribution still gets the small handicap
+              // because the preacher has explicitly signalled scripture.
+              const minSim = hasAttribution ? 0.55 : 0.60
               if (sim < minSim) {
                 /* not a real quotation — drop silently */
               } else {
                 processedTextHitsRef.current = new Set(processedTextHitsRef.current).add(top.reference)
                 const baseConf = Math.min(1, 0.5 + (sim - minSim) * 0.83)
                 const confidence = hasAttribution ? Math.min(1, baseConf + 0.08) : baseConf
+                // v0.7.104 — Keyword text-search hits are paraphrase
+                // matches → semantic pipeline (column 2). Sub-0.60
+                // confidence will be re-routed to the suggestions
+                // column by the UI selector.
                 const detected: DetectedVerse = {
                   id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                   reference: top.reference,
@@ -1661,6 +1869,18 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   translation: top.translation,
                   detectedAt: new Date(),
                   confidence,
+                  // v0.7.114 — Was `< 0.6` which demoted 0.55-0.59
+                  // hits to the Suggested Verses column even though
+                  // they cleared SEMANTIC_AUTO_LIVE_MIN.
+                  // v0.7.127 — Moved 0.55 → 0.50 to track the new
+                  // SEMANTIC_AUTO_LIVE_MIN (lowered to close the
+                  // 50–54 % dead gap; see verse-auto-live.ts comment
+                  // block). Operator: same complaint pattern, one
+                  // band lower — "Suggested Verses keeps catching
+                  // 50–54 % detections even though the column says
+                  // 10–49%". This keeps tag-floor == column-floor so
+                  // there's no slot a detection can fall through.
+                  source: confidence < 0.5 ? 'suggestion' : 'semantic',
                 }
                 const tBefore = useAppStore.getState().liveTranscript
                 useAppStore.getState().pushTranscriptBreak(tBefore.length)
@@ -1673,29 +1893,14 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   chapter: top.chapter,
                   verseStart: top.verse,
                 })
-                // v0.7.60 — Lowered live threshold 0.85 → 0.50 per
-                // operator's "display 50–100% to live" spec. The
-                // upstream `minSim` gate (0.32 / 0.4 with attribution)
-                // keeps obvious noise from reaching this point, so the
-                // 0.50 floor is a meaningful "we're confident enough
-                // to put this on the projector" signal.
-                if (autoLiveOn && sim >= 0.50) {
-                  const slide = {
-                    id: `slide-${Date.now()}`,
-                    type: 'verse' as const,
-                    title: top.reference,
-                    subtitle: top.translation,
-                    content: top.text.split('\n').filter(Boolean),
-                    background: state.settings.congregationScreenTheme,
-                  }
-                  const cur = useAppStore.getState().slides
-                  const next = cur.length > 0 ? [...cur, slide] : [slide]
-                  const idx = next.length - 1
-                  useAppStore.getState().setSlides(next)
-                  useAppStore.getState().setPreviewSlideIndex(idx)
-                  useAppStore.getState().setLiveSlideIndex(idx)
-                  useAppStore.getState().setIsLive(true)
-                }
+                // v0.7.105 — REMOVED inline auto-go-live block.
+                // Keyword-search semantic hits now route through
+                // the centralized stability gate in logos-shell.tsx
+                // via the 'semantic' source tag set above (or
+                // 'suggestion' when confidence < 0.6). The
+                // pre-v0.7.105 inline path here fired at the
+                // operator's autoLiveThreshold (default 0.78) with
+                // no stability requirement.
               }
             }
           }
@@ -1724,7 +1929,14 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       // We dedupe per-reference inside this hook AND inside
       // addDetectedVerseCandidate (which skips already-present refs)
       // so the same suggestion can't pile up across chunks.
-      const SEMANTIC_THROTTLE_MS = 1500
+      // v0.7.169 — Lowered 1500 → 1000 ms after operator reported the
+      // AI detector felt slow. 1500 ms throttle meant up to a 1.5 s
+      // gap between consecutive semantic-match probes during a fast
+      // sermon, which left visible dead-air on the "Bible Reference
+      // Quoted" column. 1000 ms still rate-limits the OpenAI semantic
+      // endpoint (~1 req/sec/seat is comfortable headroom under the
+      // gpt-4o-mini ceiling) while doubling responsiveness perception.
+      const SEMANTIC_THROTTLE_MS = 1000
       if (
         allWords.length >= minWords &&
         keywords.length >= minKeywords &&
@@ -1756,12 +1968,47 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
             }
             if (semJson.ok && Array.isArray(semJson.matches) && semJson.matches.length) {
               const tx = state.selectedTranslation
-              let bestLiveDispatched = false
-              for (const m of semJson.matches) {
-                if (m.score < 0.20) continue
-                if (processedSemanticHitsRef.current.has(m.reference)) continue
-                if (processedRefsRef.current.has(m.reference)) continue
-                if (processedTextHitsRef.current.has(m.reference)) continue
+              // v0.7.116 — Cap fused multi-fire. Pre-116 the loop
+              // pushed EVERY semantic match (topK=5) above the noise
+              // floor, so a single chunk of preaching that fuzzy-
+              // matched 4 adjacent verses fired all 4 — flooding the
+              // detected list with "fused" results and confusing the
+              // auto-live picker. Cap to the highest-scoring match per
+              // chunk; the operator can still see lower-scored
+              // candidates if they appear on subsequent chunks.
+              const sortedMatches = [...semJson.matches].sort(
+                (a, b) => b.score - a.score,
+              )
+              const cappedMatches = sortedMatches.slice(0, 1)
+              for (const m of cappedMatches) {
+                // v0.7.73 — Raised semantic noise floor 0.20 → 0.55.
+                // Cosine similarity of 0.20–0.50 between the transcript
+                // and a verse means "loosely related topic" not "the
+                // speaker is quoting/paraphrasing this verse." Embedding
+                // models cluster anything biblical into a tight subspace,
+                // so even casual sermon talk lights up a dozen verses
+                // in that band. Below 0.55 = drop entirely (don't show
+                // as a candidate either — the operator was getting noise
+                // suggestions for verses nobody mentioned).
+                if (m.score < 0.55) continue
+                // v0.7.184.2 — RE-MENTION NAVIGATOR FIRE on the AI
+                // cosine-matcher (semantic) path. Three separate
+                // dedupe checks suppress duplicate column adds; each
+                // one now also fires the navigator so the operator's
+                // re-mention re-routes the Chapter Navigator. Same
+                // operator bug pattern as the v2/regex paths above.
+                if (processedSemanticHitsRef.current.has(m.reference)) {
+                  try { useAppStore.getState().requestNavigatorRef(m.reference) } catch { /* defensive */ }
+                  continue
+                }
+                if (processedRefsRef.current.has(m.reference)) {
+                  try { useAppStore.getState().requestNavigatorRef(m.reference) } catch { /* defensive */ }
+                  continue
+                }
+                if (processedTextHitsRef.current.has(m.reference)) {
+                  try { useAppStore.getState().requestNavigatorRef(m.reference) } catch { /* defensive */ }
+                  continue
+                }
                 processedSemanticHitsRef.current.add(m.reference)
 
                 // Re-fetch in operator's selected translation when
@@ -1796,6 +2043,10 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   translationOut = 'KJV'
                 }
 
+                // v0.7.104 — AI cosine matcher hits are semantic by
+                // definition. Score < 0.60 → suggestions column;
+                // ≥ 0.60 → semantic live column (auto-fire still
+                // requires ≥ 0.85 + 3-frame stability).
                 const detected: DetectedVerse = {
                   id: `det-sem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                   reference: m.reference,
@@ -1803,12 +2054,27 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                   translation: translationOut,
                   detectedAt: new Date(),
                   confidence: m.score,
+                  // v0.7.114 — Lowered from `< 0.6` to `< 0.55` to
+                  // match SEMANTIC_AUTO_LIVE_MIN.
+                  // v0.7.127 — Lowered again 0.55 → 0.50 to track the
+                  // new SEMANTIC_AUTO_LIVE_MIN (closes the 50–54 %
+                  // dead gap). The 52 % Matthew 4:19 leak the
+                  // operator screenshotted came through THIS path:
+                  // m.score=0.52 was tagged 'suggestion' by the old
+                  // `< 0.55` predicate AND fell outside the 10-49%
+                  // suggestion band, so it appeared briefly via the
+                  // (now-removed) source==='suggestion' bypass in
+                  // suggestionsFor() then vanished. Tagging at <0.50
+                  // keeps it in the semantic column where it belongs.
+                  source: m.score < 0.5 ? 'suggestion' : 'semantic',
                 }
 
-                if (m.score >= 0.50) {
-                  // Live-eligible — push to detectedVerses and (if
-                  // auto-live is on AND this is the first 0.50+ hit
-                  // in this call) flip the projector.
+                if (m.score >= threshold) {
+                  // v0.7.73 — Auto-live now uses the operator's
+                  // autoLiveThreshold (default 0.78 = high-confidence
+                  // band). The 0.55–threshold band still surfaces as a
+                  // candidate chip the operator can click; only strong
+                  // semantic matches reach the projector automatically.
                   const tBefore = useAppStore.getState().liveTranscript
                   useAppStore.getState().pushTranscriptBreak(tBefore.length)
                   useAppStore.getState().addDetectedVerse(detected)
@@ -1822,24 +2088,14 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
                     verseEnd: m.verseEnd ?? undefined,
                   })
                   state.setDetectionStatus('detected')
-                  if (autoLiveOn && !bestLiveDispatched) {
-                    bestLiveDispatched = true
-                    const slide = {
-                      id: `slide-${Date.now()}`,
-                      type: 'verse' as const,
-                      title: m.reference,
-                      subtitle: translationOut,
-                      content: textOut.split('\n').filter(Boolean),
-                      background: state.settings.congregationScreenTheme,
-                    }
-                    const cur = useAppStore.getState().slides
-                    const next = cur.length > 0 ? [...cur, slide] : [slide]
-                    const idx = next.length - 1
-                    useAppStore.getState().setSlides(next)
-                    useAppStore.getState().setPreviewSlideIndex(idx)
-                    useAppStore.getState().setLiveSlideIndex(idx)
-                    useAppStore.getState().setIsLive(true)
-                  }
+                  // v0.7.105 — REMOVED inline auto-go-live block.
+                  // AI cosine matcher hits now route through the
+                  // centralized stability gate in logos-shell.tsx via
+                  // the 'semantic' source tag set above (or
+                  // 'suggestion' when score < 0.6). The pre-v0.7.105
+                  // inline path here fired at the operator's
+                  // autoLiveThreshold (default 0.78) with no
+                  // stability requirement.
                 } else {
                   // 0.20–0.49 band → candidates only. Operator must
                   // explicitly promote; never auto-live.
@@ -1856,7 +2112,16 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
 
       for (const detectedRef of detectedRefs) {
         const ref = detectedRef.reference
-        if (processedRefsRef.current.has(ref) || processedTextHitsRef.current.has(ref)) continue
+        if (processedRefsRef.current.has(ref) || processedTextHitsRef.current.has(ref)) {
+          // v0.7.184.2 — RE-MENTION NAVIGATOR FIRE on the regex-detector
+          // explicit-reference path. Same operator bug as the v2 path
+          // above: a re-mentioned reference is dedupe-suppressed for
+          // the column (correct) but the navigator silently stayed put
+          // (wrong). Fire requestNavigatorRef before continuing so the
+          // operator can flip to the re-mentioned verse instantly.
+          try { useAppStore.getState().requestNavigatorRef(ref) } catch { /* defensive */ }
+          continue
+        }
         processedRefsRef.current.set(ref, Date.now())
 
         try {
@@ -1864,6 +2129,8 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
           if (verse) {
             const t = useAppStore.getState().liveTranscript
             useAppStore.getState().pushTranscriptBreak(t.length)
+            // v0.7.104 — Regex-based reference detector hits are
+            // explicit address parses → column 1.
             const detected: DetectedVerse = {
               id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
               reference: ref,
@@ -1871,33 +2138,19 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               translation: state.selectedTranslation,
               detectedAt: new Date(),
               confidence: detectedRef.confidence,
+              source: 'explicit',
             }
 
             useAppStore.getState().addDetectedVerse(detected)
             useAppStore.getState().setLiveVerse(verse)
             useAppStore.getState().addToVerseHistory(verse)
-
-            const latestState = useAppStore.getState()
-            const passesThreshold =
-              detectedRef.confidence >= threshold && detectedRef.hasExplicitVerse
-            if (autoLiveOn && passesThreshold) {
-              const slide = {
-                id: `slide-${Date.now()}`,
-                type: 'verse' as const,
-                title: detected.reference,
-                subtitle: detected.translation,
-                content: detected.text.split('\n').filter(Boolean),
-                background: latestState.settings.congregationScreenTheme,
-              }
-              const currentSlides = latestState.slides.length > 0
-                ? [...latestState.slides, slide]
-                : [slide]
-              const newLiveIndex = currentSlides.length - 1
-              useAppStore.getState().setSlides(currentSlides)
-              useAppStore.getState().setPreviewSlideIndex(newLiveIndex)
-              useAppStore.getState().setLiveSlideIndex(newLiveIndex)
-              useAppStore.getState().setIsLive(true)
-            }
+            // v0.7.105 — REMOVED inline auto-go-live block.
+            // Regex-detected explicit references now route through
+            // the centralized stability gate in logos-shell.tsx via
+            // the 'explicit' source tag set above. The pre-v0.7.105
+            // inline path here fired at the operator's
+            // autoLiveThreshold (default 0.78, floor 0.50) with no
+            // stability requirement.
           }
         } catch {
           // Silently ignore fetch errors for unrecognized references
@@ -2040,11 +2293,13 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     const verses: VerseLine[] = content.map((text, index) => ({ index, text }))
     const result = pickBestVerse(tail, verses, {
       currentIndex: liveActiveVerseIndexSF,
-      switchThreshold: 0.20,
-      // v0.7.4 — rely on speaker-follow.ts defaults (minDelta 0.08,
-      // antiRewindMs 1500). Pass the last-switch timestamp so the
-      // anti-rewind guard can suppress backward flips on a single
-      // noisy chunk.
+      // v0.7.110 — Removed the explicit switchThreshold: 0.20 override
+      // that masked the new bigram defaults (0.10 / 0.04). The hard-
+      // coded 0.20 was the production cause of "speaker-follow does
+      // nothing" — virtually no preacher paraphrase ever scored that
+      // high on the trigram model, let alone bigram. Falls back to
+      // speaker-follow.ts defaults: switchThreshold 0.10, minDelta
+      // 0.04, antiRewindMs 1500.
       lastSwitchAt: lastSpeakerSwitchAtRef.current,
     })
     if (result.shouldSwitch && result.bestIndex != null && result.bestIndex !== liveActiveVerseIndexSF) {

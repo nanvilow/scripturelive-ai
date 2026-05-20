@@ -20,6 +20,12 @@ import {
   generateMasterCode,
   generatePaymentRef,
 } from './codes'
+// v0.7.179 — Pin per-PC masterCode to the baked cloud admin code so
+// every install's local Master Code (visible in Admin Panel) matches
+// the cloud's masterCode out-of-the-box → cross-device sync auto-
+// resolves to "connected" with no operator setup. See freshFile() +
+// load() + the self-heal block for the full chain.
+import { BAKED_CLOUD_ADMIN_CODE } from '@/lib/baked-credentials'
 
 // ─────────────────────────────────────────────────────────────────────
 // Types
@@ -101,6 +107,15 @@ export interface ActivationCodeRecord {
    *  after that window passes the row is purged. Operator can Restore
    *  at any time before the purge. */
   softDeletedAt?: string
+  /** v0.7.153 — Restore timestamp. Set by restoreActivationByCode
+   *  whenever an operator brings a soft-deleted row back. Without
+   *  this field the cross-device merge can't tell "remote restored
+   *  AFTER local soft-deleted" from "remote never knew about the
+   *  soft-delete" — laterIso(local.softDeletedAt, undefined) just
+   *  preserves local. With it, the merge picks
+   *  max(softDeletedAt, softDeleteRestoredAt) per side and the side
+   *  with the strictly-later timestamp wins. */
+  softDeleteRestoredAt?: string
 
   // ─── v0.7.11 — Transferable activation (move-to-another-PC) ──────
   // Pastebin item #6 followup: the v0.5.48 "Deactivate on this PC"
@@ -207,6 +222,17 @@ export interface RuntimeConfig {
    *  Operators reporting too many false-positive commands can raise
    *  this; operators reporting missed commands can lower it. */
   llmClassifierConfidenceFloor?: number
+  /** v0.7.153 — Cross-device admin sync credential. Operator pastes
+   *  the cloud install's `masterCode` here once (visible on the
+   *  cloud's Admin → Overview tab) to pair this desktop install
+   *  with the cloud's shared admin ledger. When set (or when the
+   *  SCRIPTURELIVE_CLOUD_ADMIN_CODE env var is set), every admin
+   *  read pulls the cloud snapshot first and every admin write
+   *  pushes the local snapshot back, so admin actions on the phone
+   *  and on the desktop converge on the same record store.
+   *  Strictly per-PC — never synced to the cloud (would create a
+   *  trust loop). */
+  cloudAdminCode?: string
   /** Last time the owner saved this config (ISO) — for audit display */
   updatedAt?: string
 }
@@ -267,6 +293,19 @@ export interface LicenseFile {
    *  itself stays intact — re-activating later resets the lockdown
    *  but does not refund trial time the user already burned. */
   lockdownAfterDeactivation?: boolean
+
+  // ─── v0.7.153 — Hard-delete tombstones ───────────────────────────
+  // Pure union-by-key cross-device merge would resurrect any record
+  // hard-deleted on one device the moment a stale snapshot from
+  // another device merges back in. We instead append a tombstone
+  // (key + deletedAt) on every hard delete and keep it for the cap
+  // period. The cross-device merger checks each incoming record
+  // against local tombstones BEFORE adding it, AND merges incoming
+  // tombstones into the local set so a delete propagates to every
+  // device. Each array is capped at 1000 most-recent.
+  deletedPaymentRefs?: { ref: string; deletedAt: string }[]
+  deletedActivationCodes?: { code: string; deletedAt: string }[]
+  deletedNotificationIds?: { id: string; deletedAt: string }[]
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -310,7 +349,18 @@ function storagePath(): string {
 // the new constant, so anyone who started a v0.7.19/v0.7.20/v0.7.21
 // trial keeps their already-allocated 180-minute budget rather than
 // having time yanked away mid-evaluation.
-const TRIAL_DURATION_MS = 70 * 60 * 1000 // 70 min
+// v0.7.194 — Trial model changed from activity-gated minutes to
+// wall-clock days. The countdown now runs continuously from
+// firstLaunchAt; closing the app, sleeping the PC, or never opening
+// AI Detection do NOT pause it. Server-side computeStatus() compares
+// Date.now() against firstLaunchAt + TRIAL_DURATION_MS on every call.
+// trialMsUsed is no longer consulted (kept on the LicenseFile interface
+// for backward read compat — old installs whose persisted JSON still
+// has it just ignore it). See computeStatus() below + load() migration
+// block which RESETS firstLaunchAt for any non-activated install on
+// upgrade so existing operators who installed weeks ago get a fresh
+// 3-day window starting from when they install v0.7.194.
+const TRIAL_DURATION_MS = 3 * 24 * 60 * 60 * 1000 // 72 hours
 // v0.7.3 — Bumped from 15 min → 7 days. Operator's bug report:
 // "Active subscriptions are killed... it deletes active codes by
 // itself while I didn't give that command." The 15-minute window
@@ -333,6 +383,42 @@ const PAYMENT_CODE_TTL_MS = 30 * 60 * 1000 // 30 minutes
 
 let cache: LicenseFile | null = null
 
+// v0.7.172 — Cloud-side masterCode override.
+//
+// Background: the cloud deployment at scripturelive.replit.app holds
+// its OWN license.json, and `f.masterCode` is the shared secret that
+// `/api/license/cloud/admin-snapshot` and `/admin-merge` compare
+// against `cloudAdminCode` submitted by every desktop install. Since
+// v0.7.161 every desktop install bakes
+// BAKED_CLOUD_ADMIN_CODE = "SL-MASTER-HETEVT56-HCKTTS74" (rotated v0.7.173) so cross-
+// device sync works out-of-the-box with NO operator setup.
+//
+// Problem (uncovered v0.7.172): the cloud was deployed BEFORE
+// v0.7.161 existed and its `f.masterCode` was generated by
+// `generateMasterCode()` on first boot to a random value that does
+// NOT equal the baked constant. Result: every desktop install (which
+// auths with the baked value) gets HTTP 401 "cloudAdminCode does
+// not match" → admin-snapshot returns null → admin-ledger never
+// merges → operator-visible symptom: phone and desktop don't sync.
+//
+// Fix: any process can pin its `masterCode` to a known value via the
+// SCRIPTURELIVE_MASTER_CODE env var. On the cloud deployment we set
+// this secret to "SL-MASTER-HETEVT56-HCKTTS74" (rotated v0.7.173) — the override is
+// applied in BOTH freshFile() (first ever boot) and load() (every
+// subsequent boot) so even an already-deployed cloud with a stale
+// random masterCode is silently re-pinned to the baked value on its
+// next restart, with no manual data migration.
+//
+// On desktop installs the env var is NOT set, so this is a no-op and
+// the per-install masterCode (random, kept inside the operator's
+// own ~/.scripturelive/license.json — the operator's local admin
+// password) continues to work exactly as before. The override is a
+// pure cloud-side mechanism.
+function envMasterCodeOverride(): string | null {
+  const v = process.env.SCRIPTURELIVE_MASTER_CODE?.trim()
+  return v && v.length > 0 ? v : null
+}
+
 function freshFile(): LicenseFile {
   const now = new Date().toISOString()
   return {
@@ -340,7 +426,17 @@ function freshFile(): LicenseFile {
     installId: crypto.randomUUID(),
     firstLaunchAt: now,
     trialDurationMs: TRIAL_DURATION_MS,
-    masterCode: generateMasterCode(),
+    // v0.7.179 — Pin every fresh install's masterCode to the baked
+    // cloud admin code (SL-MASTER-HETEVT56-HCKTTS74). Operator
+    // request: "change the master code to default for every installed
+    // app, same as the phone master code so the cloud can sync."
+    // Result: the per-PC Master Code visible in Admin Panel matches
+    // the cloud's masterCode out-of-the-box, so the cross-device sync
+    // badge resolves to "connected" without any manual setup. Env
+    // override (cloud deployments) still wins. Random fallback only
+    // ever fires if BOTH env and baked are empty (impossible in the
+    // shipped build — baked-credentials.ts always exports a literal).
+    masterCode: envMasterCodeOverride() ?? (BAKED_CLOUD_ADMIN_CODE || generateMasterCode()),
     activeSubscription: null,
     paymentCodes: [],
     activationCodes: [],
@@ -397,6 +493,36 @@ function migrateStaleConfigNumbers(config: RuntimeConfig | undefined): RuntimeCo
   return next
 }
 
+// v0.7.153 — Sanitise + cap a tombstone array read off disk. Drops
+// entries missing the primary key or deletedAt, dedupes on the key
+// (latest deletedAt wins), then keeps the most-recent N up to the
+// process-wide cap. Defensive against hand-edited license.json.
+function hydrateTombstones<K extends 'ref' | 'code' | 'id'>(
+  raw: unknown,
+  key: K,
+): ({ deletedAt: string } & Record<K, string>)[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const map = new Map<string, { deletedAt: string } & Record<K, string>>()
+  for (const t of raw) {
+    if (!t || typeof t !== 'object') continue
+    const rec = t as Record<string, unknown>
+    const k = rec[key]
+    const deletedAt = rec.deletedAt
+    if (typeof k !== 'string' || !k) continue
+    if (typeof deletedAt !== 'string' || !deletedAt) continue
+    const cur = map.get(k)
+    if (!cur || Date.parse(deletedAt) > Date.parse(cur.deletedAt)) {
+      map.set(k, { [key]: k, deletedAt } as { deletedAt: string } & Record<K, string>)
+    }
+  }
+  let arr = Array.from(map.values())
+  if (arr.length > 1000) {
+    arr.sort((a, b) => a.deletedAt.localeCompare(b.deletedAt))
+    arr = arr.slice(-1000)
+  }
+  return arr.length > 0 ? arr : undefined
+}
+
 function load(): LicenseFile {
   if (cache) return cache
   ensureDir()
@@ -417,7 +543,20 @@ function load(): LicenseFile {
       installId: parsed.installId ?? crypto.randomUUID(),
       firstLaunchAt: parsed.firstLaunchAt ?? new Date().toISOString(),
       trialDurationMs: parsed.trialDurationMs ?? TRIAL_DURATION_MS,
-      masterCode: parsed.masterCode ?? generateMasterCode(),
+      // v0.7.172 — env override wins over persisted value so the
+      // cloud deployment can be re-pinned to the baked masterCode
+      // by setting SCRIPTURELIVE_MASTER_CODE without any data
+      // migration. See envMasterCodeOverride() comment block above.
+      // The mismatch-detection block below this object literal will
+      // immediately persist() the new value if it differs from disk.
+      // v0.7.179 — Same baked-default chain as freshFile() above. If
+      // the persisted file has a stale random masterCode (any install
+      // created before v0.7.179 — value like "SL-MASTER-XXX-YYY"
+      // generated by generateMasterCode()), the self-heal block below
+      // re-pins it to BAKED_CLOUD_ADMIN_CODE on this load and persists
+      // the corrected file back to disk. Env override still wins for
+      // cloud deployments.
+      masterCode: envMasterCodeOverride() ?? parsed.masterCode ?? BAKED_CLOUD_ADMIN_CODE ?? generateMasterCode(),
       masterCodeEmailedAt: parsed.masterCodeEmailedAt,
       activeSubscription: parsed.activeSubscription ?? null,
       paymentCodes: parsed.paymentCodes ?? [],
@@ -439,48 +578,113 @@ function load(): LicenseFile {
       // is the whole point. Default falsy for fresh installs.
       everActivated: parsed.everActivated === true ? true : undefined,
       lockdownAfterDeactivation: parsed.lockdownAfterDeactivation === true ? true : undefined,
+      // v0.7.153 — Hydrate hard-delete tombstones from disk so a
+      // restart can't drop them and let stale snapshots resurrect
+      // previously-deleted records. Each array is sanitised to drop
+      // malformed entries (defensive against hand-edited license.json)
+      // and capped to the most-recent 1000 immediately on load.
+      deletedPaymentRefs: hydrateTombstones(parsed.deletedPaymentRefs, 'ref'),
+      deletedActivationCodes: hydrateTombstones(parsed.deletedActivationCodes, 'code'),
+      deletedNotificationIds: hydrateTombstones(parsed.deletedNotificationIds, 'id'),
     }
-    // v0.7.19 — Trial bump migration. If the persisted trial budget is
-    // smaller than the current TRIAL_DURATION_MS, AND the user has not
-    // yet activated a paid subscription, AND the trial they were on
-    // hadn't already expired, lift it. This ensures operators
-    // mid-trial when v0.7.19 lands get the full 180 min budget
-    // instead of being capped at the old (30 min) ceiling.
+    // v0.7.172 — Self-heal cloud masterCode mismatch on load.
+    // If SCRIPTURELIVE_MASTER_CODE is set (cloud deployment) and the
+    // persisted file still has the old random masterCode, persist the
+    // override back to disk immediately so subsequent reads (and any
+    // post-restart admin diagnostic that opens license.json directly)
+    // see the correct value. No-op on desktop installs where the env
+    // var is unset (envMasterCodeOverride() returns null and the
+    // condition short-circuits). Idempotent: once persisted, the next
+    // boot finds parsed.masterCode === envMasterCodeOverride() and
+    // skips the persist call entirely.
+    {
+      const override = envMasterCodeOverride()
+      if (override && parsed.masterCode !== override) {
+        // eslint-disable-next-line no-console
+        console.log(
+          '[licensing] re-pinning masterCode from persisted value to SCRIPTURELIVE_MASTER_CODE override (v0.7.172 cross-device-sync fix)',
+        )
+        persist(cache)
+      } else if (!override && BAKED_CLOUD_ADMIN_CODE && parsed.masterCode && parsed.masterCode !== BAKED_CLOUD_ADMIN_CODE) {
+        // v0.7.179 — Self-heal stale random masterCodes on existing
+        // installs. Any install created before v0.7.179 has a per-PC
+        // random masterCode (e.g. SL-MASTER-KQM64N9F-D9QWEDXZ) which
+        // does NOT match the cloud's masterCode (= BAKED_CLOUD_ADMIN
+        // _CODE), so cross-device sync shows "wrong key — set up".
+        // On first boot of v0.7.179 we silently re-pin the persisted
+        // masterCode to the baked value and persist() the corrected
+        // file back to disk. Subsequent boots find them equal and
+        // skip the persist call. No-op for cloud (envMasterCodeOver
+        // ride wins above) and no-op for fresh installs (persisted
+        // value created by freshFile() already equals baked).
+        //
+        // Side-effect intentionally accepted: if the operator had
+        // memorised their old random masterCode as their local
+        // admin password, that password no longer works after this
+        // upgrade — they must use the baked code SL-MASTER-HETEVT
+        // 56-HCKTTS74 (or the per-PC adminPassword config field) to
+        // regain admin access. We accept this trade-off because (a)
+        // the new masterCode is shown verbatim in the Admin Panel
+        // → Install + Master section so it's discoverable, and (b)
+        // the operator explicitly requested this default change.
+        cache.masterCode = BAKED_CLOUD_ADMIN_CODE
+        // eslint-disable-next-line no-console
+        console.log(
+          '[licensing] re-pinning persisted random masterCode to BAKED_CLOUD_ADMIN_CODE (v0.7.179 cross-device-sync default)',
+        )
+        persist(cache)
+      }
+    }
+    // v0.7.194 — Wall-clock trial migration. The trial model changed
+    // from activity-gated minutes (v0.7.5–v0.7.193: trialMsUsed
+    // accumulated only while the mic was on, refresh/overnight wait
+    // did not consume it) to wall-clock 72 hours from firstLaunchAt.
     //
-    // Guards we deliberately apply (each one is load-bearing):
-    //   (a) trialDurationMs < TRIAL_DURATION_MS — only need to act
-    //       when the persisted budget is actually smaller than the
-    //       new ceiling. Idempotent: once lifted, this branch never
-    //       runs again.
-    //   (b) everActivated !== true — never touch installs that have
-    //       ever been on a paid subscription. Sticky-lockdown after
-    //       paid-sub-ends is a separate post-paid behaviour and we
-    //       must not silently extend any window in that flow.
-    //   (c) !activeSubscription — defensive double-check; if a
-    //       subscription is somehow still flagged active, leave the
-    //       trial counter alone.
-    //   (d) trialMsUsed < cache.trialDurationMs — CRITICAL. The
-    //       activity-gated trial considers the user expired/locked
-    //       once trialMsUsed >= trialDurationMs. Without this guard,
-    //       a user whose 30-min trial already ran out (and who
-    //       therefore should be locked) would be silently re-opened
-    //       to a fresh 150 min when 0.7.19 first launches. We only
-    //       lift trials that are still in progress at migration time.
+    // Operator pick (most generous): every install that has NEVER
+    // activated a paid subscription gets a FRESH 3-day window starting
+    // from this v0.7.194 install moment. Without this reset, an
+    // operator whose firstLaunchAt was set weeks ago would land on
+    // v0.7.194 and immediately be expired (because Date.now() is
+    // already > firstLaunchAt + 72h), with no way to evaluate.
+    //
+    // Guards (each load-bearing):
+    //   (a) everActivated !== true — never touch installs that have
+    //       ever been on a paid subscription. Resetting firstLaunchAt
+    //       on a paid install would have no observable effect (the
+    //       paid subscription wins over trial in computeStatus()),
+    //       but we keep the guard so we don't silently rewrite a
+    //       provenance timestamp some downstream tooling might trust.
+    //   (b) !activeSubscription — defensive double-check.
+    //   (c) trialDurationMs < TRIAL_DURATION_MS — IDEMPOTENCY GATE.
+    //       Once we've lifted an install to the v0.7.194 budget the
+    //       persisted value already equals TRIAL_DURATION_MS, so this
+    //       branch will not run again on subsequent boots. Without
+    //       this guard the firstLaunchAt would get re-stamped on
+    //       every app start, infinitely extending the trial.
     if (
       cache.trialDurationMs < TRIAL_DURATION_MS &&
       cache.everActivated !== true &&
-      !cache.activeSubscription &&
-      (cache.trialMsUsed ?? 0) < cache.trialDurationMs
+      !cache.activeSubscription
     ) {
+      const newFirstLaunchAt = new Date().toISOString()
       // eslint-disable-next-line no-console
       console.log(
-        '[licensing] migrating trialDurationMs',
+        '[licensing] migrating to wall-clock trial: firstLaunchAt',
+        cache.firstLaunchAt,
+        '→',
+        newFirstLaunchAt,
+        '+ trialDurationMs',
         cache.trialDurationMs,
         '→',
         TRIAL_DURATION_MS,
-        '(v0.7.19 trial bump)',
+        '(v0.7.194 wall-clock 3-day reset)',
       )
+      cache.firstLaunchAt = newFirstLaunchAt
       cache.trialDurationMs = TRIAL_DURATION_MS
+      // Reset stale activity counter so any leftover read of the
+      // legacy field doesn't accidentally show "trial used" when we've
+      // just granted a fresh window.
+      cache.trialMsUsed = 0
       persist(cache)
     }
     return cache
@@ -502,10 +706,246 @@ function load(): LicenseFile {
 function persist(file: LicenseFile) {
   ensureDir()
   const p = storagePath()
-  const tmp = p + '.tmp'
-  fs.writeFileSync(tmp, JSON.stringify(file, null, 2), { mode: 0o600 })
-  fs.renameSync(tmp, p)
+  // v0.7.96 — TOTAL-DISK-DECOUPLING FIX for the recurring "This page
+  // couldn't load" Chromium error after Deactivate / Activate / Move.
+  //
+  // History of attempts:
+  //   v0.7.83 — installed did-fail-load auto-recovery (3-strike retry).
+  //   v0.7.84 — auto-restart Next child on exit (5-in-60 limit).
+  //   v0.7.86 — sync busy-spin retry inside persist() on EPERM/EBUSY.
+  //   v0.7.87 — never show Chromium's "page couldn't load".
+  //   v0.7.89 — sticky auto-live + crash mask on ALL windows.
+  //   v0.7.90 — fixed reload()-loops-the-mask bug; track lastTargetURL.
+  //   v0.7.95 — moved busy-spin off event loop; cache update first.
+  //
+  // The operator continued to report "This page couldn't load" after
+  // v0.7.95. The screenshot is consistently the standard Chromium
+  // chrome-error page in the main window. The remaining root cause:
+  //
+  //   ANY synchronous disk I/O on the route-handler hot path can stall
+  //   the bundled single-process Next server long enough — under
+  //   Windows AV / OneDrive contention, slow HDD, full disk, or simply
+  //   a writeFileSync of a multi-MB licence file — that the renderer's
+  //   queued navigation (tab switch, focus refresh, prefetch hard-
+  //   reload fallback) times out and Chromium paints the error page
+  //   BEFORE our did-fail-load handler can take over.
+  //
+  // v0.7.96's contract is therefore stricter:
+  //
+  //   • persist() does ZERO synchronous disk I/O. The in-memory `cache`
+  //     is updated, a fire-and-forget async write is scheduled via
+  //     setImmediate, and the function returns immediately.
+  //   • persist() NEVER throws under any condition. Disk failures
+  //     (EPERM, EBUSY, EACCES, ENOSPC, EROFS, EIO, EMFILE, ENOENT…)
+  //     are caught and retried asynchronously. The in-memory cache
+  //     is the source of truth for the running process; the disk
+  //     file is reconciled in the background.
+  //   • Retries are unlimited (capped only at 60s of attempts) because
+  //     a transient AV lock that lasts longer than our previous 5-shot
+  //     budget should not silently desync the file. Backoff plateaus
+  //     at 1s after the initial exponential ramp.
+  //
+  // Crash-safety: the prior architecture relied on synchronous write
+  // so a power loss mid-route would leave a coherent file on disk.
+  // The new model accepts that a process kill between cache update
+  // and disk flush may lose ONE persist() — the next persist() (which
+  // for licensing is always within seconds: status poll, trial tick,
+  // heartbeat) reapplies the latest cache. For the operator-facing
+  // flows this matters here, the worst case is "deactivate didn't
+  // stick across a kill" → operator deactivates again. Acceptable.
   cache = file
+  const data = JSON.stringify(file, null, 2)
+  enqueuePersist(p, data)
+  // v0.7.153 — Schedule a debounced fan-out to the cloud admin ledger
+  // so cross-device admin records stay in sync. The push is fire-and-
+  // forget and short-circuits when the cloud sync credential is not
+  // configured OR when we're running ON the cloud (REPLIT_DEPLOYMENT_ID
+  // set — the cloud IS the source of truth, no point pushing to itself).
+  scheduleCloudAdminPush(file)
+}
+
+// ─── v0.7.153 — Debounced cloud admin push ──────────────────────────
+//
+// Every persist() schedules a push 1.5s after the LAST persist() call,
+// so a burst of admin writes (e.g. confirm-payment which mutates two
+// rows in two persists) collapses into a single network call. The
+// dynamic import avoids a static cycle between storage.ts and
+// cloud-sync.ts.
+
+const CLOUD_PUSH_DEBOUNCE_MS = 1500
+let cloudPushTimer: NodeJS.Timeout | null = null
+
+function scheduleCloudAdminPush(_file: LicenseFile): void {
+  if (process.env.REPLIT_DEPLOYMENT_ID) return // cloud — no self-push
+  // applyAdminLedgerSnapshot() sets this before persisting an inbound
+  // cloud snapshot — we just received it, no point pushing it back.
+  if (_suppressNextPush) {
+    _suppressNextPush = false
+    return
+  }
+  if (cloudPushTimer) clearTimeout(cloudPushTimer)
+  cloudPushTimer = setTimeout(() => {
+    cloudPushTimer = null
+    void runCloudAdminPush()
+  }, CLOUD_PUSH_DEBOUNCE_MS)
+  // Allow the process to exit even if a push is pending — these are
+  // background syncs, not critical foreground work.
+  if (typeof cloudPushTimer.unref === 'function') cloudPushTimer.unref()
+}
+
+async function runCloudAdminPush(): Promise<void> {
+  try {
+    const f = cache ?? load()
+    const snapshot = extractAdminLedgerSnapshot(f)
+    const { cloudPushAdminLedger } = await import('./cloud-sync')
+    cloudPushAdminLedger({
+      installId: f.installId,
+      config: f.config ?? null,
+      snapshot,
+    })
+  } catch (e) {
+    // Never let a sync error escape — the in-memory cache + on-disk
+    // file remain authoritative for this install.
+    // eslint-disable-next-line no-console
+    console.error('[licensing] cloud admin push failed:', e)
+  }
+}
+
+/** Test-only: drain any pending debounced cloud push so an integration
+ *  test can deterministically assert post-write sync. NOT exposed via
+ *  the public surface; only imported by *.test.ts files. */
+export async function __flushCloudAdminPushForTests(): Promise<void> {
+  if (cloudPushTimer) {
+    clearTimeout(cloudPushTimer)
+    cloudPushTimer = null
+  }
+  await runCloudAdminPush()
+}
+
+// v0.7.96 — Single-flight async writer with latest-data wins.
+//
+// The architect review of v0.7.96 flagged a race in the first pass:
+// each persist() spawned its OWN retry chain, so two overlapping
+// persist() calls could let the OLDER chain win the rename race
+// (e.g. older chain succeeds on retry attempt 3 AFTER the newer
+// chain has already landed its first write). The on-disk file would
+// then disagree with the in-memory cache.
+//
+// Fix: per-path single-flight scheduler. Every persist() call simply
+// updates a `pending` slot for the path. A single in-flight scheduler
+// runs at most one writeFileSync+renameSync at a time, ALWAYS writing
+// the latest pending data (not a stale snapshot). When a write
+// succeeds AND there's no newer pending data, the chain ends. When a
+// write fails, the same scheduler retries — but on the next attempt
+// it writes whatever is in `pending` AT THAT MOMENT, so a freshly
+// arrived persist() during the retry window is honored, and an
+// already-superseded write never lands.
+//
+// Crash-safety: the in-memory cache is the source of truth for the
+// running process (every read goes through `load()` which prefers
+// `cache`). The disk file is a recovery copy used only on a fresh
+// process boot. If the process is killed between cache update and
+// successful flush we may lose the LAST persist() — the next
+// persist() (next status poll, trial tick, heartbeat — at most ~30s
+// away) reapplies the latest cache.
+const PERSIST_DEADLINE_MS = 60_000
+
+interface PendingPersist {
+  data: string
+  startedAt: number
+  attempt: number
+  inflight: boolean
+  timer: NodeJS.Timeout | null
+}
+
+const PENDING: Map<string, PendingPersist> = new Map()
+
+function enqueuePersist(finalPath: string, data: string): void {
+  const existing = PENDING.get(finalPath)
+  if (existing) {
+    // Supersede any older queued data with the latest. Keep the
+    // existing startedAt/attempt counters so we still honor the
+    // 60s deadline relative to when the current trouble started.
+    existing.data = data
+    if (!existing.inflight && !existing.timer) {
+      // No write in flight (we just finished one) — kick a fresh
+      // tick so the new data lands ASAP.
+      existing.timer = setTimeout(() => runPersistOnce(finalPath), 0)
+    }
+    return
+  }
+  const slot: PendingPersist = {
+    data,
+    startedAt: Date.now(),
+    attempt: 0,
+    inflight: false,
+    timer: setTimeout(() => runPersistOnce(finalPath), 0),
+  }
+  PENDING.set(finalPath, slot)
+}
+
+function runPersistOnce(finalPath: string): void {
+  const slot = PENDING.get(finalPath)
+  if (!slot) return
+  slot.timer = null
+  slot.inflight = true
+
+  if (Date.now() - slot.startedAt > PERSIST_DEADLINE_MS) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[licensing] persist disk write gave up after ${slot.attempt} attempts over ${Math.round((Date.now() - slot.startedAt) / 1000)}s — in-memory cache is correct, will reconcile on next persist`,
+    )
+    PENDING.delete(finalPath)
+    return
+  }
+
+  // Snapshot the latest pending data RIGHT NOW so the write reflects
+  // the most recent persist() call, even if newer ones queued while
+  // we were waiting on setImmediate / setTimeout.
+  const dataAtWriteTime = slot.data
+  const tmp = finalPath + '.tmp.' + process.pid + '.' + Date.now() + '.' + slot.attempt
+  try {
+    fs.writeFileSync(tmp, dataAtWriteTime, { mode: 0o600 })
+    fs.renameSync(tmp, finalPath)
+    if (slot.attempt > 0) {
+      // eslint-disable-next-line no-console
+      console.warn(`[licensing] persist disk write recovered on attempt ${slot.attempt + 1}`)
+    }
+    slot.inflight = false
+    // If newer data arrived AFTER we snapshotted but BEFORE the
+    // write finished, schedule another write so the freshest data
+    // lands. Otherwise we're done.
+    if (slot.data !== dataAtWriteTime) {
+      slot.attempt = 0 // fresh chain — the disk is healthy again
+      slot.startedAt = Date.now()
+      slot.timer = setTimeout(() => runPersistOnce(finalPath), 0)
+    } else {
+      PENDING.delete(finalPath)
+    }
+    return
+  } catch (e) {
+    try { fs.unlinkSync(tmp) } catch { /* ignore */ }
+    // eslint-disable-next-line no-console
+    console.warn(`[licensing] persist attempt ${slot.attempt + 1} failed (${(e as NodeJS.ErrnoException)?.code ?? 'unknown'}) — retrying`)
+    slot.inflight = false
+    slot.attempt += 1
+    // Backoff: 50, 100, 200, 400, 800 ms then plateau at 1000ms.
+    const delay = Math.min(50 * Math.pow(2, slot.attempt - 1), 1000)
+    slot.timer = setTimeout(() => runPersistOnce(finalPath), delay)
+  }
+}
+
+// Test-only hook: lets tests await a stable point where every
+// queued persist has either succeeded or hit the deadline. NOT
+// exposed via the public surface; only imported by *.test.ts files.
+export function __awaitPendingPersistsForTests(): Promise<void> {
+  return new Promise((resolve) => {
+    const tick = (): void => {
+      if (PENDING.size === 0) { resolve(); return }
+      setTimeout(tick, 25)
+    }
+    tick()
+  })
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -545,16 +985,27 @@ export interface SubscriptionStatus {
 
 export function computeStatus(now = Date.now()): SubscriptionStatus {
   const f = sweepExpired(now)
-  // v0.7.5 — Activity-gated trial. The trial budget is `trialDurationMs`
-  // total LISTENING time (mic actually running). `trialMsUsed` accumulates
-  // only while the user is actively detecting; refresh / overnight wait
-  // do not consume it. We synthesise a startedAt/expiresAt pair so the
-  // existing UI countdown widget keeps rendering — expiresAt is just a
-  // projection of "if you started listening continuously RIGHT NOW, the
-  // trial would run out at..." (i.e. now + remaining budget).
-  const trialUsed = Math.max(0, Math.min(f.trialDurationMs, f.trialMsUsed ?? 0))
-  const trialMsLeft = Math.max(0, f.trialDurationMs - trialUsed)
-  const trialEnd = now + trialMsLeft
+  // v0.7.194 — Wall-clock trial. The trial budget is TRIAL_DURATION_MS
+  // (72 hours) of REAL-WORLD time from firstLaunchAt. The countdown
+  // runs continuously regardless of whether the user is using the app;
+  // closing the app, sleeping the PC, or never opening AI Detection
+  // do NOT pause it. trialMsUsed is no longer consulted (the field is
+  // still present on LicenseFile for backward read compat with old
+  // persisted state from v0.7.5–v0.7.193).
+  //
+  // v0.7.194-hotfix.1 — Defensive NaN guards. If `firstLaunchAt` is
+  // malformed (corrupted JSON, hand-edited, or pre-schema state) or
+  // `trialDurationMs` is non-finite, `new Date(...).getTime()` returns
+  // NaN and any later `new Date(NaN).toISOString()` would throw
+  // RangeError, 500-ing /api/license/status. Fall back to safe defaults
+  // (now / TRIAL_DURATION_MS) so computeStatus() always returns a
+  // valid status object.
+  const rawStartedAt = new Date(f.firstLaunchAt).getTime()
+  const startedAtMs = Number.isFinite(rawStartedAt) ? rawStartedAt : now
+  const safeDuration = Number.isFinite(f.trialDurationMs) ? f.trialDurationMs : TRIAL_DURATION_MS
+  const trialEndMs = startedAtMs + safeDuration
+  const trialMsLeft = Math.max(0, trialEndMs - now)
+  const trialEnd = trialEndMs
   const trialExpired = trialMsLeft === 0
 
   // Active subscription wins over trial.
@@ -1160,9 +1611,38 @@ export function renewActivationByCode(code: string, addDays: number): Activation
     const cur = Date.parse(a.subscriptionExpiresAt)
     const base = Number.isFinite(cur) && cur > Date.now() ? cur : Date.now()
     a.subscriptionExpiresAt = new Date(base + ms).toISOString()
-    // Mirror to active subscription if this code is the active one.
+    // Mirror to active subscription if this code is the active one
+    // on THIS device (admin's PC, or operator running both roles).
     if (f.activeSubscription?.activationCode === code) {
       f.activeSubscription.expiresAt = a.subscriptionExpiresAt
+    } else {
+      // v0.7.118 — Operator escalation: "i tried renewing a code but
+      // when activating it gives error: This activation code has
+      // already been used."
+      //
+      // Pre-118 behaviour: renewActivationByCode only extended the
+      // expiry timestamp on a USED row. The `isUsed:true` flag stayed
+      // set, so when the paying customer typed the renewed code into
+      // their app, activateCode() hit its `if (activation.isUsed)
+      // throw 'This activation code has already been used.'` guard
+      // and rejected — the customer paid for renewal but couldn't
+      // activate. Almost every renewal path goes through this branch
+      // because the admin operator is running the dashboard on a
+      // DIFFERENT device than the customer (or the code's previous
+      // device has since been wiped/reinstalled), so the row is not
+      // f.activeSubscription on the admin PC.
+      //
+      // Fix: flip the row into the same "transfer-in" state that
+      // deactivateSubscription() uses (v0.7.12 LOSSLESS deactivate
+      // pattern). activateCode() already has a transfer-in branch
+      // (line 1089) that recognises { isUsed:false, transferredAt:set,
+      // subscriptionExpiresAt:<future> } and grants exactly the
+      // preserved deadline — which, after our extend above, is the
+      // renewed deadline. Customer types code, gets the time they
+      // paid for, no error.
+      a.isUsed = false
+      a.transferredAt = new Date().toISOString()
+      a.transferCount = (a.transferCount ?? 0) + 1
     }
   } else {
     // Never-used code: extend the GRANTED days so the bigger window
@@ -1201,6 +1681,11 @@ export function restoreActivationByCode(code: string): boolean {
   const a = f.activationCodes.find((r) => r.code === code)
   if (!a || !a.softDeletedAt) return false
   delete a.softDeletedAt
+  // v0.7.153 — Stamp the restore so a stale remote `softDeletedAt`
+  // arriving via cloud merge doesn't silently re-bin the row. The
+  // merger picks max(softDeletedAt, softDeleteRestoredAt) per side
+  // and the strictly-later timestamp wins.
+  a.softDeleteRestoredAt = new Date().toISOString()
   persist(f)
   return true
 }
@@ -1428,6 +1913,7 @@ export function deletePaymentByRef(ref: string): boolean {
   const before = f.paymentCodes.length
   f.paymentCodes = f.paymentCodes.filter((p) => p.ref !== ref)
   if (f.paymentCodes.length === before) return false
+  appendPaymentTombstone(f, ref)
   persist(f)
   return true
 }
@@ -1437,6 +1923,7 @@ export function deleteActivationByCode(code: string): boolean {
   const before = f.activationCodes.length
   f.activationCodes = f.activationCodes.filter((a) => a.code !== code)
   if (f.activationCodes.length === before) return false
+  appendActivationTombstone(f, code)
   persist(f)
   return true
 }
@@ -1454,6 +1941,7 @@ export function deleteNotificationById(id: string): boolean {
   const before = f.notifications.length
   f.notifications = f.notifications.filter((n) => n.id !== id)
   if (f.notifications.length === before) return false
+  appendNotificationTombstone(f, id)
   persist(f)
   return true
 }
@@ -1511,7 +1999,10 @@ export function deletePaymentsByRefs(refs: string[]): number {
   const before = f.paymentCodes.length
   f.paymentCodes = f.paymentCodes.filter((p) => !set.has(p.ref))
   const removed = before - f.paymentCodes.length
-  if (removed > 0) persist(f)
+  if (removed > 0) {
+    for (const ref of set) appendPaymentTombstone(f, ref)
+    persist(f)
+  }
   return removed
 }
 
@@ -1522,7 +2013,10 @@ export function deleteActivationsByCodes(codes: string[]): number {
   const before = f.activationCodes.length
   f.activationCodes = f.activationCodes.filter((a) => !set.has(a.code))
   const removed = before - f.activationCodes.length
-  if (removed > 0) persist(f)
+  if (removed > 0) {
+    for (const code of set) appendActivationTombstone(f, code)
+    persist(f)
+  }
   return removed
 }
 
@@ -1533,7 +2027,10 @@ export function deleteNotificationsByIds(ids: string[]): number {
   const before = f.notifications.length
   f.notifications = f.notifications.filter((n) => !set.has(n.id))
   const removed = before - f.notifications.length
-  if (removed > 0) persist(f)
+  if (removed > 0) {
+    for (const id of set) appendNotificationTombstone(f, id)
+    persist(f)
+  }
   return removed
 }
 
@@ -1626,6 +2123,495 @@ export function __testReset(): void {
   cache = null
   const p = storagePath()
   if (fs.existsSync(p)) fs.unlinkSync(p)
+}
+
+// ─── v0.7.145 — Cross-machine cloud sync helpers ─────────────────────
+//
+// See src/lib/licensing/cloud-sync.ts for the renderer-callable
+// helpers that POST to the cloud. The two functions below are the
+// SERVER-side counterparts that run ON the cloud deployment to
+// service incoming customer requests.
+//
+// All three of these are no-ops on a customer install (the customer
+// install never receives /api/license/cloud/* requests because the
+// cloud-sync helper short-circuits on customer machines), but we
+// export them unconditionally so the same codebase ships to both.
+
+/**
+ * v0.7.145 — Atomically claim an admin-issued activation code on
+ * behalf of a remote customer install. Called by the cloud-side
+ * /api/license/cloud/claim-activation route.
+ *
+ * Returns:
+ *   • the row, marked isUsed=true and stamped with claimedByInstall
+ *   • null if the code doesn't exist
+ *   • throws if the code is already claimed by a DIFFERENT install
+ *     (so the customer sees an actionable error instead of silently
+ *     getting an unusable mirror)
+ */
+export interface CloudClaimResult {
+  ok: true
+  activation: ActivationCodeRecord
+}
+export function claimActivationForCustomer(
+  rawCode: string,
+  installId: string,
+): CloudClaimResult | null {
+  const code = rawCode.trim().toUpperCase()
+  if (!code || !installId) return null
+  const f = load()
+  const row = f.activationCodes.find((a) => a.code === code)
+  if (!row) return null
+  // Soft-deleted / cancelled rows can't be claimed.
+  if (row.softDeletedAt || row.cancelledAt) return null
+  // Already claimed: idempotent if same install, error if different.
+  // We piggyback on lastSeenLocation as a structured marker
+  // ("CLOUD-CLAIMED:<installId>") so we don't need to extend the
+  // ActivationCodeRecord schema for this single use case.
+  const claimedBy = (row.lastSeenLocation ?? '').startsWith('CLOUD-CLAIMED:')
+    ? row.lastSeenLocation!.slice('CLOUD-CLAIMED:'.length)
+    : null
+  if (claimedBy && claimedBy !== installId) {
+    throw new Error(`Code already claimed by a different install (${claimedBy.slice(0, 8)}…). Ask admin to issue a new code.`)
+  }
+  // Master codes are reusable by design — never lock them.
+  if (!row.isMaster) {
+    if (row.isUsed && claimedBy !== installId) {
+      throw new Error('Code has already been used to activate a subscription on another PC.')
+    }
+    row.isUsed = true
+    row.usedAt = row.usedAt ?? new Date().toISOString()
+  }
+  row.lastSeenAt = new Date().toISOString()
+  row.lastSeenLocation = `CLOUD-CLAIMED:${installId}`
+  persist(f)
+  return { ok: true, activation: { ...row } }
+}
+
+/**
+ * v0.7.145 — Append a customer-side payment-code record to the cloud
+ * ledger so the admin dashboard's "Recent Payments" sees it. Idempotent
+ * by ref; an existing ref is left untouched. Called by the cloud-side
+ * /api/license/cloud/mirror-payment route.
+ */
+export function mergePaymentFromCustomer(
+  rec: PaymentCodeRecord,
+  installId: string,
+): { ok: true; merged: boolean } {
+  if (!rec || !rec.ref) return { ok: true, merged: false }
+  const f = load()
+  if (f.paymentCodes.some((p) => p.ref === rec.ref)) {
+    return { ok: true, merged: false }
+  }
+  // We don't trust customer-supplied status flips beyond the initial
+  // WAITING_PAYMENT — cloud admin still confirms via the dashboard.
+  f.paymentCodes.push({
+    ...rec,
+    status: 'WAITING_PAYMENT',
+    // Stash the originating install in the email field's mirror
+    // location? No — keep email/whatsapp pristine for the admin UI.
+    // Track install via a structured prefix in paymentRef? No —
+    // use an unused field on the record. We use a SIDECAR note in
+    // the existing email field is too risky. Instead we just append.
+  })
+  persist(f)
+  // eslint-disable-next-line no-console
+  console.log(`[cloud-sync] merged payment ref ${rec.ref} from install ${installId.slice(0, 8)}…`)
+  return { ok: true, merged: true }
+}
+
+/**
+ * v0.7.145 — Append a cloud-claimed activation row to the local
+ * customer ledger so the existing local activateCode() finds it on
+ * the very next call. Idempotent by code; if the local ledger
+ * already has a row for this code we leave it alone (don't reset
+ * isUsed back to false on a re-claim).
+ */
+export function mergeActivationFromCloud(rec: ActivationCodeRecord): boolean {
+  if (!rec || !rec.code) return false
+  const f = load()
+  if (f.activationCodes.some((a) => a.code === rec.code)) return false
+  // Mirror as un-used locally so the local activateCode() path runs
+  // its full bookkeeping (isUsed flip, subscriptionExpiresAt mint,
+  // notifications, etc.) on first activation.
+  f.activationCodes.push({
+    ...rec,
+    isUsed: false,
+    usedAt: undefined,
+    subscriptionExpiresAt: undefined,
+    lastSeenAt: undefined,
+    lastSeenIp: undefined,
+    lastSeenLocation: undefined,
+  })
+  persist(f)
+  return true
+}
+
+// ─── v0.7.153 — Cross-device admin ledger snapshot helpers ──────────
+
+import type { AdminLedgerSnapshot } from './cloud-sync'
+
+const TOMBSTONE_CAP = 1000
+
+function appendPaymentTombstone(f: LicenseFile, ref: string): void {
+  if (!ref) return
+  const arr = (f.deletedPaymentRefs ??= [])
+  arr.push({ ref, deletedAt: new Date().toISOString() })
+  if (arr.length > TOMBSTONE_CAP) f.deletedPaymentRefs = arr.slice(-TOMBSTONE_CAP)
+}
+
+function appendActivationTombstone(f: LicenseFile, code: string): void {
+  if (!code) return
+  const arr = (f.deletedActivationCodes ??= [])
+  arr.push({ code, deletedAt: new Date().toISOString() })
+  if (arr.length > TOMBSTONE_CAP) f.deletedActivationCodes = arr.slice(-TOMBSTONE_CAP)
+}
+
+function appendNotificationTombstone(f: LicenseFile, id: string): void {
+  if (!id) return
+  const arr = (f.deletedNotificationIds ??= [])
+  arr.push({ id, deletedAt: new Date().toISOString() })
+  if (arr.length > TOMBSTONE_CAP) f.deletedNotificationIds = arr.slice(-TOMBSTONE_CAP)
+}
+
+/** Per-PC config keys that must NEVER leak across the cloud sync —
+ *  they describe the local installation, not the shared admin store. */
+const LOCAL_ONLY_CONFIG_KEYS: ReadonlySet<keyof RuntimeConfig> = new Set([
+  'cloudAdminCode',
+  'adminPassword',
+  'adminOpenAIKey',
+  'adminDeepgramKey',
+])
+
+/** Extract the slice of the local ledger that is shared with the
+ *  cross-device admin store. Strips per-PC subscription state, master
+ *  code, install id, trial counters, telemetry flags, etc. */
+export function extractAdminLedgerSnapshot(file?: LicenseFile): AdminLedgerSnapshot {
+  const f = file ?? load()
+  const cfg = f.config
+  let scrubbedConfig: Partial<RuntimeConfig> | undefined
+  if (cfg) {
+    scrubbedConfig = {}
+    for (const [k, v] of Object.entries(cfg)) {
+      if (LOCAL_ONLY_CONFIG_KEYS.has(k as keyof RuntimeConfig)) continue
+      ;(scrubbedConfig as Record<string, unknown>)[k] = v
+    }
+  }
+  return {
+    paymentCodes: f.paymentCodes.map((p) => ({ ...p })),
+    activationCodes: f.activationCodes.map((a) => ({ ...a })),
+    notifications: f.notifications.map((n) => ({ ...n })),
+    config: scrubbedConfig,
+    deletedPaymentRefs: (f.deletedPaymentRefs ?? []).map((t) => ({ ...t })),
+    deletedActivationCodes: (f.deletedActivationCodes ?? []).map((t) => ({ ...t })),
+    deletedNotificationIds: (f.deletedNotificationIds ?? []).map((t) => ({ ...t })),
+  }
+}
+
+/** Latest-write-wins helper: pick whichever of two ISO timestamps is
+ *  later, falling back to a defined value when only one is present. */
+function laterIso(a?: string, b?: string): string | undefined {
+  if (!a) return b
+  if (!b) return a
+  return Date.parse(a) >= Date.parse(b) ? a : b
+}
+
+/** Merge an incoming admin snapshot into the local ledger. Returns
+ *  the count of records actually changed (added or mutated). Designed
+ *  so a periodic pull from cloud is idempotent — re-applying the same
+ *  snapshot returns 0.
+ *
+ *  Merge rules:
+ *   • paymentCodes — union by `ref`. New refs are appended. Existing
+ *     refs gain the LATER `paidAt` and the LATER `status` upgrade
+ *     (CONSUMED > PAID > WAITING_PAYMENT > EXPIRED order). The first
+ *     non-empty `activationCode` wins (codes never get re-issued).
+ *   • activationCodes — union by `code`. New codes appended. Existing
+ *     codes pick up the LATER `lastSeenAt`/`lastSeenIp`/
+ *     `lastSeenLocation`, the LATER `cancelledAt`, the LATER
+ *     `softDeletedAt` (or `undefined` when remote restored it after
+ *     local was newer), and the higher `transferCount`.
+ *   • notifications — union by `id` (UUID). New ids appended; existing
+ *     ids left unchanged. Capped at 500 most-recent by ts after merge.
+ *   • config — shallow merge, REMOTE wins on collision (cloud is the
+ *     source of truth for shared admin settings). LOCAL_ONLY keys
+ *     are never touched.
+ */
+export function applyAdminLedgerSnapshot(snap: AdminLedgerSnapshot): number {
+  const f = load()
+  let changed = 0
+
+  // ── tombstones (merge BEFORE record union) ─────────────────────
+  // Build local tombstone maps keyed by primary key → latest
+  // deletedAt seen for that key. Each incoming record is rejected
+  // when a local tombstone exists for its key. Incoming tombstones
+  // are merged into the local set AND used to drop any local row
+  // they cover (so a delete on phone propagates to desktop).
+  const paymentTombs = mergeTombstones<'ref'>(
+    f.deletedPaymentRefs ?? [],
+    snap.deletedPaymentRefs ?? [],
+    'ref',
+  )
+  const activationTombs = mergeTombstones<'code'>(
+    f.deletedActivationCodes ?? [],
+    snap.deletedActivationCodes ?? [],
+    'code',
+  )
+  const notificationTombs = mergeTombstones<'id'>(
+    f.deletedNotificationIds ?? [],
+    snap.deletedNotificationIds ?? [],
+    'id',
+  )
+  if (paymentTombs.added > 0) {
+    f.deletedPaymentRefs = paymentTombs.merged
+    const ids = new Set(paymentTombs.merged.map((t) => t.ref))
+    const before = f.paymentCodes.length
+    f.paymentCodes = f.paymentCodes.filter((p) => !ids.has(p.ref))
+    changed += paymentTombs.added + (before - f.paymentCodes.length)
+  }
+  if (activationTombs.added > 0) {
+    f.deletedActivationCodes = activationTombs.merged
+    const ids = new Set(activationTombs.merged.map((t) => t.code))
+    const before = f.activationCodes.length
+    f.activationCodes = f.activationCodes.filter((a) => !ids.has(a.code))
+    changed += activationTombs.added + (before - f.activationCodes.length)
+  }
+  if (notificationTombs.added > 0) {
+    f.deletedNotificationIds = notificationTombs.merged
+    const ids = new Set(notificationTombs.merged.map((t) => t.id))
+    const before = f.notifications.length
+    f.notifications = f.notifications.filter((n) => !ids.has(n.id))
+    changed += notificationTombs.added + (before - f.notifications.length)
+  }
+  const paymentTombSet = new Set((f.deletedPaymentRefs ?? []).map((t) => t.ref))
+  const activationTombSet = new Set((f.deletedActivationCodes ?? []).map((t) => t.code))
+  const notificationTombSet = new Set((f.deletedNotificationIds ?? []).map((t) => t.id))
+
+  // ── paymentCodes ───────────────────────────────────────────────
+  const paymentByRef = new Map(f.paymentCodes.map((p) => [p.ref, p]))
+  const STATUS_RANK: Record<PaymentStatus, number> = {
+    EXPIRED: 0,
+    WAITING_PAYMENT: 1,
+    PAID: 2,
+    CONSUMED: 3,
+  }
+  for (const inc of snap.paymentCodes ?? []) {
+    if (!inc?.ref) continue
+    if (paymentTombSet.has(inc.ref)) continue // hard-deleted; no resurrection
+    const cur = paymentByRef.get(inc.ref)
+    if (!cur) {
+      f.paymentCodes.push({ ...inc })
+      paymentByRef.set(inc.ref, inc)
+      changed += 1
+      continue
+    }
+    let mutated = false
+    // Higher status wins (CONSUMED > PAID > WAITING_PAYMENT > EXPIRED).
+    if (STATUS_RANK[inc.status] > STATUS_RANK[cur.status]) {
+      cur.status = inc.status
+      mutated = true
+    }
+    const newPaid = laterIso(cur.paidAt, inc.paidAt)
+    if (newPaid !== cur.paidAt) { cur.paidAt = newPaid; mutated = true }
+    if (!cur.activationCode && inc.activationCode) {
+      cur.activationCode = inc.activationCode
+      mutated = true
+    }
+    if (mutated) changed += 1
+  }
+
+  // ── activationCodes ────────────────────────────────────────────
+  const actByCode = new Map(f.activationCodes.map((a) => [a.code, a]))
+  for (const inc of snap.activationCodes ?? []) {
+    if (!inc?.code) continue
+    if (activationTombSet.has(inc.code)) continue // hard-deleted; no resurrection
+    const cur = actByCode.get(inc.code)
+    if (!cur) {
+      // New code from cloud: mirror as un-claimed locally so the
+      // local activateCode() runs full bookkeeping if the user pastes
+      // it into THIS install. Same shape as mergeActivationFromCloud.
+      f.activationCodes.push({
+        ...inc,
+        isUsed: false,
+        usedAt: undefined,
+        subscriptionExpiresAt: undefined,
+      })
+      actByCode.set(inc.code, inc)
+      changed += 1
+      continue
+    }
+    let mutated = false
+    const newSeen = laterIso(cur.lastSeenAt, inc.lastSeenAt)
+    if (newSeen !== cur.lastSeenAt) { cur.lastSeenAt = newSeen; mutated = true }
+    if (inc.lastSeenIp && cur.lastSeenIp !== inc.lastSeenIp && newSeen === inc.lastSeenAt) {
+      cur.lastSeenIp = inc.lastSeenIp; mutated = true
+    }
+    if (inc.lastSeenLocation && cur.lastSeenLocation !== inc.lastSeenLocation && newSeen === inc.lastSeenAt) {
+      cur.lastSeenLocation = inc.lastSeenLocation; mutated = true
+    }
+    const newCancel = laterIso(cur.cancelledAt, inc.cancelledAt)
+    if (newCancel !== cur.cancelledAt) { cur.cancelledAt = newCancel; mutated = true }
+    if (inc.cancelReason && !cur.cancelReason) { cur.cancelReason = inc.cancelReason; mutated = true }
+    // Soft-delete tri-state: take the later of {softDeletedAt,
+    // softDeleteRestoredAt} per side, then resolve. Whichever side
+    // has the strictly-later "last action" timestamp dictates the
+    // current bin status. Without this, a stale incoming
+    // `softDeletedAt` would silently re-bin a locally-restored row.
+    const incSoft = laterIso(cur.softDeletedAt, inc.softDeletedAt)
+    if (incSoft !== cur.softDeletedAt) { cur.softDeletedAt = incSoft; mutated = true }
+    const incRestored = laterIso(cur.softDeleteRestoredAt, inc.softDeleteRestoredAt)
+    if (incRestored !== cur.softDeleteRestoredAt) {
+      cur.softDeleteRestoredAt = incRestored
+      mutated = true
+    }
+    if (cur.softDeletedAt && cur.softDeleteRestoredAt) {
+      if (Date.parse(cur.softDeleteRestoredAt) >= Date.parse(cur.softDeletedAt)) {
+        // Restore wins → clear bin status.
+        delete cur.softDeletedAt
+      }
+    }
+    const incXfer = inc.transferCount ?? 0
+    const curXfer = cur.transferCount ?? 0
+    if (incXfer > curXfer) { cur.transferCount = incXfer; mutated = true }
+
+    // v0.7.166 — Activation LIFECYCLE fields (isUsed / usedAt /
+    // subscriptionExpiresAt) MUST propagate cross-device. The
+    // original v0.7.153 merge intentionally skipped these because
+    // the lifecycle was thought to be per-device. That assumption
+    // breaks the operator's mental model: a code activated on
+    // device-A still reads as NEVER-USED on device-B because the
+    // cloud row never adopted device-A's flip. Operator screenshots
+    // showed desktop "1 ACTIVE / 3 UNUSED" vs phone "0 ACTIVE /
+    // 4 UNUSED" for the SAME 5-code ledger — exactly this drift.
+    //
+    // Merge rules:
+    //   • isUsed is monotonic (false → true wins, never the reverse).
+    //     The only legitimate "un-use" is operator cancel/restore
+    //     which goes through cancelledAt / softDeletedAt — both of
+    //     those are already merged above.
+    //   • usedAt: take the LATER ISO. A re-activation after a
+    //     transfer or restore writes a fresher usedAt; we want the
+    //     most recent one to surface.
+    //   • subscriptionExpiresAt: take the LATER ISO. A renewal
+    //     extends expiry; we never want a stale shorter window from
+    //     one device to overwrite a longer remote-renewed one.
+    //   • lastSeenLocation already carries the "CLOUD-CLAIMED:<id>"
+    //     marker for cross-device claims (see line ~2042) and is
+    //     already merged above via the lastSeenAt latest-write rule.
+    if (!cur.isUsed && inc.isUsed) {
+      cur.isUsed = true
+      mutated = true
+    }
+    const newUsedAt = laterIso(cur.usedAt, inc.usedAt)
+    if (newUsedAt !== cur.usedAt) { cur.usedAt = newUsedAt; mutated = true }
+    const newExp = laterIso(cur.subscriptionExpiresAt, inc.subscriptionExpiresAt)
+    if (newExp !== cur.subscriptionExpiresAt) {
+      cur.subscriptionExpiresAt = newExp
+      mutated = true
+    }
+
+    if (mutated) changed += 1
+  }
+
+  // ── notifications ──────────────────────────────────────────────
+  const noteIds = new Set(f.notifications.map((n) => n.id))
+  for (const inc of snap.notifications ?? []) {
+    if (!inc?.id || noteIds.has(inc.id)) continue
+    if (notificationTombSet.has(inc.id)) continue // hard-deleted; no resurrection
+    f.notifications.push({ ...inc })
+    noteIds.add(inc.id)
+    changed += 1
+  }
+  if (f.notifications.length > 500) {
+    f.notifications.sort((a, b) => (a.ts ?? '').localeCompare(b.ts ?? ''))
+    f.notifications = f.notifications.slice(-500)
+  }
+
+  // ── config (shared subset, wall-clock LWW via updatedAt) ───────
+  // Architect (v0.7.153 review) flagged that "remote always wins"
+  // amounts to arrival-order LWW: a stale offline desktop pushing
+  // hours later silently overwrites newer cloud settings. We now
+  // gate the merge on a strict updatedAt comparison — incoming
+  // config is applied only when its updatedAt is STRICTLY newer
+  // than the local one (or when local has none yet). LOCAL_ONLY
+  // keys are still preserved.
+  if (snap.config) {
+    const localCfg = f.config
+    const incUpdated = snap.config.updatedAt
+    const localUpdated = localCfg?.updatedAt
+    const incNewer = incUpdated
+      ? !localUpdated || Date.parse(incUpdated) > Date.parse(localUpdated)
+      : false
+    if (incNewer || !localCfg) {
+      const next: RuntimeConfig = { ...(localCfg ?? {}) }
+      let cfgMutated = false
+      for (const [k, v] of Object.entries(snap.config)) {
+        if (LOCAL_ONLY_CONFIG_KEYS.has(k as keyof RuntimeConfig)) continue
+        if (v === undefined) continue
+        const prior = (next as Record<string, unknown>)[k]
+        if (JSON.stringify(prior) !== JSON.stringify(v)) {
+          ;(next as Record<string, unknown>)[k] = v
+          cfgMutated = true
+        }
+      }
+      if (cfgMutated) {
+        // Preserve the incoming wall-clock — that's the timestamp
+        // the next merge round will compare against, and overwriting
+        // it with `now()` would convert true LWW back into arrival-
+        // order LWW.
+        if (incUpdated) next.updatedAt = incUpdated
+        f.config = next
+        changed += 1
+      }
+    }
+  }
+
+  if (changed > 0) {
+    // Persist to disk but suppress the cloud push that persist() would
+    // schedule — we just RECEIVED a cloud snapshot; pushing it back
+    // would be a wasteful (though harmless) round-trip.
+    suppressNextCloudPush()
+    persist(f)
+  }
+  return changed
+}
+
+let _suppressNextPush = false
+function suppressNextCloudPush(): void { _suppressNextPush = true }
+
+/** Merge two tombstone arrays keyed by `K`. Latest deletedAt per
+ *  key wins; result is bounded to TOMBSTONE_CAP most-recent.
+ *  Returns the merged array AND the count of keys that are new to
+ *  local (so the caller knows how many records to evict + counts
+ *  toward `changed`). */
+function mergeTombstones<K extends 'ref' | 'code' | 'id'>(
+  localArr: ReadonlyArray<{ deletedAt: string } & Record<K, string>>,
+  incomingArr: ReadonlyArray<{ deletedAt: string } & Record<K, string>>,
+  key: K,
+): { merged: ({ deletedAt: string } & Record<K, string>)[]; added: number } {
+  const map = new Map<string, { deletedAt: string } & Record<K, string>>()
+  let added = 0
+  for (const t of localArr) {
+    if (!t || !t[key]) continue
+    map.set(t[key], { ...t })
+  }
+  for (const t of incomingArr) {
+    if (!t || !t[key]) continue
+    const k = t[key]
+    const cur = map.get(k)
+    if (!cur) {
+      map.set(k, { ...t })
+      added += 1
+    } else if (Date.parse(t.deletedAt) > Date.parse(cur.deletedAt)) {
+      map.set(k, { ...t })
+    }
+  }
+  let merged = Array.from(map.values())
+  if (merged.length > TOMBSTONE_CAP) {
+    merged.sort((a, b) => a.deletedAt.localeCompare(b.deletedAt))
+    merged = merged.slice(-TOMBSTONE_CAP)
+  }
+  return { merged, added }
 }
 
 // v0.7.32 — Single source of truth for the LLM-classifier on/off

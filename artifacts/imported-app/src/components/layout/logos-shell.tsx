@@ -15,10 +15,10 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useAppStore } from '@/lib/store'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { SlideThumb } from '@/components/presenter/slide-renderer'
 import { StableStage } from '@/components/presenter/stable-stage'
-import { getFontStack } from '@/lib/fonts'
-import { cn } from '@/lib/utils'
+import { OutputPreview } from '@/components/settings/output-preview'
+import { attachAnalyser, readLevel } from '@/lib/audio-level'
+import { cn, resolveMediaUrl } from '@/lib/utils'
 import { toast } from 'sonner'
 import {
   Mic,
@@ -26,6 +26,8 @@ import {
   Send,
   CircleSlash,
   Square,
+  CheckSquare,
+  Repeat,
   Image as LogoIcon,
   History,
   ListOrdered,
@@ -46,7 +48,6 @@ import {
   SkipForward,
   Volume2,
   VolumeX,
-  Headphones,
   LayoutGrid,
   List as ListIcon,
   Rows3,
@@ -91,6 +92,14 @@ import {
   detectVersesInText,
 } from '@/lib/bible-api'
 import type { Slide } from '@/lib/store'
+import {
+  initialPerSourceStability,
+  liveColumnFor,
+  pickAutoLiveBySource,
+  shouldFireAutoLiveStable,
+  suggestionsFor,
+  type PerSourceStabilityState,
+} from '@/lib/verse-auto-live'
 
 // ──────────────────────────────────────────────────────────────────────
 // Card primitives
@@ -200,6 +209,347 @@ function AudioMeter({
           <span key={i} className="block h-px w-full bg-black/40" />
         ))}
       </div>
+    </div>
+  )
+}
+
+// v0.7.193 — In-app media-video surface (REPLACES v0.7.186 HiddenMediaMeter).
+//
+// Background: v0.7.158 hid every media-video <video> behind an
+// iframe of /api/output/congregation, which made it unreachable from
+// React. v0.7.186 papered over the audio-meter half of the problem
+// by mounting a hidden parallel <video> just for the analyser, but
+// EVERY operator-facing control on top of the iframe was effectively
+// dead — VideoTransport's `document.querySelector` returned null
+// because the iframe DOM is not part of the parent document, the
+// global mute icon could not reach into the iframe to mute audio,
+// and the Live Display panel painted a black frame because the
+// iframe instance there was decoupled from any operator
+// interaction. Auto-play after Send-to-Live also broke because
+// nothing in-app actually held a reference to the live <video>.
+//
+// Fix: mount a REAL React-managed <video> for the operator's in-app
+// Preview AND Live Display panels whenever the slide is media-video.
+// The iframe path stays for scripture / title / image slides AND
+// for every external surface (NDI capture window, OBS browser
+// source, secondary screen) — those each load the renderer route in
+// their own browser context and play media autonomously based on
+// store-pushed SSE state. The in-app React videos and the iframe-
+// rendered videos all read the same store fields (mediaCurrentTime,
+// mediaPaused, mediaLoop, globalMuted) so the four surfaces stay in
+// lockstep within ~SSE latency for normal cue-and-play workflows.
+//
+// `data-surface` is set so the existing VideoTransport's
+// querySelector continues to find these elements unchanged. The
+// audio analyser uses `attachAnalyser` (NOT the silent variant) so
+// the audio actually plays — the visible video is now the SOLE
+// in-app audio source for its surface (no double-audio because the
+// iframe overlay is no longer rendered for media-video slides).
+function MediaVideoSurface({
+  surface,
+  src,
+  fit = 'fit',
+  forceMute = false,
+}: {
+  surface: 'preview' | 'live'
+  src: string
+  fit?: string
+  forceMute?: boolean
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const setAudioLevel = useAppStore((s) => s.setAudioLevel)
+  const setPreviewVideoPlaying = useAppStore((s) => s.setPreviewVideoPlaying)
+  const setLiveVideoPlaying = useAppStore((s) => s.setLiveVideoPlaying)
+  // v0.7.193-hotfix.2 — Per-surface state: each MediaVideoSurface
+  // listens ONLY to its own pair of fields so Preview transport never
+  // bleeds into Live transport (and vice versa).
+  const setOwnCurrentTime = useAppStore((s) =>
+    surface === 'preview' ? s.setPreviewMediaCurrentTime : s.setLiveMediaCurrentTime,
+  )
+  const globalMuted = useAppStore((s) => s.globalMuted)
+  const globalVolume = useAppStore((s) => s.globalVolume)
+  // v0.7.216 follow-up #3 — Live broadcast-audio toggle (the speaker
+  // button on the right rail of LiveDisplayCard) MUST actually mute
+  // the in-app live <video>, not just flip a payload flag. Pre-fix,
+  // `liveBroadcastAudio` only set `broadcastEnabled` in the output
+  // payload — the operator clicked it expecting their local speakers
+  // to mute and nothing happened. Now the live MediaVideoSurface
+  // honours it too, so the speaker button gates BOTH the SSE/NDI
+  // output (existing behaviour via output-payload.ts L105 +
+  // output-broadcaster.tsx L213) AND the local live <video> audio.
+  const liveBroadcastAudio = useAppStore((s) => s.liveBroadcastAudio)
+  const mediaPaused = useAppStore((s) =>
+    surface === 'preview' ? s.previewMediaPaused : s.liveMediaPaused,
+  )
+  const mediaCurrentTime = useAppStore((s) =>
+    surface === 'preview' ? s.previewMediaCurrentTime : s.liveMediaCurrentTime,
+  )
+  const mediaLoop = useAppStore((s) =>
+    surface === 'preview' ? s.previewMediaLoop : s.liveMediaLoop,
+  )
+  const isLive = useAppStore((s) => s.isLive)
+
+  // Mirror real play/paused state into the store flag the AudioMeter
+  // (and the rest of the UI) keys off. Bar is only "active" while a
+  // real signal is flowing.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    const setter = surface === 'preview' ? setPreviewVideoPlaying : setLiveVideoPlaying
+    const onPlaying = () => setter(true)
+    const onPaused = () => setter(false)
+    v.addEventListener('playing', onPlaying)
+    v.addEventListener('pause', onPaused)
+    v.addEventListener('ended', onPaused)
+    v.addEventListener('stalled', onPaused)
+    v.addEventListener('emptied', onPaused)
+    setter(!v.paused && !v.ended && v.readyState > 2)
+    return () => {
+      v.removeEventListener('playing', onPlaying)
+      v.removeEventListener('pause', onPaused)
+      v.removeEventListener('ended', onPaused)
+      v.removeEventListener('stalled', onPaused)
+      v.removeEventListener('emptied', onPaused)
+      setter(false)
+    }
+  }, [surface, src, setPreviewVideoPlaying, setLiveVideoPlaying])
+
+  // Drive the green VU meter at ~33 Hz from the analyser RMS. We use
+  // the FULL `attachAnalyser` here (not the silent variant) so audio
+  // actually reaches the speakers — this is the in-app audio source.
+  //
+  // v0.7.193-hotfix.2 — Skip the analyser entirely when the surface
+  // is muted (forceMute or globalMuted). The Web Audio analyser keeps
+  // decoding raw audio samples even when the speaker is silenced, just
+  // to compute an RMS that we never display. On a quiet preview that's
+  // a few % CPU per surface for nothing — multiplied across surfaces
+  // it adds up to visible playback judder. Meter shows 0 when muted,
+  // which is exactly what the operator expects from a muted source.
+  const muted = forceMute || globalMuted || (surface === 'live' && !liveBroadcastAudio)
+  useEffect(() => {
+    if (muted) {
+      setAudioLevel(surface, 0)
+      return
+    }
+    const v = videoRef.current
+    if (!v) return
+    const an = attachAnalyser(v)
+    if (!an) {
+      setAudioLevel(surface, 0)
+      return
+    }
+    let raf = 0
+    let lastWrite = 0
+    const tick = (t: number) => {
+      if (t - lastWrite >= 30) {
+        lastWrite = t
+        const stopped = v.paused || v.ended || v.muted
+        setAudioLevel(surface, stopped ? 0 : readLevel(an))
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => {
+      cancelAnimationFrame(raf)
+      setAudioLevel(surface, 0)
+    }
+  }, [src, surface, setAudioLevel, muted])
+
+  // Mute / volume — react to global mute toggle and to the
+  // surface-specific monitor flag.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    v.muted = forceMute || globalMuted || (surface === 'live' && !liveBroadcastAudio)
+    v.volume = Math.max(0, Math.min(1, globalVolume))
+  }, [forceMute, globalMuted, globalVolume, surface, liveBroadcastAudio])
+
+  // Loop — mirror the store flag onto the element.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    v.loop = mediaLoop
+  }, [mediaLoop])
+
+  // v0.7.193-hotfix.2 — Sync the element to OUR OWN per-surface clock
+  // (no cross-surface mirroring). On the LIVE surface this also honours
+  // the auto-play-on-go-live promotion; on the PREVIEW surface it
+  // honours the operator's preview transport without ever touching the
+  // live element.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    if (
+      Number.isFinite(mediaCurrentTime) &&
+      Math.abs(v.currentTime - mediaCurrentTime) > 0.5
+    ) {
+      try { v.currentTime = mediaCurrentTime } catch { /* ignore */ }
+    }
+    const shouldPlay = surface === 'live' ? (isLive && !mediaPaused) : !mediaPaused
+    if (shouldPlay) {
+      v.play().catch(() => {})
+      // v0.7.216 — Operator $1600-customer escalation: "user clicking
+      // on go live also send video from preview to live display to
+      // immediate start playing". Root cause: when LIVE is being
+      // SWAPPED from one media-video to another (operator pins clip
+      // B over a different live clip A, then presses GO LIVE → goLive
+      // pinned-path does setLiveMediaPaused(false) + setLiveAuto(B)),
+      // the React element is REUSED at the same position with a new
+      // `src` attribute. Browser semantics: changing `src` aborts the
+      // current playback and starts LOADING the new resource — but
+      // this effect fires SYNCHRONOUSLY in the same render commit,
+      // BEFORE the new src has buffered. v.play() called pre-`canplay`
+      // either drops silently or never resolves, leaving the live
+      // pane stalled on the first frame after promotion. Fix: register
+      // a one-shot `canplay` retry that calls v.play() the moment the
+      // new src is buffered enough to start. Same render commit, no
+      // extra store mutation needed — operator sees the promoted clip
+      // start playing the instant the browser is ready. Cleanup tears
+      // down the listener if the effect re-runs before `canplay` fires
+      // (e.g. operator rapidly swaps the live clip again).
+      const onCanPlay = () => { v.play().catch(() => {}) }
+      v.addEventListener('canplay', onCanPlay, { once: true })
+      return () => v.removeEventListener('canplay', onCanPlay)
+    }
+    if (mediaPaused) v.pause()
+  }, [surface, isLive, mediaPaused, mediaCurrentTime, src])
+
+  // Write the surface's current time back to its OWN clock.
+  //
+  // v0.7.216 follow-up #4 — Operator $1600-customer escalation:
+  // "Fix the output video freezing for main app output and NDI output
+  // make it play smoothly live Easyworship". Pre-fix, the LIVE
+  // surface wrote back every >0.10s (10Hz). Each write triggered
+  // OutputBroadcaster.onChange → JSON.stringify(~80-field payload) →
+  // SSE POST → secondary-screen + offscreen NDI capture window both
+  // parse + reconcile. That CPU storm on every store tick starved
+  // the offscreen compositor of frame time (visible NDI freezes) and
+  // the receiver's drift-correction (route.ts L1612) force-seeked the
+  // secondary <video> every time SSE jitter pushed mediaCurrentTime
+  // past its 0.20s tolerance (visible main-output freezes). The 0.10s
+  // threshold from v0.7.193-hotfix.2 was sized for a tighter sync
+  // model that no longer applies — the receiver-side tolerance is
+  // now 1.5s (route.ts) so we have a lot more headroom.
+  //
+  // 0.50s writeback gives:
+  //   - 2Hz broadcast rate during steady playback (5x reduction)
+  //   - Max local→broadcast latency of 0.50s (well inside the new
+  //     1.5s receiver tolerance, no spurious seeks)
+  //   - Transport scrubber in the main app still updates 2x/sec which
+  //     is faster than human perceptual threshold for a progress bar.
+  // Preview stays at 0.25s — it doesn't broadcast, so the 4Hz tick is
+  // just for the local transport UI and costs nothing extra.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    const writeThreshold = surface === 'live' ? 0.50 : 0.25
+    const onTimeUpdate = () => {
+      const cur = v.currentTime
+      const stored = surface === 'preview'
+        ? useAppStore.getState().previewMediaCurrentTime
+        : useAppStore.getState().liveMediaCurrentTime
+      if (Math.abs(cur - stored) > writeThreshold) setOwnCurrentTime(cur)
+    }
+    // v0.7.216 follow-up #4 — ALSO write on these transport events so
+    // the receiver gets an immediate sync target on operator-driven
+    // transitions (play / pause / seek). Without these, raising the
+    // timeupdate threshold could leave the receiver up to 0.50s stale
+    // at the moment of a real transport event — and transport events
+    // are exactly when we want pixel-accurate sync.
+    const onTransport = () => setOwnCurrentTime(v.currentTime)
+    v.addEventListener('timeupdate', onTimeUpdate)
+    v.addEventListener('play', onTransport)
+    v.addEventListener('pause', onTransport)
+    v.addEventListener('seeked', onTransport)
+    v.addEventListener('loadedmetadata', onTransport)
+    return () => {
+      v.removeEventListener('timeupdate', onTimeUpdate)
+      v.removeEventListener('play', onTransport)
+      v.removeEventListener('pause', onTransport)
+      v.removeEventListener('seeked', onTransport)
+      v.removeEventListener('loadedmetadata', onTransport)
+    }
+  }, [surface, src, setOwnCurrentTime])
+
+  const objectFit: 'contain' | 'cover' | 'fill' =
+    fit === 'fill' ? 'cover' : fit === 'stretch' ? 'fill' : 'contain'
+
+  return (
+    <div
+      className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
+      style={{ aspectRatio: '16 / 9' }}
+    >
+      <video
+        ref={videoRef}
+        data-surface={surface}
+        src={src}
+        // Preview auto-plays on mount so the operator hears/sees the
+        // clip immediately on first click. Live auto-plays via the
+        // isLive effect above (only after Send-to-Live).
+        //
+        // v0.7.216 — Operator $1600-customer escalation: when LIVE is
+        // already playing a DIFFERENT media-video, the new Preview
+        // <video> auto-decoding adds a 2nd HW decoder slot that
+        // steals from the live decoder (GPU cap 2-4 streams), causing
+        // the live video to stall. `sendMediaToPreview` now flips
+        // `previewMediaPaused=true` BEFORE pinning in that scenario;
+        // gating autoPlay on !mediaPaused honours it at mount so the
+        // 2nd decoder never spins up. Operator presses Play in the
+        // transport bar when ready to actually preview the new clip.
+        //
+        // v0.7.218 — Operator escalation, v0.7.217 follow-up: gating
+        // `autoPlay` alone WAS NOT ENOUGH. `preload="auto"` (the
+        // previous default) tells Chromium to eagerly DOWNLOAD AND
+        // DECODE the media on element mount — even without autoplay.
+        // That eager decode allocates a HW decoder slot the instant
+        // the new preview <video> mounts, competing with the live
+        // decoder regardless of the autoPlay gate. Net behaviour: live
+        // video still stalled on single-click of a different media
+        // tile. Fix: gate `preload` symmetric to `autoPlay` — when the
+        // preview is mounted in the "paused-at-zero" state (i.e.
+        // sendMediaToPreview's pause-before-pin branch fired), use
+        // `preload="metadata"` which fetches duration/dimensions only
+        // and does NOT allocate a HW decoder slot. When operator
+        // presses Play in the transport bar, `previewMediaPaused`
+        // flips to false → preload flips to "auto" → the play()
+        // useEffect kicks the fetch+decode for the first time. Cold-
+        // start latency is acceptable (the slide wasn't preheated
+        // anyway because MediaPreheat only reads slides[idx], not
+        // pinnedPreviewSlide). Live decoder stays uncontested.
+        autoPlay={surface === 'preview' && !mediaPaused}
+        playsInline
+        preload={surface === 'preview' && mediaPaused ? 'metadata' : 'auto'}
+        crossOrigin="anonymous"
+        // v0.7.221 — GPU compositing + stall-resistance for the LIVE
+        // media surface. The live <video> for media-video slides
+        // paints behind the slide's caption/overlay layers; without
+        // an explicit GPU promotion every overlay repaint forces the
+        // video pixels to repaint too, costing roughly a frame on
+        // low-end hardware (the same root cause as the bgLayer
+        // judder addressed in route.ts L69). translateZ(0) +
+        // will-change moves it to its own composited layer.
+        // disablePictureInPicture/disableRemotePlayback kill the
+        // Chromium overlay buttons that periodically repaint the
+        // surface (operators never want PiP on a broadcast pane).
+        // Gated to surface === 'live' to preserve the v0.7.216-218
+        // decoder-slot invariants on the preview pane (those gates
+        // assume preview is the "cheap" surface; promoting preview
+        // to its own GPU layer would change the contention budget).
+        disablePictureInPicture={surface === 'live'}
+        disableRemotePlayback={surface === 'live'}
+        controlsList="nodownload noremoteplayback noplaybackrate"
+        className="absolute inset-0 w-full h-full"
+        style={
+          surface === 'live'
+            ? {
+                objectFit,
+                transform: 'translateZ(0)',
+                willChange: 'transform, opacity',
+                backfaceVisibility: 'hidden',
+              }
+            : { objectFit }
+        }
+      />
     </div>
   )
 }
@@ -408,8 +758,29 @@ function LiveTranscriptionCard() {
     // canonical detector (same logic that fires the slide auto-stage)
     // so a paragraph appearing here is guaranteed to have triggered a
     // verse panel update — no false positives from word-soup names.
+    //
+    // v0.7.75 — Per operator feedback ("the second image is supposed
+    // to show only the Bible-detected verses, not the whole writings"):
+    // Bible-only mode now extracts JUST the detected reference strings
+    // (e.g. "Genesis 1:1", "John 3:16") instead of leaking the
+    // surrounding sermon speech that happened to contain the trigger
+    // phrase. Each unique reference becomes its own paragraph, in
+    // order of appearance, deduplicated against the previous segment
+    // so the same verse doesn't repeat back-to-back when the speaker
+    // dwells on it. The render below detects this case and styles
+    // each entry as a verse pill rather than running prose.
     if (bibleOnlyTranscription) {
-      segs = segs.filter((p) => detectVersesInText(p).length > 0)
+      const refs: string[] = []
+      let last = ''
+      for (const p of segs) {
+        for (const ref of detectVersesInText(p)) {
+          if (ref !== last) {
+            refs.push(ref)
+            last = ref
+          }
+        }
+      }
+      return refs.slice(-12)
     }
     return segs.slice(-12)
   })()
@@ -418,61 +789,36 @@ function LiveTranscriptionCard() {
     <Card
       title="Live Transcription"
       badge={
-        // v0.5.49 — The engine picker lives in the BADGE slot now. The
-        // mic Button below already conveys listening state (rose color
-        // + MicOff icon + "Stop" label when active), so the legacy
-        // Listening/Idle pill was redundant. Putting the picker here
-        // frees the actions row for the four control buttons (Bible /
-        // Clear / Mic / Auto) and gives the engine badge full breathing
-        // room. The dot before the label pulses when the mic is hot,
-        // preserving the "live" cue.
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              title={engineTitle}
-              className={cn(
-                'inline-flex items-center gap-1 h-5 px-1.5 rounded-md text-[9px] uppercase tracking-wider font-semibold border whitespace-nowrap',
-                'bg-card hover:bg-muted text-foreground border-border',
-              )}
-            >
-              <span
-                className={cn(
-                  'inline-block h-1.5 w-1.5 rounded-full',
-                  engineDotColor,
-                  isListening && 'animate-pulse',
-                )}
-              />
-              {engineLabel}
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[14rem]">
-            {/* v0.7.19 — OpenAI Whisper option removed. The OpenAI
-                project key was rotated and never propagated cleanly to
-                the deployed proxy, so Whisper-routed chunks 401-ed for
-                every customer in the field. We've consolidated on
-                Deepgram for both the streaming and batched HTTP paths
-                — the picker now reflects that. 'Auto' is kept so old
-                presets keep working; with only Deepgram in the chain
-                it behaves identically to picking 'Deepgram' directly. */}
-            {([
-              { v: 'auto',     label: 'Auto (recommended)',    sub: 'Deepgram-only (single engine)' },
-              { v: 'deepgram', label: 'Deepgram (streaming)',  sub: 'Lowest latency, requires WSS' },
-            ] as const).map((opt) => (
-              <DropdownMenuItem
-                key={opt.v}
-                onClick={() => setPreferredEngine(opt.v)}
-                className="flex flex-col items-start gap-0.5"
-              >
-                <span className="flex items-center gap-2 text-[12px] font-medium">
-                  {preferredEngine === opt.v && <Check className="h-3 w-3 text-emerald-400" />}
-                  {opt.label}
-                </span>
-                <span className="text-[10px] text-muted-foreground pl-5">{opt.sub}</span>
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        // v0.7.144 — REVERT v0.7.141's full-badge hide.
+        //
+        // v0.7.141 wrapped this whole DropdownMenu in `<div hidden>` to
+        // remove the "DG" pill operators complained about
+        // (https://imgur.com/a/elWJh5G). That ALSO hid the pulsing
+        // colored dot inside the pill — and that dot was the operators'
+        // primary visual cue that the mic was hot and transcription was
+        // running. With it gone the LIVE TRANSCRIPTION card looked dead
+        // even when audio was streaming, and operators reported the app
+        // had stopped transcribing entirely.
+        //
+        // New compromise: keep the pulsing-dot indicator (so operators
+        // can SEE the mic is live at a glance), drop the "DG" text label
+        // (the original UI-noise complaint), and drop the dropdown
+        // trigger entirely (the picker is functionally vestigial since
+        // v0.7.19 collapsed every option to Deepgram). Result is a
+        // single, unobtrusive emerald/amber dot that pulses iff the mic
+        // is capturing. `engineDotColor`, `preferredEngine`,
+        // `setPreferredEngine`, `engineLabel`, and `engineTitle` are
+        // still defined above and consumed by the speech-provider chain
+        // — only the visible chrome here is trimmed.
+        <span
+          title={isListening ? 'Live — microphone is capturing audio' : 'Idle — click Mic to start transcription'}
+          aria-label={isListening ? 'Live' : 'Idle'}
+          className={cn(
+            'inline-block h-2 w-2 rounded-full',
+            engineDotColor,
+            isListening && 'animate-pulse',
+          )}
+        />
       }
       actions={
         <div className="flex items-center gap-1">
@@ -623,41 +969,67 @@ function LiveTranscriptionCard() {
                   Previously this only showed in the rose error line
                   above; engine identity was buried in the Card BADGE
                   picker dot which operators didn't notice. */}
+              {/* v0.7.81 — Engine identity removed per operator
+                  request (the row leaked "Engine: DEEPGRAM" + tech
+                  jargon to congregants reading the operator's screen
+                  during a live service). We keep the inline live-/
+                  error- state so a "dead transcription" column still
+                  tells the operator what's happening, just without
+                  naming the speech vendor. */}
               <div className="mt-3 text-[10px] text-muted-foreground space-y-0.5">
-                <div>
-                  Engine:{' '}
-                  <span className="text-foreground font-mono uppercase">
-                    {activeEngineName ?? 'idle'}
-                  </span>
-                  {preferredEngine !== 'auto' && (
-                    <span className="text-muted-foreground"> (pinned: {preferredEngine})</span>
-                  )}
-                </div>
                 {isListening && (
                   <div className="text-emerald-400">Listening — speak normally…</div>
                 )}
                 {speechError && (
-                  <div className="text-rose-400 break-words">Last error: {speechError}</div>
+                  <div className="text-rose-400 break-words">{speechError}</div>
                 )}
               </div>
             </div>
           )}
-          {paragraphs.map((para, i) => (
-            <p
-              key={i}
-              className={cn(
-                'text-[12px] leading-relaxed text-foreground',
-                // Add visible spacing between paragraphs
-                i > 0 && 'mt-3 pt-3 border-t border-border/40',
+          {bibleOnlyTranscription ? (
+            // v0.7.75 — Bible-only mode renders each detected reference
+            // as a compact pill. No surrounding speech leaks through.
+            paragraphs.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {paragraphs.map((ref, i) => (
+                  <span
+                    key={`${ref}-${i}`}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-500/15 border border-amber-500/40 text-amber-200 text-[11px] font-mono font-semibold"
+                  >
+                    <BookOpen className="h-3 w-3" />
+                    {ref}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              liveTranscript ? (
+                <p className="text-[11px] text-muted-foreground italic">
+                  Listening — no Bible references detected yet. Toggle the{' '}
+                  <span className="text-foreground font-semibold">Bible</span> button
+                  off to see the full transcript.
+                </p>
+              ) : null
+            )
+          ) : (
+            <>
+              {paragraphs.map((para, i) => (
+                <p
+                  key={i}
+                  className={cn(
+                    'text-[12px] leading-relaxed text-foreground',
+                    // Add visible spacing between paragraphs
+                    i > 0 && 'mt-3 pt-3 border-t border-border/40',
+                  )}
+                >
+                  {normalizeTranscriptForDisplay(para)}
+                </p>
+              ))}
+              {liveInterimTranscript && (
+                <p className="text-[12px] leading-relaxed text-muted-foreground italic">
+                  {normalizeTranscriptForDisplay(liveInterimTranscript)}…
+                </p>
               )}
-            >
-              {normalizeTranscriptForDisplay(para)}
-            </p>
-          ))}
-          {liveInterimTranscript && (
-            <p className="text-[12px] leading-relaxed text-muted-foreground italic">
-              {normalizeTranscriptForDisplay(liveInterimTranscript)}…
-            </p>
+            </>
           )}
         </div>
       </div>
@@ -673,143 +1045,22 @@ function LiveTranscriptionCard() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// DISPLAY STAGE — operator-side mirror of the secondary screen
+// DISPLAY STAGE — REMOVED in v0.7.158
 // ──────────────────────────────────────────────────────────────────────
-// Renders a single slide the way the congregation route would render
-// it given the current Display Mode setting. Used by both the Preview
-// and Live panes so any change to Settings → Display Mode (Full vs
-// Lower Third / Lower Third on Black) reflects on the operator's
-// staging frames in real time, matching what the projector / NDI feed
-// shows. Typography (font family, font size bucket, text scale, text
-// shadow, alignment) and lower-third geometry (position + height
-// bucket) all flow from the same `settings` object the broadcaster
-// transmits, so all three surfaces stay perfectly in sync.
-function DisplayStage({
-  slide,
-  themeKey,
-  settings,
-  isLive,
-}: {
-  slide: Slide
-  themeKey?: string
-  settings: ReturnType<typeof useAppStore.getState>['settings']
-  isLive?: boolean
-}) {
-  const dm = settings.displayMode || 'full'
-  const isLT = dm === 'lower-third' || dm === 'lower-third-black'
-  if (!isLT) {
-    return (
-      <SlideThumb
-        slide={slide}
-        themeKey={themeKey || settings.congregationScreenTheme}
-        size="lg"
-        settings={settings}
-        isLive={isLive}
-      />
-    )
-  }
-  const isBlackBackdrop = dm === 'lower-third-black'
-  const ltPos = settings.lowerThirdPosition === 'top' ? 'top' : 'bottom'
-  const ltHeightMap = { sm: 22, md: 33, lg: 45 } as const
-  const ltHeightPct =
-    ltHeightMap[settings.lowerThirdHeight as keyof typeof ltHeightMap] ?? 33
-  const refLine =
-    settings.showReferenceOnOutput !== false && slide.title
-      ? `${slide.title}${slide.subtitle ? ' — ' + slide.subtitle : ''}`
-      : ''
-  const bodyLines: string[] =
-    slide.type === 'title'
-      ? [slide.title || '', slide.subtitle || ''].filter(Boolean)
-      : slide.content && slide.content.length
-        ? [slide.content.join(' ').replace(/\s+/g, ' ').trim()]
-        : slide.title
-          ? [slide.title]
-          : []
-  const FS_MULT = { sm: 0.85, md: 1, lg: 1.25, xl: 1.5 } as const
-  const rawScale = typeof settings.textScale === 'number' ? settings.textScale : 1
-  const scale =
-    Math.min(2, Math.max(0.5, rawScale)) *
-    (FS_MULT[settings.fontSize as keyof typeof FS_MULT] || 1)
-  const fontStack = getFontStack(settings.fontFamily)
-  const wantsShadow = settings.textShadow !== false
-  const shadowCss = wantsShadow ? '0 2px 12px rgba(0,0,0,0.4)' : 'none'
-  const ta = settings.textAlign ?? 'center'
-  const totalChars = bodyLines.join(' ').length
-  const bandRaw =
-    totalChars > 320 ? 5 : totalChars > 180 ? 7 : totalChars > 90 ? 9 : 11
-  const band = bandRaw * scale
-  const bodyMin = Math.max(7, 9 * scale)
-  const bodyMax = Math.max(14, 30 * scale)
-  const refMin = Math.max(6, 7 * scale)
-  const refMax = Math.max(11, 20 * scale)
-  return (
-    <div className="relative w-full aspect-video bg-black overflow-hidden ring-1 ring-border">
-      {!isBlackBackdrop && settings.customBackground && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={settings.customBackground}
-          alt=""
-          className="absolute inset-0 w-full h-full object-cover opacity-40"
-        />
-      )}
-      <div
-        className="absolute left-0 right-0 flex items-center justify-center"
-        style={{
-          [ltPos]: '6%',
-          height: `${ltHeightPct}%`,
-          padding: '0 6%',
-          containerType: 'size',
-        }}
-      >
-        <div
-          className="w-full h-full max-w-[68rem] mx-auto rounded-md flex flex-col justify-center text-white"
-          style={{
-            background: 'rgba(0,0,0,0.85)',
-            backdropFilter: 'blur(8px)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            padding: '3% 5%',
-            gap: '1cqh',
-            overflow: 'hidden',
-            fontFamily: fontStack,
-            textAlign: ta,
-            alignItems:
-              ta === 'left' ? 'flex-start' : ta === 'right' ? 'flex-end' : 'center',
-          }}
-        >
-          {refLine && (
-            <div
-              className="opacity-70 font-medium leading-tight"
-              style={{
-                fontSize: `clamp(${refMin}px, min(${2 * scale}cqw, ${4 * scale}cqh), ${refMax}px)`,
-                textShadow: shadowCss,
-              }}
-            >
-              {refLine}
-            </div>
-          )}
-          {bodyLines.map((line, i) => (
-            <div
-              key={i}
-              className="font-semibold leading-snug w-full"
-              style={{
-                fontSize: `clamp(${bodyMin}px, min(${band * 0.55}cqw, ${band}cqh), ${bodyMax}px)`,
-                textShadow: shadowCss,
-              }}
-            >
-              {line}
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="absolute top-1 left-1 z-10">
-        <Badge className="text-[8px] px-1 py-0 font-bold uppercase tracking-wider border-0 bg-sky-600 text-white">
-          {isBlackBackdrop ? 'L/3 · Black · ' : 'Lower Third · '}
-          {ltPos}
-        </Badge>
-      </div>
-    </div>
-  )
-}
+// ──────────────────────────────────────────────────────────────────────
+// DISPLAY STAGE — REMOVED in v0.7.158
+// ──────────────────────────────────────────────────────────────────────
+// The hand-rolled React mirror of the congregation renderer was the
+// last surface in the app that did NOT consume the canonical
+// /api/output/congregation route. Operators kept reporting drift
+// between Settings PREVIEW (iframe) and the Main Preview / Live
+// Display panes (DisplayStage). Both panes now use <OutputPreview>
+// directly — same iframe, same payload, byte-identical output across
+// Settings preview, Main Preview, Live Display, NDI Live Preview,
+// Browser Source URL, and the Second Screen. Any future render-
+// affecting field added to buildOutputPayload() is honoured on all
+// six surfaces automatically with no parallel React mockup to update.
+
 
 // ──────────────────────────────────────────────────────────────────────
 // PREVIEW
@@ -829,7 +1080,46 @@ function PreviewCard() {
     setPreviewAudio,
   } = useAppStore()
   const previewVideoPlaying = useAppStore((s) => s.previewVideoPlaying)
-  const previewSlide = slides[previewSlideIndex] || null
+  const isLive = useAppStore((s) => s.isLive)
+  // v0.7.201 — Pinned preview slide takes precedence over the
+  // slides[previewSlideIndex] lookup. Operator's single-click in
+  // any of the 5 columns plants a direct Slide reference that
+  // nothing else (mystery mutation, Zustand notification race,
+  // setSlides reset) can overwrite. Pin is cleared on setIsLive(true)
+  // / selectScheduleItem / removeAllScheduleItems / clearSchedule,
+  // at which point this falls back to the normal index-based lookup.
+  const pinnedPreviewSlide = useAppStore((s) => s.pinnedPreviewSlide)
+  const previewSlide = pinnedPreviewSlide ?? slides[previewSlideIndex] ?? null
+  // v0.7.186 — Restore the v0.7.157-and-earlier behaviour where the
+  // Preview pane FREEZES on its current frame the moment the same
+  // media is sent to Live, so the operator never hears doubled audio
+  // (echo) and never sees two ticking copies of the same clip. The
+  // iframe renderer (route.ts) already pauses any media slide whose
+  // payload carries `mediaPaused:true`, so we splice that flag in
+  // here when the Preview slide and the Live slide point at the same
+  // mediaUrl. Verse / image / theme slides are passed through
+  // unchanged — the pause-on-promote rule is media-only.
+  // v0.7.203 — liveSlide direct ref (set by auto-fire via setLiveAuto)
+  // takes precedence over slides[liveSlideIndex], matching buildOutputPayload.
+  const liveSlideRef = useAppStore((s) => s.liveSlide)
+  const liveSlide = liveSlideRef ?? (liveSlideIndex >= 0 ? slides[liveSlideIndex] : null)
+  const previewMediaIsLive = !!(
+    isLive &&
+    previewSlide?.type === 'media' &&
+    liveSlide?.type === 'media' &&
+    previewSlide.mediaUrl &&
+    previewSlide.mediaUrl === liveSlide.mediaUrl
+  )
+  const effectivePreviewSlide = previewMediaIsLive && previewSlide
+    ? { ...previewSlide, mediaPaused: true }
+    : previewSlide
+  // Whether to mount the hidden meter video at all — only for video
+  // media slides (images have no audio + no need for a meter signal).
+  const previewIsVideoMedia = !!(
+    previewSlide?.type === 'media' &&
+    previewSlide.mediaKind === 'video' &&
+    previewSlide.mediaUrl
+  )
   const [navigating, setNavigating] = useState(false)
   // Transport bar was removed from Preview — see comment near the
   // bottom of this card. Playback for the live video is now driven
@@ -948,26 +1238,62 @@ function PreviewCard() {
         </div>
         <div className="flex-1 min-w-0 flex items-center justify-center">
           {previewSlide ? (
-            // v0.5.51 — wrap the rendered slide in a StableStage so
-            // the bible text stays still (and keeps every alignment)
-            // while the operator drags the column splitter between
-            // Preview and the panels next to it. Inside StableStage
-            // the stage is always 1920×1080 and only a GPU transform
-            // is animated on resize — text never reflows mid-drag.
-            <StableStage>
-              {/* The Preview pane mirrors the Live pane's display-mode
-                  composite so flipping Settings → Display Mode between
-                  Full Screen and Lower Third reflects on Preview
-                  immediately — not just after a slide is sent live.
-                  Operators kept asking "did it apply?" when they could
-                  see it on the secondary screen but not in the
-                  staging pane next to it. */}
-              <DisplayStage
-                slide={previewSlide}
-                themeKey={previewSlide.background || settings.congregationScreenTheme}
-                settings={settings}
-              />
-            </StableStage>
+            previewIsVideoMedia && previewSlide.mediaUrl ? (
+              // v0.7.193 — Real React <video> for media-video preview.
+              // Operator can play/pause/scrub/loop/mute it directly;
+              // the audio analyser feeds the green VU bar; the visible
+              // element is the SOLE preview audio source (iframe path
+              // is bypassed entirely for media-video to avoid double-
+              // audio).
+              //
+              // v0.7.193-hotfix.2 — When the same media is on Live, do
+              // NOT mount a second <video> here. Most GPUs cap hardware
+              // video decode at 2-4 concurrent streams; the duplicate
+              // Preview decoder pushed total decoders into software-
+              // fallback territory and stuttered every other surface.
+              // Show a static "ON AIR" placard instead — the operator
+              // sees the same clip on the Live Display side anyway.
+              <StableStage isLive={false}>
+                {previewMediaIsLive ? (
+                  <div
+                    className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border flex flex-col items-center justify-center text-center"
+                    style={{ aspectRatio: '16 / 9' }}
+                  >
+                    <div className="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-0.5 rounded bg-red-600/90 text-white text-[10px] uppercase tracking-wider font-semibold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                      ON AIR
+                    </div>
+                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground/70 mb-1">
+                      Preview matches Live
+                    </div>
+                    <div className="text-[10px] text-muted-foreground/50 max-w-[80%]">
+                      This clip is on air — Preview is paused to keep playback smooth.
+                    </div>
+                  </div>
+                ) : (
+                  <MediaVideoSurface
+                    surface="preview"
+                    src={previewSlide.mediaUrl}
+                    fit={previewSlide.mediaFit ?? 'fit'}
+                    forceMute={!previewAudio}
+                  />
+                )}
+              </StableStage>
+            ) : (
+              // v0.7.158 — single-renderer architecture for everything
+              // else (scripture, title, image, theme). The iframe path
+              // keeps every typography / lower-third / background axis
+              // in lockstep with the projector via the canonical
+              // /api/output/congregation route.
+              <StableStage isLive={false}>
+                <OutputPreview
+                  derivePreview
+                  hideModeBadge
+                  className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
+                  aspectOverride="16 / 9"
+                />
+              </StableStage>
+            )
           ) : (
             <div className="text-center text-[11px] text-muted-foreground">
               <BookOpen className="h-8 w-8 mx-auto opacity-30 mb-2" />
@@ -976,23 +1302,28 @@ function PreviewCard() {
           )}
         </div>
       </div>
-      {/* Symmetry strip — mirrors Live Display's always-visible
-          bottom transport row (Mic / Vol / Prev / Go Live / Next) so
-          both cards reserve the same vertical real estate. Without
-          this, the Preview body has more room than Live Display and
-          the 16:9 stages render at different sizes side-by-side.
-          Operators specifically asked for the two stages to be
-          visual twins so they can A/B compare what's queued vs
-          what's live without optical illusions. Kept content-light
-          (just chapter prev/next mirrors plus a spacer) since the
-          authoritative chapter nav already lives in the header — we
-          just need the height. */}
-      <div
-        className="border-t border-border/60 px-3 py-2 flex items-center justify-end gap-3 bg-card/30 shrink-0"
-        aria-hidden="true"
-        role="presentation"
-      >
-        <div className="h-7" />
+      {/* v0.7.215 — Symmetry strip now carries an explicit Clear
+          button that wipes the Preview pane only. Independent of
+          the Live pane's Clear (see LiveDisplayCard's bottom
+          toolbar). Operator asked for one-click wipe per pane so
+          the two surfaces never interfere. Internally calls
+          clearPinnedPreview() + setPreviewSlideIndex(-1) only —
+          slides[] / live state untouched. */}
+      <div className="border-t border-border/60 px-3 py-2 flex items-center justify-end gap-3 bg-card/30 shrink-0">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            useAppStore.getState().clearPinnedPreview()
+            useAppStore.getState().setPreviewSlideIndex(-1)
+          }}
+          disabled={!previewSlide}
+          title="Clear the Preview pane (does not affect Live)"
+          className="h-7 px-3 text-[10px] uppercase tracking-wider font-semibold text-muted-foreground hover:text-foreground border border-border gap-1.5"
+        >
+          <CircleSlash className="h-3 w-3" />
+          Clear Preview
+        </Button>
       </div>
       {/* Preview transport — Play / Pause + scrubbable seek bar. Only
           rendered for media-video preview slides; controls the actual
@@ -1022,6 +1353,23 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
   const [paused, setPaused] = useState(true)
   const [scrubbing, setScrubbing] = useState(false)
   const scrubValueRef = useRef(0)
+  // v0.7.193-hotfix.2 — Per-surface state: each VideoTransport drives
+  // ONLY its own pair of store fields, so the Preview deck never moves
+  // the Live deck (and vice versa). Loop, pause and the master clock
+  // are all per-surface now. The SSE broadcast (NDI/OBS/secondary)
+  // follows the LIVE pair only.
+  const mediaLoop = useAppStore((s) =>
+    surface === 'preview' ? s.previewMediaLoop : s.liveMediaLoop,
+  )
+  const setMediaLoop = useAppStore((s) =>
+    surface === 'preview' ? s.setPreviewMediaLoop : s.setLiveMediaLoop,
+  )
+  const setMediaPaused = useAppStore((s) =>
+    surface === 'preview' ? s.setPreviewMediaPaused : s.setLiveMediaPaused,
+  )
+  const setOwnCurrentTime = useAppStore((s) =>
+    surface === 'preview' ? s.setPreviewMediaCurrentTime : s.setLiveMediaCurrentTime,
+  )
 
   // Find the live <video> element for this surface and poll its
   // playback state. We re-query on every tick because slides can swap
@@ -1054,13 +1402,37 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
   const onPlay = () => {
     const el = findVideo()
     if (!el) return
+    // Mirror to the master mediaPaused flag so iframe consumers (NDI,
+    // OBS, secondary screen) follow the operator's play/pause from
+    // either Preview or Live transport.
+    setMediaPaused(false)
     el.play().catch(() => {})
   }
   const onPause = () => {
     const el = findVideo()
     if (!el) return
+    setMediaPaused(true)
     el.pause()
   }
+  // v0.7.193 — Stop = pause + reset to 0. Operators expect this from
+  // every other broadcast tool they've used (EasyWorship / ProPresenter
+  // / vMix). Mirrors the timestamp into the master clock so every
+  // surface rewinds together.
+  const onStop = () => {
+    const el = findVideo()
+    setMediaPaused(true)
+    if (el) {
+      try { el.currentTime = 0 } catch { /* ignore */ }
+      el.pause()
+    }
+    try { setOwnCurrentTime(0) } catch { /* ignore */ }
+    setCurrent(0)
+  }
+  // v0.7.193 — Loop toggle. Writes to a global store flag the
+  // MediaVideoSurface (in-app) AND the iframe renderer both honour, so
+  // a looped preview also loops on Live, NDI, OBS and the secondary
+  // screen.
+  const onToggleLoop = () => setMediaLoop(!mediaLoop)
   const onScrubInput = (v: number) => {
     scrubValueRef.current = v
     setCurrent(v)
@@ -1069,10 +1441,9 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
     const el = findVideo()
     if (el && Number.isFinite(scrubValueRef.current)) {
       el.currentTime = scrubValueRef.current
-      // Push the scrubbed timestamp into the master clock so the
-      // other surfaces (Live / congregation) seek to match — this is
-      // what makes scrubbing while paused stay in sync everywhere.
-      try { useAppStore.getState().setMediaCurrentTime(scrubValueRef.current) } catch { /* ignore */ }
+      // v0.7.193-hotfix.2 — Write to OUR OWN clock only. The other
+      // surface keeps its own playhead untouched.
+      try { setOwnCurrentTime(scrubValueRef.current) } catch { /* ignore */ }
     }
     setScrubbing(false)
   }
@@ -1094,6 +1465,27 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
         title={paused ? 'Play' : 'Pause'}
       >
         {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+      </Button>
+      <Button
+        size="sm"
+        variant="secondary"
+        className="h-7 w-7 p-0 shrink-0"
+        onClick={onStop}
+        title="Stop (rewind to 0)"
+      >
+        <Square className="h-3 w-3 fill-current" />
+      </Button>
+      <Button
+        size="sm"
+        variant="secondary"
+        className={cn(
+          'h-7 w-7 p-0 shrink-0',
+          mediaLoop && 'bg-sky-500/20 border border-sky-500/40 text-sky-300',
+        )}
+        onClick={onToggleLoop}
+        title={mediaLoop ? 'Loop ON — click to disable' : 'Loop OFF — click to enable'}
+      >
+        <Repeat className="h-3.5 w-3.5" />
       </Button>
       <span className="text-[10px] font-mono text-muted-foreground w-9 text-right tabular-nums">
         {fmt(current)}
@@ -1419,13 +1811,22 @@ function LiveDisplayCard({
     hasShownContent,
     liveBroadcastAudio,
     setLiveBroadcastAudio,
-    liveMonitorAudio,
-    setLiveMonitorAudio,
   } = useAppStore()
+  // v0.7.78 — Voice Control + Speaker-Follow toggles surfaced in the
+  // Live Output column header so the operator can flip them mid-show
+  // without trekking back to Settings (the CardDescription already
+  // claims they're here, so this brings reality in line with copy).
+  const voiceControlEnabled = useAppStore((s) => s.voiceControlEnabled)
+  const setVoiceControlEnabled = useAppStore((s) => s.setVoiceControlEnabled)
+  const speakerFollowEnabled = useAppStore((s) => s.speakerFollowEnabled)
+  const setSpeakerFollowEnabled = useAppStore((s) => s.setSpeakerFollowEnabled)
   const liveVideoPlaying = useAppStore((s) => s.liveVideoPlaying)
-  const mediaPaused = useAppStore((s) => s.mediaPaused)
-  const setMediaPaused = useAppStore((s) => s.setMediaPaused)
-  const liveSlide = liveSlideIndex >= 0 ? slides[liveSlideIndex] : null
+  const mediaPaused = useAppStore((s) => s.liveMediaPaused)
+  const setMediaPaused = useAppStore((s) => s.setLiveMediaPaused)
+  // v0.7.203 — liveSlide direct ref (set by auto-fire via setLiveAuto)
+  // takes precedence over slides[liveSlideIndex], matching buildOutputPayload.
+  const liveSlideRef = useAppStore((s) => s.liveSlide)
+  const liveSlide = liveSlideRef ?? (liveSlideIndex >= 0 ? slides[liveSlideIndex] : null)
   // Interactive Scale Control state. The slider / drag handle write
   // to `size` (the TARGET); the displayed transform uses `actualSize`,
   // which eases toward the target on every animation frame. That
@@ -1463,6 +1864,49 @@ function LiveDisplayCard({
       }
       actions={
         <div className="flex items-center gap-1">
+          {/* v0.7.78 — Voice Control toggle (the Settings copy
+              promised this here; now it actually exists). When ON,
+              the speech provider listens for "next verse",
+              "previous verse", "go to John 3:16", "scroll up/down",
+              "start/pause/stop auto scroll", "clear screen",
+              "blank screen", and the LLM-extended translation /
+              quote intents. Mic must still be running. */}
+          <button
+            onClick={() => setVoiceControlEnabled(!voiceControlEnabled)}
+            className={cn(
+              'flex items-center gap-1 h-6 px-2 rounded text-[10px] uppercase tracking-wider font-semibold border transition-colors',
+              voiceControlEnabled
+                ? 'bg-amber-500/20 text-amber-200 border-amber-500/50'
+                : 'bg-transparent text-muted-foreground border-transparent hover:text-foreground',
+            )}
+            title={
+              voiceControlEnabled
+                ? 'Voice Control ON — listening for spoken commands. Click to disable.'
+                : 'Voice Control OFF — click to enable. Mic must be running on the Live tab.'
+            }
+          >
+            <Mic className="h-3 w-3" />
+            Voice
+          </button>
+          {/* v0.7.78 — Speaker-Follow toggle. When ON, a multi-verse
+              passage on Live auto-advances the highlight to the
+              verse the preacher is currently reading. */}
+          <button
+            onClick={() => setSpeakerFollowEnabled(!speakerFollowEnabled)}
+            className={cn(
+              'flex items-center gap-1 h-6 px-2 rounded text-[10px] uppercase tracking-wider font-semibold border transition-colors',
+              speakerFollowEnabled
+                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/50'
+                : 'bg-transparent text-muted-foreground border-transparent hover:text-foreground',
+            )}
+            title={
+              speakerFollowEnabled
+                ? 'Speaker-Follow ON — live highlight advances with the preacher. Click to disable.'
+                : 'Speaker-Follow OFF — click to enable so the live highlight tracks the preacher.'
+            }
+          >
+            Follow
+          </button>
           <button
             onClick={() => setHidden(!hidden)}
             className={cn(
@@ -1494,29 +1938,14 @@ function LiveDisplayCard({
     >
       <div className="flex-1 min-h-0 flex items-stretch p-2 gap-2 relative">
         <div className="flex-1 min-w-0 flex items-center justify-center relative">
-        {/* Startup splash. While the operator hasn't put anything on
-            air yet (fresh session) we render a transparent branded
-            text mark — pure white "Scripture AI" with the WassMedia
-            attribution underneath — so both the operator's Live
-            Display and the congregation TV match. Disappears on the
-            first cue. Style is intentionally text-only with NO logo
-            background, per the Live Display spec. */}
-        {showStartupLogo && !hidden && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center pointer-events-none bg-transparent text-white">
-            <div
-              className="font-semibold tracking-tight opacity-40"
-              style={{ fontSize: 'clamp(1rem, 5cqi, 3rem)', lineHeight: 1.1 }}
-            >
-              Scripture AI
-            </div>
-            <div
-              className="mt-2 opacity-30"
-              style={{ fontSize: 'clamp(0.55rem, 1.6cqi, 0.95rem)' }}
-            >
-              Powered By WassMedia (+233246798526)
-            </div>
-          </div>
-        )}
+        {/* v0.7.158 — Startup splash overlay REMOVED. The congregation
+            route renders the identical "Scripture AI / Powered By
+            WassMedia" splash itself when `showStartupLogo` is true in
+            the payload (see /api/output/congregation/route.ts line
+            ~159 + ~600). With the Live Display now embedding that
+            same iframe via `<OutputPreview mirrorLive>`, it appears
+            on its own — keeping a parallel React copy here would
+            double-render the text. */}
         {/* Always render the themed background, even when no scripture
             is on air. This gives the operator a constant "what the
             congregation will see" preview instead of a black void, and
@@ -1531,205 +1960,61 @@ function LiveDisplayCard({
             NDI feed) will actually show — same position, same size,
             same styling — and updates in real time as the operator
             tweaks lower-third position / height in Settings. */}
-        {!hidden && (() => {
-          const dm = settings.displayMode || 'full'
-          const isLT = dm === 'lower-third' || dm === 'lower-third-black'
-          const ltPos = settings.lowerThirdPosition === 'top' ? 'top' : 'bottom'
-          // lowerThirdHeight is an enum ('sm' | 'md' | 'lg') in the
-          // store — map it to the same percentage values the
-          // congregation renderer uses so the preview, the secondary
-          // screen and the NDI feed show identical bar heights.
-          const ltHeightMap = { sm: 22, md: 33, lg: 45 } as const
-          const ltHeightPct = ltHeightMap[settings.lowerThirdHeight] ?? 33
-          const isBlackBackdrop = dm === 'lower-third-black'
-          const slide =
-            liveSlide ?? {
-              id: 'lv-bg',
-              type: 'blank' as const,
-              title: '',
-              subtitle: '',
-              content: [],
-              background: settings.congregationScreenTheme,
-            }
-          if (!isLT) {
-            return (
-              // v0.5.51 — StableStage replaces the previous bare
-              // transform-scale wrapper. The user-supplied SIZE
-              // slider value (`actualSize`) is now multiplied on top
-              // of the auto-fit-to-column scale, so the slider still
-              // works exactly as before AND the bible text stays
-              // perfectly still while the operator drags the column
-              // splitter (no font-size jitter, no word-wrap shifts,
-              // no alignment drift mid-drag). The on-air red ring is
-              // moved to StableStage's outer (device-pixel sized) so
-              // it stays a crisp 2px border on narrow columns rather
-              // than getting scaled to sub-pixel thickness with the
-              // slide.
-              <StableStage scale={actualSize} isLive={!!liveSlide}>
-                <SlideThumb
-                  slide={slide}
-                  themeKey={liveSlide?.background || settings.congregationScreenTheme}
-                  isLive={!!liveSlide}
-                  size="lg"
-                  settings={settings}
-                />
-              </StableStage>
-            )
-          }
-          // Build the verse reference + body the same way the
-          // congregation renderer does so the preview matches the
-          // secondary screen and NDI feed exactly.
-          const refLine =
-            settings.showReferenceOnOutput !== false && slide.title
-              ? `${slide.title}${slide.subtitle ? ' — ' + slide.subtitle : ''}`
-              : ''
-          // Render verse / lyric content as a single paragraph so all
-          // words sit on the same baseline. Title slides keep title +
-          // subtitle as two distinct lines because they're a real
-          // hierarchy, not a wrapped paragraph.
-          const bodyLines: string[] =
-            slide.type === 'title'
-              ? [slide.title || '', slide.subtitle || ''].filter(Boolean)
-              : slide.content && slide.content.length
-                ? [slide.content.join(' ').replace(/\s+/g, ' ').trim()]
-                : slide.title
-                  ? [slide.title]
-                  : []
-          return (
-            // v0.5.51 — same StableStage wrap as the full-screen
-            // branch above, applied to the lower-third composite
-            // path. Without this, dragging the column splitter
-            // re-evaluated `cqw`/`cqh` inside the LT bar every
-            // frame and the bible text inside the bar would jiggle
-            // and re-wrap as the column width changed. Now the LT
-            // bar lives inside a 1920×1080 reference stage that is
-            // simply scaled by transform — text is frozen. The
-            // small "Lower Third · bottom" reference badge is
-            // hoisted out via the `overlay` prop so it stays
-            // readable at the column's real pixel size instead of
-            // shrinking with the rest of the stage.
-            <StableStage
-              scale={actualSize}
-              isLive={!!liveSlide}
-              overlay={
-                <div className="absolute top-1 left-1 z-10">
-                  <Badge className="text-[8px] px-1 py-0 font-bold uppercase tracking-wider border-0 bg-sky-600 text-white">
-                    {isBlackBackdrop ? 'L/3 · Black · ' : 'Lower Third · '}
-                    {ltPos}
-                  </Badge>
-                </div>
-              }
-            >
-              <div className="relative w-full aspect-video bg-black overflow-hidden ring-1 ring-border">
-                {/* lower-third uses the themed/custom background as
-                    backdrop; lower-third-black uses pure black so the
-                    bar reads like a broadcast caption (matches the
-                    congregation renderer). */}
-                {!isBlackBackdrop && settings.customBackground && (
-                  <img
-                    src={settings.customBackground}
-                    alt=""
-                    className="absolute inset-0 w-full h-full object-cover opacity-40"
-                  />
-                )}
-                {/* The bar itself. Using safe-area padding (≈6% horiz)
-                    and a translucent dark panel exactly like the .lt-box
-                    in the congregation route. Font sizes use container
-                    query units (cqw) so text scales with the preview
-                    width and never overflows on small operator panes
-                    or huge external displays. */}
-                {/* Bar wrapper. Lift the bar 6% off the chosen edge
-                    so it doesn't hug the bezel (operators reported the
-                    previous build sat too low on TVs). Container query
-                    on the bar wrapper itself so cqw/cqh scale to the
-                    bar — not the whole stage — keeping text inside the
-                    panel on every output size. */}
-                {(() => {
-                  // Mirror the congregation route's typography pipeline so
-                  // the operator's Lower-Third PREVIEW honours every
-                  // Settings → Typography control (font family, font size
-                  // bucket, text scale, text shadow, alignment) — not just
-                  // alignment as it used to. Without this the preview
-                  // looked completely different from the secondary screen
-                  // / NDI feed even though the bar geometry matched.
-                  const FS_MULT = { sm: 0.85, md: 1, lg: 1.25, xl: 1.5 } as const
-                  const rawScale = typeof settings.textScale === 'number' ? settings.textScale : 1
-                  const scale =
-                    Math.min(2, Math.max(0.5, rawScale)) *
-                    (FS_MULT[settings.fontSize as keyof typeof FS_MULT] || 1)
-                  const fontStack = getFontStack(settings.fontFamily)
-                  const wantsShadow = settings.textShadow !== false
-                  const shadowCss = wantsShadow ? '0 2px 12px rgba(0,0,0,0.4)' : 'none'
-                  const ta = settings.textAlign ?? 'center'
-                  const totalChars = bodyLines.join(' ').length
-                  const bandRaw =
-                    totalChars > 320 ? 5 : totalChars > 180 ? 7 : totalChars > 90 ? 9 : 11
-                  const band = bandRaw * scale
-                  const bodyMin = Math.max(7, 9 * scale)
-                  const bodyMax = Math.max(14, 30 * scale)
-                  const refMin = Math.max(6, 7 * scale)
-                  const refMax = Math.max(11, 20 * scale)
-                  return (
-                    <div
-                      className="absolute left-0 right-0 flex items-center justify-center"
-                      style={{
-                        [ltPos]: '6%',
-                        height: `${ltHeightPct}%`,
-                        padding: '0 6%',
-                        containerType: 'size',
-                      }}
-                    >
-                      <div
-                        className="w-full h-full max-w-[68rem] mx-auto rounded-md flex flex-col justify-center text-white"
-                        style={{
-                          background: 'rgba(0,0,0,0.85)',
-                          backdropFilter: 'blur(8px)',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                          padding: '3% 5%',
-                          gap: '1cqh',
-                          overflow: 'hidden',
-                          fontFamily: fontStack,
-                          textAlign: ta,
-                          alignItems:
-                            ta === 'left' ? 'flex-start' : ta === 'right' ? 'flex-end' : 'center',
-                        }}
-                      >
-                        {refLine && (
-                          <div
-                            className="opacity-70 font-medium leading-tight"
-                            style={{
-                              fontSize: `clamp(${refMin}px, min(${2 * scale}cqw, ${4 * scale}cqh), ${refMax}px)`,
-                              textShadow: shadowCss,
-                            }}
-                          >
-                            {refLine}
-                          </div>
-                        )}
-                        {bodyLines.map((line, i) => (
-                          <div
-                            key={i}
-                            className="font-semibold leading-snug w-full"
-                            style={{
-                              fontSize: `clamp(${bodyMin}px, min(${band * 0.55}cqw, ${band}cqh), ${bodyMax}px)`,
-                              textShadow: shadowCss,
-                            }}
-                          >
-                            {line}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )
-                })()}
-                {/* v0.5.51 — the Lower-Third reference badge that
-                    used to live here was hoisted into StableStage's
-                    `overlay` slot above so it renders OUTSIDE the
-                    GPU-scaled inner stage and stays readable at any
-                    column width. */}
-              </div>
+        {!hidden && (
+          liveIsMediaVideo && liveSlide?.mediaUrl ? (
+            // v0.7.193 — Real React <video> for media-video on Live.
+            // The iframe path was returning a black frame for media-
+            // video on Live Display because no operator-side React
+            // tree was mounting a video element. Now the operator sees
+            // the actual clip play, hears it (via globalMuted/monitor
+            // toggles), and the green VU meter has a real signal. The
+            // separate iframe consumers (NDI capture window, OBS
+            // browser source, secondary screen) keep playing the same
+            // media independently from store-pushed SSE state.
+            <StableStage scale={actualSize} isLive={!!liveSlide}>
+              {/* v0.7.221 — `key={liveSlide.mediaUrl}` forces a clean
+                  unmount/remount of the <video> when the live source
+                  URL changes (e.g. operator swaps live to a different
+                  clip via setLiveAuto). Without the key, React reuses
+                  the same DOM <video> with a mutated `src` attribute;
+                  the browser aborts the in-flight playback and races
+                  the new fetch against the still-allocated GPU decoder
+                  slot of the previous clip. Clean unmount releases the
+                  decoder synchronously BEFORE the new element mounts —
+                  no HW decoder slot contention with the preview pane
+                  or NDI capture window during the swap. Operator-
+                  visible bug this fixes: "clicking another media tile
+                  stops the live video" — root cause was decoder slot
+                  exhaustion during a contended swap, masked by the
+                  fact that the EFFECT layer is idempotent (so React
+                  source-grep tests passed) but the BROWSER layer is
+                  not. Same-URL re-renders (pin changes, parent re-
+                  renders driven by other store mutations) keep the
+                  key stable and DO NOT remount — the live <video>
+                  is fully isolated from preview pin clicks. */}
+              <MediaVideoSurface
+                key={liveSlide.mediaUrl}
+                surface="live"
+                src={liveSlide.mediaUrl}
+                fit={liveSlide.mediaFit ?? 'fit'}
+              />
+            </StableStage>
+          ) : (
+            // v0.7.158 — single-renderer architecture. Iframe path for
+            // every non-media-video slide (scripture / title / image /
+            // theme) so typography, lower-third position/height, and
+            // background flow through buildOutputPayload() in lockstep
+            // with the projector / NDI feed.
+            <StableStage scale={actualSize} isLive={!!liveSlide}>
+              <OutputPreview
+                mirrorLive
+                hideModeBadge
+                aspectOverride="16 / 9"
+                className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
+              />
             </StableStage>
           )
-        })()}
+        )}
         {hidden && (
           <div className="text-center text-[11px] text-muted-foreground">
             <CircleSlash className="h-8 w-8 mx-auto opacity-30 mb-2" />
@@ -1738,16 +2023,19 @@ function LiveDisplayCard({
         )}
         </div>
         {/* RIGHT audio rail — sits OUTSIDE the live frame on the
-            right edge, exactly like the Wirecast reference. Stack:
-            VU meter on top, then the broadcast speaker, then the
-            operator headphone toggle. The meter tone follows whichever
-            of the two toggles is currently driving audio. */}
+            right edge. Stack: VU meter on top, then the broadcast
+            speaker toggle. v0.7.216 follow-up #3 — removed the
+            operator-headphone monitor toggle per operator request
+            ("Take the Headphone icon off") and made the remaining
+            volume button actually mute/unmute the live <video> (was
+            a no-op flag pre-fix; MediaVideoSurface now honours
+            `liveBroadcastAudio` via its `muted` computation). */}
         <div className="w-7 shrink-0 flex flex-col items-center gap-1.5 py-1">
           <div className="flex-1 min-h-0 w-full flex justify-center">
             <AudioMeter
-              active={liveBroadcastAudio || liveMonitorAudio}
+              active={liveBroadcastAudio}
               playing={liveVideoPlaying}
-              tone={liveBroadcastAudio ? 'red' : liveMonitorAudio ? 'amber' : 'green'}
+              tone={liveBroadcastAudio ? 'red' : 'green'}
               surface="live"
             />
           </div>
@@ -1756,9 +2044,11 @@ function LiveDisplayCard({
             onClick={() => setLiveBroadcastAudio(!liveBroadcastAudio)}
             title={
               liveBroadcastAudio
-                ? 'Mute broadcast audio'
-                : 'Send audio to broadcast'
+                ? 'Mute live audio (in-app + broadcast)'
+                : 'Unmute live audio (in-app + broadcast)'
             }
+            aria-pressed={liveBroadcastAudio}
+            aria-label={liveBroadcastAudio ? 'Mute live audio' : 'Unmute live audio'}
             className={cn(
               'h-6 w-6 rounded-md border flex items-center justify-center transition-colors shrink-0',
               liveBroadcastAudio
@@ -1770,26 +2060,6 @@ function LiveDisplayCard({
               <Volume2 className="h-3 w-3" />
             ) : (
               <VolumeX className="h-3 w-3" />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setLiveMonitorAudio(!liveMonitorAudio)}
-            title={
-              liveMonitorAudio
-                ? 'Stop monitoring live audio'
-                : 'Monitor live audio in your headphones'
-            }
-            className={cn(
-              'h-6 w-6 rounded-md border flex items-center justify-center transition-colors relative shrink-0',
-              liveMonitorAudio
-                ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
-                : 'bg-black/60 border-border text-muted-foreground hover:text-foreground hover:border-border',
-            )}
-          >
-            <Headphones className="h-3 w-3" />
-            {!liveMonitorAudio && (
-              <span className="absolute inset-x-1 h-px bg-current rotate-45" />
             )}
           </button>
         </div>
@@ -1804,6 +2074,24 @@ function LiveDisplayCard({
             global master volume the slide renderer already honours. */}
         <LiveBottomAudioControls />
         <div className="flex items-center gap-1">
+          {/* v0.7.215 — Explicit Clear Live button. Always visible
+              and independent of the GO LIVE / STOP LIVE toggle so
+              the operator can wipe the Live pane in one click even
+              when isLive=false but a stale slide (e.g. AI direct
+              ref) is still showing. Mirrors the Preview pane's
+              Clear button at the symmetry strip — the two are
+              fully independent. */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onClearLive}
+            disabled={!liveSlide && !isLive}
+            title="Clear the Live pane (does not affect Preview)"
+            className="h-7 px-2 text-[10px] uppercase tracking-wider font-semibold text-muted-foreground hover:text-foreground border border-border gap-1.5"
+          >
+            <CircleSlash className="h-3 w-3" />
+            Clear
+          </Button>
           <Button variant="ghost" size="icon" onClick={onPrev} className="h-7 w-7 text-foreground hover:text-foreground border border-border">
             <ChevronLeft className="h-3.5 w-3.5" />
           </Button>
@@ -1829,37 +2117,12 @@ function LiveDisplayCard({
           </Button>
         </div>
       </div>
-      {/* Live transport row — Pause/Play for the currently-on-air
-          video. Lives BELOW the Live Display body so the operator
-          interrupts the live feed from the same column they sent it
-          from. Hidden for non-video slides. */}
-      {liveIsMediaVideo && (
-        <div className="flex items-center justify-center gap-2 border-t border-border/70 px-2 py-1.5 shrink-0">
-          {mediaPaused ? (
-            <Button
-              size="sm"
-              variant="secondary"
-              className="h-7 px-3 gap-1.5"
-              onClick={() => setMediaPaused(false)}
-              title="Resume live video"
-            >
-              <Play className="h-3.5 w-3.5" />
-              <span className="text-[10px] uppercase tracking-wider font-semibold">Play</span>
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant="secondary"
-              className="h-7 px-3 gap-1.5"
-              onClick={() => setMediaPaused(true)}
-              title="Pause live video"
-            >
-              <Pause className="h-3.5 w-3.5" />
-              <span className="text-[10px] uppercase tracking-wider font-semibold">Pause</span>
-            </Button>
-          )}
-        </div>
-      )}
+      {/* v0.7.193 — Full Live transport (Play/Pause/Stop/Loop + scrub
+          bar) instead of the v0.7.186 single Pause button. Operator
+          asked for parity with EasyWorship/ProPresenter — full deck
+          of broadcast-style controls reachable from the same column
+          the cue was sent from. */}
+      {liveIsMediaVideo && <VideoTransport surface="live" />}
     </Card>
   )
 }
@@ -1869,57 +2132,222 @@ function LiveDisplayCard({
 // ──────────────────────────────────────────────────────────────────────
 function ScriptureFeedCard() {
   const [tab, setTab] = useState<'history' | 'queue'>('history')
+  // v0.7.194-hotfix.7 — Select-to-delete mode. While ON, row clicks
+  // toggle the checkbox instead of firing Preview/Live, and the card
+  // header swaps to a red action bar (Cancel + Delete N). Selection
+  // is reset whenever the tab switches so we never carry History
+  // indices into Queue land or vice versa.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set())
+  useEffect(() => {
+    setSelectedKeys(new Set())
+  }, [tab])
   const {
     verseHistory,
     schedule,
     selectedScheduleItemId,
     selectScheduleItem,
     removeScheduleItem,
+    removeVerseHistoryByIndices,
+    removeScheduleItemsByIds,
     setSlides,
     setPreviewSlideIndex,
     setLiveSlideIndex,
     setIsLive,
+    stageVersePreviewOnly,
+    addScheduleItemQuiet,
+    removeAllVerseHistory,
+    removeAllScheduleItems,
     settings,
     addScheduleItem,
   } = useAppStore()
+  const currentTabEmpty = tab === 'history' ? verseHistory.length === 0 : schedule.length === 0
+  const toggleKey = (k: string) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(k)) next.delete(k)
+      else next.add(k)
+      return next
+    })
+  }
+  const exitSelectMode = () => {
+    setSelectMode(false)
+    setSelectedKeys(new Set())
+  }
+  const deleteSelected = () => {
+    if (tab === 'history') {
+      const indices = Array.from(selectedKeys)
+        .filter((k) => k.startsWith('h:'))
+        .map((k) => Number(k.slice(2)))
+        .filter((n) => Number.isFinite(n))
+      if (indices.length) removeVerseHistoryByIndices(indices)
+    } else {
+      const ids = Array.from(selectedKeys)
+        .filter((k) => k.startsWith('q:'))
+        .map((k) => k.slice(2))
+      if (ids.length) removeScheduleItemsByIds(ids)
+    }
+    exitSelectMode()
+  }
+  const selectedCount = selectedKeys.size
+  // v0.7.194-hotfix.9 Item C — Select All ticks every row in the
+  // active tab using the existing h: / q: discriminator key shape
+  // so the existing deleteSelected handler works unchanged.
+  const selectAllCurrentTab = () => {
+    if (tab === 'history') {
+      setSelectedKeys(new Set(verseHistory.map((_, i) => `h:${i}`)))
+    } else {
+      setSelectedKeys(new Set(schedule.map((s) => `q:${s.id}`)))
+    }
+  }
+  // v0.7.194-hotfix.9 Item C — Delete All wipes the active tab.
+  // History pane: no live state, unconditional wipe. Queue pane:
+  // preserveLive=true so the on-air schedule item stays anchored
+  // and the live broadcast does not get yanked. Confirm dialog
+  // prevents accidental Cmd+click wipes during a service.
+  const deleteAllCurrentTab = () => {
+    const count = tab === 'history' ? verseHistory.length : schedule.length
+    if (count === 0) return
+    const label = tab === 'history' ? `${count} history entries` : `${count} queue items`
+    if (typeof window !== 'undefined' && !window.confirm(`Delete all ${label}? This cannot be undone.`)) {
+      return
+    }
+    if (tab === 'history') removeAllVerseHistory()
+    else removeAllScheduleItems(true)
+    exitSelectMode()
+  }
 
-  // Build the slide for a history verse and load it into the deck.
-  // `live=false` → only the preview cursor moves (operator stages).
-  // `live=true`  → also flips the live cursor + Live mode (on air).
-  // The verse is also recorded in the schedule for later recall, so
-  // we don't lose history just because the operator clicked through
-  // it from the History pane.
+  // v0.7.194-hotfix.4 — Single-click is now PREVIEW-ONLY everywhere.
+  // The `live` parameter is retained for future use but no caller in
+  // the History/Queue tabs passes `true` anymore — operators wanted
+  // explicit "Go Live" actions (the dedicated Live toggle on the
+  // Preview card) rather than accidental on-air pushes from a stray
+  // double-click in the Scripture Feed list.
   const sendVerseFromHistory = (v: typeof verseHistory[number], live: boolean) => {
+    // v0.7.194-hotfix.7 — STABLE id + preview-preserves-live for single-click.
+    const slideId = `verse-${(v.book || v.reference).replace(/\s+/g, '-')}-${v.chapter ?? 0}-${v.verseStart ?? 0}-${v.translation}`
     const slide: Slide = {
-      id: `slide-${Date.now()}`,
+      id: slideId,
       type: 'verse',
       title: v.reference,
       subtitle: v.translation,
       content: (v.text || '').split('\n').filter(Boolean),
       background: settings.congregationScreenTheme,
     }
-    addScheduleItem({
-      type: 'verse',
-      title: v.reference,
-      subtitle: v.translation,
-      slides: [slide],
-    })
-    setSlides([slide])
-    setPreviewSlideIndex(0)
+    // v0.7.194-hotfix.8 — Quiet schedule mutation on preview path so
+    // the on-air slide is preserved by the subsequent
+    // stageVersePreviewOnly. Live path keeps regular addScheduleItem
+    // because going-live intentionally resets slides/live index.
     if (live) {
+      addScheduleItem({
+        type: 'verse',
+        title: v.reference,
+        subtitle: v.translation,
+        slides: [slide],
+      })
+      setSlides([slide])
+      setPreviewSlideIndex(0)
       setLiveSlideIndex(0)
       setIsLive(true)
+    } else {
+      addScheduleItemQuiet({
+        type: 'verse',
+        title: v.reference,
+        subtitle: v.translation,
+        slides: [slide],
+      })
+      stageVersePreviewOnly(slide)
     }
   }
 
   return (
     <Card
-      title="Scripture Feed"
+      title={selectMode && selectedCount > 0 ? `${selectedCount} selected` : 'Scripture Feed'}
       actions={
-        <div className="flex items-center gap-1">
-          <Tab active={tab === 'history'} onClick={() => setTab('history')} icon={History} label="History" />
-          <Tab active={tab === 'queue'} onClick={() => setTab('queue')} icon={ListOrdered} label="Queue" />
-        </div>
+        selectMode ? (
+          // v0.7.194-hotfix.9 Item C — Select-mode action bar now
+          // ALWAYS shows Select All + Delete All; Delete (N) only
+          // appears once ≥1 row is ticked. Cancel returns to the
+          // normal Select-on header. Previous-hotfix.7 layout
+          // conditionally swapped to red bar only at selectedCount>0
+          // which hid Select All when the operator wanted "tick
+          // everything in one click then delete."
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={exitSelectMode}
+              className="h-6 px-2 inline-flex items-center rounded text-[10px] font-semibold text-muted-foreground hover:text-foreground hover:bg-muted/40 border border-border/60"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={selectAllCurrentTab}
+              disabled={currentTabEmpty}
+              className={cn(
+                'h-6 px-2 inline-flex items-center gap-1 rounded text-[10px] font-semibold border transition-colors',
+                'bg-sky-700/30 border-sky-500/60 text-sky-100 hover:bg-sky-600/40',
+                currentTabEmpty && 'opacity-40 cursor-not-allowed',
+              )}
+              title="Tick every row in this tab"
+            >
+              <CheckSquare className="h-3 w-3" />
+              Select All
+            </button>
+            {selectedCount > 0 && (
+              <button
+                type="button"
+                onClick={deleteSelected}
+                className="h-6 px-2 inline-flex items-center gap-1 rounded text-[10px] font-semibold text-white bg-rose-600 hover:bg-rose-500 border border-rose-500/60"
+              >
+                <Trash2 className="h-3 w-3" />
+                Delete ({selectedCount})
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={deleteAllCurrentTab}
+              disabled={currentTabEmpty}
+              className={cn(
+                'h-6 px-2 inline-flex items-center gap-1 rounded text-[10px] font-semibold border transition-colors',
+                'bg-rose-900/40 border-rose-600/60 text-rose-100 hover:bg-rose-800/60',
+                currentTabEmpty && 'opacity-40 cursor-not-allowed',
+              )}
+              title={`Wipe all ${tab === 'history' ? 'history' : 'queue'} entries (confirmed)`}
+            >
+              <Trash2 className="h-3 w-3" />
+              Delete All
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1">
+            <Tab active={tab === 'history'} onClick={() => setTab('history')} icon={History} label="History" />
+            <Tab active={tab === 'queue'} onClick={() => setTab('queue')} icon={ListOrdered} label="Queue" />
+            {/* v0.7.194-hotfix.11 Item #5 — Select toggle always enabled.
+                Pre-fix this button was disabled when the current tab was
+                empty, hiding the entry point to Select mode entirely.
+                Operator now enters Select mode regardless of current
+                tab state; Select All / Delete All inside Select mode
+                still self-disable per-tab via currentTabEmpty. */}
+            <button
+              type="button"
+              onClick={() => {
+                if (selectMode) exitSelectMode()
+                else setSelectMode(true)
+              }}
+              className={cn(
+                'h-6 px-2 ml-1 inline-flex items-center gap-1 rounded text-[10px] font-semibold border transition-colors',
+                selectMode
+                  ? 'bg-sky-600/20 border-sky-500/60 text-sky-100'
+                  : 'border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/40',
+              )}
+              title={selectMode ? 'Exit select mode' : 'Select rows to delete'}
+            >
+              <CheckSquare className="h-3 w-3" />
+              {selectMode ? 'Done' : 'Select'}
+            </button>
+          </div>
+        )
       }
     >
       <div className="flex-1 min-h-0 overflow-y-auto">
@@ -1931,21 +2359,65 @@ function ScriptureFeedCard() {
                 Verses you look up or detect will show here.
               </div>
             ) : (
-              verseHistory.map((v, i) => (
-                <button
-                  key={`${v.reference}-${i}`}
-                  onClick={() => sendVerseFromHistory(v, false)}
-                  onDoubleClick={() => sendVerseFromHistory(v, true)}
-                  className="w-full text-left rounded border border-border/70 bg-card/40 hover:border-sky-500/40 hover:bg-card px-2 py-1.5 transition-colors group select-none"
-                  title="Click → Preview · Double-click → Go Live"
-                >
-                  <div className="flex items-center justify-between gap-2 mb-0.5">
-                    <span className="text-[10px] font-semibold text-sky-300 truncate">{v.reference}</span>
-                    <span className="text-[9px] text-muted-foreground uppercase">{v.translation}</span>
+              verseHistory.map((v, i) => {
+                const key = `h:${i}`
+                const checked = selectedKeys.has(key)
+                return (
+                  <div
+                    key={`${v.reference}-${i}`}
+                    className={cn(
+                      'group/row relative rounded border bg-card/40 transition-colors flex items-stretch',
+                      checked
+                        ? 'border-rose-500/70 bg-rose-500/10'
+                        : 'border-border/70 hover:border-sky-500/40 hover:bg-card',
+                    )}
+                  >
+                    {selectMode && (
+                      <button
+                        type="button"
+                        onClick={() => toggleKey(key)}
+                        className="flex items-center justify-center pl-2 pr-1 select-none"
+                        aria-label={checked ? 'Deselect row' : 'Select row'}
+                      >
+                        {checked ? (
+                          <CheckSquare className="h-4 w-4 text-rose-300" />
+                        ) : (
+                          <Square className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectMode) toggleKey(key)
+                        else sendVerseFromHistory(v, false)
+                      }}
+                      className="flex-1 min-w-0 text-left px-2 py-1.5 select-none"
+                      title={selectMode ? 'Click → toggle selection' : 'Click → Preview'}
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-0.5 pr-5">
+                        <span className="text-[10px] font-semibold text-sky-300 truncate">{v.reference}</span>
+                        <span className="text-[9px] text-muted-foreground uppercase">{v.translation}</span>
+                      </div>
+                      <p className="text-[11px] text-foreground line-clamp-2 leading-snug">{v.text}</p>
+                    </button>
+                    {!selectMode && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          useAppStore.getState().removeVerseFromHistoryAt(i)
+                        }}
+                        className="absolute top-1 right-1 h-5 w-5 inline-flex items-center justify-center rounded text-muted-foreground hover:text-rose-300 hover:bg-rose-500/10 opacity-0 group-hover/row:opacity-100 transition-opacity text-[12px] leading-none"
+                        title="Remove from history"
+                        aria-label="Remove from history"
+                      >
+                        ×
+                      </button>
+                    )}
                   </div>
-                  <p className="text-[11px] text-foreground line-clamp-2 leading-snug">{v.text}</p>
-                </button>
-              ))
+                )
+              })
             )
           ) : schedule.length === 0 ? (
             <div className="text-center py-6 text-[11px] text-muted-foreground">
@@ -1955,30 +2427,48 @@ function ScriptureFeedCard() {
           ) : (
             schedule.map((item, i) => {
               const selected = item.id === selectedScheduleItemId
+              const key = `q:${item.id}`
+              const checked = selectedKeys.has(key)
               return (
                 <div
                   key={item.id}
                   className={cn(
                     'rounded border px-2 py-1.5 transition-colors flex items-center gap-2',
-                    selected
+                    checked
+                      ? 'border-rose-500/70 bg-rose-500/10'
+                      : selected
                       ? 'border-amber-500/60 bg-amber-500/10'
                       : 'border-border/70 bg-card/40 hover:border-border',
                   )}
                 >
+                  {selectMode && (
+                    <button
+                      type="button"
+                      onClick={() => toggleKey(key)}
+                      className="flex items-center justify-center select-none"
+                      aria-label={checked ? 'Deselect row' : 'Select row'}
+                    >
+                      {checked ? (
+                        <CheckSquare className="h-4 w-4 text-rose-300" />
+                      ) : (
+                        <Square className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </button>
+                  )}
                   <button
-                    onClick={() => selectScheduleItem(item.id)}
-                    onDoubleClick={() => {
+                    onClick={() => {
+                      if (selectMode) {
+                        toggleKey(key)
+                        return
+                      }
                       selectScheduleItem(item.id)
                       if (item.slides.length) {
                         setSlides(item.slides)
                         setPreviewSlideIndex(0)
-                        setLiveSlideIndex(0)
-                        setIsLive(true)
-                        /* Toast suppressed per FRS — output actions stay silent. */
                       }
                     }}
                     className="flex-1 min-w-0 text-left"
-                    title="Click to select · Double-click to send live"
+                    title={selectMode ? 'Click → toggle selection' : 'Click → Preview'}
                   >
                     <div className="flex items-center gap-1.5 mb-0.5">
                       <span
@@ -1995,13 +2485,15 @@ function ScriptureFeedCard() {
                       {item.title}
                     </p>
                   </button>
-                  <button
-                    onClick={() => removeScheduleItem(item.id)}
-                    className="text-muted-foreground hover:text-rose-400 p-1"
-                    title="Remove"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
+                  {!selectMode && (
+                    <button
+                      onClick={() => removeScheduleItem(item.id)}
+                      className="text-muted-foreground hover:text-rose-400 p-1"
+                      title="Remove"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  )}
                 </div>
               )
             })
@@ -2040,14 +2532,17 @@ function DetectedVersesCard() {
   const {
     detectedVerses,
     clearDetectedVerses,
+    clearDetectedVersesBySource,
     detectedVerseCandidates,
     clearDetectedVerseCandidates,
     promoteDetectedVerseCandidate,
     addScheduleItem,
+    addScheduleItemQuiet,
     setSlides,
     setPreviewSlideIndex,
     setLiveSlideIndex,
     setIsLive,
+    stageSlidesPreviewOnly,
     settings,
     requestNavigatorRef,
   } = useAppStore()
@@ -2079,7 +2574,13 @@ function DetectedVersesCard() {
     return chunks.length ? chunks : [[cleaned]]
   }
 
-  const sendDetected = (v: typeof detectedVerses[number], live: boolean) => {
+  // v0.7.76 — `mode` replaces the old boolean `live`:
+  //   • 'schedule' — add to schedule only (no preview, no live)
+  //   • 'preview'  — schedule + load into Preview pane (operator
+  //                  can review before going live)
+  //   • 'live'     — schedule + load into Preview + push to Live
+  //                  (the old `live: true` behaviour)
+  const sendDetected = (v: typeof detectedVerses[number], mode: 'schedule' | 'preview' | 'live') => {
     const groups = splitForSlides(v.text || '')
     const slides = groups.map((content, idx) => ({
       id: `slide-${Date.now()}-${idx}`,
@@ -2089,18 +2590,42 @@ function DetectedVersesCard() {
       content,
       background: settings.congregationScreenTheme,
     }))
-    addScheduleItem({
-      type: 'verse',
-      title: v.reference,
-      subtitle: v.translation,
-      slides,
-    })
-    if (live) {
-      setSlides(slides)
-      setPreviewSlideIndex(0)
-      setLiveSlideIndex(0)
-      setIsLive(true)
-      // Toast suppressed per FRS — output actions stay silent.
+    // v0.7.194-hotfix.8 — Preview mode uses Quiet schedule append so
+    // the on-air slide is preserved; live/schedule modes keep the
+    // existing addScheduleItem semantics (live intentionally resets;
+    // schedule keeps legacy behaviour from pre-hotfix.8 detected-row
+    // clicks until operator explicitly asks for a change).
+    if (mode === 'preview') {
+      // v0.7.194-hotfix.9 Item B — Route preview mode through
+      // stageSlidesPreviewOnly so the on-air slide is preserved.
+      // Pre-hotfix.9 this called setSlides(slides) which hardcoded
+      // liveSlideIndex:-1 → live yanked → operator-reported
+      // "snap-back to live" bug across all 5 columns (Auto Verse
+      // Match, Bible Reference Quoted, Suggested Verses, Chapter
+      // Navigator, Scripture Feed). Quiet schedule append still
+      // runs first so the verse appears in history without
+      // changing what's currently broadcasting.
+      addScheduleItemQuiet({
+        type: 'verse',
+        title: v.reference,
+        subtitle: v.translation,
+        slides,
+      })
+      stageSlidesPreviewOnly(slides)
+    } else {
+      addScheduleItem({
+        type: 'verse',
+        title: v.reference,
+        subtitle: v.translation,
+        slides,
+      })
+      if (mode === 'live') {
+        setSlides(slides)
+        setPreviewSlideIndex(0)
+        setLiveSlideIndex(0)
+        setIsLive(true)
+        // Toast suppressed per FRS — output actions stay silent.
+      }
     }
   }
 
@@ -2144,27 +2669,37 @@ function DetectedVersesCard() {
         key={`${kind}-${v.reference}-${i}`}
         onClick={() => {
           if (isCandidate) {
-            // Promote candidate → live-eligible bucket. Does NOT
-            // touch the projector — operator still needs to click
-            // it again in the LIVE column to schedule, or double-
-            // click to go live. This is the explicit confirmation
-            // step the spec demands.
+            // v0.7.76 — Per operator request: clicking a candidate
+            // now promotes it AND loads it into the Preview pane
+            // (no projector push). Operator double-clicks to send
+            // live. Previously a single click only promoted to the
+            // LIVE column without touching Preview, which felt
+            // unresponsive — operators didn't realise the click
+            // had registered.
             promoteDetectedVerseCandidate(v.id)
+            sendDetected({ ...v, confidence: Math.max(0.5, v.confidence) }, 'preview')
             requestNavigatorRef(v.reference)
           } else {
-            sendDetected(v, false)
+            // v0.7.194-hotfix.9 Item B — Live-column single-click now
+            // PREVIEWS (was 'schedule' which appended silently with
+            // no preview render). Operator's mental model: one click
+            // anywhere = preview without yanking live; double-click
+            // promotes to live. Unified across all 5 columns.
+            sendDetected(v, 'preview')
             requestNavigatorRef(v.reference)
           }
         }}
         onDoubleClick={() => {
           if (isCandidate) {
-            // Two-step promote+schedule on double-click of a
-            // candidate. Still does NOT auto-live (per spec).
+            // v0.7.76 — Double-click on a candidate now goes
+            // STRAIGHT to Live Display (still after promotion so
+            // the row settles in the LIVE column). Previous
+            // behaviour was promote+schedule only, never live.
             promoteDetectedVerseCandidate(v.id)
-            sendDetected({ ...v, confidence: Math.max(0.5, v.confidence) }, false)
+            sendDetected({ ...v, confidence: Math.max(0.5, v.confidence) }, 'live')
             requestNavigatorRef(v.reference)
           } else {
-            sendDetected(v, true)
+            sendDetected(v, 'live')
           }
         }}
         className={cn(
@@ -2175,7 +2710,7 @@ function DetectedVersesCard() {
         )}
         title={
           isCandidate
-            ? `Low-confidence suggestion (${pct}%). Click → promote to LIVE column · Double-click → promote + schedule. Never auto-live.`
+            ? `Low-confidence suggestion (${pct}%). Click → preview only · Double-click → send LIVE. Never auto-live.`
             : `Click → schedule + open in Chapter Navigator · Double-click → live · Detection accuracy: ${pct}%`
         }
       >
@@ -2230,58 +2765,150 @@ function DetectedVersesCard() {
         ) : null
       }
     >
-      {/* v0.7.60 — Two-column split: LIVE (≥50%, auto-live eligible)
-          on the left, CANDIDATES (20–49%, operator-promote-only) on
-          the right. Each column scrolls independently so a busy
-          candidates list can't push live detections off-screen. */}
-      <div className="flex-1 min-h-0 grid grid-cols-2 gap-1 overflow-hidden">
-        {/* LIVE column — ≥50% confidence */}
-        <div className="flex flex-col min-h-0 border-r border-border/50">
-          <div className="px-2 py-1 flex items-center justify-between bg-emerald-500/5 border-b border-emerald-500/20 sticky top-0 z-10">
-            <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-300">
-              Live (≥50%)
-            </span>
-            <span className="text-[9px] font-mono tabular-nums text-muted-foreground">
-              {detectedVerses.length}
-            </span>
-          </div>
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <div className="p-1.5 space-y-1.5">
-              {detectedVerses.length === 0 ? (
-                <div className="text-center py-6 text-[10px] text-muted-foreground">
-                  <Mic className="h-5 w-5 mx-auto opacity-40 mb-1.5" />
-                  Live-eligible detections appear here.
-                </div>
-              ) : (
-                detectedVerses.map((v, i) => renderRow(v, i, 'live'))
-              )}
-            </div>
-          </div>
-        </div>
+      {/* v0.7.109 — Per-column auto-live thresholds + 1.25 s dwell.
+          Each column is an INDEPENDENT detection pipeline.
 
-        {/* CANDIDATES column — 20–49% confidence, operator promotes manually */}
-        <div className="flex flex-col min-h-0">
-          <div className="px-2 py-1 flex items-center justify-between bg-rose-500/5 border-b border-rose-500/20 sticky top-0 z-10">
-            <span className="text-[9px] font-bold uppercase tracking-wider text-rose-300">
-              Candidates (20–49%)
-            </span>
-            <span className="text-[9px] font-mono tabular-nums text-muted-foreground">
-              {detectedVerseCandidates.length}
-            </span>
-          </div>
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <div className="p-1.5 space-y-1.5">
-              {detectedVerseCandidates.length === 0 ? (
-                <div className="text-center py-6 text-[10px] text-muted-foreground">
-                  Low-confidence guesses land here. Click to promote.
+            • COL 1 "Auto Verse Match"  (explicit regex / Reference-
+                Engine hits like "Amos 1:3"): Auto-live at ≥60%.
+
+            • COL 2 "Bible Reference Quoted"  (semantic — paraphrased
+                quotations / AI cosine embeddings): Auto-live at ≥55%.
+
+            • COL 3 "Suggested Verses": 10-49% band, MANUAL ONLY.
+                Double-click a row to send it live.
+
+            • DWELL: when a NEW detection is ready to fire, the
+                previous live verse stays on screen for ~1.25 s
+                (LIVE_HOLD_MS) before the swap. Within that window
+                further detections are queued; once it elapses the
+                next qualifying NEWEST detection takes over. */}
+      {(() => {
+        // Each column reads ONLY its own source slice — no cross-pull.
+        const explicitRows = liveColumnFor(detectedVerses, 'explicit')
+        const semanticRows = liveColumnFor(detectedVerses, 'semantic')
+        const explicitWinner = pickAutoLiveBySource(detectedVerses, 'explicit')
+        const semanticWinner = pickAutoLiveBySource(detectedVerses, 'semantic')
+        const suggestionRows = suggestionsFor(detectedVerses)
+        return (
+          <div className="flex-1 min-h-0 grid grid-cols-3 gap-1 overflow-hidden">
+            {/* COL 1 — EXPLICIT (regex / Reference Engine v2) */}
+            <div className="flex flex-col min-h-0 border-r border-border/50">
+              <div className="px-2 py-1 flex items-center justify-between bg-emerald-500/5 border-b border-emerald-500/20 sticky top-0 z-10">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-300">
+                  Auto Verse Match
+                </span>
+                {/* v0.7.134 — Per-column Clear button (operator
+                    request, screenshot https://imgur.com/37pTmau).
+                    Falls back to a count-only display when the column
+                    is empty so the chrome doesn't jitter. */}
+                {explicitRows.length > 0 ? (
+                  <button
+                    onClick={() => clearDetectedVersesBySource('explicit')}
+                    className="text-[9px] font-bold uppercase tracking-wider text-emerald-300/70 hover:text-emerald-200 px-1"
+                    aria-label="Clear Auto Verse Match column"
+                  >
+                    Clear · {explicitRows.length}
+                  </button>
+                ) : (
+                  <span className="text-[9px] font-mono tabular-nums text-muted-foreground">0</span>
+                )}
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <div className="p-1.5 space-y-1.5">
+                  {explicitRows.length === 0 ? (
+                    <div className="text-center py-6 text-[10px] text-muted-foreground">
+                      <Mic className="h-5 w-5 mx-auto opacity-40 mb-1.5" />
+                      Explicit references (e.g.&nbsp;&ldquo;Amos 1:3&rdquo;) auto-live at ≥58%.
+                    </div>
+                  ) : (
+                    // Sub-threshold rows render with the same 'live'
+                    // chrome as the winner so the operator sees the
+                    // pipeline accumulating evidence; the auto-fire
+                    // gate decides when to actually push to the
+                    // projector.
+                    explicitRows.map((row, i) => renderRow(row, i, 'live'))
+                  )}
+                  {explicitWinner ? null : null /* winner is at index 0 above */}
                 </div>
-              ) : (
-                detectedVerseCandidates.map((v, i) => renderRow(v, i, 'candidate'))
-              )}
+              </div>
+            </div>
+
+            {/* COL 2 — SEMANTIC (preacher-phrase / keyword / AI) */}
+            <div className="flex flex-col min-h-0 border-r border-border/50">
+              <div className="px-2 py-1 flex items-center justify-between bg-sky-500/5 border-b border-sky-500/20 sticky top-0 z-10">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-sky-300">
+                  Bible Reference Quoted
+                </span>
+                {semanticRows.length > 0 ? (
+                  <button
+                    onClick={() => clearDetectedVersesBySource('semantic')}
+                    className="text-[9px] font-bold uppercase tracking-wider text-sky-300/70 hover:text-sky-200 px-1"
+                    aria-label="Clear Bible Reference Quoted column"
+                  >
+                    Clear · {semanticRows.length}
+                  </button>
+                ) : (
+                  <span className="text-[9px] font-mono tabular-nums text-muted-foreground">0</span>
+                )}
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <div className="p-1.5 space-y-1.5">
+                  {semanticRows.length === 0 ? (
+                    <div className="text-center py-6 text-[10px] text-muted-foreground">
+                      <Mic className="h-5 w-5 mx-auto opacity-40 mb-1.5" />
+                      Paraphrased quotations auto-live at ≥50%.
+                    </div>
+                  ) : (
+                    semanticRows.map((row, i) => renderRow(row, i, 'live'))
+                  )}
+                  {semanticWinner ? null : null /* winner is at index 0 above */}
+                </div>
+              </div>
+            </div>
+
+            {/* COL 3 — SUGGESTIONS (10-49% manual-only) */}
+            <div className="flex flex-col min-h-0">
+              <div className="px-2 py-1 flex items-center justify-between bg-amber-500/5 border-b border-amber-500/20 sticky top-0 z-10">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-amber-300">
+                  Suggested Verses
+                </span>
+                {suggestionRows.length + detectedVerseCandidates.length > 0 ? (
+                  <button
+                    onClick={() => {
+                      // Suggestions live in BOTH detectedVerses
+                      // (band 0.10–0.49 from either pipeline) and the
+                      // separate detectedVerseCandidates bucket — wipe
+                      // both so the column actually empties.
+                      clearDetectedVersesBySource('suggestion')
+                      clearDetectedVerseCandidates()
+                    }}
+                    className="text-[9px] font-bold uppercase tracking-wider text-amber-300/70 hover:text-amber-200 px-1"
+                    aria-label="Clear Suggested Verses column"
+                  >
+                    Clear · {suggestionRows.length + detectedVerseCandidates.length}
+                  </button>
+                ) : (
+                  <span className="text-[9px] font-mono tabular-nums text-muted-foreground">0</span>
+                )}
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <div className="p-1.5 space-y-1.5">
+                  {suggestionRows.length === 0 && detectedVerseCandidates.length === 0 ? (
+                    <div className="text-center py-6 text-[10px] text-muted-foreground">
+                      Low-confidence guesses (10–49%). Double-click to send live.
+                    </div>
+                  ) : (
+                    <>
+                      {suggestionRows.map((v, i) => renderRow(v, i, 'candidate'))}
+                      {detectedVerseCandidates.map((v, i) => renderRow(v, i, 'candidate'))}
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        )
+      })()}
     </Card>
   )
 }
@@ -2771,21 +3398,32 @@ function MediaCard() {
           if (e.lengthComputable) setUploadPct(Math.round((e.loaded / e.total) * 100))
         }
         xhr.onload = () => {
-          try {
-            const data = JSON.parse(xhr.responseText || '{}')
-            if (xhr.status >= 200 && xhr.status < 300 && data.url) {
-              resolve({
-                id: `media-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                name: f.name,
-                url: data.url,
-                kind: data.kind || (f.type.startsWith('video/') ? 'video' : 'image'),
-                size: f.size,
-              })
-            } else {
-              reject(new Error(data.error || `Upload failed (${xhr.status})`))
-            }
-          } catch (err) {
-            reject(err instanceof Error ? err : new Error(String(err)))
+          // v0.7.78 — Defensive response parsing. Pre-v0.7.78 the
+          // outer try/catch caught HTML error pages (Next 500 doc,
+          // dev overlay, AV interception, …) and surfaced them to
+          // the operator as the raw "Unexpected token '<'…" parser
+          // error. We now parse safely and translate non-JSON bodies
+          // into the actual HTTP status so the operator gets a
+          // useful diagnostic. Server-side details still appear in
+          // the Next console for the operator's media team to grep.
+          const raw = xhr.responseText || ''
+          let data: { error?: string; url?: string; kind?: 'image' | 'video' } = {}
+          try { data = raw ? JSON.parse(raw) : {} } catch { /* HTML / non-JSON */ }
+          if (xhr.status >= 200 && xhr.status < 300 && data.url) {
+            resolve({
+              id: `media-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              name: f.name,
+              url: data.url,
+              kind: data.kind || (f.type.startsWith('video/') ? 'video' : 'image'),
+              size: f.size,
+            })
+          } else {
+            reject(new Error(
+              data.error
+                || (xhr.status === 0
+                  ? 'Upload failed — network or server unreachable'
+                  : `Upload failed (${xhr.status}${xhr.statusText ? ' ' + xhr.statusText : ''})`),
+            ))
           }
         }
         xhr.onerror = () => reject(new Error('Network error'))
@@ -3003,12 +3641,27 @@ function MediaCard() {
       title="Media"
       bodyClassName="overflow-hidden flex flex-col"
     >
+      {/* v0.7.180 — Was className="hidden" (display:none). Operator
+          bug (postimg V5NMM6kx): in packaged Electron build the file
+          picker opened, operator picked a file, and onChange never
+          fired (no upload, no progress, no error). Root cause was a
+          Chromium 130+ "trusted UI" hardening that suppresses the
+          change event on file inputs that are NOT in the layout tree
+          when the picker was triggered by a programmatic .click()
+          relay. The minimum-risk fix is to swap "hidden" → "sr-only"
+          so the input stays visually invisible but remains in the
+          layout tree (positioned absolutely off-screen) — Chromium
+          then accepts the .click() as a "trusted" interaction and
+          fires onChange normally. Both upload triggers below
+          (Upload button + empty-state dropzone) are byte-identical;
+          only the input's class string changed. Same root cause +
+          fix as the Custom Background card in settings.tsx. */}
       <input
         ref={fileRef}
         type="file"
         accept="image/*,video/*"
         multiple
-        className="hidden"
+        className="sr-only"
         onChange={(e) => {
           onFiles(e.target.files)
           if (fileRef.current) fileRef.current.value = ''
@@ -3159,6 +3812,123 @@ function MediaCard() {
 // ──────────────────────────────────────────────────────────────────────
 // MAIN SHELL
 // ──────────────────────────────────────────────────────────────────────
+// v0.7.194-hotfix.10 — MediaPreheat: invisible "warm-up" elements that
+// pre-fetch any video media currently in the Preview slot, the Live slot,
+// the pinned preview slot (v0.7.219), and the next schedule item's
+// slides. When Go Live promotes the preview slide, the real Live <video>
+// element mounts to a URL whose bytes are ALREADY in the OS file cache +
+// Chromium net-cache — promotion startup time drops from "seconds of
+// buffering then maybe-plays" to <100 ms decoder init. This is the
+// pragmatic Path-D win: we can't physically share one <video> element
+// across Preview / Live / NDI offscreen / secondary-screen BrowserWindows
+// (Chromium doesn't allow transplanting a MediaElement across documents),
+// but we CAN guarantee every surface that mounts a new <video> finds the
+// file already-buffered. Combined with scripturelive-media:// (disk reads,
+// no HTTP) this delivers EasyWorship-class hand-off latency.
+//
+// v0.7.219 — Operator $1600-customer escalation, two-part fix:
+//
+// PART 1 (root-cause flip) — Switched from hidden `<video preload="auto">`
+// to `<link rel="preload" as="video">`. The previous `<video>` approach
+// caused Chromium to allocate a HW DECODER SLOT for every warmed URL
+// (preload="auto" decodes metadata + first frame for the poster). With a
+// 2-4 stream GPU cap, MediaPreheat's hidden videos were silently eating
+// decoder budget that the real Preview + Live + NDI offscreen videos
+// needed. Result: same "live video stalls when you single-click another
+// media tile" complaint that v0.7.210/v0.7.212/v0.7.216/v0.7.218 tried
+// to close, because the 4th-decoder-competition path was the hidden
+// warm-up <video> itself. `<link rel="preload" as="video">` instructs
+// the browser to fetch bytes into the HTTP cache WITHOUT allocating any
+// decoder slot. When the real `<video>` later mounts with that URL, it
+// pulls from cache instantly → fast `canplay` → fast playback start.
+//
+// PART 2 (pinned-preview coverage) — Added `pinnedPreviewSlide` (and the
+// `liveSlide` v0.7.203 direct ref) to the warmed URLs set. Pre-fix,
+// MediaPreheat only read `slides[previewIdx]` and `slides[liveIdx]` —
+// but `pinPreviewSlide` (v0.7.201) and `setLiveAuto` (v0.7.203) BOTH
+// bypass `slides[]` entirely. So a single-clicked media tile's bytes
+// were NEVER warmed, and on GO LIVE the live <video> did a cold network
+// fetch before `canplay` could fire — operator perceived this as "GO
+// LIVE doesn't immediately start playing". Subscribing to the direct-ref
+// fields fixes the warming gap.
+//
+// GUARD-RAIL: the <link> element MUST live in the document <head>, not
+// as an inline DOM child, because Chromium's preload scanner only honours
+// preload links discovered in the head. We portal into document.head via
+// a useEffect that imperatively creates / removes <link> elements keyed
+// by URL. React's render tree never owns these elements directly.
+function MediaPreheat() {
+  const slides = useAppStore((s) => s.slides)
+  const previewIdx = useAppStore((s) => s.previewSlideIndex)
+  const liveIdx = useAppStore((s) => s.liveSlideIndex)
+  const schedule = useAppStore((s) => s.schedule)
+  const selectedId = useAppStore((s) => s.selectedScheduleItemId)
+  const pinnedPreviewSlide = useAppStore((s) => s.pinnedPreviewSlide)
+  const liveSlide = useAppStore((s) => s.liveSlide)
+
+  const urls = new Set<string>()
+  const addIfVideo = (s: { mediaKind?: string; mediaUrl?: string } | undefined | null) => {
+    if (s && s.mediaKind === 'video' && s.mediaUrl) urls.add(s.mediaUrl)
+  }
+  if (previewIdx >= 0) addIfVideo(slides[previewIdx])
+  if (liveIdx >= 0) addIfVideo(slides[liveIdx])
+  // v0.7.219 — the v0.7.201 pinned-preview + v0.7.203 live direct-ref
+  // shadows of slides[] MUST also be warmed; otherwise single-click and
+  // AI-routed media slides cold-fetch on promotion.
+  addIfVideo(pinnedPreviewSlide as { mediaKind?: string; mediaUrl?: string } | null)
+  addIfVideo(liveSlide as { mediaKind?: string; mediaUrl?: string } | null)
+  // Look one ahead in the schedule so when the operator drags the next
+  // item forward, its first media slide is already half-decoded.
+  if (selectedId) {
+    const i = schedule.findIndex((it) => it.id === selectedId)
+    const next = i >= 0 ? schedule[i + 1] : null
+    const nextSlides = (next && (next as { slides?: Array<{ mediaKind?: string; mediaUrl?: string }> }).slides) || []
+    for (const s of nextSlides) addIfVideo(s)
+  }
+
+  // v0.7.219 — Imperatively manage <link rel="preload" as="video"> in
+  // document.head. We tag each link with `data-media-preheat="<url>"`
+  // so we can find and remove our own elements without disturbing any
+  // other preload links the app or its dependencies may inject.
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const want = new Set<string>(Array.from(urls).map((u) => resolveMediaUrl(u)))
+    const existing = new Map<string, HTMLLinkElement>()
+    document
+      .querySelectorAll<HTMLLinkElement>('link[data-media-preheat]')
+      .forEach((el) => {
+        const k = el.getAttribute('data-media-preheat') || ''
+        existing.set(k, el)
+      })
+    // Add new
+    for (const resolved of want) {
+      if (existing.has(resolved)) continue
+      const link = document.createElement('link')
+      link.rel = 'preload'
+      link.as = 'video'
+      link.href = resolved
+      link.setAttribute('data-media-preheat', resolved)
+      // crossOrigin matches the eventual <video crossOrigin="anonymous">
+      // so the cached response is reusable by the real video element
+      // without a second fetch (CORS-mode mismatches force a refetch).
+      link.crossOrigin = 'anonymous'
+      document.head.appendChild(link)
+    }
+    // Remove stale
+    for (const [k, el] of existing) {
+      if (!want.has(k)) el.remove()
+    }
+    // Note: we intentionally do NOT remove on unmount of MediaPreheat —
+    // these links are cheap (1 cache entry each) and aggressive removal
+    // would defeat the purpose if the component briefly re-mounts.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Array.from(urls).sort().join('|')])
+
+  // No visible output — everything happens in document.head via the
+  // useEffect above. Returning null avoids polluting the layout tree.
+  return null
+}
+
 export function LogosShell() {
   const {
     slides,
@@ -3172,6 +3942,7 @@ export function LogosShell() {
     settings,
     detectedVerses,
     addScheduleItem,
+    addScheduleItemQuiet,
     setSlides,
     outputEnabled,
     setOutputEnabled,
@@ -3204,37 +3975,172 @@ export function LogosShell() {
   // the same state.
   const autoAdvance = useAppStore((s) => s.autoLive)
   const setAutoAdvance = useAppStore((s) => s.setAutoLive)
+  // v0.7.105 — Auto-fire gate honours BOTH the AUTO toggle and the
+  // legacy "Auto-go-live on detection" Setting, matching the gating
+  // the per-pipeline inline blocks in speech-provider.tsx used
+  // before they were neutered. Without this OR, operators who only
+  // had `autoGoLiveOnDetection` enabled (and never flipped the AUTO
+  // pill) would silently lose auto-fire after the v0.7.104→.105
+  // refactor. The toggle UI itself still binds to `autoAdvance`
+  // alone so its label/state stays correct.
+  const autoGoLiveOnDetection = useAppStore((s) => s.settings.autoGoLiveOnDetection)
+  const effectiveAutoFire = autoAdvance || autoGoLiveOnDetection
 
-  // ── Auto-advance: when ON, every newly detected verse is sent straight
-  // to the live output (and added to the schedule). Mirrors how Logos AI
-  // and similar production tools handle "follow the speaker" mode.
-  const lastAutoVerseId = useRef<string | null>(null)
+  // v0.7.81 — Auto-prefetch the operator's default Bible translation
+  // for offline use on first launch.
+  //
+  // The /api/bible/translations endpoint already supports caching an
+  // entire translation into the local SQLite (`bibleChapterCache`),
+  // and the lookup path on /api/bible already checks that cache
+  // before going to the network. The missing piece was a "first time
+  // online → quietly download my main translation in the background"
+  // step so the operator gets offline support out of the box without
+  // having to find Settings → Bible Downloads.
+  //
+  // We fire this once per session (the server's `inFlight` map dedupes
+  // concurrent requests, and an already-downloaded translation just
+  // re-runs in the background to refresh — cheap, idempotent). Failure
+  // is silent — if the operator is offline at first launch we'll
+  // simply try again next launch when they're online.
+  const prefetchedRef = useRef(false)
   useEffect(() => {
-    if (!autoAdvance) return
-    if (!detectedVerses.length) return
-    const newest = detectedVerses[0]
-    if (!newest || newest.id === lastAutoVerseId.current) return
-    lastAutoVerseId.current = newest.id
+    if (prefetchedRef.current) return
+    prefetchedRef.current = true
+    const t = (settings.defaultTranslation || 'KJV').toUpperCase()
+    void fetch('/api/bible/translations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ translation: t }),
+    }).catch(() => { /* offline / boot race — retry next session */ })
+  }, [settings.defaultTranslation])
+
+  // ── Auto-advance.
+  //
+  // v0.7.86 — The right mental model (clarified by the operator):
+  //
+  //   "If the speaker quotes John 4:24 correctly, John 4:24 should
+  //    GO LIVE — not land in Alternative References. Alternatives
+  //    are for OTHER verses the AI also guessed at for the same
+  //    phrase (different translations, similar-sounding refs)."
+  //
+  // So the rule is simple:
+  //   • Always rank current detections by confidence and pick the
+  //     single top match.
+  //   • If that match is high-confidence (≥0.50), put it on the
+  //     screen — REPLACING whatever was previously live. As the
+  //     speaker moves from John 4:24 to Prov 3:5 the live output
+  //     follows them.
+  //   • Don't fire when the same top match is already live (id
+  //     match → no-op so we don't re-flash the slide).
+  //   • Lower-confidence siblings of the SAME phrase remain visible
+  //     in the right column of the Detected Verses card as
+  //     Alternative References — they don't auto-promote, the
+  //     operator double-clicks one if they want to use it instead.
+  //     This is enforced naturally because only the single top match
+  //     is ever auto-promoted; everything else stays in the
+  //     alternatives column.
+  //
+  // Earlier attempts (v0.7.83 newest-wins, v0.7.84 +0.10 sticky,
+  // v0.7.86-pre strict no-displace) all over-corrected in one
+  // direction or the other. This version trusts the confidence
+  // ranking and simply REPLACES live whenever the top match changes.
+  const lastAutoVerseId = useRef<string | null>(null)
+  // v0.7.104 — Per-pipeline stability counters (≥3 consecutive
+  // frames before auto-fire). Reset to initial whenever the operator
+  // clears detectedVerses so a stale candidate from a previous
+  // service can't immediately fire on resume.
+  const stabilityRef = useRef<PerSourceStabilityState>(initialPerSourceStability)
+  useEffect(() => {
+    if (!effectiveAutoFire) return
+    if (!detectedVerses.length) {
+      lastAutoVerseId.current = null
+      stabilityRef.current = initialPerSourceStability
+      return
+    }
+    // Delegated to the pure helper in src/lib/verse-auto-live.ts so
+    // the source-aware rules + stability gate are unit-tested in
+    // isolation. See verse-auto-live.test.ts.
+    // v0.7.106 — Pass Date.now() in so the helper can enforce its
+    // 3.5 s LIVE_HOLD_MS dwell window between consecutive fires.
+    const decision = shouldFireAutoLiveStable(
+      detectedVerses,
+      lastAutoVerseId.current,
+      stabilityRef.current,
+      { nowMs: Date.now() },
+    )
+    stabilityRef.current = decision.nextStability
+    if (!decision.fire) return
+    const best = decision.verse
+    lastAutoVerseId.current = best.id
     const slide = {
-      id: `auto-${newest.id}`,
+      id: `auto-${best.id}`,
       type: 'verse' as const,
-      title: newest.reference,
-      subtitle: newest.translation,
-      content: (newest.text || '').split('\n').filter(Boolean),
+      title: best.reference,
+      subtitle: best.translation,
+      content: (best.text || '').split('\n').filter(Boolean),
       background: settings.congregationScreenTheme,
     }
-    addScheduleItem({
+    // v0.7.200 — Replaces v0.7.197's preview-lock (which wrongly
+    // blocked AI MASTER mode from sending detections to LIVE — the
+    // entire reason that mode exists). The actual snap-back root
+    // cause is the unconditional setSlides([slide]) call below: when
+    // the preacher keeps reading v18 and the AI keeps re-detecting
+    // it, setSlides wipes the operator's manually-staged [v18,v19]
+    // array down to [v18] → previewSlideIndex=0 → preview snaps back.
+    //
+    // Two-part fix:
+    //   (1) SAME-AS-LIVE SHORT-CIRCUIT — if the AI re-detects the
+    //       verse that is already live, return immediately. Do NOT
+    //       call setSlides (which would clobber operator's preview).
+    //       This is the ACTUAL snap-back fix.
+    //   (2) PRESERVE-PREVIEW ON NEW-DETECTION — when the AI detects
+    //       a genuinely new verse, push it to live (that's what AI
+    //       MASTER is FOR). If the operator has staged a different
+    //       preview manually, keep their preview slide at index 1.
+    //
+    // Operator workflow this enables (all 5 columns: Chapter
+    // Navigator, Auto Verse Match, Bible Reference Quoted, Suggested
+    // Verses, Scripture Feed):
+    //   - double-click v18 → live=v18, preview=v18
+    //   - single-click v19 → live=v18 unchanged, preview=v19 staged
+    //   - AI re-detects v18 (preacher still reading) → SHORT-CIRCUIT
+    //     → preview=v19 SURVIVES (no snap-back)
+    //   - preacher moves to v19, AI detects v19 → new detection →
+    //     pushes v19 live, syncs preview to v19
+    //   - operator double-clicks v25 anywhere → promotes to live
+    //     via the normal go-live path (unrelated to this effect)
+    // v0.7.203 — Auto-fire writes ONLY to the liveSlide direct ref
+    // via setLiveAuto. Does NOT touch slides[] / previewSlideIndex /
+    // liveSlideIndex / pinnedPreviewSlide. The operator's single-click
+    // pin therefore SURVIVES every AI detection, regardless of whether
+    // the AI re-detects the same verse or a new one. The schedule still
+    // gets a (quiet) history entry so the Queue/History tab shows the
+    // detection trail. Compare current live (liveSlide ref or
+    // slides[liveSlideIndex]) by title+subtitle (per v0.7.200-hotfix.1
+    // — id varies by click origin: Chapter Navigator builds
+    // `slide-${Date.now()}-${verse}`, Detected Verses builds
+    // `slide-${Date.now()}-${idx}`, auto builds `auto-${best.id}`).
+    // Same-as-live short-circuits so we don't re-broadcast the same
+    // frame and re-trigger the secondary screen's transition CSS.
+    const __st = useAppStore.getState()
+    const curLiveSlide = __st.liveSlide
+      ?? (__st.isLive && __st.liveSlideIndex >= 0 ? __st.slides[__st.liveSlideIndex] : null)
+    const sameAsLive = !!curLiveSlide
+      && curLiveSlide.title === slide.title
+      && curLiveSlide.subtitle === slide.subtitle
+      && curLiveSlide.type === 'verse'
+    if (sameAsLive) {
+      return
+    }
+    addScheduleItemQuiet({
       type: 'verse',
-      title: newest.reference,
-      subtitle: newest.translation,
+      title: best.reference,
+      subtitle: best.translation,
       slides: [slide],
     })
-    setSlides([slide])
-    setPreviewSlideIndex(0)
-    setLiveSlideIndex(0)
-    setIsLive(true)
+    useAppStore.getState().setLiveAuto(slide)
     // Toast suppressed per FRS — output actions stay silent.
-  }, [autoAdvance, detectedVerses, addScheduleItem, setSlides, setPreviewSlideIndex, setLiveSlideIndex, setIsLive, settings.congregationScreenTheme])
+  }, [effectiveAutoFire, detectedVerses, addScheduleItemQuiet, settings.congregationScreenTheme])
 
   // Local no-op broadcaster — the real broadcaster lives globally in
   // <OutputBroadcaster /> (mounted in page.tsx) so settings tweaks
@@ -3278,32 +4184,80 @@ export function LogosShell() {
 
   // Transport actions
   const goLive = useCallback(() => {
+    // v0.7.212 — Operator $1600-customer escalation: clicking GO LIVE
+    // while a media tile is staged on Preview (via the v0.7.210
+    // pinPreviewSlide direct-ref path) must promote the pinned slide
+    // to live and start playback immediately. Pre-fix, goLive only
+    // consulted slides[previewSlideIndex] — but pinPreviewSlide
+    // intentionally does NOT add to slides[] (that was the whole
+    // point of v0.7.210). Fix: consult pinnedPreviewSlide first and
+    // route through setLiveAuto (canonical promote-to-live primitive).
+    const pinned = useAppStore.getState().pinnedPreviewSlide
+    if (pinned) {
+      // Mirror the smooth handoff: capture preview video timestamp +
+      // unpause live media so playback resumes seamlessly on the
+      // promoted slide (same UX as the schedule-based path below).
+      if (typeof document !== 'undefined') {
+        const pv = document.querySelector<HTMLVideoElement>('video[data-surface="preview"]')
+        if (pv && Number.isFinite(pv.currentTime)) {
+          try { useAppStore.getState().setLiveMediaCurrentTime(pv.currentTime) } catch { /* ignore */ }
+        }
+      }
+      useAppStore.getState().setLiveMediaPaused(false)
+      useAppStore.getState().setPreviewMediaPaused(true)
+      useAppStore.getState().setLiveAuto(pinned)
+      return
+    }
     if (!slides.length) {
       toast.info('Add something to the schedule first')
       return
     }
-    setLiveSlideIndex(previewSlideIndex)
-    setIsLive(true)
-    // Force-stop every Preview-surface video the instant we send to
-    // air. Without this the preview <video> may keep playing for a
-    // beat before React's render commits the new isLive state, and
-    // the operator hears the same audio out of two surfaces. Pausing
-    // the DOM directly closes that window.
+    // v0.7.193 — Smooth Preview→Live handoff with auto-play. Capture
+    // the preview <video>'s current timestamp BEFORE flipping isLive
+    // so the live element seeks to the same frame and resumes
+    // seamlessly. The MediaVideoSurface(surface='live') effect picks
+    // up isLive=true + mediaCurrentTime + mediaPaused=false and calls
+    // .play() automatically. We do NOT force-pause the preview here
+    // — the preview's `forceMute` (computed from previewMediaIsLive)
+    // silences it once isLive flips, so no double-audio. Frames keep
+    // ticking on preview so the operator can still see/scrub it.
     if (typeof document !== 'undefined') {
-      document.querySelectorAll<HTMLVideoElement>('video[data-surface="preview"]').forEach((v) => {
-        try {
-          v.pause()
-        } catch { /* ignore */ }
-      })
+      const pv = document.querySelector<HTMLVideoElement>('video[data-surface="preview"]')
+      if (pv && Number.isFinite(pv.currentTime)) {
+        try { useAppStore.getState().setLiveMediaCurrentTime(pv.currentTime) } catch { /* ignore */ }
+      }
     }
+    useAppStore.getState().setLiveMediaPaused(false)
+    // v0.7.193-hotfix.2 — Operator request: when a media slide is sent
+    // to Live, the Preview pane stops playing automatically (it does
+    // NOT keep ticking quietly in the background). This is the explicit
+    // revision to the v0.7.193 "preview keeps ticking, just muted"
+    // behaviour — operators want a clean stop on promote.
+    useAppStore.getState().setPreviewMediaPaused(true)
+    setIsLive(true)
     if (previewSlideIndex < slides.length - 1) setPreviewSlideIndex(previewSlideIndex + 1)
   }, [slides.length, previewSlideIndex, setLiveSlideIndex, setIsLive, setPreviewSlideIndex])
 
   const clearLive = useCallback(() => {
+    // v0.7.215 — also wipe the v0.7.203 liveSlide direct ref. Pre-215
+    // clearLive only reset liveSlideIndex; a stale AI auto-detected
+    // verse (held in `liveSlide`) survived and the output payload's
+    // `liveSlide ?? slides[liveSlideIndex]` read would re-render it
+    // on the next broadcaster tick. Clear button must produce a truly
+    // empty Live pane.
+    useAppStore.getState().clearLiveAuto()
     setLiveSlideIndex(-1)
     setIsLive(false)
     sendToOutput(null, false)
   }, [setLiveSlideIndex, setIsLive, sendToOutput])
+
+  // v0.7.215 — Clear Preview lives inline at PreviewCard's symmetry
+  // strip (uses useAppStore.getState().clearPinnedPreview() +
+  // setPreviewSlideIndex(-1)). PreviewCard already subscribes to the
+  // store, so no prop drilling needed. clearLive above is the
+  // symmetric Live-only wipe. The two panes are independent: clicking
+  // Clear Preview does NOT touch liveSlide/liveSlideIndex/isLive, and
+  // clearLive does NOT touch pinnedPreviewSlide/previewSlideIndex.
 
   const goBlack = useCallback(() => {
     // Toggle the store-wide BLACK flag. The broadcaster stamps
@@ -3416,6 +4370,7 @@ export function LogosShell() {
   // next-themes class on <html> cascades correctly into both themes.
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-background text-foreground">
+      <MediaPreheat />
       <TopToolbar outputActive={outputActive} toggleOutput={toggleOutput} />
 
       {/* Main workspace — broadcast-style draggable dividers between every

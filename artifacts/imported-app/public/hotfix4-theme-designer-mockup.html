@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>v0.7.194-hotfix.4 — Theme Designer audit + fix</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background:#0b0d10; color:#e7e9ec; padding:20px; }
+  h1 { font-size: 18px; margin: 0 0 6px; color: #fcd34d; }
+  .sub { margin: 0 0 18px; color: #9aa0a6; font-size: 12px; max-width: 1200px; line-height:1.55; }
+  code { background:#1f2937; padding:1px 5px; border-radius:3px; color:#fbbf24; font-size:10.5px; font-family: 'Menlo', 'Monaco', monospace; }
+
+  .audit { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 18px; }
+  .audit-cell { background:#11151a; border:1px solid #1f242b; border-radius:8px; padding:12px; }
+  .audit-cell .head { display:flex; align-items:center; justify-content:space-between; margin-bottom: 6px; }
+  .audit-cell .head .title { font-size: 12px; font-weight: 700; color:#f3f4f6; }
+  .audit-cell .head .tag { font-size: 9px; font-weight: 800; letter-spacing:.06em; padding: 2px 6px; border-radius: 3px; }
+  .audit-cell .head .tag.dead { background:#7f1d1d; color:#fecaca; }
+  .audit-cell .head .tag.works { background:#14532d; color:#bbf7d0; }
+  .audit-cell .body { font-size: 11px; color:#cbd5e1; line-height: 1.55; }
+
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 18px; }
+  .col h2 { font-size: 13px; letter-spacing:.05em; text-transform:uppercase; margin:0 0 4px; }
+  .col h2.bad { color:#f87171; }
+  .col h2.good { color:#34d399; }
+  .col .why { font-size: 11px; color:#9aa0a6; margin-bottom:10px; line-height:1.5; }
+
+  .panel { background: #14181f; border: 1px solid #1f242b; border-radius: 8px; padding: 16px; }
+  .panel .ttl { font-size: 14px; font-weight: 700; color:#f3f4f6; }
+  .panel .desc { font-size: 11px; color:#9aa0a6; margin: 2px 0 14px; }
+  .sep { height: 1px; background: #232830; margin: 14px 0; }
+  .group-label { font-size: 12px; font-weight: 600; color: #e5e7eb; margin-bottom: 8px; }
+
+  .pill-row { display:flex; gap:8px; flex-wrap:wrap; }
+  .pill { padding:6px 12px; border-radius:6px; font-size:11px; font-weight:600; text-transform:capitalize; border:1px solid #2a313a; background:#1d232b; color:#9aa0a6; display:flex; align-items:center; gap:6px; }
+  .pill.active { background: rgba(252,191,36,.12); border-color: rgba(252,191,36,.35); color:#fcd34d; }
+  .pill .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+  .preset-grid { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; }
+  .preset {
+    border: 1px solid #2a313a; background: #1d232b;
+    border-radius: 8px; padding: 10px; cursor: pointer;
+  }
+  .preset .name { font-size: 12px; font-weight: 700; color: #f3f4f6; }
+  .preset .specs { font-size: 9.5px; color: #9aa0a6; margin-top: 2px; }
+  .preset .thumb {
+    margin-top: 8px; height: 50px; border-radius: 5px; padding: 6px 8px;
+    display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;
+    overflow: hidden;
+  }
+  .preset .thumb .t-ref { font-size: 7px; font-weight: 700; opacity: 0.8; margin-bottom: 2px; letter-spacing: 0.06em; }
+  .preset .thumb .t-body { font-size: 9px; font-weight: 700; line-height: 1.15; }
+  .thumb.dc { background: linear-gradient(180deg, #2a1f12 0%, #0e0a06 100%); color: #fbbf24; font-family: 'Georgia', serif; }
+  .thumb.lp { background: linear-gradient(180deg, #1a1d20 0%, #0d0f12 100%); color: #f3f4f6; font-family: ui-sans-serif, system-ui; }
+  .thumb.cw { background: linear-gradient(180deg, #1e2d3f 0%, #0a141f 100%); color: #fde68a; font-family: 'Georgia', serif; }
+
+  .live-preview {
+    background: linear-gradient(180deg, #2a1f12 0%, #0e0a06 100%);
+    border-radius: 6px; height: 90px;
+    display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;
+    padding: 10px; margin-bottom: 4px;
+    font-family: 'Georgia', serif; color: #fbbf24;
+  }
+  .live-preview .lp-ref { font-size: 9px; font-weight: 700; letter-spacing: 0.08em; opacity: 0.85; margin-bottom: 4px; }
+  .live-preview .lp-body { font-size: 13px; font-weight: 700; line-height: 1.25; color: #fff; }
+  .live-cap { font-size: 10px; color: #9aa0a6; }
+  .live-cap b { color: #fcd34d; }
+
+  .input-row { display:flex; gap:8px; }
+  .input { flex:1; padding: 7px 10px; border-radius:6px; border:1px solid #2a313a; background:#0d1015; color:#cbd5e1; font-size:11px; }
+  .btn { padding: 7px 14px; border-radius:6px; border:1px solid #2a313a; background:#1d232b; color:#e7e9ec; font-size:11px; font-weight:600; cursor: pointer; }
+  .btn.primary { background:#fbbf24; color:#1a0f00; border-color: #f59e0b; }
+  .captures { font-size: 10px; color:#9aa0a6; margin-top: 6px; line-height: 1.5; }
+  .captures b { color:#fcd34d; }
+
+  .strike-overlay { position:relative; }
+  .strike-overlay::after {
+    content: ''; position: absolute; inset: -8px;
+    border: 2px dashed rgba(248,113,113,.7); border-radius: 10px; pointer-events: none;
+  }
+  .strike-overlay::before {
+    content: 'REMOVE (DEAD)'; position: absolute; top: -16px; right: -8px;
+    background: rgba(248,113,113,.92); color: #1a0808;
+    font-size: 9px; font-weight: 800; letter-spacing:.08em;
+    padding: 2px 6px; border-radius: 3px; z-index: 5;
+  }
+  .add-overlay { position:relative; }
+  .add-overlay::after {
+    content: ''; position: absolute; inset: -6px;
+    border: 2px dashed rgba(52,211,153,.65); border-radius: 10px; pointer-events: none;
+  }
+  .add-overlay::before {
+    content: 'NEW'; position: absolute; top: -14px; left: -6px;
+    background: rgba(52,211,153,.92); color: #042f1a;
+    font-size: 9px; font-weight: 800; letter-spacing:.08em;
+    padding: 2px 6px; border-radius: 3px; z-index: 5;
+  }
+
+  .legend { padding:12px; background:#11151a; border:1px solid #1f242b; border-radius:6px; font-size:11px; color:#cbd5e1; line-height:1.6; }
+  .legend strong { color:#fcd34d; }
+</style>
+</head>
+<body>
+  <h1>v0.7.194-hotfix.4 — Theme Designer audit, dead picker removed, live preview added</h1>
+  <p class="sub">
+    <strong>What the column does today:</strong> 3 sub-sections. Only 2 of 3 actually function. Operator asked for it to "take effect when users use it" — so we kill the truly-dead section and add a live preview to the working sections so operators see what each click does.
+  </p>
+
+  <div class="audit">
+    <div class="audit-cell">
+      <div class="head"><span class="title">Active-verse highlight color</span><span class="tag dead">DEAD</span></div>
+      <div class="body">
+        Picks one of 6 colors. <code>highlightColor</code> stored + persisted. <strong style="color:#f87171;">Zero consumers</strong> in the entire codebase (grep returns the picker itself only). Amber is hardcoded as the brand accent in 50+ Tailwind classes across logos-shell, license-button, bible-downloads, etc. Wiring this picker "properly" = a 50+ file Tailwind-class refactor, not a hotfix.
+      </div>
+    </div>
+    <div class="audit-cell">
+      <div class="head"><span class="title">Built-in presets</span><span class="tag works">WORKS</span></div>
+      <div class="body">
+        3 hardcoded presets each call <code>updateSettings(patch)</code> writing <code>congregationScreenTheme</code> + <code>fontSize</code> + <code>fontFamily</code> + <code>textShadow</code> + <code>showReferenceOnOutput</code>. Toast confirms. Output re-renders instantly. <strong style="color:#34d399;">Already functional.</strong>
+      </div>
+    </div>
+    <div class="audit-cell">
+      <div class="head"><span class="title">Save current as a custom theme</span><span class="tag works">WORKS</span></div>
+      <div class="body">
+        Captures 6 current settings (theme/fontSize/fontFamily/textShadow/showReferenceOnOutput/textScale) into a named blob. Persists via Zustand <code>persist</code>. Apply re-writes settings. Delete removes from list. <strong style="color:#34d399;">Already functional</strong> — but operator can't see which settings it captures.
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col">
+      <h2 class="bad">BEFORE — dead picker + no preview + no "what gets saved" caption</h2>
+      <div class="why">Operator picks a highlight color: nothing happens. Operator clicks a preset: settings change but no preview shows the effect inside the card. Operator types a name and saves: no indication of which knobs got baked in.</div>
+      <div class="panel">
+        <div class="ttl">Theme Designer</div>
+        <div class="desc">Highlight colour, presets, and save / load your own themes.</div>
+
+        <div class="strike-overlay" style="margin-bottom:14px;">
+          <div class="group-label">Active-verse highlight color</div>
+          <div class="pill-row">
+            <div class="pill active"><span class="dot" style="background:#fbbf24;"></span>Amber</div>
+            <div class="pill"><span class="dot" style="background:#f87171;"></span>Red</div>
+            <div class="pill"><span class="dot" style="background:#34d399;"></span>Emerald</div>
+            <div class="pill"><span class="dot" style="background:#38bdf8;"></span>Sky</div>
+            <div class="pill"><span class="dot" style="background:#a78bfa;"></span>Violet</div>
+            <div class="pill"><span class="dot" style="background:#fb7185;"></span>Rose</div>
+          </div>
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="group-label">Built-in presets</div>
+        <div class="preset-grid">
+          <div class="preset"><div class="name">Dark Church</div><div class="specs">Sermon · Serif · Lg</div></div>
+          <div class="preset"><div class="name">Light Presentation</div><div class="specs">Minimal · Sans · Md</div></div>
+          <div class="preset"><div class="name">Classic Worship</div><div class="specs">Worship · Serif · Xl</div></div>
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="group-label">Save current as a custom theme</div>
+        <div class="input-row">
+          <div class="input">e.g. Sunday Morning</div>
+          <div class="btn">Save</div>
+        </div>
+        <div class="captures" style="color:#7f8896;">No custom themes yet. Tweak the Display &amp; Output settings above, then save here.</div>
+      </div>
+    </div>
+
+    <div class="col">
+      <h2 class="good">AFTER — dead picker removed, live preview at top, "captures" caption added</h2>
+      <div class="why">Operator immediately sees how their current settings render. Each preset thumbnail previews its visual style. The save row tells them exactly which 6 settings get captured into a custom theme.</div>
+      <div class="panel">
+        <div class="ttl">Theme Designer</div>
+        <div class="desc">Preview your current theme, apply a preset, or save your own.</div>
+
+        <div class="add-overlay" style="margin-bottom:14px;">
+          <div class="group-label">Live preview</div>
+          <div class="live-preview">
+            <div class="lp-ref">John 3:16 — NKJV</div>
+            <div class="lp-body">For God so loved the world that He gave His only begotten Son…</div>
+          </div>
+          <div class="live-cap">Current: <b>sermon</b> theme · <b>serif</b> · <b>lg</b> · shadow <b>on</b> · ref <b>shown</b></div>
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="group-label">Built-in presets <span style="font-size:10px; color:#9aa0a6; font-weight:400;">— click to apply</span></div>
+        <div class="preset-grid">
+          <div class="preset">
+            <div class="name">Dark Church</div>
+            <div class="specs">Sermon · Serif · Lg</div>
+            <div class="thumb dc"><div class="t-ref">JOHN 3:16</div><div class="t-body">For God so loved the world…</div></div>
+          </div>
+          <div class="preset">
+            <div class="name">Light Presentation</div>
+            <div class="specs">Minimal · Sans · Md</div>
+            <div class="thumb lp"><div class="t-ref">JOHN 3:16</div><div class="t-body">For God so loved the world…</div></div>
+          </div>
+          <div class="preset">
+            <div class="name">Classic Worship</div>
+            <div class="specs">Worship · Serif · Xl</div>
+            <div class="thumb cw"><div class="t-ref">JOHN 3:16</div><div class="t-body">For God so loved the world…</div></div>
+          </div>
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="group-label">Save current as a custom theme</div>
+        <div class="input-row">
+          <div class="input">e.g. Sunday Morning</div>
+          <div class="btn primary">Save</div>
+        </div>
+        <div class="captures add-overlay" style="margin-top:10px;">
+          <b>Captures:</b> theme · font family · font size · text shadow · reference visibility · text scale.
+          NDI / lower-third / reference typography are saved separately and not included.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col">
+      <div style="background:#11151a; border:1px solid #1f242b; border-radius:8px; padding:14px;">
+        <div style="font-size:11px; font-weight:700; color:#e7e9ec; margin-bottom:8px;">Why we don't try to "wire" the highlight-color picker</div>
+        <div style="font-size:11px; color:#cbd5e1; line-height:1.6;">
+          Amber is the brand accent across the entire app — license button gradients, mic-active pills, NDI badge tints, recording indicators, license-trial banners, bible-downloads warnings, all use literal Tailwind classes like <code>bg-amber-500/20</code>, <code>text-amber-300</code>, <code>border-amber-500/40</code>, <code>ring-amber-500/30</code>. Tailwind classes are static strings that get compiled at build time — they can't take a runtime variable. "Wiring" <code>highlightColor</code> would require:
+          <ul style="margin:6px 0; padding-left:18px;">
+            <li>Defining 6 color×6 alpha×4 property maps (color/bg/border/ring) in Tailwind safelist</li>
+            <li>Touching ~50 files to swap hardcoded amber for dynamic class lookup</li>
+            <li>Risk: re-coloring elements the operator does NOT want re-colored (license button, mic indicator)</li>
+          </ul>
+          <strong style="color:#fcd34d;">Not a hotfix. </strong> This was scope creep from a feature that was never actually built — the original v0.5.52 commit added the picker UI but never wrote the consumer. Cleanest move: remove the dead picker. If operator one day wants a "brand color" feature, we scope it as its own ship.
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div style="background:#11151a; border:1px solid #1f242b; border-radius:8px; padding:14px;">
+        <div style="font-size:11px; font-weight:700; color:#e7e9ec; margin-bottom:8px;">The change (1 file: <code>settings.tsx</code>)</div>
+        <div style="font-size:11px; color:#cbd5e1; line-height:1.7;">
+          <strong style="color:#fcd34d;">A.</strong> Delete L2489-2515 (Active-verse highlight color block) + the L2517 Separator that follows. Remove the now-unused <code>highlightColor</code> + <code>setHighlightColor</code> hooks at L2402-2403 and <code>HIGHLIGHTS</code> constant at L2442.<br><br>
+          <strong style="color:#fcd34d;">B.</strong> Add a <em>Live preview</em> block at the top of <code>CardContent</code> showing the current theme rendering — reuse the same <code>&lt;OutputPreview&gt;</code> iframe component already imported by this file (used in the Display &amp; Output card). Single instance, mode="full", height 90-110px.<br><br>
+          <strong style="color:#fcd34d;">C.</strong> Add preset thumbnails: replace each preset button's content with theme-gradient mini-card showing "JOHN 3:16" + sample text rendered with that preset's font family + simulated theme background. Pure CSS — no real preview iframe per preset.<br><br>
+          <strong style="color:#fcd34d;">D.</strong> Update the empty-state caption AND add a "Captures: …" caption under the Save row so operators know exactly which 6 settings get baked into a saved theme.<br><br>
+          <strong style="color:#fcd34d;">E.</strong> Update card subtitle from "Highlight colour, presets, and save / load your own themes" → "Preview your current theme, apply a preset, or save your own".<br><br>
+          <strong style="color:#34d399;">Store changes:</strong> NONE. <code>highlightColor</code> field can stay in store (Zustand persist will simply hold an unread value — no risk). Or remove it from the persist whitelist in a future cleanup.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <strong>Net change:</strong> 1 file (<code>settings.tsx</code>). Dead picker gone. Live preview added at the top of the card. Each preset gets a visual thumbnail. Save row shows which settings get captured. Operators now see what they're setting — exactly as requested.
+  </div>
+</body>
+</html>

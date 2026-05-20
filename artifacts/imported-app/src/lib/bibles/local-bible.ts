@@ -34,6 +34,73 @@ function isPopulated(d: unknown): d is TranslationMap {
   )
 }
 
+// v0.7.168 — Server-side filesystem fallback. In packaged Electron
+// (`output: 'standalone'` + electron-builder) the 4-MB-each bible JSONs
+// can be split out of the webpack chunk graph instead of inlined; when
+// that happens the `require('@/data/bibles/<key>.json')` below resolves
+// to an empty object at runtime and `isTranslationBundled` returns
+// false, dropping the operator to the online fetch path. Offline service
+// then breaks. We fix this in TWO complementary places:
+//   (1) next.config.ts adds `outputFileTracingIncludes` so the literal
+//       `src/data/bibles/*.json` files are guaranteed to be copied into
+//       `.next/standalone/artifacts/imported-app/src/data/bibles/`.
+//   (2) The fallback below tries to read the file directly via `fs`
+//       when the webpack require returned an empty stub. Three
+//       candidate paths cover dev (artifact root cwd), packaged
+//       Electron (standalone artifact cwd), and any unexpected
+//       working-directory drift.
+// The fallback is server-only (`typeof window === 'undefined'`); the
+// renderer keeps using the webpack-inlined chunk path which DOES work
+// reliably client-side because the JSON ends up in static chunks the
+// postbuild script copies wholesale.
+function fsFallback(t: BibleTranslation): TranslationMap | null {
+  if (typeof window !== 'undefined') return null
+  try {
+    // v0.7.171 — `require('node:fs')` and `require('node:path')` MUST
+    // be resolved through `eval('require')` rather than the static
+    // `require()` form. Reason: `local-bible.ts` is imported by the
+    // client component `live-translation-sync.tsx`, which means
+    // webpack's CLIENT pass for the production build follows it into
+    // the page bundle. Static `require('node:fs')` is statically
+    // detected by webpack 5 and crashes with `UnhandledSchemeError:
+    // Reading from "node:fs" is not handled by plugins (Unhandled
+    // scheme)` — this broke the GitHub Actions Windows installer
+    // build for v0.7.168/v0.7.169/v0.7.170 even though it ran fine in
+    // dev under Turbopack. `eval('require')` evaluates at runtime so
+    // the bundler never sees it on the client side; on the Node side
+    // it resolves normally.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, no-eval
+    const nodeRequire: NodeJS.Require = eval('require')
+    const fs = nodeRequire('node:fs') as typeof import('node:fs')
+    const path = nodeRequire('node:path') as typeof import('node:path')
+    const fname = `${t}.json`
+    const candidates = [
+      path.join(process.cwd(), 'src', 'data', 'bibles', fname),
+      // Standalone packaged path (process.cwd() === .next/standalone/artifacts/imported-app)
+      path.join(process.cwd(), 'artifacts', 'imported-app', 'src', 'data', 'bibles', fname),
+      // Resolve-from-here as last resort. `__dirname` only exists in
+      // CJS contexts; guard with typeof to keep ESM/edge happy.
+      ...(typeof __dirname !== 'undefined'
+        ? [path.join(__dirname, '..', '..', 'data', 'bibles', fname)]
+        : []),
+    ]
+    for (const p of candidates) {
+      try {
+        if (fs.existsSync(p)) {
+          const txt = fs.readFileSync(p, 'utf8')
+          const parsed = JSON.parse(txt) as unknown
+          if (isPopulated(parsed)) return parsed
+        }
+      } catch {
+        /* try next candidate */
+      }
+    }
+  } catch {
+    /* fs/path unavailable (browser) — caller already short-circuited */
+  }
+  return null
+}
+
 function loadTranslation(t: BibleTranslation): TranslationMap | null {
   if (t in cache) return cache[t] ?? null
   try {
@@ -52,6 +119,33 @@ function loadTranslation(t: BibleTranslation): TranslationMap | null {
       case 'esv':
         mod = require('@/data/bibles/esv.json')
         break
+      // v0.7.164 — NKJV/NLT/AMP added per operator request: "somewhere
+      // in between" between bundling everything and only the safe
+      // public-domain set. Same copyright stance as the existing
+      // NIV/ESV bundling decision (v0.5.52). Sourced from bolls.life
+      // by scripts/bundle-bibles.mjs alongside the existing English
+      // trio. Each case follows the same require/stub pattern so the
+      // build succeeds even when the operator skipped the download.
+      case 'nkjv':
+        mod = require('@/data/bibles/nkjv.json')
+        break
+      case 'nlt':
+        mod = require('@/data/bibles/nlt.json')
+        break
+      case 'amp':
+        mod = require('@/data/bibles/amp.json')
+        break
+      // v0.7.137 — Ghanaian translations bundled offline so the
+      // Electron desktop build keeps working without an internet
+      // connection during a live service. wldeh/bible-api source.
+      // v0.7.163 — TWI (Akuapem) case removed; only TWIASANTE + EWE
+      // ship now per operator request.
+      case 'twiasante':
+        mod = require('@/data/bibles/twiasante.json')
+        break
+      case 'ewe':
+        mod = require('@/data/bibles/ewe.json')
+        break
       default:
         mod = null
     }
@@ -60,15 +154,22 @@ function loadTranslation(t: BibleTranslation): TranslationMap | null {
       raw && typeof raw === 'object' && 'default' in (raw as object)
         ? (raw as { default?: unknown }).default
         : raw
-    const resolved = isPopulated(unwrapped) ? unwrapped : null
+    let resolved = isPopulated(unwrapped) ? unwrapped : null
+    if (!resolved) {
+      // v0.7.168 — webpack returned an empty stub (or chunk-split the
+      // 4 MB JSON in a way that didn't inline). Try the server-side
+      // filesystem fallback before giving up.
+      resolved = fsFallback(t)
+    }
     cache[t] = resolved
     return resolved
   } catch {
-    // require() failure (stub missing in some pathological dev setup)
-    // → behave exactly like the empty-stub case so the speech path
-    // still works via the online fallback.
-    cache[t] = null
-    return null
+    // require() failure (stub missing in some pathological dev setup
+    // or bundler chunk-split). Try fs fallback once more before
+    // surrendering to the online path.
+    const resolved = fsFallback(t)
+    cache[t] = resolved
+    return resolved
   }
 }
 
@@ -123,4 +224,38 @@ export function lookupRange(
   }
   if (!lines.length) return null
   return { lines, text: lines.join('\n') }
+}
+
+/** v0.7.172 — Look up a whole chapter from the bundled JSON. Returns
+ *  the verse list in the shape the `/api/bible?book=&chapter=` route
+ *  emits (`{ verse, text }[]`). Returns null when the translation
+ *  isn't bundled OR the chapter address isn't in the data. Used by
+ *  the Chapter Navigator path so TWIASANTE / EWE / KJV / NIV / ESV /
+ *  NKJV / NLT / AMP chapters work offline (the prior code only
+ *  short-circuited single-verse lookups, leaving chapter mode going
+ *  straight to the network and failing offline with "Chapter not
+ *  found"). */
+export function lookupChapter(
+  book: string,
+  chapter: number,
+  translation: BibleTranslation,
+): Array<{ verse: number; text: string }> | null {
+  const data = loadTranslation(translation)
+  if (!data) return null
+  const b = data[book]
+  if (!b) return null
+  const c = b[String(chapter)]
+  if (!c) return null
+  const out: Array<{ verse: number; text: string }> = []
+  for (const k of Object.keys(c)) {
+    const n = Number(k)
+    if (!Number.isFinite(n) || n < 1) continue
+    const text = c[k]
+    if (typeof text === 'string' && text.trim()) {
+      out.push({ verse: n, text: text.trim() })
+    }
+  }
+  if (!out.length) return null
+  out.sort((a, b) => a.verse - b.verse)
+  return out
 }

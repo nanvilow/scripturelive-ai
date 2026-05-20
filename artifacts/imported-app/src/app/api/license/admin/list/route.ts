@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getFile, computeStatus } from '@/lib/licensing/storage'
 import { requireAdmin } from '@/lib/licensing/admin-auth'
+import { cloudPullAdminLedgerCached } from '@/lib/licensing/cloud-pull-cache'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -41,6 +42,16 @@ import { detectNotificationDelivery } from '@/lib/baked-credentials'
 export async function GET(req: NextRequest) {
   const guard = requireAdmin(req)
   if (guard) return guard
+
+  // v0.7.153 — Cross-device admin sync. v0.7.173 — now goes through the
+  // shared cloud-pull-cache (30 s TTL, 2 s timeout, single in-flight
+  // promise). First open of the panel still awaits one cold-start pull
+  // (bounded to 2 s), but subsequent reads inside the TTL window return
+  // instantly with stale-while-revalidate semantics. Multiple admin
+  // GETs firing in parallel coalesce onto a single cloud round-trip
+  // instead of each paying their own.
+  try { await cloudPullAdminLedgerCached() } catch { /* never block */ }
+
   const f = getFile()
   const status = computeStatus()
   const recent = <T extends { createdAt?: string; generatedAt?: string; ts?: string }>(arr: T[], n: number) =>

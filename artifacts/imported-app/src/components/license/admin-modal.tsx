@@ -14,7 +14,7 @@
 // We re-fetch /api/license/admin/list each time the panel opens, and
 // every 5 s while it's open. Confirmation is a separate POST.
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import {
   AlertDialog,
@@ -31,7 +31,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useLicense } from './license-provider'
-import { ShieldCheck, Copy, Mail, Phone, RefreshCw, KeyRound, AlertTriangle, CheckCircle2, Loader2, Settings as SettingsIcon, Save, Sparkles, UserPlus, Trash2, ListChecks, MapPin, Clock, Ban, CalendarPlus, Undo2, Trash, CheckSquare, X } from 'lucide-react'
+import { ShieldCheck, Copy, Mail, Phone, RefreshCw, KeyRound, AlertTriangle, CheckCircle2, Loader2, Settings as SettingsIcon, Save, Sparkles, UserPlus, Trash2, ListChecks, MapPin, Clock, Ban, CalendarPlus, Undo2, Trash, CheckSquare, X, Globe } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -87,6 +87,10 @@ interface AdminConfigResp {
     /** v0.7.29 — Phase 2 v0.8.0 — opt-in LLM voice classifier. */
     enableLlmClassifier?: boolean
     llmClassifierConfidenceFloor?: number
+    /** v0.7.153 — Cross-device admin sync credential (the cloud
+     *  install's masterCode). Per-PC; shown back to the operator so
+     *  they can confirm what's saved without re-pasting. */
+    cloudAdminCode?: string
     updatedAt?: string
   }
   defaults: {
@@ -200,6 +204,18 @@ export function AdminModal() {
   const [genEmail, setGenEmail] = useState<string>('')
   const [genWhatsapp, setGenWhatsapp] = useState<string>('')
   const [genBusy, setGenBusy] = useState(false)
+  // v0.7.121 — Operator escalation: "when i generate 1 code it generate
+  // multiple instead of 1." Root cause: the form's onSubmit guard
+  // (`if (!genBusy) generateCode()`) reads `genBusy` from the React
+  // render closure (stale value). React batches state updates, so a
+  // rapid double-trigger (Enter-press + button-click, MouseEvent +
+  // synthetic click from the pointer-events watchdog, Strict-Mode
+  // dev double-invoke, etc.) both observe `genBusy === false` in the
+  // same tick → two fetch POSTs → two activation rows minted from one
+  // operator click. `setGenBusy(true)` then can't help because it's
+  // queued for the next render. A `useRef` flips synchronously inside
+  // the same JS task and wins the race regardless of React batching.
+  const genInFlightRef = useRef(false)
   // v0.7.13 — Records dashboard state. Replaces the Reference Code
   // section (deleted in v0.7.13 per operator's spec — they were never
   // using it and wanted live install / heartbeat / error analytics
@@ -325,6 +341,37 @@ export function AdminModal() {
   // secrets so an over-the-shoulder glance can't read them).
   const [fOpenAIKey, setFOpenAIKey] = useState('')
   const [fDeepgramKey, setFDeepgramKey] = useState('')
+  // v0.7.157 — Cross-device admin sync credential (operator-pastes
+  // the cloud install's masterCode here). Round-tripped on reload
+  // unlike the key fields above, because there's no security risk —
+  // it's already visible on the cloud's own admin panel and the
+  // operator needs to be able to verify what's saved.
+  const [fCloudAdminCode, setFCloudAdminCode] = useState('')
+  const [cloudSyncTesting, setCloudSyncTesting] = useState(false)
+  const [cloudSyncResult, setCloudSyncResult] = useState<{
+    ok: boolean
+    stage: 'disabled' | 'unreachable' | 'unauthorized' | 'connected'
+    detail: string
+    cloudBase?: string
+    pulledCounts?: { paymentCodes: number; activationCodes: number; notifications: number }
+    stats?: {
+      activationsActive: number
+      activationsNeverUsed: number
+      activationsUsed: number
+      activationsExpired: number
+      activationsCancelled: number
+      activationsDeleted: number
+      activationsMaster: number
+      paymentsPaid: number
+      paymentsWaiting: number
+      paymentsConsumed: number
+      paymentsExpired: number
+      revenueGhs: number
+      uniqueCustomers: number
+      notificationsLast24h: number
+      notificationsLast7d: number
+    }
+  } | null>(null)
   const [keyStatus, setKeyStatus] = useState<{ openai: boolean; deepgram: boolean }>({
     openai: false,
     deepgram: false,
@@ -443,6 +490,13 @@ export function AdminModal() {
   const [actSelected, setActSelected] = useState<Set<string>>(new Set())
   const [codesSelectMode, setCodesSelectMode] = useState(false)
   const [codesSelected, setCodesSelected] = useState<Set<string>>(new Set())
+  // v0.7.172 — Notifications now get the same Select / Select-All /
+  // Bulk-Delete pattern as Recent Payments + Recent Activations. The
+  // operator's audit log was previously only deletable one row at a
+  // time, which became unusable once the log grew past a few dozen
+  // entries (an SMTP outage can queue hundreds in a single morning).
+  const [notifSelectMode, setNotifSelectMode] = useState(false)
+  const [notifSelected, setNotifSelected] = useState<Set<string>>(new Set())
   // Helper: toggle a single id in/out of a Set without mutating it.
   const toggleSet = (set: Set<string>, id: string): Set<string> => {
     const next = new Set(set)
@@ -457,6 +511,7 @@ export function AdminModal() {
       setPaySelectMode(false); setPaySelected(new Set())
       setActSelectMode(false); setActSelected(new Set())
       setCodesSelectMode(false); setCodesSelected(new Set())
+      setNotifSelectMode(false); setNotifSelected(new Set())
       setPending(null); setPendingValue(''); setPendingBusy(false)
     }
   }, [open])
@@ -576,11 +631,60 @@ export function AdminModal() {
     // v0.7.1 — also gate on `authed` so we don't 401-spam the
     // server (and pollute the audit log) before the operator
     // submits the password.
-    if (!open || !authed) return
+    //
+    // v0.7.166 — Additionally gate on `tab === 'overview'`. The
+    // /admin/list reload only feeds the Overview KPI cards +
+    // Recent Payments / Activations / Notifications tables; firing
+    // it every 5 s while the operator is on the Codes or Settings
+    // tab caused two visible regressions:
+    //   (a) the Settings card flickered every 5 s as Radix's Dialog
+    //       re-evaluated its overlay after each setRecords() state
+    //       update — operator described it as the panel "blurring"
+    //       on every auto-refresh tick.
+    //   (b) the cross-device admin sync push fan-out (triggered by
+    //       every list-read on the cloud side) ran 3× more often
+    //       than necessary, multiplying network chatter and giving
+    //       the merge logic 3× as many chances to race.
+    // Mirrors the existing per-tab gating used by reloadCodes (line
+    // ~672) and reloadRecords (line ~682).
+    if (!open || !authed || tab !== 'overview') return
     reload()
-    const id = setInterval(reload, 5_000)
+    // v0.7.183 — operator-explicit perf pass: 5s → 30s. Cuts admin/list
+    // requests by 6× while still feeling "live" enough for the overview
+    // tab. Manual actions still call reload() directly so freshness
+    // after a write is unchanged.
+    const id = setInterval(reload, 30_000)
     return () => clearInterval(id)
-  }, [open, authed, reload])
+  }, [open, authed, tab, reload])
+
+  // v0.7.160 — Auto-probe cross-device sync the moment the admin
+  // modal opens (and re-probe every 30 s while it stays open) so
+  // the header status badge always reflects current connectivity
+  // without the operator having to dig into Settings → Test
+  // connection. The /admin/list reload above ALREADY pulls any
+  // cloud changes into the local cache on the very next tick — the
+  // probe is purely for status visibility (so the user can SEE
+  // that sync is working, instead of staring at stale data and
+  // assuming it isn't).
+  const probeCloudSync = useCallback(async () => {
+    try {
+      const r = await fetch('/api/license/admin/cloud-sync-test', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+      const j = (await r.json().catch(() => null)) as typeof cloudSyncResult
+      if (j) setCloudSyncResult(j)
+    } catch { /* ignore — never block the panel */ }
+  }, [])
+  useEffect(() => {
+    if (!open || !authed) return
+    void probeCloudSync()
+    // v0.7.183 — perf pass: 30s → 60s. Status-only probe; doesn't drive any data.
+    const id = setInterval(() => { void probeCloudSync() }, 60_000)
+    return () => clearInterval(id)
+  }, [open, authed, probeCloudSync])
 
   // v0.7.0 — Codes tab loader. Polls every 5 s while the tab is open
   // so heartbeat-driven location/lastSeen updates appear in real time.
@@ -597,7 +701,8 @@ export function AdminModal() {
   useEffect(() => {
     if (!open || !authed || tab !== 'codes') return
     reloadCodes()
-    const id = setInterval(reloadCodes, 5_000)
+    // v0.7.183 — perf pass: 5s → 30s. heartbeat updates still appear within ~30s.
+    const id = setInterval(reloadCodes, 30_000)
     return () => clearInterval(id)
   }, [open, authed, tab, reloadCodes])
 
@@ -607,7 +712,8 @@ export function AdminModal() {
   useEffect(() => {
     if (!open || !authed || tab !== 'overview') return
     reloadRecords()
-    const id = setInterval(reloadRecords, 10_000)
+    // v0.7.183 — perf pass: 10s → 60s. Telemetry doesn't need sub-minute freshness.
+    const id = setInterval(reloadRecords, 60_000)
     return () => clearInterval(id)
   }, [open, authed, tab, reloadRecords])
 
@@ -726,6 +832,7 @@ export function AdminModal() {
       // Clear the corresponding selection set + reload data.
       if (kind === 'payment') { setPaySelected(new Set()); setPaySelectMode(false) }
       if (kind === 'activation') { setActSelected(new Set()); setActSelectMode(false); setCodesSelected(new Set()); setCodesSelectMode(false) }
+      if (kind === 'notification') { setNotifSelected(new Set()); setNotifSelectMode(false) }
       await reload()
       await reloadCodes()
       await refresh()
@@ -735,10 +842,15 @@ export function AdminModal() {
   }, [reload, reloadCodes, refresh])
 
   const generateCode = async () => {
+    // v0.7.121 — Synchronous re-entrancy guard (see genInFlightRef
+    // declaration above). Wins races vs React's batched setGenBusy.
+    if (genInFlightRef.current) return
+    genInFlightRef.current = true
     setGenResult(null)
-    if (!genPlan) { setGenResult({ ok: false, msg: 'Pick a plan or CUSTOM.' }); return }
+    if (!genPlan) { genInFlightRef.current = false; setGenResult({ ok: false, msg: 'Pick a plan or CUSTOM.' }); return }
     const daysNum = genDays.trim() === '' ? undefined : Math.floor(Number(genDays))
     if (genDays.trim() !== '' && (!Number.isFinite(daysNum) || (daysNum as number) < 1 || (daysNum as number) > 36500)) {
+      genInFlightRef.current = false
       setGenResult({ ok: false, msg: 'Days must be a whole number between 1 and 36500.' })
       return
     }
@@ -746,10 +858,12 @@ export function AdminModal() {
     const hoursNum = genHours.trim() === '' ? 0 : Math.floor(Number(genHours))
     const minutesNum = genMinutes.trim() === '' ? 0 : Math.floor(Number(genMinutes))
     if (!Number.isFinite(hoursNum) || hoursNum < 0 || hoursNum > 23) {
+      genInFlightRef.current = false
       setGenResult({ ok: false, msg: 'Hours must be a whole number between 0 and 23.' })
       return
     }
     if (!Number.isFinite(minutesNum) || minutesNum < 0 || minutesNum > 59) {
+      genInFlightRef.current = false
       setGenResult({ ok: false, msg: 'Minutes must be a whole number between 0 and 59.' })
       return
     }
@@ -759,12 +873,14 @@ export function AdminModal() {
     // "Months 6, Days 5" = 185 days, "Months 0, Hours 4" = 1 day.
     const monthsNum = genMonths.trim() === '' ? 0 : Math.floor(Number(genMonths))
     if (!Number.isFinite(monthsNum) || monthsNum < 0 || monthsNum > 1200) {
+      genInFlightRef.current = false
       setGenResult({ ok: false, msg: 'Months must be a whole number between 0 and 1200.' })
       return
     }
     const combinedDays = (daysNum ?? 0) + monthsNum * 30
     const finalDays = combinedDays > 0 ? combinedDays : undefined
     if (genPlan === 'CUSTOM' && finalDays == null && hoursNum === 0 && minutesNum === 0) {
+      genInFlightRef.current = false
       setGenResult({ ok: false, msg: 'CUSTOM plan requires a duration (Minutes, Hours, Days, or Months).' })
       return
     }
@@ -803,7 +919,7 @@ export function AdminModal() {
       }
     } catch (e) {
       setGenResult({ ok: false, msg: e instanceof Error ? e.message : String(e) })
-    } finally { setGenBusy(false) }
+    } finally { setGenBusy(false); genInFlightRef.current = false }
   }
 
   const emailMaster = async () => {
@@ -892,6 +1008,10 @@ export function AdminModal() {
       })
       setFOpenAIKey('')
       setFDeepgramKey('')
+      // v0.7.157 — Round-trip the saved cloud admin code on load so
+      // the operator can SEE whether it's set without re-entering.
+      setFCloudAdminCode(j.config.cloudAdminCode ?? '')
+      setCloudSyncResult(null)
       // v0.7.29 — Hydrate LLM classifier opt-in fields. Both default
       // to the "off / no override" state if the config never set them.
       // v0.7.32 — Default-ON semantics: treat undefined as ON.
@@ -948,6 +1068,11 @@ export function AdminModal() {
       else if (fOpenAIKey.trim() !== '') body.adminOpenAIKey = fOpenAIKey.trim()
       if (fDeepgramKey.trim().toUpperCase() === 'CLEAR') body.adminDeepgramKey = null
       else if (fDeepgramKey.trim() !== '') body.adminDeepgramKey = fDeepgramKey.trim()
+      // v0.7.157 — Cross-device admin sync credential. Always sent
+      // (round-trip semantics): empty string ⇒ null (sync disabled),
+      // non-empty ⇒ saved verbatim. The route's clean() already
+      // null-coerces empty strings.
+      body.cloudAdminCode = fCloudAdminCode.trim() === '' ? null : fCloudAdminCode.trim()
 
       // v0.7.29 — Always send the LLM classifier toggle (it's a
       // boolean — no "leave alone" semantics). The floor is null
@@ -983,6 +1108,8 @@ export function AdminModal() {
       })
       setFOpenAIKey('')
       setFDeepgramKey('')
+      // v0.7.157 — Reflect canonical persisted cloud admin code.
+      setFCloudAdminCode(j.config.cloudAdminCode ?? '')
       // v0.7.29 — Refresh from canonical server response so the
       // checkbox + floor reflect what's actually persisted (e.g. the
       // server may have clamped the floor to 1..100).
@@ -1006,9 +1133,61 @@ export function AdminModal() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="sm:max-w-[820px] max-h-[90vh] overflow-y-auto bg-background border-border text-foreground">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
             <ShieldCheck className="h-4 w-4 text-emerald-400" />
-            ScriptureLive AI — Admin Panel
+            <span>ScriptureLive AI — Admin Panel</span>
+            {/* v0.7.160 — Cross-device sync status badge in the modal
+                header. Always visible (across every tab), so the
+                operator instantly knows whether actions taken on
+                another device (phone admin pointing at the cloud,
+                another desktop install) will appear here. Click to
+                jump to the Settings tab where the credential field
+                lives. The "Sync now" button forces an immediate
+                pull-and-refresh so the operator can prove sync is
+                working without waiting for the 5 s poll. */}
+            {authed && cloudSyncResult && (
+              <button
+                type="button"
+                onClick={() => setTab('settings')}
+                title={cloudSyncResult.detail}
+                className={
+                  'ml-auto text-[10px] px-2 py-0.5 rounded-full border font-mono whitespace-nowrap transition hover:opacity-80 ' +
+                  (cloudSyncResult.stage === 'connected'
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                    : cloudSyncResult.stage === 'unauthorized'
+                      ? 'bg-rose-500/15 text-rose-300 border-rose-500/40'
+                      : cloudSyncResult.stage === 'unreachable'
+                        ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                        : 'bg-zinc-500/15 text-zinc-300 border-zinc-500/40')
+                }
+              >
+                <Globe className="inline h-3 w-3 mr-1 -mt-0.5" />
+                {cloudSyncResult.stage === 'connected'
+                  ? `Cross-device sync: connected${cloudSyncResult.stats ? ` · ${cloudSyncResult.stats.activationsActive} active · ${cloudSyncResult.stats.uniqueCustomers} customers · GHS ${cloudSyncResult.stats.revenueGhs.toLocaleString()}` : cloudSyncResult.pulledCounts ? ` (${cloudSyncResult.pulledCounts.paymentCodes + cloudSyncResult.pulledCounts.activationCodes + cloudSyncResult.pulledCounts.notifications} cloud records)` : ''}`
+                  : cloudSyncResult.stage === 'unauthorized'
+                    ? 'Cross-device sync: wrong key — set up'
+                    : cloudSyncResult.stage === 'unreachable'
+                      ? 'Cross-device sync: cloud unreachable'
+                      : 'Cross-device sync: not set up — click here'}
+              </button>
+            )}
+            {authed && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={loading}
+                onClick={async () => {
+                  await Promise.all([reload(), probeCloudSync()])
+                  toast.success('Synced with cloud')
+                }}
+                className="h-7 px-2 text-[10px] gap-1"
+                title="Pull the latest snapshot from the cloud and refresh every tab"
+              >
+                {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Globe className="h-3 w-3" />}
+                Sync now
+              </Button>
+            )}
           </DialogTitle>
           <DialogDescription className="text-muted-foreground text-xs">
             Owner-only. Confirm MoMo payments, generate activation codes, monitor subscription state.
@@ -1075,14 +1254,14 @@ export function AdminModal() {
               </button>
             </div>
             <div className="text-[10px] text-muted-foreground/70 mt-1 leading-relaxed">
-              Default password is <code className="font-mono">admin</code> on first run — change it in Settings → Admin Password.
-              Forgot it? Tap <span className="text-emerald-300">Forgot password</span> to receive a one-time code via SMS + email,
+              Forgot the password? Tap <span className="text-emerald-300">Forgot password</span> to receive a one-time code via SMS + email,
               or use your master code (saved during install) which always works.
             </div>
           </form>
         )}
 
         {authed && (<>
+        <RecentActivationsBanner />
         {/* Tab bar (v0.5.48). Overview keeps the existing payment +
             activation + notifications view; Settings shows the
             owner-tunable runtime config. */}
@@ -1682,7 +1861,9 @@ export function AdminModal() {
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
-                  if (!genBusy) generateCode()
+                  // v0.7.121 — Use ref guard, not stale `genBusy`
+                  // closure. See genInFlightRef declaration above.
+                  if (!genInFlightRef.current) generateCode()
                 }}
                 autoComplete="off"
                 className="space-y-3"
@@ -1915,7 +2096,7 @@ export function AdminModal() {
                             />
                           </th>
                         )}
-                        <th className="text-left px-2 py-1.5">Ref</th><th className="text-left px-2 py-1.5">Plan</th><th className="text-left px-2 py-1.5">Amount</th><th className="text-left px-2 py-1.5">Customer</th><th className="text-left px-2 py-1.5">Status</th><th className="text-right px-2 py-1.5">Action</th>
+                        <th className="text-left px-2 py-1.5">Ref</th><th className="text-left px-2 py-1.5">Plan</th><th className="text-left px-2 py-1.5">Amount</th><th className="text-left px-2 py-1.5">Customer</th><th className="text-left px-2 py-1.5">Status</th><th className="text-left px-2 py-1.5">Date &amp; Time</th><th className="text-right px-2 py-1.5">Action</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1935,6 +2116,8 @@ export function AdminModal() {
                           <td className="px-2 py-1.5 font-mono">GHS {p.amountGhs}</td>
                           <td className="px-2 py-1.5"><div className="truncate max-w-[160px]">{p.email}</div><div className="text-muted-foreground font-mono text-[10px]">{p.whatsapp}</div></td>
                           <td className="px-2 py-1.5"><Badge className={cn('text-[9px]', p.status === 'WAITING_PAYMENT' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : p.status === 'PAID' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : p.status === 'CONSUMED' ? 'bg-sky-500/20 text-sky-300 border-sky-500/40' : 'bg-muted text-foreground border-border')}>{p.status}</Badge></td>
+                          {/* v0.7.190-hotfix.1 — operator request: date + time column for audit/record-keeping. */}
+                          <td className="px-2 py-1.5 font-mono text-[10px] text-muted-foreground whitespace-nowrap" title={p.createdAt}>{p.createdAt ? new Date(p.createdAt).toLocaleString() : '—'}</td>
                           <td className="px-2 py-1.5 text-right">
                             <div className="inline-flex items-center gap-1">
                               {p.status === 'WAITING_PAYMENT' && (
@@ -2033,6 +2216,7 @@ export function AdminModal() {
                         <th className="text-left px-2 py-1.5">Days</th>
                         <th className="text-left px-2 py-1.5">For</th>
                         <th className="text-left px-2 py-1.5">Used?</th>
+                        <th className="text-left px-2 py-1.5">Generated</th>
                         <th className="text-left px-2 py-1.5">Expires</th>
                         <th className="text-right px-2 py-1.5">Action</th>
                       </tr>
@@ -2063,6 +2247,8 @@ export function AdminModal() {
                             <td className="px-2 py-1.5">{a.days}</td>
                             <td className="px-2 py-1.5 max-w-[200px]"><div className="truncate" title={forLabel}>{forLabel}</div></td>
                             <td className="px-2 py-1.5">{a.isUsed ? <span className="text-emerald-400">Yes</span> : <span className="text-amber-400">No</span>}</td>
+                            {/* v0.7.190-hotfix.1 — operator request: date + time column for audit/record-keeping. */}
+                            <td className="px-2 py-1.5 font-mono text-[10px] text-muted-foreground whitespace-nowrap" title={a.generatedAt}>{a.generatedAt ? new Date(a.generatedAt).toLocaleString() : '—'}</td>
                             <td className="px-2 py-1.5 font-mono text-[10px] text-muted-foreground">{a.subscriptionExpiresAt ? new Date(a.subscriptionExpiresAt).toLocaleDateString() : '—'}</td>
                             <td className="px-2 py-1.5 text-right">
                               <div className="inline-flex items-center gap-1">
@@ -2096,17 +2282,99 @@ export function AdminModal() {
               </div>
             </section>
 
-            {/* ── Notification audit log ───────────────────────────────── */}
+            {/* ── Notification audit log ─────────────────────────────────
+                v0.7.172 — Brought into parity with Recent Payments /
+                Recent Activations: Select toggle in the header reveals
+                a checkbox in front of every row + a master Select-All
+                checkbox in a sticky-ish header strip. Bulk action bar
+                with "Delete (N)" appears whenever any row is ticked.
+                Bulk delete reuses the existing
+                /api/license/admin/bulk-delete endpoint with kind='notification'
+                so no backend change required. */}
             <section>
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Notifications ({data.notifications.length})</div>
+              <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Notifications ({data.notifications.length})</div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="sm" variant="ghost"
+                    className={cn('h-7 text-[10px]', notifSelectMode && 'bg-primary/10 text-primary')}
+                    onClick={() => {
+                      setNotifSelectMode((v) => !v)
+                      setNotifSelected(new Set())
+                    }}
+                    disabled={data.notifications.length === 0}
+                  >
+                    {notifSelectMode ? <X className="h-3 w-3 mr-1" /> : <CheckSquare className="h-3 w-3 mr-1" />}
+                    {notifSelectMode ? 'Cancel' : 'Select'}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={reload} disabled={loading}><RefreshCw className={cn('h-3 w-3', loading && 'animate-spin')} /></Button>
+                </div>
+              </div>
+              {/* Master select-all + count + delete bar — only visible
+                  while in select mode so we don't take up vertical
+                  space on the default view. */}
+              {notifSelectMode && data.notifications.length > 0 && (
+                <div className="mb-1.5 flex items-center gap-2 rounded border border-primary/40 bg-primary/5 px-2 py-1.5 text-[11px]">
+                  <Checkbox
+                    checked={notifSelected.size > 0 && notifSelected.size === data.notifications.length}
+                    onCheckedChange={(c) => {
+                      if (c) setNotifSelected(new Set(data.notifications.map((n) => n.id)))
+                      else setNotifSelected(new Set())
+                    }}
+                    aria-label="Select all notifications"
+                  />
+                  <span className="font-semibold">
+                    {notifSelected.size === 0
+                      ? 'Select all'
+                      : notifSelected.size === data.notifications.length
+                        ? `All ${notifSelected.size} selected`
+                        : `${notifSelected.size} of ${data.notifications.length} selected`}
+                  </span>
+                  <div className="flex-1" />
+                  <Button
+                    size="sm" variant="outline" className="h-7 text-[10px]"
+                    onClick={() => askConfirm({
+                      title: `Delete ALL ${data.notifications.length} notifications?`,
+                      description: 'Removes every notification row from the audit log. The underlying messages (already sent or queued) are unaffected.',
+                      confirmLabel: `Delete all ${data.notifications.length}`,
+                      destructive: true,
+                      onConfirm: () => bulkDelete('notification', data.notifications.map((n) => n.id)),
+                    })}
+                  ><Trash2 className="h-3 w-3 mr-1" />Delete all</Button>
+                  <Button
+                    size="sm" className="h-7 text-[10px] bg-rose-600 hover:bg-rose-500"
+                    disabled={notifSelected.size === 0}
+                    onClick={() => askConfirm({
+                      title: `Delete ${notifSelected.size} notification${notifSelected.size === 1 ? '' : 's'}?`,
+                      description: 'Removes the rows from the audit log only. The underlying messages (already sent or queued) are unaffected.',
+                      confirmLabel: `Delete ${notifSelected.size}`,
+                      destructive: true,
+                      onConfirm: () => bulkDelete('notification', Array.from(notifSelected)),
+                    })}
+                  ><Trash2 className="h-3 w-3 mr-1" />Delete ({notifSelected.size})</Button>
+                </div>
+              )}
               <div className="rounded-lg border border-border max-h-[200px] overflow-y-auto">
                 {data.notifications.length === 0 ? (
                   <div className="p-4 text-center text-[11px] text-muted-foreground">No notifications yet.</div>
                 ) : (
                   <ul className="divide-y divide-border">
                     {data.notifications.map((n) => (
-                      <li key={n.id} className="p-2.5 text-[11px]">
+                      <li
+                        key={n.id}
+                        className={cn(
+                          'p-2.5 text-[11px]',
+                          notifSelectMode && notifSelected.has(n.id) && 'bg-primary/5',
+                        )}
+                      >
                         <div className="flex items-center gap-2 mb-1">
+                          {notifSelectMode && (
+                            <Checkbox
+                              checked={notifSelected.has(n.id)}
+                              onCheckedChange={() => setNotifSelected((s) => toggleSet(s, n.id))}
+                              aria-label={`Select notification ${n.subject}`}
+                            />
+                          )}
                           {n.channel === 'email' ? <Mail className="h-3 w-3 text-sky-400" /> : <Phone className="h-3 w-3 text-emerald-400" />}
                           <span className="font-semibold">{n.subject}</span>
                           <Badge className={cn('text-[9px] ml-auto', n.status === 'sent' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : n.status === 'pending' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-rose-500/20 text-rose-300 border-rose-500/40')}>{n.status}</Badge>
@@ -2265,6 +2533,163 @@ export function AdminModal() {
                       <p className="text-[10px] text-muted-foreground">Default {cfg.defaults.trialMinutes} min. Range 1–1440. Applies to new installs; existing trial windows keep their original end-time.</p>
                     </div>
                   </div>
+                </section>
+
+                {/* v0.7.157 — Cross-Device Admin Sync (Cloud Sync). The
+                    user kept asking "why don't admin actions on my phone
+                    show up on my desktop?" — the answer was that the
+                    cloud-sync helpers added in v0.7.153 silently no-op
+                    when cloudAdminCode is unset, and there was NO UI to
+                    set it. This card exposes the field plus a Test
+                    Connection button that pings the cloud and reports a
+                    structured status (disabled / unreachable /
+                    unauthorized / connected) the operator can act on. */}
+                <section className="rounded-lg border border-border bg-card/40 p-3.5 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Cross-Device Admin Sync</div>
+                    {cloudSyncResult && (
+                      <span
+                        className={
+                          'text-[10px] px-1.5 py-0.5 rounded border font-mono ' +
+                          (cloudSyncResult.stage === 'connected'
+                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                            : cloudSyncResult.stage === 'unauthorized'
+                              ? 'bg-rose-500/15 text-rose-300 border-rose-500/40'
+                              : cloudSyncResult.stage === 'unreachable'
+                                ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                                : 'bg-zinc-500/15 text-zinc-300 border-zinc-500/40')
+                        }
+                      >
+                        {cloudSyncResult.stage}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground leading-snug">
+                    Paste the masterCode of the cloud install
+                    (<span className="font-mono">https://scripturelive.replit.app/?admin</span> →
+                    Overview → Master code) so admin actions taken on
+                    your phone (or any other device pointed at the cloud)
+                    appear in this desktop&apos;s admin panel, and vice
+                    versa. Without this, every install&apos;s admin view
+                    is local-only.
+                  </p>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Cloud admin code (cloud&apos;s masterCode)</label>
+                    <Input
+                      type="text"
+                      placeholder="(blank = cross-device sync disabled)"
+                      value={fCloudAdminCode}
+                      onChange={(e) => { setFCloudAdminCode(e.target.value); setCloudSyncResult(null) }}
+                      className="bg-background border-border text-foreground font-mono"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={cloudSyncTesting}
+                      onClick={async () => {
+                        setCloudSyncTesting(true)
+                        setCloudSyncResult(null)
+                        try {
+                          // Save first so the route reads the LATEST
+                          // pasted code (not whatever was on disk
+                          // before the operator typed). Validate the
+                          // save response so a 401/network/500 doesn't
+                          // silently let the test run against the OLD
+                          // persisted code (would yield misleading
+                          // unauthorized/connected verdicts).
+                          const saveRes = await fetch('/api/license/admin/config', {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              cloudAdminCode: fCloudAdminCode.trim() === '' ? null : fCloudAdminCode.trim(),
+                            }),
+                          })
+                          if (!saveRes.ok) {
+                            toast.error(`Could not save cloud admin code (HTTP ${saveRes.status}). Test aborted — try again after fixing the admin session.`)
+                            return
+                          }
+                          const r = await fetch('/api/license/admin/cloud-sync-test', {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: '{}',
+                          })
+                          const j = (await r.json().catch(() => null)) as typeof cloudSyncResult
+                          if (!j) {
+                            toast.error('Test failed (no response)')
+                            return
+                          }
+                          setCloudSyncResult(j)
+                          if (j.ok) toast.success('Cloud sync connected')
+                          else toast.error(`Cloud sync ${j.stage}`)
+                        } catch (e) {
+                          toast.error(e instanceof Error ? e.message : 'Test failed')
+                        } finally {
+                          setCloudSyncTesting(false)
+                        }
+                      }}
+                      className="h-8 text-[11px] gap-1.5"
+                    >
+                      {cloudSyncTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Globe className="h-3.5 w-3.5" />}
+                      Test connection
+                    </Button>
+                  </div>
+                  {cloudSyncResult && (
+                    <div
+                      className={
+                        'rounded-md border p-2.5 text-[11px] leading-snug ' +
+                        (cloudSyncResult.ok
+                          ? 'border-emerald-500/30 bg-emerald-500/5 text-emerald-200'
+                          : 'border-amber-500/30 bg-amber-500/5 text-amber-200')
+                      }
+                    >
+                      {cloudSyncResult.detail}
+                      {cloudSyncResult.pulledCounts && (
+                        <div className="mt-1.5 font-mono text-[10px] opacity-80">
+                          Cloud snapshot: {cloudSyncResult.pulledCounts.paymentCodes} payment-codes · {cloudSyncResult.pulledCounts.activationCodes} activation-codes · {cloudSyncResult.pulledCounts.notifications} notifications
+                        </div>
+                      )}
+                      {cloudSyncResult.stats && (
+                        <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {[
+                            { label: 'Active subscriptions', value: cloudSyncResult.stats.activationsActive, accent: 'text-emerald-300' },
+                            { label: 'Unique customers', value: cloudSyncResult.stats.uniqueCustomers, accent: 'text-emerald-300' },
+                            { label: 'Total revenue (GHS)', value: cloudSyncResult.stats.revenueGhs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), accent: 'text-emerald-300' },
+                            { label: 'Never used', value: cloudSyncResult.stats.activationsNeverUsed, accent: 'text-zinc-300' },
+                            { label: 'Used (no expiry)', value: cloudSyncResult.stats.activationsUsed, accent: 'text-zinc-300' },
+                            { label: 'Expired', value: cloudSyncResult.stats.activationsExpired, accent: 'text-amber-300' },
+                            { label: 'Cancelled', value: cloudSyncResult.stats.activationsCancelled, accent: 'text-rose-300' },
+                            { label: 'Deleted (in bin)', value: cloudSyncResult.stats.activationsDeleted, accent: 'text-rose-300' },
+                            { label: 'Master codes', value: cloudSyncResult.stats.activationsMaster, accent: 'text-violet-300' },
+                            { label: 'Payments paid', value: cloudSyncResult.stats.paymentsPaid, accent: 'text-emerald-300' },
+                            { label: 'Payments waiting', value: cloudSyncResult.stats.paymentsWaiting, accent: 'text-amber-300' },
+                            { label: 'Payments consumed', value: cloudSyncResult.stats.paymentsConsumed, accent: 'text-emerald-300' },
+                            { label: 'Payments expired', value: cloudSyncResult.stats.paymentsExpired, accent: 'text-zinc-300' },
+                            { label: 'Notifications · 24h', value: cloudSyncResult.stats.notificationsLast24h, accent: 'text-sky-300' },
+                            { label: 'Notifications · 7d', value: cloudSyncResult.stats.notificationsLast7d, accent: 'text-sky-300' },
+                          ].map((m) => (
+                            <div
+                              key={m.label}
+                              className="rounded border border-border/40 bg-background/40 px-2 py-1.5"
+                            >
+                              <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
+                                {m.label}
+                              </div>
+                              <div className={'mt-0.5 font-mono text-[12px] font-semibold ' + m.accent}>
+                                {m.value}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </section>
 
                 <section className="rounded-lg border border-border bg-card/40 p-3.5 space-y-3">
@@ -2453,6 +2878,15 @@ export function AdminModal() {
                       Sends to the configured Owner Email / Phone. Result is logged in the Notifications panel above.
                     </p>
                   </div>
+
+                  {/* v0.7.122 — AI diagnostic. Calls /api/ai/diagnostic
+                      which times one embedding + one LLM + one full
+                      semantic match round-trip and reports per-stage
+                      latency. Lets the operator confirm whether AI
+                      Search / AI Detection slowdowns are upstream
+                      (OpenAI / proxy) or local (cosine compute) without
+                      shelling into devtools. */}
+                  <AiDiagnosticButton />
                 </section>
 
                 <section className="rounded-lg border border-border bg-card/40 p-3.5 space-y-3">
@@ -2979,5 +3413,174 @@ export function AdminModal() {
         </AlertDialogContent>
       </AlertDialog>
     </Dialog>
+  )
+}
+
+// ─── v0.7.122 helper components ───────────────────────────────────────
+
+interface RecentActivationRow {
+  activationCode: string
+  planCode: string
+  days: number
+  activatedAt: string
+  expiresAt: string | null
+  installId?: string | null
+  paymentRef?: string | null
+}
+
+/** v0.7.122 — Polls /api/license/admin/recent-activations every 10 s
+ *  and surfaces any activation rows whose code we haven't yet seen.
+ *  "Seen" is tracked in localStorage under `sl-admin-seen-activations`
+ *  so a refresh of the admin panel doesn't re-flash old rows. The
+ *  banner is dismissable as a whole; individual rows show plan +
+ *  days + when. Pure read — no mutation. */
+function RecentActivationsBanner() {
+  const [rows, setRows] = useState<RecentActivationRow[]>([])
+  const [seen, setSeen] = useState<Set<string>>(() => {
+    try {
+      const raw = window.localStorage.getItem('sl-admin-seen-activations') || '[]'
+      const arr = JSON.parse(raw) as string[]
+      return new Set(Array.isArray(arr) ? arr : [])
+    } catch { return new Set() }
+  })
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const r = await fetch('/api/license/admin/recent-activations?windowHours=24', { cache: 'no-store' })
+        if (!r.ok) return
+        const j = await r.json() as { activations?: RecentActivationRow[] }
+        if (!cancelled && Array.isArray(j.activations)) setRows(j.activations)
+      } catch { /* offline-tolerant */ }
+    }
+    load()
+    const id = window.setInterval(load, 10_000)
+    return () => { cancelled = true; window.clearInterval(id) }
+  }, [])
+
+  const unseen = rows.filter((r) => !seen.has(r.activationCode))
+  if (unseen.length === 0) return null
+
+  const acknowledgeAll = () => {
+    const next = new Set(seen)
+    for (const r of unseen) next.add(r.activationCode)
+    setSeen(next)
+    try {
+      window.localStorage.setItem('sl-admin-seen-activations', JSON.stringify(Array.from(next).slice(-500)))
+    } catch { /* quota — silent */ }
+  }
+
+  return (
+    <div className="rounded-md border border-emerald-500/50 bg-emerald-500/10 p-2.5 mb-2 space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-emerald-300">
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          {unseen.length} new activation{unseen.length === 1 ? '' : 's'} (last 24h)
+        </div>
+        <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={acknowledgeAll}>
+          Mark all seen
+        </Button>
+      </div>
+      <div className="space-y-0.5 max-h-32 overflow-y-auto">
+        {unseen.slice(0, 10).map((r) => (
+          <div key={r.activationCode} className="flex items-center gap-2 text-[10px] font-mono">
+            <span className="text-foreground">{r.activationCode}</span>
+            <span className="text-muted-foreground">{r.planCode} · {r.days}d</span>
+            <span className="text-muted-foreground ml-auto">{new Date(r.activatedAt).toLocaleString()}</span>
+          </div>
+        ))}
+        {unseen.length > 10 && (
+          <div className="text-[10px] text-muted-foreground italic">+{unseen.length - 10} more…</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+interface AiDiagStage {
+  ok: boolean
+  ms: number
+  error?: string
+  detail?: { dim?: number; reply?: string; matchCount?: number; topReference?: string | null; topScore?: number | null }
+}
+interface AiDiagResp {
+  ok: boolean
+  error?: string
+  stages?: { embedding?: AiDiagStage; llm?: AiDiagStage; semantic?: AiDiagStage }
+  cache?: { ready: boolean; cacheSize: number; loading: boolean; hasApiKey: boolean }
+  timestamp?: string
+}
+
+/** v0.7.122 — Manual AI Detection / AI Search / LLM latency probe.
+ *  Runs three sequential round-trips and prints per-stage ms + the
+ *  detail (embedding dim, LLM reply, top semantic match). Lets the
+ *  operator distinguish "OpenAI is slow today" from "my embedding
+ *  cache hasn't built yet" or "the proxy is dropping requests". */
+function AiDiagnosticButton() {
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<AiDiagResp | null>(null)
+
+  const run = async () => {
+    setBusy(true)
+    setResult(null)
+    try {
+      const r = await fetch('/api/ai/diagnostic', { cache: 'no-store' })
+      const j = await r.json() as AiDiagResp
+      setResult(j)
+    } catch (e) {
+      setResult({ ok: false, error: e instanceof Error ? e.message : String(e) })
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="pt-2 border-t border-border">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">AI Health</div>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={busy}
+        onClick={run}
+        className="border-border text-foreground hover:bg-muted"
+      >
+        {busy ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Sparkles className="h-3 w-3 mr-1.5" />}
+        Run AI Health Check
+      </Button>
+      <p className="text-[10px] text-muted-foreground mt-1.5">
+        Times one embedding + one LLM call + one full semantic match. Helps confirm whether AI Detection / AI Search slowness is upstream (OpenAI / proxy) or local.
+      </p>
+      {result && (
+        <div className="mt-2 rounded-md border border-border bg-card/40 p-2 text-[10px] font-mono space-y-0.5">
+          {result.error ? (
+            <div className="text-rose-400">Error: {result.error}</div>
+          ) : (
+            <>
+              <div className={result.stages?.embedding?.ok ? 'text-emerald-300' : 'text-rose-400'}>
+                Embedding: {result.stages?.embedding?.ms ?? '?'} ms
+                {result.stages?.embedding?.detail?.dim ? ` · dim ${result.stages.embedding.detail.dim}` : ''}
+                {result.stages?.embedding?.error ? ` · ${result.stages.embedding.error}` : ''}
+              </div>
+              <div className={result.stages?.llm?.ok ? 'text-emerald-300' : 'text-rose-400'}>
+                LLM (gpt-4o-mini): {result.stages?.llm?.ms ?? '?'} ms
+                {result.stages?.llm?.detail?.reply ? ` · "${result.stages.llm.detail.reply}"` : ''}
+                {result.stages?.llm?.error ? ` · ${result.stages.llm.error}` : ''}
+              </div>
+              <div className={result.stages?.semantic?.ok ? 'text-emerald-300' : 'text-rose-400'}>
+                Semantic match: {result.stages?.semantic?.ms ?? '?'} ms
+                {result.stages?.semantic?.detail?.topReference
+                  ? ` · ${result.stages.semantic.detail.topReference} (${(result.stages.semantic.detail.topScore ?? 0).toFixed(3)})`
+                  : ''}
+                {result.stages?.semantic?.error ? ` · ${result.stages.semantic.error}` : ''}
+              </div>
+              {result.cache && (
+                <div className="text-muted-foreground pt-1">
+                  Cache: {result.cache.cacheSize} verses · {result.cache.ready ? 'ready' : result.cache.loading ? 'loading' : 'cold'}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
   )
 }

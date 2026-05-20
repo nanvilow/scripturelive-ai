@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/licensing/admin-auth'
 import { getFile, listAdminCodes } from '@/lib/licensing/storage'
 import { fetchCodesLastSeen } from '@/lib/licensing/telemetry-client'
+import { cloudPullAdminLedgerCached } from '@/lib/licensing/cloud-pull-cache'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -27,6 +28,12 @@ export async function GET(req: NextRequest) {
   if (guard) return guard
   const url = new URL(req.url)
   const includeDeleted = url.searchParams.get('includeDeleted') === '1'
+
+  // v0.7.153 — Pull cross-device admin snapshot before listing so codes
+  // generated on the phone web app appear here on the very next refresh.
+  // v0.7.173 — TTL-cached + coalesced; see cloud-pull-cache.ts.
+  try { await cloudPullAdminLedgerCached() } catch { /* never block */ }
+
   const all = listAdminCodes({ includeDeleted: true })
 
   // v0.7.13 — Merge AUTHORITATIVE last-seen data from the central

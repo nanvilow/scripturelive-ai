@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { useLicense } from './license-provider'
-import { Copy, ShieldCheck, Lock, Sparkles, AlertTriangle, Phone, Mail, Loader2 } from 'lucide-react'
+import { Copy, ShieldCheck, Lock, Sparkles, AlertTriangle, Phone, Mail, Loader2, Check, Crown, Building2, Gift, Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -29,6 +29,7 @@ interface Plan {
   amountGhs: number
   days: number
   discountLabel?: string
+  hidden?: boolean
 }
 
 // v0.5.48 — compiled defaults used as a fallback BEFORE the public
@@ -36,15 +37,29 @@ interface Plan {
 // The modal fetches the EFFECTIVE plan list (with any owner-set
 // price overrides applied) on mount so price changes from Admin
 // Settings show up without rebuilding the renderer bundle.
-const FALLBACK_PLANS: Plan[] = [
-  { code: '1M', label: '1 Month',  amountGhs: 200,  days: 31 },
-  { code: '2M', label: '2 Months', amountGhs: 350,  days: 62 },
-  { code: '3M', label: '3 Months', amountGhs: 550,  days: 93 },
-  { code: '4M', label: '4 Months', amountGhs: 750,  days: 124 },
-  { code: '5M', label: '5 Months', amountGhs: 900,  days: 155 },
-  { code: '6M', label: '6 Months', amountGhs: 1200, days: 186 },
-  { code: '1Y', label: '1 Year',   amountGhs: 1800, days: 365, discountLabel: '25% Off' },
-]
+//
+// v0.7.64 — Sourced from @workspace/pricing (the canonical
+// catalogue) instead of being hand-duplicated here. The previous
+// hand-typed copy had silently drifted off the lib (it still
+// listed 2M–6M and the GHS 200 / 25% Off legacy values after they
+// were collapsed). Importing keeps both surfaces in lockstep
+// forever and makes future price changes a one-file edit.
+//
+// IMPORTANT: import DIRECTLY from `@workspace/pricing` (the zero-deps
+// catalogue lib), NOT from `@/lib/licensing/plans` — the licensing
+// barrel transitively imports `storage.ts`, which uses `node:fs`,
+// and this file ships into the client bundle. Pulling it through
+// the barrel breaks the Turbopack/Next client build with
+// "the chunking context does not support external modules
+// (request: node:fs)".
+import { getPurchasablePlans } from '@workspace/pricing'
+const FALLBACK_PLANS: Plan[] = getPurchasablePlans().map((p) => ({
+  code: p.code,
+  label: p.label,
+  amountGhs: p.amountGhs,
+  days: p.days,
+  discountLabel: p.discountLabel,
+}))
 
 interface PaymentResp {
   ref: string
@@ -90,11 +105,10 @@ export function SubscriptionModal() {
   const [whatsapp, setWhatsapp] = useState('')
   const [payment, setPayment] = useState<PaymentResp | null>(null)
   const [code, setCode] = useState('')
-  // v0.5.53 — second activation slot for an operator-supplied
-  // generated/master code, surfaced as its own input box right under
-  // Step 3. Both slots feed the same /api/license/activate endpoint;
-  // the only difference is which value is sent on click.
-  const [masterCode, setMasterCode] = useState('')
+  // v0.7.75 — Single activation input. The legacy "master code" slot
+  // was collapsed into the same field; we auto-detect master vs
+  // customer codes by SL-MASTER prefix at submit time so the API
+  // still gets the right `expectedType`.
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [receipt, setReceipt] = useState<ActivateResp | null>(null)
@@ -130,7 +144,6 @@ export function SubscriptionModal() {
         setSelected(null)
         setPayment(null)
         setCode('')
-        setMasterCode('')
         setBusy(false)
         setError(null)
         setReceipt(null)
@@ -191,13 +204,42 @@ export function SubscriptionModal() {
       })
       const j = await r.json()
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
-      setReceipt(j as ActivateResp)
-      setPhase('active')
-      await refresh()
+      // v0.7.101 — IMMEDIATE hard reload, before any React state
+      // mutates from the fresh license response.
+      //
+      // Operator confirmed (https://ibb.co/B9v8T23) that even with
+      // v0.7.100's hard-reload-on-Close-button-click, activation STILL
+      // produced chrome-error. Why: the path was
+      //   API resolves
+      //   → setReceipt(j)              ← React commits new tree
+      //   → setPhase('active')         ← lock-overlay starts unmounting
+      //   → await refresh()            ← license-provider state mutates
+      //   → render activation receipt  ← downstream useEffects fire
+      //   → ONE of those useEffects throws against an in-flight fetch
+      //     made with the old auth context → renderer crashes →
+      //     chrome-error painted BEFORE the operator could click Close.
+      //
+      // The "Close button hard reload" added in v0.7.99/v0.7.100 was
+      // closing the gate AFTER the horse had bolted. The activation
+      // receipt UI itself was the trigger. We now skip the receipt
+      // entirely and reload the moment the API confirms success.
+      //
+      // The activation receipt was a nice-to-have (copy / WhatsApp).
+      // The freshly-reloaded app shows the active subscription in
+      // Settings with the same activation code, plan label, and
+      // expiry — operators get the confirmation they actually need
+      // without ever risking the chrome-error window.
+      try { window.location.assign('/') } catch { window.location.href = '/' }
+      // Safety: if navigation is blocked (CSP, beforeunload veto,
+      // renderer mid-shutdown), don't leave the modal stuck on the
+      // 'activating' spinner forever. Same 8 s pattern as v0.7.100.
+      setTimeout(() => { setBusy(false); setPhase('active') }, 8000)
+      return // do NOT fall through to setReceipt / refresh / finally
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setPhase(originPhase)
-    } finally { setBusy(false) }
+      setBusy(false)
+    }
   }
 
   // v0.5.53 — Right-click in Electron sometimes swallows the native
@@ -216,15 +258,17 @@ export function SubscriptionModal() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="sm:max-w-[680px] max-h-[88vh] overflow-y-auto bg-background border-border text-foreground">
-        <DialogHeader>
+      <DialogContent className={cn(
+        'max-h-[92vh] overflow-y-auto bg-background border-border text-foreground p-4 sm:p-5 gap-3',
+        phase === 'plans' ? 'sm:max-w-[1080px]' : 'sm:max-w-[680px]',
+      )}>
+        <DialogHeader className="space-y-1">
           <DialogTitle className="flex items-center gap-2 text-base">
             <ShieldCheck className="h-4 w-4 text-emerald-400" />
             Activate AI Detection
           </DialogTitle>
-          <DialogDescription className="text-muted-foreground text-xs">
-            ScriptureLive AI helps churches display scripture instantly — no manual typing,
-            no delays, just smooth, accurate, powerful live Bible detection.
+          <DialogDescription className="text-muted-foreground text-[11px] leading-snug">
+            Already paid? Enter your activation code below. New here? Pick a plan.
           </DialogDescription>
         </DialogHeader>
 
@@ -235,72 +279,207 @@ export function SubscriptionModal() {
             plan first. The two activation slots now sit directly below
             the plan grid so they fill the empty space next to the 1-Year
             tile. */}
-        {phase === 'plans' && (
+        {phase === 'plans' && (() => {
+          // v0.7.68 — Professional 3-tier pricing layout (Starter / Pro /
+          // Church License) replacing the legacy 7-cell duration grid.
+          // Tiers map to the canonical @workspace/pricing catalogue:
+          //   • Starter      → no plan code (1-hour activity-gated trial
+          //                    is auto-running for unactivated installs).
+          //   • Pro          → 1M plan code, billed monthly via MoMo.
+          //   • Church License → 1Y plan code, billed yearly via MoMo.
+          // Prices and durations are pulled from the live `plans` array
+          // (which already merges in operator overrides from /api/license/plans),
+          // so any future price change in the admin panel propagates to
+          // both cards without a code edit. The legacy 1M / 1Y direct
+          // tiles are kept reachable through this same picker — clicking
+          // Pro sets selected = 1M plan, clicking Church sets 1Y plan.
+          const proPlan = plans.find((p) => p.code === '1M') ?? null
+          const churchPlan = plans.find((p) => p.code === '1Y') ?? null
+          const tiers: Array<{
+            id: 'starter' | 'pro' | 'church'
+            name: string
+            blurb: string
+            price: string
+            priceSuffix: string
+            icon: typeof Crown
+            features: string[]
+            ctaLabel: string
+            featured: boolean
+            onSelect: () => void
+            disabled?: boolean
+          }> = [
+            {
+              id: 'starter',
+              name: 'Starter',
+              blurb: 'Perfect for small churches just getting started with smart scripture display.',
+              price: 'Free',
+              priceSuffix: 'forever',
+              icon: Gift,
+              features: [
+                'AI Verse Detection (Free Trial)',
+                'Dual Screen Display',
+                'Up to 2 screens',
+              ],
+              ctaLabel: 'Get Started',
+              featured: false,
+              onSelect: () => setOpen(false),
+            },
+            {
+              id: 'pro',
+              name: 'Pro',
+              blurb: 'The full ScriptureLive experience for growing congregations.',
+              price: proPlan ? `GHS ${proPlan.amountGhs.toLocaleString()}` : 'GHS —',
+              priceSuffix: 'per month',
+              icon: Crown,
+              features: [
+                'NDI Output Integration',
+                'Full Typography & Styling',
+                'Priority Support',
+                'AI Verse Detection (OpenAI Mode)',
+              ],
+              ctaLabel: 'Get Started',
+              featured: true,
+              disabled: !proPlan,
+              onSelect: () => { if (proPlan) { setSelected(proPlan); setPhase('payment') } },
+            },
+            {
+              id: 'church',
+              name: 'Church License',
+              blurb: 'A long-term license for established ministries: pay once and own it for a year without interruptions.',
+              price: churchPlan ? `GHS ${churchPlan.amountGhs.toLocaleString()}` : 'GHS —',
+              priceSuffix: 'Year',
+              icon: Building2,
+              features: [
+                'Everything in Pro',
+                'Dedicated WhatsApp support',
+                'AI Verse Detection (OpenAI Mode)',
+                'Unlimited Screens',
+                'All future updates',
+                'Full Typography & Styling',
+              ],
+              ctaLabel: 'Get Started',
+              featured: false,
+              disabled: !churchPlan,
+              onSelect: () => { if (churchPlan) { setSelected(churchPlan); setPhase('payment') } },
+            },
+          ]
+          return (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              {plans.map((p) => (
-                <button
-                  key={p.code}
-                  type="button"
-                  onClick={() => { setSelected(p); setPhase('payment') }}
-                  className={cn(
-                    'group relative text-left rounded-lg border bg-card/50 hover:bg-muted/60',
-                    'border-border hover:border-emerald-500/50 transition p-3',
-                    selected?.code === p.code && 'border-emerald-500 bg-emerald-950/30',
-                  )}
-                >
-                  {p.discountLabel && (
-                    <Badge className="absolute -top-2 -right-2 bg-amber-500 text-amber-950 border-amber-300 text-[9px] uppercase">{p.discountLabel}</Badge>
-                  )}
-                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{p.label}</div>
-                  <div className="text-xl font-bold text-emerald-300 mt-1">GHS {p.amountGhs.toLocaleString()}</div>
-                  <div className="text-[10px] text-muted-foreground mt-0.5">{p.days} days</div>
-                </button>
-              ))}
-            </div>
-
-            {/* v0.6.1 — relocated activation entry. Same two slots that
-                used to live in PHASE 2 (post-plan-pick): a customer
-                code slot (emerald Activate) and a master / generated
-                code slot (amber Activate). Either one bypasses the
-                payment flow entirely — the activation endpoint
-                returns the plan info embedded in the code itself. */}
-            <div className="space-y-2 rounded-lg border border-border bg-card/40 p-3.5">
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Step 3 — Enter activation code after payment</div>
+            {/* v0.7.75 — Activation entry MOVED TO TOP per operator
+                feedback: "make sure when users open it, they should be
+                able to see where to enter the activation code too."
+                Previously the activation field sat below all three
+                pricing tiers, which pushed it below the fold on a
+                1280×720 stage so customers with a code in hand
+                couldn't find where to type it. Now it's the first
+                thing visible — pricing tiers follow underneath for
+                customers who don't have a code yet. The two slots
+                (customer code / master code) are collapsed into a
+                single tabbed control to keep the top section short. */}
+            <div className="rounded-lg border border-emerald-500/40 bg-emerald-950/15 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] uppercase tracking-wider text-emerald-300 font-semibold">
+                  Already have an activation code?
+                </div>
+                <span className="text-[10px] text-muted-foreground">Right-click box to paste</span>
+              </div>
               <div className="flex gap-2">
                 <Input
-                  placeholder="SL-1Y-XXXXXX"
+                  placeholder="SL-1Y-XXXXXX  (or master / generated code)"
                   value={code}
                   onChange={(e) => setCode(e.target.value.toUpperCase())}
                   onContextMenu={(e) => { e.preventDefault(); pasteIntoInput(setCode) }}
-                  className="bg-background border-border text-foreground font-mono"
+                  className="bg-background border-border text-foreground font-mono h-9"
                 />
-                <Button onClick={() => submitActivation(code, 'activation')} disabled={busy} className="bg-emerald-600 hover:bg-emerald-500 text-white">
+                <Button
+                  onClick={() => {
+                    // Auto-detect master vs customer code by prefix so
+                    // we collapse the two old buttons into one without
+                    // losing the cross-reject precision in the API.
+                    const v = code.trim().toUpperCase()
+                    const looksMaster = /^SL-MASTER/i.test(v) || /^MASTER/i.test(v)
+                    submitActivation(code, looksMaster ? 'master' : 'activation')
+                  }}
+                  disabled={busy}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 h-9"
+                >
                   {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate'}
                 </Button>
               </div>
-              <p className="text-[10px] text-muted-foreground">Right-click the box above to paste from clipboard.</p>
+              {error && phase === 'plans' && (
+                <div className="text-[11px] text-rose-400 flex items-start gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  {error}
+                </div>
+              )}
+            </div>
 
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground pt-2 border-t border-border">
-                Or — Enter your generated and master code in here
-              </div>
-              <div className="flex gap-2">
-                <Input
-                  placeholder="SL-MASTER-XXXXXX or generated code"
-                  value={masterCode}
-                  onChange={(e) => setMasterCode(e.target.value.toUpperCase())}
-                  onContextMenu={(e) => { e.preventDefault(); pasteIntoInput(setMasterCode) }}
-                  className="bg-background border-border text-foreground font-mono"
-                />
-                <Button onClick={() => submitActivation(masterCode, 'master')} disabled={busy} className="bg-amber-600 hover:bg-amber-500 text-white">
-                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate'}
-                </Button>
-              </div>
+            <div className="flex items-center gap-3">
+              <div className="h-px flex-1 bg-border" />
+              <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                Or pick a plan
+              </span>
+              <div className="h-px flex-1 bg-border" />
+            </div>
 
-              {error && phase === 'plans' && <div className="text-[11px] text-rose-400 flex items-start gap-1.5"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />{error}</div>}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 lg:gap-4">
+              {tiers.map((tier) => {
+                const Icon = tier.icon
+                return (
+                  <div
+                    key={tier.id}
+                    className={cn(
+                      'relative rounded-xl border p-3.5 sm:p-4 flex flex-col bg-card/40',
+                      tier.featured
+                        ? 'border-amber-500/70 bg-gradient-to-b from-amber-950/30 via-card/40 to-card/40 shadow-[0_0_30px_-12px_rgba(245,158,11,0.45)]'
+                        : 'border-border hover:border-border/80',
+                    )}
+                  >
+                    {tier.featured && (
+                      <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-amber-500 text-amber-950 text-[10px] font-semibold shadow-lg whitespace-nowrap inline-flex items-center gap-1">
+                        <Star className="h-2.5 w-2.5" /> Popular
+                      </div>
+                    )}
+                    <div className="flex items-center gap-1.5">
+                      <Icon className={cn('h-3.5 w-3.5', tier.featured ? 'text-amber-300' : 'text-muted-foreground')} />
+                      <h3 className="text-sm font-semibold text-foreground">{tier.name}</h3>
+                    </div>
+                    <p className="mt-1 text-[10.5px] leading-snug text-muted-foreground min-h-[28px]">{tier.blurb}</p>
+                    <div className="mt-2 mb-2">
+                      <div className="flex items-baseline gap-1">
+                        <span className={cn('text-2xl font-bold tracking-tight', tier.featured ? 'text-amber-200' : 'text-foreground')}>{tier.price}</span>
+                        {tier.priceSuffix && (
+                          <span className="text-[10px] text-muted-foreground">{tier.priceSuffix}</span>
+                        )}
+                      </div>
+                    </div>
+                    <ul className="space-y-1 mb-3">
+                      {tier.features.map((f) => (
+                        <li key={f} className="flex items-start gap-1.5 text-[11px] text-foreground leading-snug">
+                          <Check className={cn('h-3 w-3 mt-[2px] shrink-0', tier.featured ? 'text-amber-300' : 'text-emerald-400')} />
+                          <span>{f}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <Button
+                      onClick={tier.onSelect}
+                      disabled={tier.disabled}
+                      className={cn(
+                        'mt-auto w-full h-8 text-[11px] font-semibold uppercase tracking-wider',
+                        tier.featured
+                          ? 'bg-amber-500 hover:bg-amber-400 text-amber-950 border border-amber-300'
+                          : 'bg-transparent hover:bg-muted text-foreground border border-border',
+                      )}
+                    >
+                      {tier.ctaLabel}
+                    </Button>
+                  </div>
+                )
+              })}
             </div>
           </div>
-        )}
+          )
+        })()}
 
         {/* ── PHASE 2 — PAYMENT ─────────────────────────────────────────── */}
         {phase === 'payment' && selected && (
@@ -437,7 +616,19 @@ export function SubscriptionModal() {
                 </a>
               )}
             </div>
-            <Button className="bg-emerald-600 hover:bg-emerald-500" onClick={() => setOpen(false)}>Close</Button>
+            <Button className="bg-emerald-600 hover:bg-emerald-500" onClick={() => {
+              // v0.7.101 — This 'active' phase is now defensive dead
+              // code on the success path: submitActivation hard-reloads
+              // immediately after the API resolves, so the receipt UI
+              // never gets a chance to render. The block + this Close
+              // button are kept ONLY for the 8 s safety fallback in
+              // submitActivation (if window.location.assign is vetoed,
+              // the operator still gets a way to dismiss the modal).
+              // Same hard-reload pattern as v0.7.99/v0.7.100 in case
+              // the safety path lands here.
+              setOpen(false)
+              try { window.location.assign('/') } catch { window.location.href = '/' }
+            }}>Close</Button>
           </div>
         )}
       </DialogContent>

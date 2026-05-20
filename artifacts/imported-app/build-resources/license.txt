@@ -1,0 +1,101 @@
+ScriptureLive AI — End User License Agreement
+================================================
+
+Copyright (c) ScriptureLive AI. All rights reserved.
+
+By installing or using ScriptureLive AI ("the Software") you agree to
+the terms below. If you do not agree, click "Cancel" to abort the
+installation.
+
+1. Grant of License
+-------------------
+ScriptureLive AI grants you a personal, non-exclusive, non-transferable
+license to install and use the Software on the personal computers
+covered by your active subscription or activation code. The Software
+remains the property of ScriptureLive AI; this agreement transfers no
+ownership rights to you.
+
+2. Permitted Use
+----------------
+The Software is intended for live worship presentation, scripture
+detection, and related ministry workflows in churches and ministries.
+You may install the Software on the number of devices permitted by
+your active license tier. The free Starter tier permits installation
+on a single device for evaluation purposes.
+
+3. Restrictions
+---------------
+While using ScriptureLive AI, you agree NOT to do any of the following:
+
+  (a) Copy, modify, reverse engineer, decompile, or disassemble the
+      Software, or attempt to extract its source code, except to the
+      limited extent that applicable law expressly permits despite this
+      restriction.
+
+  (b) Sell, resell, rent, lease, sublicense, redistribute, or share
+      your activation code or copies of the Software with any third
+      party. Each paid activation code is tied to one congregation or
+      operator and is not for resale.
+
+  (c) Remove, hide, or change any copyright notice, trademark, brand
+      name, logo, version string, or other proprietary marking that
+      appears in the Software, its installer, its update files, or any
+      output it produces.
+
+  (d) Use the Software to display, broadcast, project, or distribute
+      content that is unlawful, defamatory, obscene, hateful, harassing,
+      or that infringes anyone else's copyright, trademark, privacy, or
+      other rights.
+
+  (e) Use the Software in a way that violates the laws of your country,
+      state, or local jurisdiction, or that breaches the rules of the
+      venue, congregation, or platform where it is being used.
+
+  (f) Bypass, disable, or tamper with the Software's licensing,
+      activation, telemetry, update, or anti-piracy mechanisms, or use
+      forged, stolen, leaked, or chargeback-reversed activation codes.
+
+4. Updates and Telemetry
+------------------------
+The Software periodically checks for updates over the Internet and
+may transmit anonymous diagnostic and usage telemetry. You can opt
+out of update checks from within the Settings panel after install.
+
+5. Activation Codes
+-------------------
+Paid activation codes are tied to your subscription record on the
+ScriptureLive AI servers. The "Move to Another PC" feature releases
+the code from the current device while preserving the remaining
+subscription time. Lost or shared codes can be reissued at the
+operator's discretion via the admin panel.
+
+6. Disclaimer of Warranty
+-------------------------
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
+NONINFRINGEMENT. SCRIPTURELIVE AI DOES NOT WARRANT THAT THE
+SOFTWARE WILL BE ERROR-FREE OR UNINTERRUPTED.
+
+7. Limitation of Liability
+--------------------------
+IN NO EVENT SHALL SCRIPTURELIVE AI BE LIABLE FOR ANY INDIRECT,
+INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES ARISING OUT OF OR IN
+CONNECTION WITH THE USE OR PERFORMANCE OF THE SOFTWARE.
+
+8. Third-Party Components
+-------------------------
+The Software bundles open-source components (Electron, Next.js,
+React, NDI Tools runtime stub, and others) used under their
+respective licenses. The full list of attributions is available
+inside the app under Settings → About → Open-Source Notices.
+
+9. Termination
+--------------
+This license terminates automatically if you fail to comply with
+any term. Upon termination you must cease all use of the Software
+and remove all copies from your devices.
+
+10. Acceptance
+--------------
+Clicking "I Agree" indicates you have read and accept these terms.

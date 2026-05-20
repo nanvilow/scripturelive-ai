@@ -324,7 +324,9 @@ export function TopToolbar({
   // blocked the live preview beneath it.
   const [micMenuOpen, setMicMenuOpen] = useState(false)
   const [outputMenuOpen, setOutputMenuOpen] = useState(false)
-  const [modeMenuOpen, setModeMenuOpen] = useState(false)
+  // v0.7.184 — modeMenuOpen state DELETED along with the Output Display
+  // Mode Popover (used to live ~L975). In-app surfaces are Full Screen
+  // ONLY now; LT lives on the NDI Output panel.
 
   // ── Live mic-input level meter ──────────────────────────────────────
   // A continuously-running RMS reader on the chosen microphone so the
@@ -342,9 +344,14 @@ export function TopToolbar({
     let raf = 0
     const run = async () => {
       try {
+        // v0.7.92 — autoGainControl:false so the operator's mic-gain
+        // slider isn't fought by Chromium's AGC, and so the OS-level
+        // mic volume slider (which is system-wide on Windows and
+        // affects every other app reading from this mic) isn't moved
+        // by our capture session.
         const constraints: MediaStreamConstraints = selectedMicrophoneId
-          ? { audio: { deviceId: { exact: selectedMicrophoneId } } }
-          : { audio: true }
+          ? { audio: { deviceId: { exact: selectedMicrophoneId }, autoGainControl: false } }
+          : { audio: { autoGainControl: false } }
         const stream = await navigator.mediaDevices.getUserMedia(constraints)
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop())
@@ -442,7 +449,10 @@ export function TopToolbar({
 
   const requestMicAccess = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // v0.7.92 — autoGainControl:false on the permission-probe stream
+      // too, even though we stop it immediately, so the brief capture
+      // doesn't blip the OS mic slider for other apps.
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { autoGainControl: false } })
       stream.getTracks().forEach((t) => t.stop())
       setMicPermission('granted')
       await refreshMicrophones()
@@ -955,71 +965,11 @@ export function TopToolbar({
           </PopoverContent>
         </Popover>
 
-        {/* ── Output Display Mode (Full / Lower Third) ─────────────────
-            Per FRS: a clearly-labelled, easily-accessible top-level
-            control to switch the output between Full Screen and Lower
-            Third for BOTH the secondary screen AND the NDI feed. The
-            currently active mode is reflected in the trigger label and
-            the selected row. Changes are picked up by the global
-            <OutputBroadcaster /> on the next animation frame, so the
-            preview, the secondary screen and the NDI feed all flip
-            together with no refresh required. */}
-        <Popover open={modeMenuOpen} onOpenChange={setModeMenuOpen}>
-          <PopoverTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-[11px] gap-1.5 border text-foreground border-border hover:bg-muted hover:text-foreground"
-              title="Switch the live output between Full Screen and Lower Third overlay. Applies to both the secondary screen and NDI."
-            >
-              <MonitorPlay className="h-3 w-3" />
-              {displayMode === 'lower-third'
-                ? 'Lower Third'
-                : displayMode === 'lower-third-black'
-                  ? 'L/3 · Black'
-                  : 'Full Screen'}
-              <ChevronDown className="h-3 w-3 opacity-60" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-[260px] p-1 bg-background border-border">
-            <div className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
-              Output Display Mode
-            </div>
-            {[
-              { value: 'full', label: 'Full Screen', sub: 'Slide fills the screen' },
-              { value: 'lower-third', label: 'Lower Third', sub: 'Bar over background' },
-              { value: 'lower-third-black', label: 'Lower Third · Black', sub: 'Bar on black frame' },
-            ].map((opt) => {
-              const active = displayMode === opt.value
-              return (
-                <button
-                  key={opt.value}
-                  onClick={() => {
-                    updateSettings({ displayMode: opt.value as 'full' | 'lower-third' | 'lower-third-black' })
-                    setModeMenuOpen(false)
-                  }}
-                  className={cn(
-                    'w-full text-left px-2 py-1.5 rounded text-[11px] flex items-start gap-2 transition-colors',
-                    active
-                      ? 'bg-sky-500/15 text-sky-200 ring-1 ring-sky-500/40'
-                      : 'text-foreground hover:bg-muted',
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'mt-0.5 inline-block h-1.5 w-1.5 rounded-full',
-                      active ? 'bg-sky-400' : 'bg-muted-foreground/40',
-                    )}
-                  />
-                  <span className="flex-1">
-                    <span className="block font-medium">{opt.label}</span>
-                    <span className="block text-[10px] text-muted-foreground">{opt.sub}</span>
-                  </span>
-                </button>
-              )
-            })}
-          </PopoverContent>
-        </Popover>
+        {/* v0.7.184 — Output Display Mode Popover (Full / Lower Third / L3 Black)
+            DELETED. In-app surfaces are Full Screen ONLY now (operator:
+            "remove the lower third from the app, leaving only the lower
+            third that can be operated in NDI settings only"). NDI broadcast
+            keeps its own ndiDisplayMode picker on the NDI Output panel. */}
 
         {/* NDI single-toggle. Click = start/stop. The whole popover-of-
             settings is gone; the only thing operators do mid-service is
@@ -1530,22 +1480,11 @@ export function TransportBar({
 
         <div className="h-6 w-px bg-muted" />
 
-        <div className="flex items-center gap-1.5">
-          <Radio
-            className={cn(
-              'h-3 w-3',
-              outputActive ? 'text-emerald-400' : 'text-muted-foreground',
-            )}
-          />
-          <span className={cn('text-[10px] uppercase font-bold tracking-wider', outputActive ? 'text-emerald-400' : 'text-muted-foreground')}>
-            {outputActive ? 'NDI / Output Active' : 'Output Idle'}
-          </span>
-        </div>
-
-        <div className="h-6 w-px bg-muted" />
-
         <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
-          {settings.displayMode === 'full' ? 'Full Screen' : 'Lower Third'}
+          {/* v0.7.184 — collapsed to literal. settings.displayMode is now the
+              single literal type 'full' so the ternary always returned the
+              left branch anyway; spelling it out removes a dead expression. */}
+          Full Screen
         </span>
       </div>
     </div>
@@ -1639,10 +1578,54 @@ export function EasyWorshipShell() {
 
   // ── Transport actions ────────────────────────────────────────────────
   const goLive = useCallback(() => {
+    // v0.7.212 — Operator $1600-customer escalation: clicking GO LIVE
+    // while a media tile is staged on Preview (via the v0.7.210
+    // pinPreviewSlide direct-ref path) must promote the pinned slide
+    // to live and start playback immediately. Pre-fix, goLive only
+    // consulted slides[previewSlideIndex] — but pinPreviewSlide
+    // intentionally does NOT add the slide to slides[] (that was the
+    // whole point of v0.7.210, to avoid clobbering slides[] / live
+    // on every preview click). So with only a pin set and no schedule
+    // entry, operator hit either "Add something to the schedule first"
+    // or got the wrong slide promoted. Fix: consult pinnedPreviewSlide
+    // first and route through setLiveAuto (the v0.7.203/v0.7.208/v0.7.210
+    // canonical "promote to live" primitive). setLiveAuto sets
+    // {liveSlide, isLive:true, hasShownContent:true} and the renderer
+    // reads liveSlide first (output-payload L19) so the video is on air
+    // immediately.
+    // v0.7.221 — Parity with logos-shell goLive (L4138-4191). EW shell
+    // pinned path was a bare `setLiveAuto(pinned); return` with NO
+    // preview→live transport handoff. Now: capture preview <video>
+    // currentTime so live resumes seamlessly, unpause live media, pause
+    // preview, then promote. (The v0.7.221 setLiveAuto store contract
+    // now also atomically clears liveMediaPaused + liveMediaCurrentTime
+    // for new-URL promotions as a defence-in-depth — these explicit
+    // calls remain so the currentTime carry-over works.)
+    const pinned = useAppStore.getState().pinnedPreviewSlide
+    if (pinned) {
+      if (typeof document !== 'undefined') {
+        const pv = document.querySelector<HTMLVideoElement>('video[data-surface="preview"]')
+        if (pv && Number.isFinite(pv.currentTime)) {
+          try { useAppStore.getState().setLiveMediaCurrentTime(pv.currentTime) } catch { /* ignore */ }
+        }
+      }
+      useAppStore.getState().setLiveMediaPaused(false)
+      useAppStore.getState().setPreviewMediaPaused(true)
+      useAppStore.getState().setLiveAuto(pinned)
+      return
+    }
     if (!slides.length) {
       toast.info('Add something to the schedule first')
       return
     }
+    if (typeof document !== 'undefined') {
+      const pv = document.querySelector<HTMLVideoElement>('video[data-surface="preview"]')
+      if (pv && Number.isFinite(pv.currentTime)) {
+        try { useAppStore.getState().setLiveMediaCurrentTime(pv.currentTime) } catch { /* ignore */ }
+      }
+    }
+    useAppStore.getState().setLiveMediaPaused(false)
+    useAppStore.getState().setPreviewMediaPaused(true)
     setLiveSlideIndex(previewSlideIndex)
     setIsLive(true)
     if (previewSlideIndex < slides.length - 1) setPreviewSlideIndex(previewSlideIndex + 1)

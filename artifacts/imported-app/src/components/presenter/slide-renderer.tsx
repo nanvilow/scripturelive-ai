@@ -2,10 +2,11 @@
 
 import { useEffect, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
-import { cn } from '@/lib/utils'
+import { cn, isVideoBackground, resolveMediaUrl } from '@/lib/utils'
 import type { Slide, AppSettings } from '@/lib/store'
 import { useAppStore } from '@/lib/store'
 import { getFontStack, resolveReferenceTypography } from '@/lib/fonts'
+import { getDirAttribute } from '@/lib/bibles/translation-direction'
 import { attachAnalyser, readLevel } from '@/lib/audio-level'
 
 // ──────────────────────────────────────────────────────────────────
@@ -41,7 +42,12 @@ function MediaSlideContent({
   slide: Slide
   isLive?: boolean
 }) {
-  const mediaPaused = useAppStore((s) => s.mediaPaused)
+  // v0.7.193-hotfix.2 — Pull from the per-surface clock so the
+  // legacy slide renderer respects the same Preview/Live independence
+  // as MediaVideoSurface.
+  const mediaPaused = useAppStore((s) =>
+    isLive ? s.liveMediaPaused : s.previewMediaPaused,
+  )
   // When something is on air the Preview surface stops playing — the
   // operator's preview must never compete for audio or distract from
   // the Live Display. The Live surface is unaffected by this gate.
@@ -60,8 +66,12 @@ function MediaSlideContent({
   const liveMonitorAudio = useAppStore((s) => s.liveMonitorAudio)
   const globalVolume = useAppStore((s) => s.globalVolume)
   const globalMuted = useAppStore((s) => s.globalMuted)
-  const mediaCurrentTime = useAppStore((s) => s.mediaCurrentTime)
-  const setMediaCurrentTime = useAppStore((s) => s.setMediaCurrentTime)
+  const mediaCurrentTime = useAppStore((s) =>
+    isLive ? s.liveMediaCurrentTime : s.previewMediaCurrentTime,
+  )
+  const setMediaCurrentTime = useAppStore((s) =>
+    isLive ? s.setLiveMediaCurrentTime : s.setPreviewMediaCurrentTime,
+  )
   const audible = isLive ? liveMonitorAudio : previewAudio
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const { objectFit, aspect } = resolveMediaPresentation(slide.mediaFit)
@@ -206,7 +216,7 @@ function MediaSlideContent({
       <video
         ref={videoRef}
         data-surface={isLive ? 'live' : 'preview'}
-        src={slide.mediaUrl}
+        src={resolveMediaUrl(slide.mediaUrl)}
         autoPlay={!shouldBePaused}
         loop
         // Audibility is now driven entirely by the useEffect above
@@ -224,7 +234,7 @@ function MediaSlideContent({
     ) : (
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={slide.mediaUrl}
+        src={resolveMediaUrl(slide.mediaUrl)}
         alt={slide.title || 'media'}
         className="w-full h-full bg-black"
         style={{ objectFit }}
@@ -319,7 +329,7 @@ function SlideContent({
   // Apply the operator's manual text-scale multiplier on top of the
   // base font size so they can dial readability live without rebuilding
   // the slide. Clamped to a sane band so the screen never blows up.
-  const scale = Math.min(2, Math.max(0.5, settings.textScale ?? 1))
+  const scale = Math.min(2, Math.max(0.5, settings.textScale ?? 0.9))
   const baseCqi = (fontSizeBaseCqi[settings.fontSize] || fontSizeBaseCqi.lg) * scale
 
   if (slide.type === 'title') {
@@ -357,6 +367,15 @@ function SlideContent({
     // "Who" hang on a separate line above the rest of the verse.
     const joined = slide.content.join(' ').replace(/\s+/g, ' ').trim()
     const ta = settings.textAlign ?? 'center'
+    // v0.7.199 — RTL Bible-translation support.
+    // For Hebrew / Arabic / Aramaic / Farsi / Urdu translations we set
+    // `dir="rtl"` on the verse container so punctuation, verse numbers,
+    // and line wrapping flow right-to-left. The helper returns
+    // undefined for every currently-bundled translation (all LTR), so
+    // the rendered DOM is byte-identical to pre-v0.7.199 for English /
+    // Twi / Ewe. The reference chyron inherits direction naturally
+    // from the container.
+    const verseDir = getDirAttribute(useAppStore.getState().selectedTranslation)
     const itemsClass =
       ta === 'left' ? 'items-start' : ta === 'right' ? 'items-end' : 'items-center'
     const textClass =
@@ -368,7 +387,7 @@ function SlideContent({
             ? 'text-justify'
             : 'text-center'
     return (
-      <div className={cn('w-full h-full flex flex-col justify-center overflow-hidden', itemsClass, textClass)} style={fontStyle}>
+      <div dir={verseDir} className={cn('w-full h-full flex flex-col justify-center overflow-hidden', itemsClass, textClass)} style={fontStyle}>
         {settings.showReferenceOnOutput && (() => {
           // Reference typography (Bug #5): resolve the operator's
           // reference-specific font/size/align/shadow/scale. Each
@@ -381,7 +400,14 @@ function SlideContent({
             : {}
           return (
             <p
-              className={cn('opacity-60 mb-2 shrink-0 m-0 p-0', theme.accent)}
+              // v0.7.194-hotfix.4 — w-full + block so the reference
+              // chyron occupies the full slide width, allowing its
+              // `textAlign` to actually take effect (pre-fix the <p>
+              // shrunk to its text width which made left/right look
+              // identical to center). Mirrors the route.ts CSS change
+              // `.slide-reference{width:100%}` so the projector +
+              // secondary screen + NDI surfaces all agree.
+              className={cn('opacity-60 mb-2 shrink-0 m-0 p-0 w-full block', theme.accent)}
               style={{
                 fontSize: large ? `${refCqi * 0.55}cqi` : '1.0cqi',
                 ...refShadow,
@@ -469,12 +495,52 @@ export function SlideThumb({
       <div className={cn('absolute inset-0 bg-gradient-to-br', theme.bg)}>
         {settings.customBackground && (
           <>
-            <img
-              src={settings.customBackground}
-              alt=""
-              className="absolute inset-0 w-full h-full object-cover opacity-40"
-            />
-            <div className="absolute inset-0 bg-black/40" />
+            {isVideoBackground(settings.customBackground) ? (
+              // v0.7.221 — Operator $1600 escalation: "the background
+              // video keeps playing anywhere". SlideThumb is rendered
+              // in the schedule strip, the chapter navigator, and
+              // every other in-app thumbnail — none of which are real
+              // broadcast surfaces. Freeze on first frame so the
+              // operator sees a static poster everywhere except the
+              // three real broadcast targets (Main Console LIVE
+              // DISPLAY, Secondary Screen popup, NDI offscreen
+              // FrameCapture). Same freeze pattern as the Custom
+              // Background thumbnail in settings.tsx and the
+              // IS_FROZEN_BG branch in /api/output/congregation
+              // route.ts. The opacity:0.4 visual style is preserved.
+              <video
+                src={`${settings.customBackground}#t=0.1`}
+                muted
+                playsInline
+                preload="metadata"
+                ref={(el) => {
+                  if (!el) return
+                  try { el.pause() } catch { /* ignore */ }
+                }}
+                onLoadedData={(e) => {
+                  try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
+                }}
+                onPlay={(e) => {
+                  try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
+                }}
+                className="absolute inset-0 w-full h-full object-cover opacity-60"
+              />
+            ) : (
+              <img
+                src={settings.customBackground}
+                alt=""
+                className="absolute inset-0 w-full h-full object-cover opacity-60"
+              />
+            )}
+            {/* v0.7.221 — Scrim alpha dropped from /40 → /20 to keep
+                in lockstep with route.ts `.bg-overlay` rgba(0,0,0,.2).
+                Bg-stack `opacity` and overlay alpha MUST move as a pair
+                so SlideThumb (operator's preview/library tile) shows
+                the SAME effective brightness as the live broadcast
+                surface — operator was previously seeing a darker
+                thumbnail than the actual projector output and
+                under-judging the scene visibility. */}
+            <div className="absolute inset-0 bg-black/20" />
           </>
         )}
       </div>

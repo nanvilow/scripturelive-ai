@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, MenuItemConstructorOptions, Tray, nativeImage, ipcMain, shell, screen, dialog, session, Notification } from 'electron'
+import { app, BrowserWindow, Menu, MenuItemConstructorOptions, Tray, nativeImage, ipcMain, shell, screen, dialog, session, Notification, protocol, net } from 'electron'
 import path from 'node:path'
 import { spawn, ChildProcess } from 'node:child_process'
 import { createServer } from 'node:net'
@@ -12,7 +12,24 @@ function setupFileLogging() {
     const dir = app.getPath('userData')
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
     logFilePath = path.join(dir, 'launch.log')
-    const stream = fs.createWriteStream(logFilePath, { flags: 'w' })
+    // v0.7.98 — APPEND instead of truncating. Previously we wiped the
+    // log on every launch with flags: 'w', so the operator who hit a
+    // chrome-error and relaunched the app to recover would lose the
+    // log lines that explained what went wrong. Now we keep history
+    // across launches and only rotate when the file exceeds 2 MB so it
+    // never grows unbounded. A "----- session start -----" banner is
+    // written below so it's easy to find the current session in the
+    // log when triaging.
+    try {
+      const stat = fs.statSync(logFilePath)
+      if (stat.size > 2 * 1024 * 1024) {
+        const rotated = path.join(dir, 'launch.prev.log')
+        try { fs.unlinkSync(rotated) } catch { /* ignore */ }
+        try { fs.renameSync(logFilePath, rotated) } catch { /* ignore */ }
+      }
+    } catch { /* file doesn't exist — first launch */ }
+    const stream = fs.createWriteStream(logFilePath, { flags: 'a' })
+    stream.write(`\n----- session start ${new Date().toISOString()} -----\n`)
     const wrap = (orig: (...args: unknown[]) => void, prefix: string) =>
       (...args: unknown[]) => {
         try {
@@ -114,9 +131,15 @@ const DEFAULT_TRANSCRIBE_PROXY_URL =
 // the two surfaces never disagree. Next.js inlines NEXT_PUBLIC_* at
 // renderer build time, and Electron's main process picks the same
 // var up from `process.env` at launch.
+// v0.7.134 — Default flipped from `scripturelive.replit.app` →
+// `scriptureliveai.com` so every operator-clicked "Visit website" link
+// (Help menu, Help & Updates card, first-run welcome dialog, the
+// desktop links from https://imgur.com/a/gZoZtsp) opens the public
+// marketing domain. Mirrors the matching default in
+// `src/lib/website-url.ts` — keep them in lockstep.
 const WEBSITE_URL =
   process.env.NEXT_PUBLIC_WEBSITE_URL?.trim() ||
-  'https://scripturelive.replit.app/'
+  'https://scriptureliveai.com/'
 
 const isDev = !app.isPackaged
 
@@ -136,6 +159,19 @@ app.commandLine.appendSwitch('enable-speech-dispatcher')
 // need a per-session prompt the user has to click through.
 app.commandLine.appendSwitch('use-fake-ui-for-media-stream')
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+// v0.7.92 — Disable Chromium's WebRTC automatic gain control so that
+// (a) the operator's manual mic-gain knob actually has an effect
+// (AGC was renormalizing the input continuously, completely
+// overriding our renderer-side GainNode), and (b) Chromium stops
+// writing to the OS-level mic-input volume slider — that write is
+// system-wide on Windows, which is what was causing OBS / vMix /
+// Zoom etc. to suddenly find their mic level lowered the moment our
+// app captured audio. Belt-and-braces with the renderer-side
+// `autoGainControl: false` constraint added in this same release.
+app.commandLine.appendSwitch(
+  'disable-features',
+  'WebRtcAllowInputVolumeAdjustment,WebRtcHybridAgc,WebRtcAnalogAgcClippingControl',
+)
 
 const ndi = new NdiService()
 let frameCapture: FrameCapture | null = null
@@ -164,6 +200,10 @@ let frameCaptureFlags: {
   lowerThirdScale: number | null
 } | null = null
 let mainWindow: BrowserWindow | null = null
+// v0.7.121 — Tracked kiosk-style output BrowserWindows (congregation,
+// stage, etc). Re-homed to primary on screen.on('display-removed') so
+// the operator never sees a blank projector after unplugging.
+const kioskWindows: Set<BrowserWindow> = new Set()
 let tray: Tray | null = null
 let nextProcess: ChildProcess | null = null
 let appBaseUrl = ''
@@ -391,6 +431,520 @@ function getUserUploadsDir(): string {
   return dir
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// v0.7.79 — Boot splash window.
+//
+// Operator request: clicking the desktop icon used to open onto a
+// blank/black screen for the 1-3 s it takes the embedded Next.js
+// server to come up + Chromium to mount the React tree, which felt
+// like the app had hung. Wirecast / vMix / OBS all show a small
+// branded splash with rolling status text during boot, and we now
+// match that pattern.
+//
+// The splash is a frameless 480×320 BrowserWindow that loads an
+// inline data: URL (no extra build artifact, no extraResources copy
+// to keep the installer slim) and exposes a tiny `window.__setStatus`
+// hook the main process drives via webContents.executeJavaScript at
+// each boot phase. It's `alwaysOnTop` + `skipTaskbar` so it floats
+// cleanly over a busy desktop without a taskbar entry, and it auto-
+// closes the moment the main window's DOM is ready (`did-finish-load`)
+// — never on a timer, so the splash never lingers nor disappears
+// before the main UI is actually visible.
+//
+// Suppressed when the app is launched in --hidden mode (auto-launch
+// at login boot path) since there is no operator at the keyboard to
+// see it and we want the boot to be visually invisible there.
+// ──────────────────────────────────────────────────────────────────────
+let splashWindow: BrowserWindow | null = null
+
+// v0.7.149 — Resolve the logo PNG once at boot. Tries the packaged
+// standalone-public path (prod), then the source public/ path (dev),
+// then the build-resources/icon.png shipped with electron-builder.
+// Returns a data: URL ready to drop into `<img src=…>` in the splash
+// HTML. If every path fails (corrupt install) we fall back to the
+// inline orange-book SVG below so the splash still renders.
+function loadLogoDataUrl(): string {
+  const candidates = [
+    path.join(process.resourcesPath || '', 'app', '.next', 'standalone', 'artifacts', 'imported-app', 'public', 'icon-512.png'),
+    path.join(__dirname, '..', 'public', 'icon-512.png'),
+    path.join(__dirname, '..', '..', 'public', 'icon-512.png'),
+    path.join(__dirname, '..', 'build-resources', 'icon.png'),
+    path.join(__dirname, '..', '..', 'build-resources', 'icon.png'),
+  ]
+  for (const p of candidates) {
+    try {
+      if (p && fs.existsSync(p)) {
+        const b64 = fs.readFileSync(p).toString('base64')
+        return `data:image/png;base64,${b64}`
+      }
+    } catch { /* try next */ }
+  }
+  return ''
+}
+
+function buildSplashHtml(version: string): string {
+  // v0.7.149 — Splash now uses the operator's actual app logo
+  // (public/icon-512.png) instead of an inline SVG glyph, for a more
+  // professional look matching the installed Windows shortcut icon.
+  // Falls back to the inline SVG mark only if the PNG can't be read.
+  // Single-file dark dialog: brand mark, animated ring, status text,
+  // version footer. The body is replaced by main-process IPC
+  // (executeJavaScript -> window.__setStatus) at each boot phase.
+  const logoDataUrl = loadLogoDataUrl()
+  const markHtml = logoDataUrl
+    ? `<img class="logo" src="${logoDataUrl}" alt="ScriptureLive AI" />`
+    : `<div class="mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+        </svg>
+      </div>`
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ScriptureLive AI</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    background: radial-gradient(ellipse at top, #1a1a1a 0%, #0a0a0a 60%, #050505 100%);
+    color: #e5e5e5;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+  }
+  .wrap {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; gap: 18px; padding: 28px;
+    -webkit-app-region: drag;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 14px;
+  }
+  .mark {
+    width: 56px; height: 56px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #f59e0b 0%, #b45309 100%);
+    display: grid; place-items: center;
+    box-shadow: 0 8px 24px -8px rgba(245, 158, 11, .55), inset 0 1px 0 rgba(255,255,255,.18);
+  }
+  .mark svg { width: 30px; height: 30px; color: #1a1a1a; }
+  .logo {
+    width: 64px; height: 64px;
+    border-radius: 16px;
+    object-fit: contain;
+    box-shadow: 0 10px 28px -10px rgba(245, 158, 11, .55);
+    -webkit-user-drag: none;
+  }
+  .title {
+    font-size: 18px; font-weight: 600; letter-spacing: .2px;
+    color: #fafafa;
+  }
+  .subtitle {
+    font-size: 11px; color: #a3a3a3; margin-top: 2px;
+    letter-spacing: .4px; text-transform: uppercase;
+  }
+  .ring {
+    width: 22px; height: 22px;
+    border: 2px solid rgba(245, 158, 11, .18);
+    border-top-color: #f59e0b;
+    border-radius: 50%;
+    animation: spin .9s linear infinite;
+  }
+  .row {
+    display: flex; align-items: center; gap: 10px;
+    min-height: 22px;
+    margin-top: 4px;
+  }
+  .status {
+    font-size: 13px; color: #d4d4d8;
+    transition: opacity .2s ease;
+  }
+  .status.fade { opacity: .35; }
+  .footer {
+    position: absolute; bottom: 12px; left: 0; right: 0;
+    text-align: center;
+    font-size: 10px; color: #525252; letter-spacing: .5px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      ${markHtml}
+      <div>
+        <div class="title">ScriptureLive AI</div>
+        <div class="subtitle">Worship Console</div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="ring" aria-hidden="true"></div>
+      <div id="status" class="status">Starting up…</div>
+    </div>
+  </div>
+  <div class="footer">v${version} — by WassMedia</div>
+  <script>
+    window.__setStatus = function (text) {
+      var el = document.getElementById('status');
+      if (!el) return;
+      el.classList.add('fade');
+      setTimeout(function () {
+        el.textContent = String(text || '');
+        el.classList.remove('fade');
+      }, 120);
+    };
+  </script>
+</body>
+</html>`
+}
+
+// v0.7.90 — Shared crash-mask + auto-reload installer.
+//
+// ROOT CAUSES this rewrite fixes (vs v0.7.89):
+//
+//   1) reload()-loops-the-mask bug. v0.7.89 did:
+//        loadURL(MASK)  →  setTimeout(() => webContents.reload(), 400)
+//      `reload()` reloads the CURRENT url. After loadURL(MASK), the
+//      current URL IS the mask data: URL. So we kept reloading the
+//      mask forever and NEVER retried the real server URL. When the
+//      server recovered the user was stuck on the spinner; when it
+//      stayed down we never actually noticed (because did-finish-load
+//      of the mask kept resetting the attempts counter to 0).
+//
+//   2) did-finish-load resetting the counter on the MASK. Same root
+//      cause as (1) — the mask "succeeding" was treated as a recovery,
+//      so the give-up dialog never fired and the bookkeeping was lying.
+//
+// Fix:
+//   • Track the LAST REAL navigation target (via did-navigate /
+//     did-start-navigation) so we can re-attempt the right URL.
+//   • Skip ALL of our own data: URL navigations in the bookkeeping —
+//     the mask loading or "failing" never resets / increments the
+//     counter and never schedules another reload.
+//   • Use loadURL(targetURL) explicitly for retries — never reload().
+//   • Cap at 8 consecutive failures of the REAL URL, then either show
+//     the friendly Relaunch dialog (main window) or leave the spinner
+//     up indefinitely (popouts).
+const __MASK_HTML = `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><html><head><meta charset="utf-8"><title>ScriptureLive AI</title><style>html,body{margin:0;height:100%;background:#0a0a0a;color:#9ca3af;font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px}.s{width:32px;height:32px;border-radius:50%;border:2px solid #27272a;border-top-color:#f59e0b;animation:r 0.9s linear infinite}@keyframes r{to{transform:rotate(360deg)}}</style></head><body><div class="s"></div><div>Reconnecting…</div></body></html>`)}`
+
+function installCrashMask(
+  win: BrowserWindow,
+  label: string,
+  opts: { showDialogOnGiveUp: boolean },
+): void {
+  let attempts = 0
+  let timer: NodeJS.Timeout | null = null
+  // The last REAL URL the renderer navigated to (i.e. http(s)://, not
+  // our own data: mask). This is what we re-attempt when the server
+  // hiccups. Falls back to the validatedURL from did-fail-load if we
+  // somehow never observed a navigation.
+  let lastTargetURL: string | null = null
+
+  // v0.7.98 — Reentrancy guard. A SINGLE failure can fire multiple
+  // events for the same chrome-error episode: did-fail-load, then
+  // did-navigate (chrome-error commit), then did-finish-load
+  // (chrome-error finished). Without dedup, beginRecovery would run
+  // 3× per real outage — the attempts counter would burn through the
+  // 60 s budget in 20 s, causing a premature give-up dialog while
+  // the bundled Next server was still respawning. recoveryActive is
+  // set on entry to beginRecovery and cleared only when the REAL
+  // target URL successfully finishes loading (or when the user
+  // dismisses the give-up dialog), so the entire recovery episode is
+  // treated atomically regardless of how many events surfaced it.
+  let recoveryActive = false
+
+  // v0.7.96 — Retry budget extended to ~60 seconds. The previous
+  // 8 × 400 ms = 3.2 s budget gave up LONG before scheduleNextRestart
+  // (in startNextServer) finished respawning the bundled Next child
+  // process — that path waits up to 60 s for the readiness probe.
+  // When the give-up dialog fired before the server came back, the
+  // operator saw "could not reload its window after several attempts"
+  // and the app force-quit, which is the user-visible bug.
+  //
+  // New schedule: first attempt at 400 ms, then 800, 1200, 1600… up
+  // to a 2 s plateau, totalling ~60 s of patience. After 60 s we
+  // either show the dialog (main window) or just leave the spinner.
+  // Reset on every successful did-finish-load so subsequent hiccups
+  // get a fresh budget.
+  const MAX_ATTEMPTS = 40
+  const nextDelay = (a: number): number => Math.min(400 + a * 400, 2000)
+
+  const isMaskUrl = (u: string | null | undefined): boolean =>
+    !!u && u.startsWith('data:')
+
+  // v0.7.96 — Helper that paints the mask AND runs the retry timer
+  // for `target`. Shared between did-fail-load and render-process-gone
+  // so the recovery logic is identical regardless of which event
+  // surfaced the failure.
+  //
+  // v0.7.98 — Instrument the mask paint so a SILENT loadURL failure
+  // (e.g. data: URL blocked by session policy, renderer crashed mid-
+  // navigation) is now logged to launch.log. Without this we had a
+  // blind spot: the operator saw the chrome-error page persist and
+  // we had no breadcrumb explaining why our mask never showed.
+  const beginRecovery = (target: string | null): void => {
+    if (win.isDestroyed()) return
+    // v0.7.98 — dedup. If a recovery is already in flight for the
+    // current chrome-error episode, every subsequent event firing
+    // for the SAME episode (did-navigate, did-finish-load, repeat
+    // did-fail-load) is a no-op. Prevents triple-counting attempts.
+    if (recoveryActive) return
+    recoveryActive = true
+    win.webContents.loadURL(__MASK_HTML).catch((err) => {
+      console.error(`[${label}] mask loadURL failed — chrome-error may persist`, err)
+      // Fall back to an HTML inject. If even loadURL of a data: URL
+      // is rejected, we can still try to overlay the chrome-error
+      // page with our spinner via executeJavaScript.
+      try {
+        void win.webContents.executeJavaScript(
+          'document.documentElement.innerHTML = ' +
+          '\'<div style="position:fixed;inset:0;background:#0a0a0a;color:#9ca3af;display:flex;align-items:center;justify-content:center;font:14px system-ui;z-index:2147483647">Reconnecting…</div>\'',
+          true,
+        )
+      } catch { /* nothing more we can do here */ }
+    })
+    if (!target) {
+      console.error(`[${label}] no target URL recorded — cannot auto-recover`)
+      return
+    }
+    if (attempts >= MAX_ATTEMPTS) {
+      if (opts.showDialogOnGiveUp) {
+        void dialog.showMessageBox(win, {
+          type: 'error',
+          title: 'ScriptureLive AI — connection lost',
+          message: 'The app could not reload its window after a full minute of attempts.',
+          detail: 'This usually clears up by relaunching ScriptureLive AI from the desktop shortcut. Your activation, library and settings are preserved.',
+          buttons: ['Relaunch now', 'Quit'],
+          defaultId: 0,
+          cancelId: 1,
+        }).then((r) => {
+          if (r.response === 0) app.relaunch()
+          app.exit(0)
+        }).catch(() => { /* dialog failed — leave app as-is */ })
+      } else {
+        // Popout: keep the spinner up forever. Operator can close from
+        // the console. Reset the budget so if the server LATER comes
+        // back and any external nudge re-triggers a load, we cooperate.
+        attempts = 0
+        // v0.7.98 — also clear the reentrancy guard so a future
+        // chrome-error event (after the operator manually reloads or
+        // the server returns) can re-arm recovery. Without this, the
+        // popout would be stuck "recovering forever" with no way to
+        // recover from a NEW failure.
+        recoveryActive = false
+      }
+      return
+    }
+    const delay = nextDelay(attempts)
+    attempts += 1
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => {
+      timer = null
+      if (win.isDestroyed()) return
+      try {
+        // CRITICAL: use loadURL(target), NOT webContents.reload().
+        // reload() would re-load the mask we just painted, which
+        // always succeeds and would silently abandon the real URL.
+        void win.webContents.loadURL(target)
+      } catch (err) {
+        console.error(`[${label}] auto-recover loadURL threw:`, err)
+      }
+    }, delay)
+  }
+
+  win.webContents.on('did-start-navigation', (_e, url, _isInPlace, isMainFrame) => {
+    if (!isMainFrame) return
+    if (isMaskUrl(url)) return
+    lastTargetURL = url
+  })
+
+  win.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return
+    if (errorCode === -3) return // ERR_ABORTED — user cancelled / fast nav
+    // The mask "failing" must NEVER count against us and must NEVER
+    // schedule another retry. Just log and bail.
+    if (isMaskUrl(validatedURL)) {
+      console.warn(`[${label}] mask data: URL reported did-fail-load (ignored)`, { errorCode, errorDescription })
+      return
+    }
+    const target = lastTargetURL || validatedURL || null
+    console.warn(`[${label}] did-fail-load:`, { errorCode, errorDescription, validatedURL, target, attempts })
+    beginRecovery(target)
+  })
+
+  // v0.7.96 — render-process-gone fires when the renderer subprocess
+  // crashes (OOM, segfault, killed by AV). did-fail-load does NOT
+  // fire in this case — the page is "gone" rather than "failed". A
+  // gone renderer leaves the window painting Chromium's "Aw, Snap!"
+  // / "This page couldn't load" page until something explicitly
+  // calls reload() or loadURL(). Without this listener, a one-off
+  // renderer crash would strand the operator on the error page
+  // permanently. We treat it identically to did-fail-load and run
+  // the same mask + retry recovery against the last known target URL.
+  win.webContents.on('render-process-gone', (_e, details) => {
+    console.warn(`[${label}] render-process-gone:`, details)
+    if (details.reason === 'clean-exit') return // intentional
+    beginRecovery(lastTargetURL)
+  })
+
+  win.webContents.on('did-finish-load', () => {
+    const cur = win.webContents.getURL()
+    // v0.7.98 — BRUTE-FORCE chrome-error guard. If Chromium ever
+    // paints chrome-error://chromewebdata as a "successful" load
+    // (some failure classes don't fire did-fail-load — e.g. a TLS
+    // error that Chromium classifies internally as a navigation
+    // success to the error page), force-trigger recovery here so
+    // the operator never sees the raw error chrome with the
+    // "Reload / Back" buttons. This is the safety net that makes
+    // the symptom impossible regardless of which underlying event
+    // (or non-event) caused it.
+    if (cur.startsWith('chrome-error://')) {
+      console.warn(`[${label}] chrome-error painted (did-finish-load) — forcing recovery`, { cur, lastTargetURL })
+      beginRecovery(lastTargetURL)
+      return
+    }
+    // Only the REAL URL succeeding counts as recovery. The mask
+    // finishing must NOT reset the budget — otherwise the give-up
+    // dialog never fires when the server is permanently dead.
+    if (isMaskUrl(cur)) return
+    attempts = 0
+    // v0.7.98 — REAL URL succeeded → episode is over, allow the
+    // next episode to trigger recovery again.
+    recoveryActive = false
+    if (timer) { clearTimeout(timer); timer = null }
+  })
+
+  // v0.7.98 — Second safety net. did-navigate fires the moment a
+  // navigation commits (before did-finish-load), so we catch the
+  // chrome-error URL ASAP and beat the user's eyeball to it. Some
+  // chrome-error renders never reach did-finish-load (e.g. when the
+  // renderer is killed mid-paint), so catching at did-navigate AND
+  // did-finish-load gives us double coverage.
+  win.webContents.on('did-navigate', (_e, url) => {
+    if (url.startsWith('chrome-error://')) {
+      console.warn(`[${label}] chrome-error navigated (did-navigate) — forcing recovery`, { url, lastTargetURL })
+      beginRecovery(lastTargetURL)
+    }
+  })
+}
+
+// v0.7.91 — Track when the splash first became visible so closeSplash
+// can guarantee an operator-perceived minimum dwell of 4.5 s. Without
+// this, on fast machines the splash flickered for ~600 ms and the
+// operator wasn't sure their click had landed (recurring complaint
+// in the field). 4.5 s is the operator's spec ("4 to 5 sec").
+let splashOpenedAt = 0
+// v0.7.149 — Operator request: splash should disappear IMMEDIATELY
+// when the main window is ready ("immediately app launch, take it
+// off"). The 4.5 s minimum dwell from v0.7.91 was masking the
+// transition with an unnecessary delay; with the main window now
+// fully painted before closeSplash() fires there's no flicker risk
+// to mitigate. Setting to 0 means closeSplash() runs synchronously
+// the moment did-finish-load on the main window resolves.
+const SPLASH_MIN_DWELL_MS = 0
+
+function showSplash(): void {
+  if (splashWindow && !splashWindow.isDestroyed()) return
+  splashOpenedAt = Date.now()
+  try {
+    splashWindow = new BrowserWindow({
+      width: 480,
+      height: 320,
+      frame: false,
+      transparent: false,
+      resizable: false,
+      movable: true,
+      // v0.7.149 — Splash is now MINIMIZABLE so the operator can shove
+      // it out of the way if boot is genuinely slow and they need to
+      // do something else on the PC. Pairs with the alwaysOnTop=false
+      // change below — both serve the operator's "don't intrude over
+      // my other apps" request.
+      minimizable: true,
+      maximizable: false,
+      fullscreenable: false,
+      // v0.7.149 — Operator request: previously alwaysOnTop=true meant
+      // the splash floated over Word / Chrome / Spotify / etc. while
+      // the operator was doing something else, which felt rude on
+      // slower machines. Off by default — splash sits in the normal
+      // window stack and yields focus to whatever the operator is
+      // doing. They can still bring it back via the taskbar (see
+      // skipTaskbar=false below).
+      alwaysOnTop: false,
+      // v0.7.149 — Show in the taskbar so a minimized splash has a
+      // clickable entry to restore from. Was true (hidden) in v0.7.79
+      // because the splash always-on-top'd anyway. Now that it can
+      // be minimized the taskbar entry is the primary way back.
+      skipTaskbar: false,
+      center: true,
+      show: false,
+      backgroundColor: '#0a0a0a',
+      title: 'ScriptureLive AI',
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        // No preload — splash is fully self-contained. Setting
+        // `additionalArguments: ['--splash']` would let a shared
+        // preload distinguish, but we avoid wiring one at all so
+        // the splash window has zero attack surface.
+      },
+    })
+    const html = buildSplashHtml(app.getVersion())
+    const url = 'data:text/html;charset=utf-8;base64,' + Buffer.from(html, 'utf8').toString('base64')
+    void splashWindow.loadURL(url)
+    splashWindow.once('ready-to-show', () => {
+      if (splashWindow && !splashWindow.isDestroyed()) splashWindow.show()
+    })
+    splashWindow.on('closed', () => { splashWindow = null })
+  } catch (err) {
+    // Splash is decorative — never block boot on its failure.
+    console.warn('[splash] failed to create (non-fatal):', err)
+    splashWindow = null
+  }
+}
+
+function setSplashStatus(text: string): void {
+  if (!splashWindow || splashWindow.isDestroyed()) return
+  try {
+    void splashWindow.webContents.executeJavaScript(
+      `window.__setStatus && window.__setStatus(${JSON.stringify(text)})`,
+      true,
+    ).catch(() => { /* splash gone mid-boot — ignore */ })
+  } catch { /* ignore */ }
+}
+
+function closeSplash(): void {
+  // v0.7.91 — Honor SPLASH_MIN_DWELL_MS. If the boot was fast and the
+  // splash has been visible for less than the operator's minimum, defer
+  // the actual close until the dwell elapses. The main window is
+  // already up underneath; the splash just floats on top a moment
+  // longer so the operator's brain registers "yes, the app is
+  // launching" before the operator UI replaces it.
+  if (!splashWindow || splashWindow.isDestroyed()) {
+    splashWindow = null
+    return
+  }
+  const elapsed = Date.now() - (splashOpenedAt || Date.now())
+  const remaining = Math.max(0, SPLASH_MIN_DWELL_MS - elapsed)
+  const doClose = () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      try { splashWindow.close() } catch { /* ignore */ }
+    }
+    splashWindow = null
+  }
+  if (remaining > 0) {
+    setTimeout(doClose, remaining)
+  } else {
+    doClose()
+  }
+}
+
 async function startNextServer(): Promise<string> {
   if (isDev) {
     return process.env.NEXT_DEV_URL || 'http://localhost:3000'
@@ -424,7 +978,21 @@ async function startNextServer(): Promise<string> {
     env: {
       ...process.env,
       PORT: String(port),
-      HOSTNAME: '127.0.0.1',
+      // v0.7.153 — Bind the bundled Next.js server to ALL interfaces
+      // (0.0.0.0) instead of loopback only. This is what powers the
+      // new "OBS Browser Source URL" card in the NDI Output panel:
+      // operators can paste the LAN URL (http://<pc-ip>:<port>/api/output/congregation?transparent=1)
+      // into OBS on a SECOND PC's Browser Source and receive the
+      // verse-only feed with full transparency, ZERO plugin install
+      // (no DistroAV, no NDI Tools required on the receiver). This is
+      // the zero-install alternative to NDI for cross-PC OBS users.
+      // Pre-v0.7.153 the server was bound to 127.0.0.1 which made the
+      // LAN URL unreachable from any other machine on the church Wi-Fi.
+      // Security note: the local server has no auth on its routes; it
+      // is intended for trusted church LANs (the same trust model NDI
+      // operates under — NDI also has zero auth and broadcasts to any
+      // listener on the subnet via mDNS).
+      HOSTNAME: '0.0.0.0',
       NODE_ENV: 'production',
       DATABASE_URL: `file:${dbPath}`,
       SCRIPTURELIVE_UPLOADS_DIR: uploadsDir,
@@ -440,8 +1008,34 @@ async function startNextServer(): Promise<string> {
 
   nextProcess.stdout?.on('data', (b) => console.log(`[next] ${b.toString().trimEnd()}`))
   nextProcess.stderr?.on('data', (b) => console.error(`[next:err] ${b.toString().trimEnd()}`))
-  nextProcess.on('exit', (code) => {
-    console.log(`[next] process exited with code ${code}`)
+  // v0.7.84 — Auto-restart on unexpected death. ROOT CAUSE of the
+  // recurring "This page couldn't load" chrome-error page reported in
+  // v0.7.82/0.7.83: the bundled Next.js standalone server is a child
+  // process spawned with `spawn(process.execPath, [server.js])`. On
+  // Windows it occasionally dies during the synchronous
+  // writeFileSync + renameSync inside license storage.persist() —
+  // antivirus / OneDrive / Defender briefly locks the rename target
+  // and the unhandled EPERM exception kills the route handler thread
+  // hard enough to take the whole server process down. Pre-v0.7.84 we
+  // just LOGGED the exit and never respawned, so the renderer was
+  // permanently orphaned (which is why v0.7.83's renderer-reload
+  // handler couldn't recover — there was no server left to reload
+  // against).
+  //
+  // Auto-restart contract:
+  //   • Skip if `isQuitting` (we're shutting the app down on purpose).
+  //   • Skip if `nextProcess` was nulled (manual stop in shutdown()).
+  //   • Re-spawn with the SAME env / cwd / port and wait for the
+  //     readiness probe before reloading the renderer.
+  //   • Cap at 5 restarts within 60s so a permanently-broken server
+  //     (corrupt standalone bundle, missing dep) surfaces as a
+  //     dialog rather than a hot loop.
+  nextProcess.on('exit', (code, signal) => {
+    console.log(`[next] process exited with code ${code} signal ${signal}`)
+    if (isQuitting) return
+    if (!nextProcess) return // someone else cleaned up (shutdown())
+    nextProcess = null
+    void scheduleNextRestart()
   })
 
   // Wait for server readiness
@@ -457,6 +1051,60 @@ async function startNextServer(): Promise<string> {
     await new Promise((r) => setTimeout(r, 250))
   }
   throw new Error(`Next server failed to start within 60s. Last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`)
+}
+
+// v0.7.84 — Sliding-window restart limiter for the bundled Next server.
+// Keeps the last N restart timestamps; if 5 deaths happen inside 60s
+// we stop respawning and surface a friendly dialog (the standalone
+// bundle is genuinely broken, not just antivirus-locked).
+const restartTimestamps: number[] = []
+let restartInFlight = false
+async function scheduleNextRestart(): Promise<void> {
+  if (restartInFlight) return
+  restartInFlight = true
+  const now = Date.now()
+  while (restartTimestamps.length && now - restartTimestamps[0] > 60_000) {
+    restartTimestamps.shift()
+  }
+  if (restartTimestamps.length >= 5) {
+    restartInFlight = false
+    console.error('[next] crash-loop: 5 deaths in 60s — giving up')
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      void dialog.showMessageBox(mainWindow, {
+        type: 'error',
+        title: 'ScriptureLive AI — server keeps crashing',
+        message: 'The bundled application server crashed 5 times in a minute and has stopped restarting.',
+        detail: 'This usually means antivirus is quarantining a file inside the install folder, or the install is damaged. Try (1) excluding the ScriptureLive AI install folder from antivirus, or (2) reinstalling. Your activation, library and settings are preserved.',
+        buttons: ['Relaunch now', 'Quit'],
+        defaultId: 0,
+        cancelId: 1,
+      }).then((r) => {
+        if (r.response === 0) app.relaunch()
+        app.exit(0)
+      }).catch(() => { /* dialog gone — leave app */ })
+    }
+    return
+  }
+  restartTimestamps.push(now)
+  console.log(`[next] respawning (attempt ${restartTimestamps.length} in 60s)`)
+  try {
+    const url = await startNextServer()
+    console.log(`[next] respawned and ready at ${url}`)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try { mainWindow.webContents.reload() } catch (err) {
+        console.error('[next] post-restart renderer reload threw:', err)
+      }
+    }
+  } catch (err) {
+    console.error('[next] restart failed:', err)
+    // Try once more after a short delay; the readiness probe inside
+    // startNextServer already waits up to 60s, so a fail here means
+    // spawn() itself threw (e.g. EBUSY on the executable). Schedule
+    // another attempt — the sliding-window limiter above protects us.
+    setTimeout(() => { restartInFlight = false; void scheduleNextRestart() }, 1500)
+    return
+  }
+  restartInFlight = false
 }
 
 async function createMainWindow(url: string, opts: { show?: boolean } = {}) {
@@ -488,14 +1136,76 @@ async function createMainWindow(url: string, opts: { show?: boolean } = {}) {
       // session denies the request silently and the transcription panel
       // sits idle even when the user grants OS-level mic permission.
       webSecurity: true,
+      // v0.7.194-hotfix.10 — Chromium throttles timers + requestAnimationFrame
+      // by default on unfocused windows. The operator console drives the
+      // Preview + Live <video> elements AND the MediaPreheat hidden warm-up
+      // video; if the operator alt-tabs to OBS/Wirecast/PowerPoint mid-service
+      // the throttle would freeze decoder warm-up and stall the Preview→Live
+      // hand-off the moment they alt-tab back. Disable to match native-app
+      // expectations (EasyWorship, ProPresenter never throttle).
+      backgroundThrottling: false,
     },
     title: 'ScriptureLive AI',
     autoHideMenuBar: true,
   })
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+    // v0.7.90 — Only EXTERNAL URLs (https://ndi.video, mailto:, etc.)
+    // get handed to the system browser. Same-origin URLs against the
+    // bundled Next server (e.g. window.open('/api/output/congregation'))
+    // must NOT be opened in Edge — Edge can't resolve relative paths
+    // and shows its own "This page couldn't load" page (the exact
+    // symptom the operator screenshotted). Allow Electron to open
+    // them in a new BrowserWindow that inherits our crash-mask via
+    // did-create-window, so any hiccup paints "Reconnecting…" and
+    // auto-recovers instead of dumping into the OS browser.
+    try {
+      const u = new URL(target, appBaseUrl || 'http://localhost')
+      const sameOrigin = appBaseUrl
+        ? u.origin === new URL(appBaseUrl).origin
+        : u.hostname === 'localhost' || u.hostname === '127.0.0.1'
+      if (sameOrigin) {
+        return { action: 'allow' }
+      }
+    } catch { /* fall through to external */ }
     shell.openExternal(target)
     return { action: 'deny' }
   })
+  // Any new BrowserWindow that Electron creates on our behalf (via
+  // window.open from the renderer with action: 'allow' above) gets
+  // the SAME crash-mask + auto-reload protection as the primary and
+  // explicit popout windows. Without this, a renderer-driven popup
+  // would be the one window in the app NOT protected — the exact
+  // class of bug v0.7.89 left unfixed.
+  mainWindow.webContents.on('did-create-window', (childWin, details) => {
+    try {
+      installCrashMask(childWin, `child:${details.url}`, { showDialogOnGiveUp: false })
+    } catch (err) {
+      console.error('[main] failed to install crash mask on child window:', err)
+    }
+  })
+  // v0.7.83 — Auto-recover from "This page couldn't load" (Electron's
+  // chrome-error://chromewebdata page). Symptom seen in the field: an
+  // operator clicks Deactivate (or any flow that triggers a quick burst
+  // of API calls), the bundled Next.js standalone server has a brief
+  // hiccup mid-write (SQLite lock, slow disk, GC pause on a 4 GB box),
+  // and the NEXT renderer fetch fails with ERR_CONNECTION_REFUSED.
+  // Electron then paints the full-window chrome error page and the
+  // operator is stuck — there is no in-app reload button.
+  //
+  // Belt-and-braces recovery:
+  //   • Ignore subframe failures and user-aborted loads (errorCode -3).
+  //   • IMMEDIATELY paint a dark mask page so the operator never sees
+  //     Chromium's built-in "This page couldn't load" error chrome
+  //     while we wait for the server to come back. The mask is a tiny
+  //     inline data: URL — no network needed, no flash of white.
+  //   • Wait 400ms (server usually back inside one tick), then reload
+  //     the real URL.
+  //   • Cap at 8 consecutive auto-reloads to ride out brief stalls on
+  //     slow/AV-heavy machines without giving up. If we genuinely
+  //     can't reconnect after that, surface a friendly dialog.
+  //   • Reset the counter on every successful did-finish-load so the
+  //     budget refills for the NEXT incident.
+  installCrashMask(mainWindow, 'main', { showDialogOnGiveUp: true })
   // Hide-to-tray on close. The operator complaint we're solving:
   // closing the main console window during a live service used to
   // call shutdown(), which killed the Next.js server and the NDI
@@ -518,6 +1228,28 @@ async function createMainWindow(url: string, opts: { show?: boolean } = {}) {
     () => { void maybeShowTrayHint() },
   )
   mainWindow.on('closed', () => { mainWindow = null })
+  // v0.7.149 — Mirror the main window's minimize/restore state onto
+  // the splash so that if boot is slow and the operator minimizes
+  // the main app to do something else on their PC, the splash also
+  // hides (rather than floating around as a stray "ScriptureLive AI"
+  // dialog the operator has to chase down separately). Restoring the
+  // main window brings the splash back too — until closeSplash()
+  // tears it down at did-finish-load.
+  mainWindow.on('minimize', () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      try { splashWindow.minimize() } catch { /* ignore */ }
+    }
+  })
+  mainWindow.on('restore', () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      try { splashWindow.restore(); splashWindow.show() } catch { /* ignore */ }
+    }
+  })
+  mainWindow.on('hide', () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      try { splashWindow.hide() } catch { /* ignore */ }
+    }
+  })
   await mainWindow.loadURL(url)
 }
 
@@ -1306,10 +2038,21 @@ function buildAppMenu() {
 }
 
 function broadcastNdiStatus(status: NdiStatus) {
+  // v0.7.121 — Renderer-facing normalisation. While the sender is in
+  // the operator-initiated linger window (Stop pressed but the NDI
+  // sender is held alive on the wire for OBS/vMix continuity), the
+  // wire-side `running` is still true, but the UI must show "stopped"
+  // so the Stop button visibly toggles off and the Start button
+  // becomes available again. Both the panel and the on-air gate (tray
+  // / update toast) treat lingering as "not on-air" — receivers see a
+  // black frame, the operator's UX correctly says we are off.
+  const renderStatus: NdiStatus = status.lingering
+    ? { ...status, running: false }
+    : status
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('ndi:status', status)
+    mainWindow.webContents.send('ndi:status', renderStatus)
   }
-  applyNdiAirChange(status.running === true)
+  applyNdiAirChange(renderStatus.running === true)
 }
 
 /**
@@ -1384,6 +2127,40 @@ function setupIpc() {
     ndiUnavailableReason: ndi.unavailableReason(),
   }))
 
+  // v0.7.153 — Expose the bundled Next.js server's bound port + the
+  // PC's reachable LAN IPv4 addresses so the renderer can build URLs
+  // for the "OBS Browser Source" card in the NDI Output panel.
+  // appBaseUrl is the loopback URL (http://127.0.0.1:<port>) we use
+  // internally; the LAN URLs swap the host for each non-internal IPv4
+  // interface so an operator running OBS on a different PC on the
+  // same Wi-Fi can paste one of them straight into Browser Source.
+  // Returns an empty `lanIps` array on machines with no LAN
+  // interfaces (rare, but possible on a fully offline laptop).
+  ipcMain.handle('app:get-server-info', () => {
+    let port = 0
+    try {
+      if (appBaseUrl) port = Number(new URL(appBaseUrl).port) || 0
+    } catch { /* ignore */ }
+    const lanIps: string[] = []
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const os = require('node:os') as typeof import('node:os')
+      const ifaces = os.networkInterfaces()
+      for (const name of Object.keys(ifaces)) {
+        for (const info of ifaces[name] || []) {
+          if (info.family === 'IPv4' && !info.internal) {
+            lanIps.push(info.address)
+          }
+        }
+      }
+    } catch { /* ignore — return empty list */ }
+    return {
+      port,
+      localUrl: appBaseUrl || '',
+      lanIps,
+    }
+  })
+
   // ── Quit on close (Settings → Startup card) ───────────────────────
   // Lets the operator opt OUT of the new hide-to-tray behavior.
   // Default is false (keep tray-friendly behavior). Persisted to
@@ -1457,7 +2234,33 @@ function setupIpc() {
     }
   })
 
-  ipcMain.handle('ndi:status', () => ndi.getStatus())
+  // v0.7.199 — Defensive IPC guards. `ndi.getStatus()` and the stop
+  // handler below are called from the renderer at boot and on every
+  // operator click of the NDI panel. If the bundled DLL failed to load
+  // (corrupt install / missing VC++ runtime / blocked by AV), some
+  // internal fields on the NdiService instance are nullable. A renderer
+  // call into an unhealthy main-process handler that throws would be
+  // surfaced as an `invoke` rejection in the operator's console with no
+  // diagnostic. Returning a structured "unavailable" reply lets the UI
+  // render the NDI panel in its disabled state with the actual reason
+  // string instead of bubbling up an Error to React.
+  ipcMain.handle('ndi:status', () => {
+    try {
+      return ndi.getStatus()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      // Shape matches NdiStatus in electron/ndi-service.ts L29 +
+      // electron/preload.ts L26 + src/lib/use-electron.ts L5 (all
+      // three must stay in sync). Renderer reads NDI availability via
+      // appInfo.ndiAvailable (preload.ts L42), so we only need to
+      // surface `running:false` + the error string here.
+      return {
+        running: false,
+        frameCount: 0,
+        error: ndi.unavailableReason() || message,
+      }
+    }
+  })
 
   ipcMain.handle('ndi:start', (_e, opts: NdiStartOptions) =>
     serializeNdi(async () => {
@@ -1522,6 +2325,11 @@ function setupIpc() {
           broadcastNdiStatus(cur)
           return { ok: true, status: cur }
         }
+        // v0.7.194-hotfix.11 Item #3 — Arm NDI frame bridge BEFORE the
+        // BrowserWindow destroy+create await chain so Wirecast/OBS/vMix
+        // see continuous frames through the rebuild gap. armBridge is
+        // a no-op when no sender exists yet (first start of a session).
+        ndi.armBridge(3000)
         if (frameCapture) { await frameCapture.stop(); frameCapture = null }
         await ndi.start(opts)
         frameCapture = new FrameCapture({
@@ -1608,20 +2416,65 @@ function setupIpc() {
 
   ipcMain.handle('ndi:stop', () =>
     serializeNdi(async () => {
+      // v0.7.199 — Match the ndi:start guard. If the runtime never
+      // loaded there is nothing to stop, but we still want a clean
+      // structured reply so the renderer doesn't see an invoke
+      // rejection (which would surface as a generic "Disconnect
+      // failed" toast). Returning ok:true here is correct: from the
+      // operator's perspective "the NDI sender is not running" is the
+      // desired post-state and that is exactly what `available=false`
+      // already guarantees.
+      if (!ndi.isAvailable()) {
+        return { ok: true, alreadyStopped: true }
+      }
       try {
-        // v0.7.12 — Stop the frame capture FIRST so no new frames
-        // arrive into nativeSendFrame while we're emitting the
-        // black-frame fadeout. Then call gracefulStop() so downstream
-        // receivers (OBS, vMix, Wirecast, NDI Studio Monitor) get a
-        // clean ~200ms fade-to-black on the wire instead of a frozen
-        // last-frame, and have a clear "source went off-air" event
-        // they can react to without the operator needing to close /
-        // reopen them. Plain stop() is reserved for emergency shutdown
-        // paths (before-quit, crash) where adding 200ms would risk
-        // losing the exit deadline.
+        // v0.7.103 — LINGER MODE on operator-initiated Disconnect.
+        //
+        // Pre-v0.7.103 behaviour: this handler called ndi.gracefulStop()
+        // which fades to black, then immediately runs send_destroy +
+        // NDIlib_destroy. The destroy retracts our mDNS advertisement,
+        // tears down the worker threads, and severs every TCP
+        // connection downstream NDI receivers had open to us. OBS and
+        // vMix react by dropping our source from their lists. If the
+        // operator then hits Reconnect, OBS/vMix have already torn
+        // down their side — they need a manual re-add, or to be
+        // restarted, before they re-acquire our new sender. Operator
+        // escalation: "OBS/vMix close before NDI can reconnect".
+        //
+        // v0.7.103 fix: ndi.lingerStop(200, 60) emits the same brief
+        // fade-to-black for downstream visual continuity, then HOLDS
+        // the NDI sender alive on the wire for 60 seconds, with the
+        // keep-alive ticker pumping a black frame at the configured
+        // fps. To OBS/vMix the source remains "live, currently black"
+        // — they keep the connection open and the source listed.
+        //
+        // If the operator hits Reconnect within the 60s window, the
+        // ndi:start handler below detects we still have a live sender
+        // (persistent-source rule in ndi.start) and reuses it — the
+        // linger timer is cancelled at the top of ndi.start, and
+        // fresh real frames replace the held black with zero source-
+        // acquire flicker on the receiver side.
+        //
+        // If the operator does not come back within 60s, the linger
+        // timer fires and runs full ndi.stop() (send_destroy +
+        // NDIlib_destroy + runtime recycle) — same end-state as the
+        // pre-v0.7.103 behaviour, just delayed by the grace window.
+        //
+        // The frame-capture BrowserWindow is still torn down here
+        // because (a) we don't want to keep capturing the renderer
+        // for a now-off-air feed, and (b) we don't want a stray
+        // capture-window frame to "un-black" the held linger frame
+        // mid-window. Reconnect inside the linger window will
+        // re-create a fresh frame-capture from scratch (see
+        // ndi:start above) which is fine — the heavy expense was
+        // the NDI sender setup + mDNS round-trip, which we skip.
+        //
+        // Plain ndi.stop() is reserved for emergency shutdown paths
+        // (before-quit, crash) where the 60s linger would block exit
+        // and where downstream UX continuity is irrelevant anyway.
         if (frameCapture) { await frameCapture.stop(); frameCapture = null }
         frameCaptureFlags = null
-        await ndi.gracefulStop()
+        await ndi.lingerStop(200, 60)
         broadcastNdiStatus(ndi.getStatus())
         return { ok: true }
       } catch (err) {
@@ -1713,6 +2566,13 @@ function setupIpc() {
         nodeIntegration: false,
         // Disable devtools entirely on production output windows.
         devTools: false,
+        // v0.7.194-hotfix.10 — Secondary-screen kiosk MUST decode video
+        // at full framerate even when the operator's main console takes
+        // focus. Without this, alt-tabbing from the kiosk to the operator
+        // UI mid-service causes the projected output to drop frames /
+        // stutter — exactly the lag operators report when "the second
+        // screen freezes for a second every time I click in the app."
+        backgroundThrottling: false,
       },
     })
     win.removeMenu()
@@ -1771,9 +2631,51 @@ function setupIpc() {
       win.webContents.setZoomFactor(1)
     })
 
+    // v0.7.89 — protect popout/satellite windows (congregation, stage,
+    // NDI preview, etc) with the same crash-mask + auto-reload as the
+    // main window. Without this, the chrome-error://chromewebdata
+    // "This page couldn't load" page paints in the popout the moment
+    // the bundled Next server hiccups, and the operator has no way to
+    // recover except closing and reopening the popout.
+    installCrashMask(win, `popout:${opts.title || opts.path}`, { showDialogOnGiveUp: false })
+
     win.loadURL(`${appBaseUrl}${opts.path}`)
+    // v0.7.121 — Track open kiosk output windows so screen.on('display-
+    // removed') below can re-home them to the primary display when the
+    // operator unplugs the secondary monitor mid-service. Without this
+    // the kiosk window stays pinned to the now-gone display's bounds
+    // and disappears entirely (operator escalation: "anytime i
+    // disconnect output display from the other screen from the app,
+    // the app output… becomes Blank").
+    kioskWindows.add(win)
+    win.on('closed', () => { kioskWindows.delete(win) })
     return win
   }
+
+  // v0.7.121 — Auto-recover kiosk output windows when their host display
+  // is unplugged. Without this, the BrowserWindow stays at coordinates
+  // belonging to a display that no longer exists and the operator sees
+  // a blank room projector / stage display until they restart the app.
+  // We simply move every tracked kiosk to the primary display's full
+  // bounds and re-assert kiosk + fullscreen. The renderer inside is
+  // untouched so SSE state, slide content, etc. all survive.
+  screen.on('display-removed', () => {
+    try {
+      const primary = screen.getPrimaryDisplay()
+      const { x, y, width, height } = primary.bounds
+      for (const w of Array.from(kioskWindows)) {
+        if (!w || w.isDestroyed()) { kioskWindows.delete(w); continue }
+        try {
+          w.setKiosk(false)
+          w.setFullScreen(false)
+          w.setBounds({ x, y, width, height })
+          w.setKiosk(true)
+          w.setFullScreen(true)
+          w.show()
+        } catch { /* per-window failure is non-fatal */ }
+      }
+    } catch { /* screen API unavailable on this platform */ }
+  })
 
   ipcMain.handle('output:open-window', (_e, opts?: { displayId?: number }) => {
     if (!appBaseUrl) return { ok: false, error: 'app not ready' }
@@ -1828,6 +2730,38 @@ function setupIpc() {
 // `whenReady`'s heavy startup path — startNextServer, NDI probe,
 // updater init are all expensive and pointless in a doomed second
 // instance).
+// v0.7.194-hotfix.10 — Register the `scripturelive-media://` privileged
+// scheme BEFORE app.whenReady so the renderer-side <video> / <img>
+// elements can use it from the very first paint. The actual handler is
+// installed inside whenReady (below). See guard-rails A/C in CHANGELOG.
+// PRIVILEGES rationale:
+//   - secure: treated as https-equivalent so it survives mixed-content,
+//     CSP "media-src 'self'", and credentialed contexts inside the
+//     congregation/NDI BrowserWindows.
+//   - supportFetchAPI + stream: enables byte-range fetch() and the
+//     streaming Response body the handler returns.
+//   - bypassCSP: NDI offscreen + secondary-screen BrowserWindows load
+//     /api/output/congregation which sets its own CSP via Next; the
+//     custom protocol must not be blocked by the page's media-src.
+//   - corsEnabled: lets the HTMLMediaElement do credentialed range
+//     requests against the protocol without an Origin mismatch.
+//   - standard: makes URLs parse with hostname/pathname semantics so
+//     `new URL('scripturelive-media://uploads/<uuid>.mp4').pathname`
+//     gives us `/<uuid>.mp4` for the disk-path join below.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'scripturelive-media',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      bypassCSP: true,
+      corsEnabled: true,
+    },
+  },
+])
+
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   // The other (primary) instance will receive a `second-instance`
@@ -1856,6 +2790,165 @@ app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
 
   setupFileLogging()
+
+  // v0.7.194-hotfix.10 — Install the `scripturelive-media://` handler.
+  // Reads operator-uploaded media DIRECTLY from `userData/uploads/` via
+  // Node's streaming fs.createReadStream with proper byte-range support,
+  // bypassing the Next.js single-threaded /api/upload route. This kills
+  // the lag class where 3-5 concurrent <video> decoders (Preview, Live,
+  // NDI in-app preview, NDI offscreen capture window, secondary-screen
+  // kiosk) were each pulling the SAME local mp4 over HTTP through one
+  // Node event loop — every range request stalled every other range
+  // request. With this protocol, each surface reads straight off disk
+  // and the OS file cache de-dupes the bytes for free, just like every
+  // native player on Windows. The legacy /api/upload HTTP route stays
+  // alive for backward compat with operator-pasted OBS Browser-Source
+  // URLs from before this hotfix.
+  // SECURITY: refuse any path that escapes uploads/ (path traversal).
+  // The renderer is sandboxed and we control every call site, but a
+  // future maintainer who lets operator-typed text into mediaUrl would
+  // otherwise expose the entire userData directory.
+  try {
+    const uploadsDir = path.join(app.getPath('userData'), 'uploads')
+    protocol.handle('scripturelive-media', async (req) => {
+      try {
+        const u = new URL(req.url)
+        // URL shape: scripturelive-media://uploads/<filename>
+        // hostname = 'uploads', pathname = '/<filename>'
+        const filename = decodeURIComponent(u.pathname.replace(/^\/+/, ''))
+        // Reject anything that could escape uploadsDir.
+        if (!filename || filename.includes('..') || filename.includes('/') || filename.includes('\\') || filename.startsWith('.')) {
+          return new Response('forbidden', { status: 403 })
+        }
+        const full = path.join(uploadsDir, filename)
+        let stat: fs.Stats
+        try {
+          stat = await fs.promises.stat(full)
+        } catch {
+          return new Response('not found', { status: 404 })
+        }
+        if (!stat.isFile()) return new Response('not a file', { status: 404 })
+
+        const ext = path.extname(filename).toLowerCase()
+        const mime =
+          ext === '.mp4' || ext === '.m4v' ? 'video/mp4' :
+          ext === '.webm' ? 'video/webm' :
+          ext === '.mov' ? 'video/quicktime' :
+          ext === '.mkv' ? 'video/x-matroska' :
+          ext === '.avi' ? 'video/x-msvideo' :
+          ext === '.ogv' ? 'video/ogg' :
+          ext === '.png' ? 'image/png' :
+          ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
+          ext === '.gif' ? 'image/gif' :
+          ext === '.webp' ? 'image/webp' :
+          ext === '.svg' ? 'image/svg+xml' :
+          'application/octet-stream'
+
+        const total = stat.size
+        const range = req.headers.get('range') || ''
+        const m = /bytes=(\d*)-(\d*)/.exec(range)
+        const baseHeaders: Record<string, string> = {
+          'Content-Type': mime,
+          'Accept-Ranges': 'bytes',
+          // Operator uploads are content-addressed by uuid filename, so
+          // bytes never change for a given URL — immutable + 1-year max-age
+          // lets the Chromium net-cache aggressively reuse decoded frames.
+          'Cache-Control': 'public, max-age=31536000, immutable',
+          // v0.7.194-hotfix.12 — CORS headers are LOAD-BEARING. The
+          // renderer-side <video> / <img> elements set crossorigin="anonymous"
+          // (required so the NDI frame-capture canvas stays un-tainted by
+          // cross-origin pixels — without it, drawImage() throws SecurityError
+          // and the NDI sender stops emitting frames). The custom scheme
+          // origin (scripturelive-media://) is cross-origin to the page
+          // origin (http://localhost:<port>), so Chromium issues a strict
+          // CORS request. corsEnabled in registerSchemesAsPrivileged ONLY
+          // marks the scheme as CORS-eligible — the handler MUST still send
+          // ACAO itself. Pre-hotfix.12 this header was missing, every video
+          // silently 4xx'd, v.onerror fired display:none on every surface
+          // (Typography preview, NDI preview, Live preview, main Preview/Live
+          // columns), and the operator saw the empty Scripture AI placeholder
+          // everywhere a video should have been. See GR-A below.
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Access-Control-Allow-Headers': '*',
+        }
+        if (m) {
+          const start = m[1] ? parseInt(m[1], 10) : 0
+          let end = m[2] ? parseInt(m[2], 10) : total - 1
+          if (end >= total) end = total - 1
+          if (start > end || start < 0) {
+            return new Response('range not satisfiable', {
+              status: 416,
+              headers: { 'Content-Range': `bytes */${total}` },
+            })
+          }
+          const stream = fs.createReadStream(full, { start, end })
+          const webStream = new ReadableStream({
+            start(controller) {
+              stream.on('data', (chunk) => controller.enqueue(
+                typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk)
+              ))
+              stream.on('end', () => controller.close())
+              stream.on('error', (err) => controller.error(err))
+            },
+            cancel() { try { stream.destroy() } catch { /* ignore */ } },
+          })
+          return new Response(webStream, {
+            status: 206,
+            headers: {
+              ...baseHeaders,
+              'Content-Range': `bytes ${start}-${end}/${total}`,
+              'Content-Length': String(end - start + 1),
+            },
+          })
+        }
+        const stream = fs.createReadStream(full)
+        const webStream = new ReadableStream({
+          start(controller) {
+            stream.on('data', (chunk) => controller.enqueue(
+              typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk)
+            ))
+            stream.on('end', () => controller.close())
+            stream.on('error', (err) => controller.error(err))
+          },
+          cancel() { try { stream.destroy() } catch { /* ignore */ } },
+        })
+        // v0.7.196 — Diagnostic log every successful 200 full-file serve so
+        // a future debug session can see exactly which files the renderer
+        // requested, in what order, and at what time. Range (206) responses
+        // are NOT logged to avoid flooding the log on long-running videos
+        // that fire 50+ range requests per playback. The 200 path only
+        // fires on first probe or small files (images), so 1 log line per
+        // media-asset load is the expected volume.
+        console.log('[scripturelive-media] 200 serve', filename, 'size=', total)
+        return new Response(webStream, {
+          status: 200,
+          headers: { ...baseHeaders, 'Content-Length': String(total) },
+        })
+      } catch (err) {
+        console.error('[scripturelive-media] handler error:', err)
+        return new Response('internal error', { status: 500 })
+      }
+    })
+    console.log('[boot] scripturelive-media:// protocol handler registered, uploadsDir=', uploadsDir)
+  } catch (err) {
+    console.error('[boot] failed to register scripturelive-media:// handler:', err)
+  }
+  // Reference `net` so the import isn't tree-shaken — currently unused
+  // but kept available for a future fetch-from-disk fallback path.
+  void net
+
+  // v0.7.79 — Boot splash. Show ASAP (before any heavy work) so the
+  // operator gets instant visual feedback that the click on the icon
+  // registered. Suppressed when launched in --hidden mode (auto-
+  // launch at login) since no operator is at the keyboard.
+  const launchedHidden = process.argv.includes('--hidden')
+    || (process.platform === 'win32'
+        && (() => { try { return app.getLoginItemSettings().wasOpenedAsHidden === true } catch { return false } })())
+  if (!launchedHidden) {
+    showSplash()
+    setSplashStatus('Initializing…')
+  }
 
   // Hydrate the on-disk preferences (currently just `quitOnClose`)
   // before any window can be created or closed. This way the very
@@ -1903,13 +2996,39 @@ app.whenReady().then(async () => {
   try {
     setupIpc()
   } catch (err) {
+    closeSplash()
     fatalError('setupIpc', err); app.quit(); return
   }
+  // v0.7.72 — Clear Chromium HTTP cache before the embedded Next
+  // server boots. The pinned port (47330) means every install of
+  // SLAI hits the SAME origin (http://127.0.0.1:47330), so after
+  // an auto-update Chromium would happily serve cached HTML from
+  // the PREVIOUS build — referencing _next/static/chunks/<hash>.js
+  // filenames that no longer exist in the new build's static dir.
+  // Result: "This page couldn't load" because every chunk 404s.
+  // Clearing the cache once at startup costs ~50ms and guarantees
+  // the renderer always pulls a fresh HTML+chunk pair from the
+  // freshly-baked server. Safe to run on every launch — Chromium
+  // re-populates the cache as the page loads.
+  try {
+    await session.defaultSession.clearCache()
+  } catch (err) {
+    console.warn('[boot] session.clearCache failed (non-fatal):', err)
+  }
+  setSplashStatus('Starting Bible engine…')
+  // Whisper a follow-up message a moment later so the operator sees
+  // the splash text actually MOVE during the typical 1-3 s server
+  // boot — silent text feels just as frozen as a black screen.
+  const warmingTimer = setTimeout(() => setSplashStatus('Warming up the worship console…'), 1200)
   try {
     appBaseUrl = await startNextServer()
   } catch (err) {
+    clearTimeout(warmingTimer)
+    closeSplash()
     fatalError('startNextServer', err); app.quit(); return
   }
+  clearTimeout(warmingTimer)
+  setSplashStatus('Loading interface…')
   // ── Launch-at-login: hidden boot detection ──────────────────────
   // The OS-registered auto-launch entry was set via
   // `app.setLoginItemSettings({ ... args: ['--hidden'], openAsHidden:
@@ -1933,8 +3052,17 @@ app.whenReady().then(async () => {
     await createMainWindow(appBaseUrl, { show: !bootHidden })
     if (bootHidden) console.log('[boot] launched hidden — main window created with show:false, tray-only UI')
   } catch (err) {
+    closeSplash()
     fatalError('createMainWindow', err); app.quit(); return
   }
+  // v0.7.79 — Tear the splash down NOW. `createMainWindow` awaits
+  // `mainWindow.loadURL(url)`, which already resolves on the
+  // renderer's `did-finish-load`, so by the time we get here the
+  // main UI has finished loading. Attaching a listener here would
+  // never fire (the event has already passed) and we'd be stuck
+  // waiting on the 10 s safety net while the splash floats on top
+  // of the live app — exactly what the operator just hit.
+  closeSplash()
   try {
     setupAutoUpdater({
       getMainWindow: () => mainWindow,
