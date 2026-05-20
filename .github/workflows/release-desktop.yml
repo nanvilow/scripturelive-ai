@@ -141,6 +141,12 @@ jobs:
   build:
     name: Build Windows installer
     needs: preflight
+    # Explicit gate so build runs whenever preflight actually succeeded —
+    # GHA's implicit `success()` was treating build as skipped because the
+    # upstream `tag-ancestry` carries `if: github.event_name == 'push'` and
+    # ends up `skipped` on workflow_dispatch runs (release/<tag> branch
+    # pattern, see ship-v0.7.228 task notes).
+    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     runs-on: windows-latest
     steps:
       # `fetch-depth: 0` so the opt-out step below can read annotated-tag
