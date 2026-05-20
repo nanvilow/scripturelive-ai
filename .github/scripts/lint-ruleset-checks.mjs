@@ -60,10 +60,42 @@
 // job's name — which manifests as a clear "missing context" failure
 // rather than a silent pass, so the failure mode stays safe.
 //
+// Companion check (Task #109) — drift in the OTHER direction
+// ----------------------------------------------------------
+// Task #107 catches the case where a ruleset context no longer maps to
+// any workflow job. The inverse risk is just as real: someone ADDS a
+// new security/CI job to a workflow (a future SBOM scanner, license
+// check, an extra CodeQL matrix language, a new SAST tool, etc.) and
+// forgets to promote it to a required status check in the ruleset.
+// Every PR can then merge while silently skipping that gate.
+//
+// To catch that, this script also flags jobs that are "opted in" to
+// being required but aren't listed in the ruleset. A job opts in via
+// EITHER of two mechanisms:
+//
+//   1. Marker comment — `# ruleset:required` appearing anywhere
+//      inside the job's YAML block (on the job header line as a
+//      trailing comment, or on its own line under the job). This is
+//      the precise, explicit form — recommended for one-off jobs that
+//      don't follow the naming convention (e.g. `gitleaks`, `analyze`).
+//
+//   2. Naming convention — the job ID starts with `scan-`, `scan_`,
+//      `security-`, `security_`, `audit-`, or `audit_` (or equals one
+//      of `scan`/`security`/`audit` exactly, case-insensitive). This
+//      keeps the common case zero-config: any future job whose ID
+//      follows the convention is required by default.
+//
+// Build matrix permutations that should NOT be required (e.g. a
+// `build (windows-2019, node-18)` permutation that exists only as a
+// CI smoke test) can simply omit the marker and avoid the naming
+// convention — no false positives.
+//
 // Exit codes
 // ----------
-//   0 — every required context maps to at least one discovered job name
-//   1 — at least one required context is unmatched (drift detected)
+//   0 — every required context maps to at least one discovered job
+//        name AND every opted-in job is listed in the ruleset
+//   1 — at least one required context is unmatched OR at least one
+//        opted-in job is missing from the ruleset (drift detected)
 //   2 — the ruleset file or workflows directory is missing (treated as
 //        a hard error so a typo doesn't silently pass the check)
 
@@ -134,7 +166,9 @@ function parseWorkflowJobs(filePath) {
   }
   if (jobIndent === -1) return [];
 
-  // Split into per-job blocks.
+  // Split into per-job blocks. Preserve the job header LINE itself
+  // (including any trailing `# ruleset:required` comment) on the
+  // block so the opt-in marker scan can see it.
   const headerRe = new RegExp(`^ {${jobIndent}}([A-Za-z_][\\w-]*):\\s*(#.*)?$`);
   const jobBlocks = [];
   let current = null;
@@ -142,7 +176,7 @@ function parseWorkflowJobs(filePath) {
     const m = ln.match(headerRe);
     if (m) {
       if (current) jobBlocks.push(current);
-      current = { id: m[1], body: [] };
+      current = { id: m[1], headerLine: ln, body: [] };
     } else if (current) {
       current.body.push(ln);
     }
@@ -153,7 +187,29 @@ function parseWorkflowJobs(filePath) {
   for (const job of jobBlocks) {
     const info = parseJobBody(job.body, jobIndent);
     const names = expandJobName(info.name ?? job.id, info.matrix);
-    results.push(...names);
+
+    // Opt-in detection (Task #109). The marker check scans the job
+    // header line AND every line in the job body — the marker can
+    // live as a trailing comment on the `jobId:` line, on its own
+    // comment line directly under the job, or anywhere inside the
+    // job's YAML block.
+    const markerRe = /#\s*ruleset:required\b/;
+    const hasMarker =
+      markerRe.test(job.headerLine) ||
+      job.body.some(ln => markerRe.test(ln));
+    const matchesNamingConvention =
+      /^(scan|security|audit)([-_]|$)/i.test(job.id);
+    let qualifyReason = null;
+    if (hasMarker) qualifyReason = 'marker';
+    else if (matchesNamingConvention) qualifyReason = 'naming-convention';
+
+    results.push({
+      file: filePath,
+      id: job.id,
+      names,
+      qualified: qualifyReason !== null,
+      qualifyReason,
+    });
   }
   return results;
 }
@@ -296,39 +352,103 @@ const workflowFiles = fs.readdirSync(WORKFLOWS_DIR)
   .sort();
 
 const allJobNames = new Set();
+const allJobs = []; // { file, id, names, qualified, qualifyReason }
 for (const wf of workflowFiles) {
-  for (const n of parseWorkflowJobs(wf)) allJobNames.add(n);
+  for (const job of parseWorkflowJobs(wf)) {
+    allJobs.push(job);
+    for (const n of job.names) allJobNames.add(n);
+  }
 }
 
+const requiredSet = new Set(required);
+
+// Direction A (Task #107): every required context must map to a job.
 const missing = required.filter(ctx => !allJobNames.has(ctx));
 
-if (missing.length === 0) {
+// Direction B (Task #109): every opted-in job must appear in the ruleset.
+// We report at the expanded-name granularity so each unprotected matrix
+// permutation shows up individually in the failure list.
+const orphans = [];
+for (const job of allJobs) {
+  if (!job.qualified) continue;
+  for (const name of job.names) {
+    if (!requiredSet.has(name)) {
+      orphans.push({
+        file: path.relative(REPO_ROOT, job.file),
+        id: job.id,
+        name,
+        reason: job.qualifyReason,
+      });
+    }
+  }
+}
+
+if (missing.length === 0 && orphans.length === 0) {
   console.log(`[ruleset-lint] OK — all ${required.length} required status check(s) map to a workflow job:`);
   for (const ctx of required) console.log(`    ✓ ${ctx}`);
+  const qualifiedCount = allJobs.filter(j => j.qualified).length;
+  if (qualifiedCount > 0) {
+    console.log(`[ruleset-lint] OK — all ${qualifiedCount} opted-in workflow job(s) are listed in the ruleset.`);
+  }
   process.exit(0);
 }
 
-console.error('');
-console.error('[ruleset-lint] FAIL — required status check(s) in the branch ruleset');
-console.error('               do not correspond to any job name in .github/workflows/.');
-console.error('');
-console.error('               Ruleset file: .github/rulesets/main-branch-protection.json');
-console.error('');
-console.error('  Missing required contexts:');
-for (const ctx of missing) console.error(`    ✗ "${ctx}"`);
-console.error('');
-console.error('  Discovered workflow job names (after matrix expansion):');
-for (const n of [...allJobNames].sort()) console.error(`      • ${n}`);
-console.error('');
-console.error('  Without a fix, every subsequent PR will silently block forever');
-console.error('  waiting for a status check that no longer reports under that name.');
-console.error('');
-console.error('  Fix one of:');
-console.error('    1. Restore the original `name:` field in the workflow YAML, OR');
-console.error('    2. Update the "context" entry in');
-console.error('       .github/rulesets/main-branch-protection.json to match the new');
-console.error('       job name (and re-apply the ruleset on GitHub via the');
-console.error('       Settings → Rules → Rulesets UI or `gh api` import).');
-console.error('');
+if (missing.length > 0) {
+  console.error('');
+  console.error('[ruleset-lint] FAIL — required status check(s) in the branch ruleset');
+  console.error('               do not correspond to any job name in .github/workflows/.');
+  console.error('');
+  console.error('               Ruleset file: .github/rulesets/main-branch-protection.json');
+  console.error('');
+  console.error('  Missing required contexts:');
+  for (const ctx of missing) console.error(`    ✗ "${ctx}"`);
+  console.error('');
+  console.error('  Discovered workflow job names (after matrix expansion):');
+  for (const n of [...allJobNames].sort()) console.error(`      • ${n}`);
+  console.error('');
+  console.error('  Without a fix, every subsequent PR will silently block forever');
+  console.error('  waiting for a status check that no longer reports under that name.');
+  console.error('');
+  console.error('  Fix one of:');
+  console.error('    1. Restore the original `name:` field in the workflow YAML, OR');
+  console.error('    2. Update the "context" entry in');
+  console.error('       .github/rulesets/main-branch-protection.json to match the new');
+  console.error('       job name (and re-apply the ruleset on GitHub via the');
+  console.error('       Settings → Rules → Rulesets UI or `gh api` import).');
+  console.error('');
+}
+
+if (orphans.length > 0) {
+  console.error('');
+  console.error('[ruleset-lint] FAIL — workflow job(s) opted into being required status');
+  console.error('               checks are NOT listed in the branch ruleset.');
+  console.error('');
+  console.error('               Ruleset file: .github/rulesets/main-branch-protection.json');
+  console.error('');
+  console.error('  Opted-in jobs missing from the ruleset:');
+  for (const o of orphans) {
+    const why =
+      o.reason === 'marker'
+        ? 'opted in via `# ruleset:required` marker'
+        : 'opted in via job-id naming convention (scan-*/security-*/audit-*)';
+    console.error(`    ✗ "${o.name}"`);
+    console.error(`        job id: ${o.id}`);
+    console.error(`        file:   ${o.file}`);
+    console.error(`        reason: ${why}`);
+  }
+  console.error('');
+  console.error('  Without a fix, every PR can merge while silently skipping these');
+  console.error('  gates — exactly the failure mode this guard exists to prevent.');
+  console.error('');
+  console.error('  Fix one of:');
+  console.error('    1. Add each name above to `rules[].parameters.required_status_checks`');
+  console.error('       in .github/rulesets/main-branch-protection.json (and re-apply the');
+  console.error('       ruleset on GitHub via Settings → Rules → Rulesets or `gh api`), OR');
+  console.error('    2. If the job is intentionally NOT a required check (e.g. an');
+  console.error('       informational matrix permutation), remove the `# ruleset:required`');
+  console.error('       marker and/or rename the job so its id no longer matches the');
+  console.error('       scan-*/security-*/audit-* naming convention.');
+  console.error('');
+}
 
 process.exit(1);
