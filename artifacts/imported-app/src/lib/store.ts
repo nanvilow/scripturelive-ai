@@ -1191,7 +1191,51 @@ export const useAppStore = create<AppState>()(
       clearPinnedPreview: () => set({ pinnedPreviewSlide: null }),
       // v0.7.203 — liveSlide direct ref. See interface comment.
       liveSlide: null,
-      setLiveAuto: (s) => set({ liveSlide: s, isLive: true, hasShownContent: true }),
+      setLiveAuto: (s) => set((state) => {
+        // v0.7.221 — Atomic transport reset on media-video promotion.
+        // Operator $1600 escalation: "clicking GO LIVE also sends video
+        // from the preview to the live display to IMMEDIATELY START
+        // PLAYING". Pre-fix root cause: setLiveAuto only set
+        // {liveSlide, isLive:true, hasShownContent:true}. If a previous
+        // live media-video had been paused by the operator,
+        // `liveMediaPaused` was sticky-true in the store; the new
+        // promotion then mounted the fresh <video> but the
+        // MediaVideoSurface effect (L388: `shouldPlay = isLive &&
+        // !mediaPaused`) saw mediaPaused=true and never called
+        // v.play(). Same for `liveMediaCurrentTime`: leftover seek
+        // position from clip A made clip B start at the wrong frame
+        // (or past EOF → frozen on first frame). The two shell goLive
+        // call sites tried to fix this by calling setLiveMediaPaused +
+        // setLiveMediaCurrentTime BEFORE setLiveAuto, but (a) the EW
+        // shell goLive pinned path never wired in the resets at all
+        // (was just `setLiveAuto(pinned); return`), and (b) every
+        // setLiveAuto call site outside goLive (speech-provider × 5,
+        // live-translation-sync × 2, library-compact double-click,
+        // logos-shell AI auto-fire) had the same gap. Fix the store
+        // contract once: when promoting a NEW media-video (different
+        // mediaUrl from current liveSlide), atomically clear the
+        // transport state. Text-slide rebuilds (translation switch,
+        // AI verse handoff) and same-URL re-promotions preserve
+        // transport — they have no playback to reset and the
+        // translation-switch test (ai-live-only.test.ts L80) asserts
+        // the rebuild keeps in-place behaviour.
+        const update: {
+          liveSlide: typeof s
+          isLive: boolean
+          hasShownContent: boolean
+          liveMediaPaused?: boolean
+          liveMediaCurrentTime?: number
+        } = { liveSlide: s, isLive: true, hasShownContent: true }
+        const sAny = s as { type?: string; mediaKind?: string; mediaUrl?: string } | null
+        const curAny = state.liveSlide as { type?: string; mediaKind?: string; mediaUrl?: string } | null
+        const newUrl = sAny && sAny.type === 'media' && sAny.mediaKind === 'video' ? sAny.mediaUrl ?? null : null
+        const curUrl = curAny && curAny.type === 'media' && curAny.mediaKind === 'video' ? curAny.mediaUrl ?? null : null
+        if (newUrl && newUrl !== curUrl) {
+          update.liveMediaPaused = false
+          update.liveMediaCurrentTime = 0
+        }
+        return update
+      }),
       clearLiveAuto: () => set({ liveSlide: null }),
       // v0.7.194-hotfix.7 — see interface comment above.
       // v0.7.201 — Atomically PIN the staged slide so the Preview

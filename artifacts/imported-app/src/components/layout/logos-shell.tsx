@@ -1945,7 +1945,28 @@ function LiveDisplayCard({
             // browser source, secondary screen) keep playing the same
             // media independently from store-pushed SSE state.
             <StableStage scale={actualSize} isLive={!!liveSlide}>
+              {/* v0.7.221 — `key={liveSlide.mediaUrl}` forces a clean
+                  unmount/remount of the <video> when the live source
+                  URL changes (e.g. operator swaps live to a different
+                  clip via setLiveAuto). Without the key, React reuses
+                  the same DOM <video> with a mutated `src` attribute;
+                  the browser aborts the in-flight playback and races
+                  the new fetch against the still-allocated GPU decoder
+                  slot of the previous clip. Clean unmount releases the
+                  decoder synchronously BEFORE the new element mounts —
+                  no HW decoder slot contention with the preview pane
+                  or NDI capture window during the swap. Operator-
+                  visible bug this fixes: "clicking another media tile
+                  stops the live video" — root cause was decoder slot
+                  exhaustion during a contended swap, masked by the
+                  fact that the EFFECT layer is idempotent (so React
+                  source-grep tests passed) but the BROWSER layer is
+                  not. Same-URL re-renders (pin changes, parent re-
+                  renders driven by other store mutations) keep the
+                  key stable and DO NOT remount — the live <video>
+                  is fully isolated from preview pin clicks. */}
               <MediaVideoSurface
+                key={liveSlide.mediaUrl}
                 surface="live"
                 src={liveSlide.mediaUrl}
                 fit={liveSlide.mediaFit ?? 'fit'}

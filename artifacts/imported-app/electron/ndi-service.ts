@@ -191,6 +191,9 @@ export class NdiService extends EventEmitter {
   // trigger a fresh allocation rather than a buffer-too-small write.
   private videoBufferPool: Buffer[] = []
   private videoBufferIndex = 0
+  // v0.7.221 — Monotonic timecode anchor (see nativeSendFrame for full
+  // rationale). 0n sentinel = "uninitialised, set on first frame".
+  private senderStartHrTimeNs: bigint = BigInt(0)
   private videoBufferCapacity = 0
   // v0.7.56 — Tracks whether NDIlib_initialize() is currently active.
   // The operator-initiated stop() path now calls NDIlib_destroy() to
@@ -573,6 +576,26 @@ export class NdiService extends EventEmitter {
     this.sendBusy = true
     try {
       const fps = this.status.fps || 30
+      // v0.7.221 — Operator $1600 escalation: "What makes EasyWorship NDI
+      // output play smoothly in other apps? Implement that here." Part of
+      // the answer: stamping a real monotonic timecode on every frame
+      // instead of BigInt(0). NDI timecode is in 100-ns intervals (per
+      // NDI SDK docs). Receivers (OBS / vMix / Wirecast) use timecode
+      // for jitter buffer pacing — when timecode is 0, the receiver
+      // falls back to system-clock arrival times, which drift relative
+      // to the source's true frame cadence (especially under Windows
+      // SwapBuffers + GC pressure on the operator PC). With a real
+      // monotonic timecode the receiver can low-pass filter wire jitter
+      // and present at the source-true cadence — the same trick EW
+      // uses to keep its NDI output silky on overloaded operator
+      // machines. process.hrtime.bigint() is a monotonic high-res clock
+      // unaffected by NTP adjustments or system sleep. Anchor at first
+      // frame so the value starts near 0 (within u63 range for
+      // generations).
+      if (this.senderStartHrTimeNs === BigInt(0)) {
+        this.senderStartHrTimeNs = process.hrtime.bigint()
+      }
+      const tc100ns = (process.hrtime.bigint() - this.senderStartHrTimeNs) / BigInt(100)
       const frame = {
         xres: width,
         yres: height,
@@ -581,11 +604,11 @@ export class NdiService extends EventEmitter {
         frame_rate_D: 1000,
         picture_aspect_ratio: width / height,
         frame_format_type: FRAME_FORMAT_PROGRESSIVE,
-        timecode: BigInt(0) as unknown as number,
+        timecode: tc100ns as unknown as number,
         p_data: bgraBuffer,
         line_stride_in_bytes: width * 4,
         p_metadata: null as unknown as string,
-        timestamp: BigInt(0) as unknown as number,
+        timestamp: tc100ns as unknown as number,
       }
       // v0.7.220 — Async send. Returns immediately; NDI worker thread
       // reads from `bgraBuffer` until the next async_v2 call. Buffer
@@ -642,6 +665,9 @@ export class NdiService extends EventEmitter {
     this.videoBufferPool = []
     this.videoBufferIndex = 0
     this.videoBufferCapacity = 0
+    // v0.7.221 — Reset monotonic timecode anchor on teardown so the
+    // next sender re-anchors at 0 on its first frame.
+    this.senderStartHrTimeNs = BigInt(0)
     this.status = { running: false, frameCount: this.status.frameCount }
 
     // v0.7.56 — Full NDI runtime recycle on operator-initiated stop.

@@ -1593,8 +1593,24 @@ export function EasyWorshipShell() {
     // {liveSlide, isLive:true, hasShownContent:true} and the renderer
     // reads liveSlide first (output-payload L19) so the video is on air
     // immediately.
+    // v0.7.221 — Parity with logos-shell goLive (L4138-4191). EW shell
+    // pinned path was a bare `setLiveAuto(pinned); return` with NO
+    // preview→live transport handoff. Now: capture preview <video>
+    // currentTime so live resumes seamlessly, unpause live media, pause
+    // preview, then promote. (The v0.7.221 setLiveAuto store contract
+    // now also atomically clears liveMediaPaused + liveMediaCurrentTime
+    // for new-URL promotions as a defence-in-depth — these explicit
+    // calls remain so the currentTime carry-over works.)
     const pinned = useAppStore.getState().pinnedPreviewSlide
     if (pinned) {
+      if (typeof document !== 'undefined') {
+        const pv = document.querySelector<HTMLVideoElement>('video[data-surface="preview"]')
+        if (pv && Number.isFinite(pv.currentTime)) {
+          try { useAppStore.getState().setLiveMediaCurrentTime(pv.currentTime) } catch { /* ignore */ }
+        }
+      }
+      useAppStore.getState().setLiveMediaPaused(false)
+      useAppStore.getState().setPreviewMediaPaused(true)
       useAppStore.getState().setLiveAuto(pinned)
       return
     }
@@ -1602,6 +1618,14 @@ export function EasyWorshipShell() {
       toast.info('Add something to the schedule first')
       return
     }
+    if (typeof document !== 'undefined') {
+      const pv = document.querySelector<HTMLVideoElement>('video[data-surface="preview"]')
+      if (pv && Number.isFinite(pv.currentTime)) {
+        try { useAppStore.getState().setLiveMediaCurrentTime(pv.currentTime) } catch { /* ignore */ }
+      }
+    }
+    useAppStore.getState().setLiveMediaPaused(false)
+    useAppStore.getState().setPreviewMediaPaused(true)
     setLiveSlideIndex(previewSlideIndex)
     setIsLive(true)
     if (previewSlideIndex < slides.length - 1) setPreviewSlideIndex(previewSlideIndex + 1)
