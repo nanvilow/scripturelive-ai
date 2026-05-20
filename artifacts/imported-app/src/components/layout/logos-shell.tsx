@@ -1370,38 +1370,92 @@ function PreviewCard() {
                     </div>
                   </div>
                 ) : previewStandbyForLive ? (
-                  // v0.7.222 — STANDBY placard. Zero media element
-                  // mounted in the preview pane = zero HW decoder
-                  // slot contention with the live decoder. Operator
-                  // can press Play in the transport bar below to opt
-                  // into mounting the real preview surface. The
-                  // same-media-on-Live case is handled by the
-                  // ON-AIR placard branch above instead (different
-                  // reason: avoid double-audio).
+                  // v0.7.227 — Single-click on a video tile MUST paint
+                  // the first frame in Preview (operator escalation
+                  // following v0.7.222). v0.7.222 rendered a black
+                  // text-only placard which operators perceived as
+                  // "single-click is broken — I can't see what I just
+                  // clicked". Pure text feedback is not enough.
+                  //
+                  // The fix re-applies the v0.7.225 freezeBg pattern
+                  // here: a real <video> with preload="auto" is
+                  // mounted, the first decoded frame is forced onto
+                  // the compositor via play().then(pause) inside the
+                  // loadeddata handler, and the element STAYS PAUSED
+                  // afterwards. The HW decoder slot is held only for
+                  // the brief play→pause window (a few ms) then
+                  // released — no continuous decode runs in parallel
+                  // with Live. This preserves the v0.7.222 $1600-
+                  // customer protection (Live decoder never evicted
+                  // by a competing steady-state preview decode) while
+                  // delivering the visual confirmation operators
+                  // expect from single-click.
+                  //
+                  // The Standby badge + "Play preview" button stay as
+                  // OVERLAYS on top of the poster frame so the
+                  // operator still understands they need to press
+                  // Play to monitor with audio + scrub controls. The
+                  // button continues to flip previewMediaPaused=false
+                  // → the full MediaVideoSurface mounts and the
+                  // operator accepts the dual-decoder risk knowingly.
+                  //
+                  // GUARD-RAIL (v0.7.222 lineage): the <video> MUST
+                  // stay muted, MUST NOT autoplay, MUST NOT loop, and
+                  // MUST execute the play().then(pause) kick exactly
+                  // once (loadeddata, not loadedmetadata). The pause
+                  // in the play listener MUST be setTimeout(_, 0) —
+                  // a synchronous pause races the loadeddata kick and
+                  // emits AbortError spam (same trap v0.7.225 hit on
+                  // freezeBg). key={mediaUrl} forces a clean remount
+                  // when the operator single-clicks a DIFFERENT tile.
                   <div
-                    className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border flex flex-col items-center justify-center text-center gap-1.5 px-3"
+                    className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
                     style={{ aspectRatio: '16 / 9' }}
                   >
-                    <div className="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/90 text-black text-[10px] uppercase tracking-wider font-semibold">
+                    <video
+                      key={previewSlide.mediaUrl}
+                      src={previewSlide.mediaUrl}
+                      muted
+                      playsInline
+                      preload="auto"
+                      disablePictureInPicture
+                      disableRemotePlayback
+                      className="absolute inset-0 w-full h-full object-contain bg-black"
+                      onLoadedData={(e) => {
+                        const v = e.currentTarget
+                        // Force first frame onto compositor then release
+                        // the decoder slot. .catch(pause) handles the
+                        // case where play() rejects (autoplay policy on
+                        // some Chromium builds) — pause still wins.
+                        v.play().then(() => v.pause()).catch(() => { try { v.pause() } catch (_e) { /* swallow */ } })
+                      }}
+                      onPlay={(e) => {
+                        // Async pause — see GUARD-RAIL above. Sync
+                        // pause inside the play listener races the
+                        // loadeddata .then(pause) and spams AbortError.
+                        const v = e.currentTarget
+                        setTimeout(() => { try { v.pause() } catch (_e) { /* swallow */ } }, 0)
+                      }}
+                    />
+                    <div className="absolute top-2 left-2 z-10 flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/90 text-black text-[10px] uppercase tracking-wider font-semibold pointer-events-none">
                       <span className="w-1.5 h-1.5 rounded-full bg-black/70" />
                       Standby
                     </div>
-                    <div className="text-[11px] uppercase tracking-wider text-amber-300/80">
-                      Preview ready
+                    <div className="absolute inset-x-0 bottom-0 z-10 flex flex-col items-center gap-1 px-3 py-2 bg-gradient-to-t from-black/85 via-black/55 to-transparent">
+                      <div className="text-[10px] uppercase tracking-wider text-amber-300/90 font-semibold">
+                        Preview ready · Live is on air
+                      </div>
+                      <div className="text-[10px] text-white/70 max-w-[90%] truncate">
+                        {previewSlide.title || 'Video clip'}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewMediaPaused(false)}
+                        className="mt-0.5 h-7 px-3 rounded bg-amber-500/90 hover:bg-amber-500 text-black text-[10px] uppercase tracking-wider font-semibold"
+                      >
+                        Play preview
+                      </button>
                     </div>
-                    <div className="text-[12px] text-muted-foreground/90 font-medium max-w-[85%] truncate">
-                      {previewSlide.title || 'Video clip'}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground/60 max-w-[85%]">
-                      Live is on air — press Play below to monitor without stalling Live.
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setPreviewMediaPaused(false)}
-                      className="mt-1 h-7 px-3 rounded bg-amber-500/90 hover:bg-amber-500 text-black text-[10px] uppercase tracking-wider font-semibold"
-                    >
-                      Play preview
-                    </button>
                   </div>
                 ) : (
                   <MediaVideoSurface
