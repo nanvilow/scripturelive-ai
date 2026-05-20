@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Background brightness — before / after</title>
+<style>
+  html,body{margin:0;padding:0;background:#0b0d10;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;padding:18px;max-width:1760px;margin:0 auto}
+  .col-title{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:18px;padding:0 18px}
+  .col-title > div{font-size:14px;letter-spacing:.12em;text-transform:uppercase;opacity:.7;padding:14px 4px 0}
+  .row-label{font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#a8b2c0;padding:14px 22px 0;grid-column:1/-1}
+  .panel{position:relative;aspect-ratio:16/9;border-radius:12px;overflow:hidden;border:1px solid #232a33;background:#000}
+  .badge{position:absolute;top:10px;left:10px;z-index:5;background:rgba(0,0,0,.6);color:#fff;padding:6px 10px;border-radius:6px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+  .badge.after{background:rgba(34,150,94,.85)}
+  .bg-media{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+  .scrim{position:absolute;inset:0;pointer-events:none}
+  /* BEFORE — current production values */
+  .before .bg-media{opacity:.4}
+  .before .scrim{background:rgba(0,0,0,.3)}
+  /* AFTER — proposed brightened values */
+  .after .bg-media{opacity:.6}
+  .after .scrim{background:rgba(0,0,0,.2)}
+
+  .slide-text{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:6% 8%;color:#fff;text-shadow:0 2px 12px rgba(0,0,0,.4)}
+  .verse{font-size:clamp(20px,3.4vw,42px);font-weight:600;letter-spacing:-.005em;line-height:1.2;max-width:90%}
+  .reference{margin-top:1.2em;font-size:clamp(14px,1.6vw,20px);font-weight:700;letter-spacing:.04em;opacity:.95}
+
+  h1{margin:24px 24px 6px;font-size:22px;font-weight:600;letter-spacing:-.01em}
+  .legend{margin:0 24px 14px;color:#a8b2c0;font-size:13px;line-height:1.6}
+  .legend code{background:#1a1f26;padding:2px 6px;border-radius:4px;font-size:12px;color:#dfe5ee}
+</style>
+</head>
+<body>
+  <h1>Background brightness — current vs. proposed</h1>
+  <p class="legend">
+    Current: bg layer <code>opacity: .4</code> + dark scrim <code>rgba(0,0,0,.3)</code> → effective brightness ≈&nbsp;28% of source.<br/>
+    Proposed: bg layer <code>opacity: .6</code> + lighter scrim <code>rgba(0,0,0,.2)</code> → effective brightness ≈&nbsp;48% of source (~70% brighter), text still WCAG-AA legible.
+  </p>
+
+  <div class="grid">
+    <div class="col-title"><div>Before (current)</div><div>After (proposed)</div></div>
+
+    <div class="row-label">Image background</div>
+    <div class="panel before">
+      <span class="badge">Before · opacity .4 + scrim .3</span>
+      <img class="bg-media" src="https://picsum.photos/seed/scripture-live/1920/1080" alt="" crossorigin="anonymous" />
+      <div class="scrim"></div>
+      <div class="slide-text">
+        <div class="verse">And he commanded the multitude to sit down on the grass, and took the five loaves, and the two fishes, and looking up to heaven, he blessed.</div>
+        <div class="reference">Matthew 14:19 · KJV</div>
+      </div>
+    </div>
+    <div class="panel after">
+      <span class="badge after">After · opacity .6 + scrim .2</span>
+      <img class="bg-media" src="https://picsum.photos/seed/scripture-live/1920/1080" alt="" crossorigin="anonymous" />
+      <div class="scrim"></div>
+      <div class="slide-text">
+        <div class="verse">And he commanded the multitude to sit down on the grass, and took the five loaves, and the two fishes, and looking up to heaven, he blessed.</div>
+        <div class="reference">Matthew 14:19 · KJV</div>
+      </div>
+    </div>
+
+    <div class="row-label">Video background (playing)</div>
+    <div class="panel before">
+      <span class="badge">Before · opacity .4 + scrim .3</span>
+      <video class="bg-media" src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4#t=12" autoplay loop muted playsinline preload="auto" crossorigin="anonymous"></video>
+      <div class="scrim"></div>
+      <div class="slide-text">
+        <div class="verse">For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.</div>
+        <div class="reference">John 3:16 · KJV</div>
+      </div>
+    </div>
+    <div class="panel after">
+      <span class="badge after">After · opacity .6 + scrim .2</span>
+      <video class="bg-media" src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4#t=12" autoplay loop muted playsinline preload="auto" crossorigin="anonymous"></video>
+      <div class="scrim"></div>
+      <div class="slide-text">
+        <div class="verse">For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.</div>
+        <div class="reference">John 3:16 · KJV</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

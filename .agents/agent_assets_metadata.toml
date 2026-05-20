@@ -1433,3 +1433,9 @@ id = "nyNsIL-oPLdQU16EjPoul"
 uri = "file://screenshots/proof/05-pin-holds-after-wait.jpg"
 type = "image"
 title = "4 — 5 seconds later → pin still holds, panes still different"
+
+[[outputs]]
+id = "Up4NcN3GaGCILsitoZ1Tr"
+uri = "file://screenshots/bg-compare.jpg"
+type = "image"
+title = "Background brightness — before vs. after"
