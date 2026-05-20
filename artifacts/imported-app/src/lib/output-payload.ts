@@ -52,6 +52,11 @@ export function buildOutputPayload(s: StoreState) {
     lowerThirdHeight: settings.lowerThirdHeight,
     lowerThirdPosition: settings.lowerThirdPosition,
     customBackground: settings.customBackground,
+    // v0.7.227 — Operator-controlled background brightness (0-100). The
+    // congregation renderer derives bg opacity + scrim alpha from this
+    // value so both members of the v0.7.226 pair-invariant move in
+    // lockstep across all three surfaces (.bg-image, #bgLayer, .lt-bg).
+    bgBrightness: settings.bgBrightness,
     congregationScreenTheme: settings.congregationScreenTheme,
     displayRatio: settings.displayRatio,
     textScale: settings.textScale,

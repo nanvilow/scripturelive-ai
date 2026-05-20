@@ -109,6 +109,16 @@ export interface AppSettings {
   displayMode: DisplayMode
   outputDestination: OutputDestination
   customBackground: string | null
+  /** v0.7.227 — Operator-controlled brightness for the custom-background
+   *  image AND video on every output surface (full-screen verse bg,
+   *  persistent #bgLayer, lower-third .lt-bg). Integer 0-100. The
+   *  congregation renderer derives BOTH the bg opacity AND the dark
+   *  scrim alpha from this single value to preserve the v0.7.226
+   *  pair-invariant: opacity = brightness/100, scrim alpha ≈
+   *  (1 - opacity) * 0.333. Default 85 matches the v0.7.226 operator
+   *  pick. Optional for back-compat — pre-v0.7.227 saved settings have
+   *  no key and the renderer falls back to the same default. */
+  bgBrightness?: number
   lowerThirdPosition: 'bottom' | 'top'
   lowerThirdHeight: 'sm' | 'md' | 'lg'
   autoAdvanceSlides: boolean
@@ -785,6 +795,11 @@ const defaultSettings: AppSettings = {
   displayMode: 'full',
   outputDestination: 'window',
   customBackground: null,
+  // v0.7.227 — Default 85 = .85 opacity / .05 scrim, matching the
+  // v0.7.226 operator-picked baseline. Operator slider in Settings →
+  // Custom Background can dial it to taste live, with both members
+  // of the opacity/scrim pair moving in lockstep.
+  bgBrightness: 85,
   lowerThirdPosition: 'bottom',
   lowerThirdHeight: 'lg',
   autoAdvanceSlides: false,

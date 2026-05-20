@@ -55,8 +55,15 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    / .lt-bg-overlay (lower-third surface) so chyron and full-screen
    modes match. The legacy .bg-image class shares the .bg-overlay
    stack so it follows the same axis. */
-.bg-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.85;pointer-events:none}
-.bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.05);pointer-events:none;z-index:1}
+/* v0.7.227 — Operator brightness slider: both members of the
+   v0.7.226 pair-invariant are now driven by CSS variables set by
+   applyRender() from s.settings.bgBrightness. Fallback to the
+   v0.7.226 baseline (.85 / .05) when the var is unset so first-paint
+   before SSE settles AND pre-v0.7.227 persisted state render
+   identically to v0.7.226. Pair invariant preserved by SOURCE:
+   --bg-opacity = brightness/100, --bg-scrim = (1 - opacity) * 0.333. */
+.bg-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:var(--bg-opacity,.85);pointer-events:none}
+.bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,var(--bg-scrim,.05));pointer-events:none;z-index:1}
 /* v0.7.187 — Persistent BG VIDEO layer (PERFORMANCE FIX). Pre-fix, the
    verse-background <video> was inlined into #output's innerHTML on every
    render. Because the renderer reassigns $('output').innerHTML on every
@@ -93,7 +100,9 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    video layers. Cheap (1 extra compositor layer) and broadcast-safe. */
 /* v0.7.221 — opacity:.4 → .6 (brightness fix, see .bg-image comment
    above). GPU compositing hints unchanged (also v0.7.221). */
-#bgLayer > video, #bgLayer > img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.85;display:block;transform:translateZ(0);will-change:transform,opacity;backface-visibility:hidden}
+/* v0.7.227 — opacity driven by --bg-opacity (set by applyRender from
+   settings.bgBrightness). Fallback .85 preserves v0.7.226 baseline. */
+#bgLayer > video, #bgLayer > img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:var(--bg-opacity,.85);display:block;transform:translateZ(0);will-change:transform,opacity;backface-visibility:hidden}
 #output{position:relative;z-index:1}
 .slide-content{position:relative;z-index:1;text-align:center;width:90%;max-width:90vw;height:100%;max-height:100%;min-height:0;box-sizing:border-box;overflow:hidden;padding:4vh 3vw;display:flex;flex-direction:column;align-items:center;justify-content:center}
 /* v0.6.3 — Bible reference text: BOLD by default + full opacity. The
@@ -219,8 +228,10 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    of CSS): opacity .4 → .6, scrim alpha .3 → .2. Lower-third bg
    stack mirrors the full-screen bg stack so chyron and full
    surfaces stay visually consistent. */
-.lt-box .lt-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.85;border-radius:inherit;pointer-events:none}
-.lt-box .lt-bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.05);border-radius:inherit;pointer-events:none}
+/* v0.7.227 — Lower-third bg pair also driven by --bg-opacity /
+   --bg-scrim. 3-surface lockstep invariant preserved (v0.7.226). */
+.lt-box .lt-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:var(--bg-opacity,.85);border-radius:inherit;pointer-events:none}
+.lt-box .lt-bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,var(--bg-scrim,.05));border-radius:inherit;pointer-events:none}
 .lt-box .lt-content{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;width:100%;height:100%;overflow:hidden;min-height:0}
 /* v0.7.5 — Hard clamp the verse text to N lines inside the FIXED
    lower-third frame (T503). Combined with the auto-fit ltFs clamp
@@ -996,6 +1007,21 @@ function applyRender(s){
   if(dur<0)dur=0;if(dur>1000)dur=1000; // cap at 1 s — anything longer felt sluggish to operators
   var el=$('output');
   if(el)el.style.setProperty('--slide-fade-ms',dur+'ms');
+  // v0.7.227 — Apply operator brightness slider. Both members of the
+  // v0.7.226 pair-invariant (bg opacity + dark scrim alpha) move in
+  // lockstep across all three surfaces (.bg-image / #bgLayer / .lt-bg)
+  // because they read the same two CSS variables from :root. Mapping
+  // chosen so brightness=85 reproduces the v0.7.226 operator pick
+  // exactly (op=.85, scrim=.05): scrim = (1 - op) * 0.333.
+  try{
+    var bb=(s&&s.settings&&typeof s.settings.bgBrightness==='number')?s.settings.bgBrightness:85;
+    if(bb<0)bb=0;if(bb>100)bb=100;
+    var bbOp=bb/100;
+    var bbSc=Math.max(0,(1-bbOp)*0.333);
+    var root=document.documentElement;
+    root.style.setProperty('--bg-opacity',bbOp.toFixed(3));
+    root.style.setProperty('--bg-scrim',bbSc.toFixed(3));
+  }catch(e){}
   // Decide whether this update is a true SLIDE change (worth animating)
   // or a settings-only adjustment (must NOT animate). The fingerprint
   // intentionally excludes settings, audio, and transport flags.
