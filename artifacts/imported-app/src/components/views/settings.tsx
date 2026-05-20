@@ -1478,12 +1478,32 @@ export function SettingsView() {
                   it behaves like a confirmation chip rather than a banner. */}
               <div className="relative rounded-lg overflow-hidden border border-border aspect-video bg-muted max-w-[240px]">
                 {isVideoBackground(settings.customBackground) ? (
+                  // v0.7.221 — Operator $1600 escalation: bg video was
+                  // animating in this Custom Background thumbnail
+                  // alongside 4 other previews on the same screen,
+                  // distracting from the LIVE pane. Freeze on first
+                  // frame: no autoPlay/loop, preload only metadata,
+                  // and append `#t=0.1` to the src so the browser
+                  // paints the frame at 0.1s as a static poster
+                  // instead of the codec's all-black first frame.
+                  // ref-based pause guards against the rare browser
+                  // that ignores autoPlay=false after a previous
+                  // session left the element in a playing state.
                   <video
-                    src={settings.customBackground}
-                    autoPlay
-                    loop
+                    src={`${settings.customBackground}#t=0.1`}
                     muted
                     playsInline
+                    preload="metadata"
+                    ref={(el) => {
+                      if (!el) return
+                      try { el.pause() } catch { /* ignore */ }
+                    }}
+                    onLoadedData={(e) => {
+                      try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
+                    }}
+                    onPlay={(e) => {
+                      try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
+                    }}
                     className="w-full h-full object-cover"
                   />
                 ) : (

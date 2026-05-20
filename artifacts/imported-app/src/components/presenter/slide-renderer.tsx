@@ -496,12 +496,33 @@ export function SlideThumb({
         {settings.customBackground && (
           <>
             {isVideoBackground(settings.customBackground) ? (
+              // v0.7.221 — Operator $1600 escalation: "the background
+              // video keeps playing anywhere". SlideThumb is rendered
+              // in the schedule strip, the chapter navigator, and
+              // every other in-app thumbnail — none of which are real
+              // broadcast surfaces. Freeze on first frame so the
+              // operator sees a static poster everywhere except the
+              // three real broadcast targets (Main Console LIVE
+              // DISPLAY, Secondary Screen popup, NDI offscreen
+              // FrameCapture). Same freeze pattern as the Custom
+              // Background thumbnail in settings.tsx and the
+              // IS_FROZEN_BG branch in /api/output/congregation
+              // route.ts. The opacity:0.4 visual style is preserved.
               <video
-                src={settings.customBackground}
-                autoPlay
-                loop
+                src={`${settings.customBackground}#t=0.1`}
                 muted
                 playsInline
+                preload="metadata"
+                ref={(el) => {
+                  if (!el) return
+                  try { el.pause() } catch { /* ignore */ }
+                }}
+                onLoadedData={(e) => {
+                  try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
+                }}
+                onPlay={(e) => {
+                  try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
+                }}
                 className="absolute inset-0 w-full h-full object-cover opacity-40"
               />
             ) : (

@@ -282,6 +282,8 @@ var FORCE_POS=null;
 var IS_PREVIEW=false;
 var FORCE_FULL=false;
 var IS_NO_MEDIA=false;
+// v0.7.221 — see freezeBg parser block below.
+var IS_FROZEN_BG=false;
 // v0.7.5.1 — FORCE_LH / FORCE_SC let the Electron NDI capture pin the
 // operator's lower-third HEIGHT bucket and SCALE multiplier into the
 // URL itself, so the captured BrowserWindow renders the right box
@@ -326,6 +328,24 @@ try{
   // NDI FrameCapture, Browser Source) do NOT pass this flag, so
   // operator + congregation + OBS still see video.
   IS_NO_MEDIA=(__qp.get('noMedia')==='1');
+  // v0.7.221 — When ?freezeBg=1 is set, the custom-background <video>
+  // in #bgLayer mounts WITHOUT autoplay/loop and is paused on the
+  // first frame so the surface shows a still poster instead of a
+  // playing clip. Used by every operator-facing PREVIEW surface that
+  // is NOT the real broadcast target: Settings PREVIEW (TYPOGRAPHY),
+  // Settings Custom Background thumbnail, Settings NDI LIVE PREVIEW,
+  // Settings Display & Output LIVE PREVIEW, and the Main Console
+  // PREVIEW pane (the middle column in the operator view). Operator
+  // escalation: a background video was animating in 5+ places on a
+  // single screen, distracting the operator from the actual live
+  // pane and chewing decoder slots/CPU. Real broadcast targets do
+  // NOT pass this flag and keep playing: Main Console LIVE DISPLAY
+  // pane (OutputPreview mirrorLive=true), Secondary Screen popup
+  // window (opened with no query params), Offscreen NDI FrameCapture
+  // (its own URL builder in electron/, no freezeBg). This is a
+  // separate axis from noMedia: noMedia hides media-video SLIDES
+  // (foreground content); freezeBg pauses the BACKGROUND layer.
+  IS_FROZEN_BG=(__qp.get('freezeBg')==='1');
 }catch(e){}
 // v0.7.209 — Force the operator-chosen background with !important
 // inline so it beats OBS Browser Source default Custom CSS
@@ -745,13 +765,37 @@ function setBgVid(url){
   if(!u) return;
   if(isVideoBg(u)){
     var v=document.createElement('video');
-    v.src=__scrMedia(u);
-    v.autoplay=true;v.loop=true;v.muted=true;v.playsInline=true;
-    v.preload='auto';
-    try{v.setAttribute('crossorigin','anonymous');}catch(e){}
-    v.onerror=function(){try{v.style.display='none';}catch(_e){}};
-    layer.appendChild(v);
-    var pp=v.play();if(pp&&pp.catch)pp.catch(function(){});
+    // v0.7.221 — IS_FROZEN_BG path: settings/preview surfaces mount the
+    // bg <video> as a still poster, not a playing clip. We append
+    // `#t=0.1` so the browser fetches & paints the frame at 0.1s and
+    // sits there (avoids the all-black first-frame poster many
+    // codecs ship with). preload='metadata' is the cheapest mode
+    // that still produces a visible frame — no decoder slot is held
+    // for ongoing playback. Real broadcast surfaces fall through to
+    // the historical autoplay/loop path.
+    if(IS_FROZEN_BG){
+      v.src=__scrMedia(u)+'#t=0.1';
+      v.autoplay=false;v.loop=false;v.muted=true;v.playsInline=true;
+      v.preload='metadata';
+      try{v.setAttribute('crossorigin','anonymous');}catch(e){}
+      v.onerror=function(){try{v.style.display='none';}catch(_e){}};
+      // Defensive: some Electron/Chromium versions still start playing
+      // when autoplay=false but the element has been added to the DOM
+      // and previously played. Pause on every loadeddata + once
+      // immediately so we never animate.
+      v.addEventListener('loadeddata',function(){try{v.pause();}catch(_e){}});
+      v.addEventListener('play',function(){try{v.pause();}catch(_e){}});
+      layer.appendChild(v);
+      try{v.pause();}catch(_e){}
+    } else {
+      v.src=__scrMedia(u);
+      v.autoplay=true;v.loop=true;v.muted=true;v.playsInline=true;
+      v.preload='auto';
+      try{v.setAttribute('crossorigin','anonymous');}catch(e){}
+      v.onerror=function(){try{v.style.display='none';}catch(_e){}};
+      layer.appendChild(v);
+      var pp=v.play();if(pp&&pp.catch)pp.catch(function(){});
+    }
   } else {
     var img=document.createElement('img');
     img.src=__scrMedia(u);img.alt='';

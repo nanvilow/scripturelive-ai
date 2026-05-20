@@ -1446,6 +1446,16 @@ function NdiPreviewSurface(props: NdiPreviewSurfaceProps): React.JSX.Element {
     // OBS via NDI, OBS via Browser Source) keep playing video — they
     // do NOT pass noMedia=1.
     p.set('noMedia', '1')
+    // v0.7.221 — Freeze the custom-background <video> on its first
+    // frame. This iframe is the operator-facing Settings NDI Live
+    // Preview, NOT the offscreen FrameCapture surface that feeds
+    // OBS/vMix/Wirecast. Operator escalation: bg video was animating
+    // here alongside 3 other settings previews and the main console,
+    // distracting from the actual live pane. The real NDI output (a
+    // separate Electron offscreen window in electron/frame-capture.ts
+    // + frame-capture/ndi-service.ts) does NOT load this URL and is
+    // unaffected — vMix / OBS / Wirecast still see the animated bg.
+    p.set('freezeBg', '1')
     // v0.7.159 — DO NOT pass `transparent=1` here. The actual NDI capture
     // (a hidden FrameCapture BrowserWindow elsewhere in the Electron main
     // process) keeps `transparent=1` so OBS / vMix get a clean alpha
