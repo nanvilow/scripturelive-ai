@@ -1,5 +1,8 @@
 {pkgs}: {
   deps = [
+    pkgs.udev
+    pkgs.libgbm
+    pkgs.systemdLibs
     pkgs.wineWowPackages.stable
     pkgs.xvfb-run
     pkgs.xorg.xorgserver
