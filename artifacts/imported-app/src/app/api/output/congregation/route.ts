@@ -55,8 +55,8 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    / .lt-bg-overlay (lower-third surface) so chyron and full-screen
    modes match. The legacy .bg-image class shares the .bg-overlay
    stack so it follows the same axis. */
-.bg-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.6;pointer-events:none}
-.bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.2);pointer-events:none;z-index:1}
+.bg-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.85;pointer-events:none}
+.bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.05);pointer-events:none;z-index:1}
 /* v0.7.187 — Persistent BG VIDEO layer (PERFORMANCE FIX). Pre-fix, the
    verse-background <video> was inlined into #output's innerHTML on every
    render. Because the renderer reassigns $('output').innerHTML on every
@@ -93,7 +93,7 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    video layers. Cheap (1 extra compositor layer) and broadcast-safe. */
 /* v0.7.221 — opacity:.4 → .6 (brightness fix, see .bg-image comment
    above). GPU compositing hints unchanged (also v0.7.221). */
-#bgLayer > video, #bgLayer > img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.6;display:block;transform:translateZ(0);will-change:transform,opacity;backface-visibility:hidden}
+#bgLayer > video, #bgLayer > img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.85;display:block;transform:translateZ(0);will-change:transform,opacity;backface-visibility:hidden}
 #output{position:relative;z-index:1}
 .slide-content{position:relative;z-index:1;text-align:center;width:90%;max-width:90vw;height:100%;max-height:100%;min-height:0;box-sizing:border-box;overflow:hidden;padding:4vh 3vw;display:flex;flex-direction:column;align-items:center;justify-content:center}
 /* v0.6.3 — Bible reference text: BOLD by default + full opacity. The
@@ -219,8 +219,8 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
    of CSS): opacity .4 → .6, scrim alpha .3 → .2. Lower-third bg
    stack mirrors the full-screen bg stack so chyron and full
    surfaces stay visually consistent. */
-.lt-box .lt-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.6;border-radius:inherit;pointer-events:none}
-.lt-box .lt-bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.2);border-radius:inherit;pointer-events:none}
+.lt-box .lt-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.85;border-radius:inherit;pointer-events:none}
+.lt-box .lt-bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.05);border-radius:inherit;pointer-events:none}
 .lt-box .lt-content{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;width:100%;height:100%;overflow:hidden;min-height:0}
 /* v0.7.5 — Hard clamp the verse text to N lines inside the FIXED
    lower-third frame (T503). Combined with the auto-fit ltFs clamp

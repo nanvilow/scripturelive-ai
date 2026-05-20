@@ -1,3 +1,32 @@
+## v0.7.226 — Operator brightness pick: image / video / lower-third backgrounds opacity .60 → .85, scrim .20 → .05 (BRIGHTEST variant selected from canvas A/B/C)
+
+**Operator workflow**: v0.7.221 introduced a `.bg-image` / `.bg-overlay` brightness pair of `opacity:.6` + scrim `rgba(0,0,0,.2)` (effective brightness ~0.48). Operator still found backgrounds too dim relative to EasyWorship / ProPresenter (which sit near full-photo with minimal scrim). To avoid blind-shipping a guess, three side-by-side mockups were rendered on the canvas (mockup-sandbox `brightness/{Current,Mid,Max}`) covering CURRENT (.60/.20), BRIGHTER (.72/.12), and BRIGHTEST (.85/.05). Operator picked BRIGHTEST.
+
+**Fix** (`route.ts` 3 surfaces, 5 literal swaps, all in one pair so chyron + full-screen + image-bg stay visually consistent):
+- L61 `.bg-image` `opacity:.6` → `opacity:.85` (legacy image-bg surface)
+- L62 `.bg-overlay` `rgba(0,0,0,.2)` → `rgba(0,0,0,.05)` (matching scrim)
+- L99 `#bgLayer > video, #bgLayer > img` `opacity:.6` → `opacity:.85` (v0.7.187 persistent bg layer — both video and image siblings)
+- L225 `.lt-box .lt-bg` `opacity:.6` → `opacity:.85` (lower-third / chyron bg)
+- L226 `.lt-box .lt-bg-overlay` `rgba(0,0,0,.2)` → `rgba(0,0,0,.05)` (matching lower-third scrim)
+
+Effective brightness on photographic backgrounds rises from ~0.48 to ~0.81 (≈70% brighter), matching the EasyWorship / ProPresenter look operator referenced.
+
+**GUARD-RAIL (pair invariant)**: opacity and scrim alpha MUST move as a pair on the SAME surface. Pre-v0.7.221 the values drifted out of pair (opacity bumped without lowering scrim) producing washed-out-but-still-dim renders. The bg-image/bg-overlay, #bgLayer/its sibling scrim, and lt-bg/lt-bg-overlay are three independent pairs — any future brightness change MUST update both members of each pair OR explicitly document why the pair is being broken.
+
+**GUARD-RAIL (3-surface lockstep)**: `.bg-image`, `#bgLayer > video, #bgLayer > img`, and `.lt-box .lt-bg` MUST share the same numeric values. Operator-visible inconsistency between full-screen verse bg (driven by `#bgLayer`) and chyron bg (driven by `.lt-box .lt-bg`) is a UX regression class (operator escalation history: v0.6.x had this drift and it took 3 releases to converge). Test guard would be a regex over route.ts inline CSS — not added in v0.7.226 to keep the release minimal, but flagged for next housekeeping pass.
+
+**GUARD-RAIL (WCAG contrast)**: at opacity .85 + scrim .05, body verse text MUST keep its `text-shadow` stack (`2px 2px 4px rgba(0,0,0,.8), 0 0 8px rgba(0,0,0,.6)` — see `.slide-text` declaration). Removing the text-shadow at this brightness level drops verse legibility below WCAG-AA on bright photographic backgrounds. The shadow is the WCAG fallback that allowed us to reduce the scrim this aggressively.
+
+**PROCESS GR — when an operator gives a subjective "too dim / too bright" complaint, MOCK UP THE OPTIONS ON CANVAS FIRST, do not blind-ship a guess**: v0.7.221 was a single-value bump (.4 → .6) that landed half-way to operator-acceptable and re-opened the same escalation 5 releases later. v0.7.226 used the mockup-sandbox canvas to render 3 variants with operator-selectable preview, captured a real pick, then shipped. Total cost: ~3 mockup files (~80 lines) + 5 literal swaps. Saves a v0.7.227 re-escalation cycle. Pattern applies to any "brightness / saturation / contrast / font-weight / spacing" complaint where the operator can't pre-articulate the exact value but knows it when they see it.
+
+**PROCESS GR — pair / lockstep invariants MUST be inline-commented at the CSS site, not just in the changelog**: the v0.7.221 comments at L97-98 and L221-224 already reference the pair contract; v0.7.226 deliberately leaves them in place (still accurate — only the numeric values changed). When a future agent edits any one of these 5 lines, the inline `/* v0.7.221 — opacity:.4 → .6 ... */` comment is the first thing they see; the v0.7.226 update to .85/.05 is documented by changelog + git blame, NOT by re-writing the comment (rewriting would lose v0.7.221's pair-invariant rationale).
+
+Tests: 670/670 PASS (no new test — pure literal CSS value swap inside an inline-string route handler; the v0.7.221 surrounding structure is unchanged). `tsc --noEmit` clean. NDI runtime + actual photographic backgrounds untestable in Replit — operator field validation closes the loop (open Settings → Display & Output, send a photo or video as background, verse text should be clearly readable AND the photo should be ~70% brighter than v0.7.225).
+
+**Untouched**: all v0.7.225 freezeBg first-frame paint fixes (preload='auto' + play().then(pause) kick + setTimeout pause + no synchronous pause-on-append); v0.7.224 goLive pinned-path ordering + canplay seek; v0.7.223 NDI BGRX FourCC + transparent default; v0.7.222 STANDBY placard + preload='none'; v0.7.220 NDI async send + buffer pool; all v0.7.221 GPU compositing hints (`transform:translateZ(0); will-change:transform,opacity; backface-visibility:hidden`); freezeBg / mirrorLive / SSE writeback semantics.
+
+---
+
 ## v0.7.225 — Settings preview boxes: first frame of bg video must paint instantly, not 1-3s after mount
 
 **Operator on v0.7.224**: "Video background delays to appear on all preview columns it should be fast as users upload it." Clarified: the slow surface is the SETTINGS preview boxes (Display & Output Live Preview, Typography preview, NDI Live Preview, Custom Background thumbnail) — after picking a video tile, the box stayed black-with-text for 1-3 seconds before the first frame painted, then sat there frozen as designed.
