@@ -111,6 +111,30 @@ export function buildOutputPayload(s: StoreState) {
     volume: typeof s.globalVolume === 'number' ? s.globalVolume : 1,
     muted: !!s.globalMuted,
   }
+  // v0.7.228 — Output / NDI startup-delay fix (the deferred half of the
+  // v0.7.227 operator escalation). Surface the pinned-preview video URL
+  // to the output renderer (congregation/route.ts) so it can mount a
+  // hidden <video preload="auto"> using the v0.7.225 freezeBg pattern
+  // and have HTTP bytes + container demux + first-frame decode all done
+  // BEFORE the operator clicks Go Live. Without this the secondary
+  // screen + NDI offscreen capture each take 1-3s to paint the first
+  // frame because the <video> mount on the live URL change does cold
+  // network fetch + decoder allocation AFTER the click. We only emit
+  // it when the pinned preview is (a) a media-video, (b) different
+  // from whatever's already live (no point preheating the live URL —
+  // it's already decoded), and (c) not equal to whatever was preheated
+  // last tick (renderer dedups by URL too, but cheaper to filter here).
+  // Bandwidth cost: ~1 MOOV-atom + ~1 GOP per preview pin, not per
+  // single-click — capped at one preheat in flight at a time.
+  const pinned = s.pinnedPreviewSlide
+  const preheatMediaUrl =
+    pinned &&
+    pinned.type === 'media' &&
+    pinned.mediaKind === 'video' &&
+    !!pinned.mediaUrl &&
+    pinned.mediaUrl !== (cur && cur.type === 'media' ? cur.mediaUrl : null)
+      ? pinned.mediaUrl
+      : null
   const showStartupLogo = !s.hasShownContent
   return s.outputEnabled
     ? {
@@ -127,6 +151,7 @@ export function buildOutputPayload(s: StoreState) {
         settings: settingsBlock,
         blanked,
         audio,
+        preheatMediaUrl,
       }
     : {
         type: 'clear' as const,
@@ -140,6 +165,7 @@ export function buildOutputPayload(s: StoreState) {
         settings: settingsBlock,
         blanked,
         audio,
+        preheatMediaUrl,
       }
 }
 

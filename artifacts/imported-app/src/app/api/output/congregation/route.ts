@@ -278,7 +278,7 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 <!-- v0.5.33 — bake the splash watermark into the initial body so the
      surface is NEVER visually blank, even before SSE connects or the
      first poll lands. The renderer replaces this on first state. -->
-<div id="stage"><div id="bgLayer"></div><div id="output"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;color:#fff;text-align:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif"><div style="font-size:clamp(2rem,7vmin,7rem);font-weight:600;letter-spacing:-.01em;line-height:1.05;opacity:.4">Scripture AI</div><div style="margin-top:1.4vmin;font-size:clamp(.85rem,1.8vmin,1.6rem);opacity:.3;font-weight:500">Powered By WassMedia (+233246798526)</div></div></div></div>
+<div id="stage"><div id="bgLayer"></div><div id="preheatLayer" style="position:absolute;left:-99999px;top:-99999px;width:1px;height:1px;overflow:hidden;pointer-events:none;opacity:0"></div><div id="output"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;color:#fff;text-align:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif"><div style="font-size:clamp(2rem,7vmin,7rem);font-weight:600;letter-spacing:-.01em;line-height:1.05;opacity:.4">Scripture AI</div><div style="margin-top:1.4vmin;font-size:clamp(.85rem,1.8vmin,1.6rem);opacity:.3;font-weight:500">Powered By WassMedia (+233246798526)</div></div></div></div>
 <script>
 // Surface any uncaught script error as a visible red banner instead of
 // silently leaving the splash up forever (which is exactly how the
@@ -946,6 +946,60 @@ function setBgVid(url){
   }
 }
 
+// v0.7.228 — Output / NDI startup-delay fix. Mounts a hidden <video> in
+// #preheatLayer for the pinned-preview video URL so HTTP bytes,
+// container demux, and first-frame decode all complete BEFORE the
+// operator clicks Go Live. When goLive promotes that URL into the
+// live slide, the foreground <video id="liveVideo"> mount at L1845
+// hits a warm HTTP cache + warm decoder and paints near-instantly on
+// the secondary screen AND the NDI offscreen capture (NDI captures
+// this same renderer, so any preheat benefit propagates automatically).
+//
+// Uses the v0.7.225 freezeBg pattern so the decoder slot is held only
+// briefly: preload="auto" + play().then(pause) on loadeddata to force
+// first-frame paint, then setTimeout(pause, 0) on the play listener
+// to release the decoder cleanly without AbortError spam. Steady-state
+// decoder cost is ZERO once the first frame is paged in — protects
+// the v0.7.222 finite-HW-decoder invariant.
+//
+// Dedup by URL: same URL = no-op. Empty/null URL = teardown.
+var __preheatUrl='';
+function setPreheatVid(url){
+  var layer=document.getElementById('preheatLayer');
+  if(!layer) return;
+  var u=url||'';
+  if(u===__preheatUrl) return;
+  __preheatUrl=u;
+  while(layer.firstChild){
+    var old=layer.firstChild;
+    if(old.tagName==='VIDEO'){try{old.pause();old.removeAttribute('src');old.load();}catch(e){}}
+    layer.removeChild(old);
+  }
+  if(!u) return;
+  if(!isVideoBg(u)) return; // images don't need decoder preheat; <link rel=preload> in operator console covers byte cache
+  var v=document.createElement('video');
+  v.src=__scrMedia(u);
+  v.autoplay=false;v.loop=false;v.muted=true;v.playsInline=true;
+  v.preload='auto';
+  try{v.disablePictureInPicture=true;}catch(_e){}
+  try{v.disableRemotePlayback=true;}catch(_e){}
+  try{v.setAttribute('crossorigin','anonymous');}catch(e){}
+  v.onerror=function(){try{v.style.display='none';}catch(_e){}};
+  // v0.7.225 freezeBg pattern: kick play().then(pause) on loadeddata to
+  // force the first decoded frame onto the GPU, then release decoder.
+  v.addEventListener('loadeddata',function(){
+    try{
+      var pp=v.play();
+      if(pp&&pp.then){pp.then(function(){try{v.pause();}catch(_e){}}).catch(function(){try{v.pause();}catch(_e){}});}
+      else {try{v.pause();}catch(_e){}}
+    }catch(_e){try{v.pause();}catch(__e){}}
+  });
+  v.addEventListener('play',function(){
+    setTimeout(function(){try{v.pause();}catch(_e){}},0);
+  });
+  layer.appendChild(v);
+}
+
 // applyAudio — pushes the operator's audio toggles down to the live
 // <video> element WITHOUT triggering a render rebuild. We deliberately
 // keep audio out of the render-key so the operator can drag the
@@ -1022,6 +1076,13 @@ function applyRender(s){
     root.style.setProperty('--bg-opacity',bbOp.toFixed(3));
     root.style.setProperty('--bg-scrim',bbSc.toFixed(3));
   }catch(e){}
+  // v0.7.228 — Honour preheat URL from the operator console's pinned
+  // preview. setPreheatVid is URL-dedup'd, so calling it on every
+  // applyRender is cheap (no churn when the value is unchanged). Null
+  // / undefined / same-as-live URL all tear the hidden element down
+  // and release its decoder slot — see output-payload.ts L132-140
+  // for the source-side gate.
+  try{ setPreheatVid(s && s.preheatMediaUrl ? String(s.preheatMediaUrl) : ''); }catch(e){}
   // Decide whether this update is a true SLIDE change (worth animating)
   // or a settings-only adjustment (must NOT animate). The fingerprint
   // intentionally excludes settings, audio, and transport flags.
