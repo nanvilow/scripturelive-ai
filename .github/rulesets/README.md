@@ -23,7 +23,12 @@ code-review the workflows that produce the checks.
   feature-branch commit that never got scanned, and the release pipeline
   would ship it anyway. Also blocks tag `deletion` and `update`
   (force-move) so a tag, once cut, cannot be silently re-pointed at a
-  different commit after the scans have run.
+  different commit after the scans have run. Also requires the tag
+  object itself to carry a valid GPG or SSH signature
+  (`required_signatures`) — closes the "stolen push token can still
+  ship a release under someone else's name" gap, since the attacker
+  would also need the maintainer's signing key to produce a tag
+  GitHub will accept.
 
 ## Required status checks
 
@@ -116,6 +121,70 @@ pipeline never even starts. Layer 2 fails fast inside the pipeline so
 even if Layer 1 is misconfigured, disabled, or a future GitHub API
 change moves the goalposts on what counts as a "matching" status check,
 no release is published from off-`main`. Defense in depth.
+
+## Signed tags — contributor setup
+
+`release-tag-protection.json` enforces `required_signatures`, so an
+unsigned `git tag v0.7.x && git push origin v0.7.x` is rejected at the
+git-server boundary with **"signature required"** before any pipeline
+runs. To be able to cut a release you need a signing key registered
+with GitHub and `git` configured to use it.
+
+### One-time GPG setup
+
+```bash
+# Generate a key (skip if you already have one)
+gpg --full-generate-key            # pick "RSA and RSA", 4096 bits
+
+# Find the key ID
+gpg --list-secret-keys --keyid-format=long
+# sec   rsa4096/ABCD1234EF567890 2026-05-20 [SC]
+
+# Export the public key and add it to GitHub
+gpg --armor --export ABCD1234EF567890
+# Paste into https://github.com/settings/keys → "New GPG key"
+
+# Tell git to sign with this key
+git config --global user.signingkey ABCD1234EF567890
+git config --global tag.gpgSign true        # auto-sign every tag
+git config --global commit.gpgSign true     # recommended, not required
+```
+
+### One-time SSH setup (alternative)
+
+GitHub also accepts SSH signatures, which lets you reuse your existing
+auth key:
+
+```bash
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/id_ed25519.pub
+git config --global tag.gpgSign true
+# Then add the SAME public key at
+# https://github.com/settings/keys → "New SSH key" → key type "Signing Key"
+```
+
+### Cutting a release
+
+With `tag.gpgSign=true` set, `git tag v0.7.x` is already signed. If you
+skipped that config, sign explicitly:
+
+```bash
+git tag -s v0.7.x -m "v0.7.x"
+git push origin v0.7.x
+```
+
+A missing or invalid signature surfaces as:
+
+```text
+remote: error: GH013: Repository rule violations found for refs/tags/v0.7.x.
+remote: - Tag must be signed.
+```
+
+If you see that, run `git tag -v v0.7.x` locally to confirm the
+signature state, then re-tag (delete the local tag, re-create with
+`-s`, push) — note that the `update` rule means you cannot overwrite
+a tag that already made it to the remote, so this only works if the
+push was rejected and the bad tag never landed.
 
 ## Why a ruleset and not classic branch protection
 
