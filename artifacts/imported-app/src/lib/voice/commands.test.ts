@@ -194,6 +194,22 @@ describe('detectCommand — show_verse_n', () => {
     ['Display verse 23', 23],
     ['Jump to verse 16', 16],
     ['Read verse 3', 3],
+    // v0.7.116 — Massively expanded triggers per operator request:
+    // "Add 'let go to verse...', 'take me to verse...', 'scroll down
+    // to verse...' etc."
+    ["Let's go to verse 5", 5],
+    ['Lets go to verse 5', 5],
+    ['Let go to verse 5', 5],
+    ['Take me to verse 12', 12],
+    ['Scroll down to verse 4', 4],
+    ['Scroll up to verse 8', 8],
+    ['Go down to verse 9', 9],
+    ['Go up to verse 2', 2],
+    ['Move to verse 6', 6],
+    ['Move down to verse 11', 11],
+    ['Skip to verse 14', 14],
+    ['Skip down to verse 17', 17],
+    ['Turn to verse 21', 21],
   ])('"%s" → verseNumber %d', (utterance, n) => {
     const cmd = detectCommand(utterance)
     expect(cmd?.kind).toBe('show_verse_n')
@@ -267,6 +283,37 @@ describe('detectCommandChain — multi-command chaining', () => {
 })
 
 // ── v0.7.23 — AI Verse Search detector ────────────────────────────────
+// v0.7.110 — chapter navigation. v0.7.78 had hijacked "next chapter"
+// → next_verse (one-verse step). The current operator wants real
+// chapter jumps; the dispatcher case has always existed.
+describe('detectCommand — chapter navigation (v0.7.110)', () => {
+  it('"next chapter" → next_chapter (NOT next_verse)', () => {
+    const c = detectCommand('next chapter')
+    expect(c?.kind).toBe('next_chapter')
+  })
+
+  it('"previous chapter" → previous_chapter', () => {
+    const c = detectCommand('previous chapter')
+    expect(c?.kind).toBe('previous_chapter')
+  })
+
+  it('"prev chapter" → previous_chapter', () => {
+    const c = detectCommand('prev chapter')
+    expect(c?.kind).toBe('previous_chapter')
+  })
+
+  it('"Media, next chapter" → next_chapter with wake word', () => {
+    const c = detectCommand('Media, next chapter')
+    expect(c?.kind).toBe('next_chapter')
+    expect(c?.wakeWord).toBe(true)
+  })
+
+  it('"next verse" still routes to next_verse (one-verse step preserved)', () => {
+    const c = detectCommand('next verse')
+    expect(c?.kind).toBe('next_verse')
+  })
+})
+
 describe('detectCommand — find_by_quote (AI Verse Search)', () => {
   it('"find the verse about loving your enemies" → find_by_quote', () => {
     const c = detectCommand('find the verse about loving your enemies')
@@ -323,6 +370,46 @@ describe('detectCommand — find_by_quote (AI Verse Search)', () => {
     expect(c?.quoteText).toBe('prayer')
   })
 
+  // v0.7.110 — Natural Bible-question patterns. Pre-110 these all
+  // returned null because the regex required the literal word
+  // "verse" / "scripture" / "passage" — production complaint:
+  // "doesn't answer Bible questions".
+  it('"show me where Jesus wept" → find_by_quote (natural question)', () => {
+    const c = detectCommand('show me where Jesus wept')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('Jesus wept')
+  })
+
+  it('"where did they say silver and gold have I none" → find_by_quote', () => {
+    const c = detectCommand('where did they say silver and gold have I none')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('they say silver and gold have I none')
+  })
+
+  it('"where was Stephen stoned to death" → find_by_quote', () => {
+    const c = detectCommand('where was Stephen stoned to death')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('Stephen stoned to death')
+  })
+
+  it('"where did Jesus weep" → find_by_quote', () => {
+    const c = detectCommand('where did Jesus weep')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('Jesus weep')
+  })
+
+  it('"who said love your enemies" → find_by_quote', () => {
+    const c = detectCommand('who said love your enemies')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('love your enemies')
+  })
+
+  it('"what did Jesus say about prayer" → find_by_quote (group 2 capture)', () => {
+    const c = detectCommand('what did Jesus say about prayer')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('prayer')
+  })
+
   it('with wake word "Media, the verse about grace" works', () => {
     const c = detectCommand('Media, the verse about grace')
     expect(c?.kind).toBe('find_by_quote')
@@ -371,6 +458,36 @@ describe('detectCommand — find_by_quote (AI Verse Search)', () => {
     expect(c?.kind).toBe('next_verse')
   })
 
+  // v0.7.113 — Trailing-punctuation regression. Pre-113 the strict
+  // trigger comparison failed when ASR appended a period/comma to the
+  // final chunk, so "next chapter." silently routed through the
+  // next_verse pattern (bare "next" + tail "chapter."). These tests
+  // pin the trailing-punct strip behaviour so the regression can't
+  // come back.
+  it('next chapter with trailing period fires next_chapter', () => {
+    expect(detectCommand('next chapter.')?.kind).toBe('next_chapter')
+    expect(detectCommand('Next chapter.')?.kind).toBe('next_chapter')
+    expect(detectCommand('next chapter,')?.kind).toBe('next_chapter')
+    expect(detectCommand('next chapter?')?.kind).toBe('next_chapter')
+  })
+  it('previous chapter with trailing period fires previous_chapter', () => {
+    expect(detectCommand('previous chapter.')?.kind).toBe('previous_chapter')
+    expect(detectCommand('previous chapter,')?.kind).toBe('previous_chapter')
+  })
+  it('verse N with trailing period fires show_verse_n', () => {
+    const c = detectCommand('verse 10.')
+    expect(c?.kind).toBe('show_verse_n')
+    expect(c?.verseNumber).toBe(10)
+  })
+  it('show verse N with trailing period fires show_verse_n', () => {
+    const c = detectCommand('show verse 5.')
+    expect(c?.kind).toBe('show_verse_n')
+    expect(c?.verseNumber).toBe(5)
+  })
+  it('next verse with trailing period still fires next_verse (not regressed)', () => {
+    expect(detectCommand('next verse.')?.kind).toBe('next_verse')
+  })
+
   it('does NOT misfire on "show verse 16"', () => {
     // Existing show_verse_n behaviour must still win.
     const c = detectCommand('show verse 16')
@@ -388,5 +505,60 @@ describe('detectCommand — find_by_quote (AI Verse Search)', () => {
   it('label preview is reasonable', () => {
     const c = detectCommand('find the verse about loving your enemies')
     expect(c?.label).toMatch(/^Find: /)
+  })
+})
+
+// ── v0.7.111 — "in the bible" prefix strip ───────────────────────
+//
+// Operator complaint after v0.7.110: "Show me where in the bible
+// Jesus was crucified" matched the new natural-question pattern but
+// captured "in the bible Jesus was crucified" as the quote, which
+// the semantic matcher couldn't resolve. Now the leading "in (the)
+// bible / scripture / scriptures / word (of god)" is stripped so the
+// search runs against the actual subject.
+describe('detectCommand — find_by_quote v0.7.111 prefix strip', () => {
+  it('"show me where in the bible Jesus was crucified" → quote = "Jesus was crucified"', () => {
+    const c = detectCommand('show me where in the bible Jesus was crucified')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('Jesus was crucified')
+  })
+
+  it('"where did in the bible David fight Goliath" strips "in the bible"', () => {
+    const c = detectCommand('where did in the bible David fight Goliath')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('David fight Goliath')
+  })
+
+  it('"show me where in scripture Stephen was stoned" strips "in scripture"', () => {
+    const c = detectCommand('show me where in scripture Stephen was stoned')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('Stephen was stoned')
+  })
+
+  it('"show me where in the scriptures Moses parted the sea" strips "in the scriptures"', () => {
+    const c = detectCommand('show me where in the scriptures Moses parted the sea')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('Moses parted the sea')
+  })
+
+  it('"show me where in the word of god love is patient" strips "in the word of god"', () => {
+    const c = detectCommand('show me where in the word of god love is patient')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toBe('love is patient')
+  })
+
+  it('label no longer leaks the "in the bible" prefix', () => {
+    const c = detectCommand('show me where in the bible Jesus wept')
+    expect(c?.label).not.toMatch(/in the bible/i)
+    expect(c?.label).toMatch(/Jesus wept/i)
+  })
+
+  it('strip is anchored to the START — internal "in the bible" survives', () => {
+    // We only strip a leading prefix; an internal "the bible" must
+    // be preserved so questions like "what does the bible mean by
+    // grace" are not silently mangled if they reach this matcher.
+    const c = detectCommand('show me where the bible mentions grace')
+    expect(c?.kind).toBe('find_by_quote')
+    expect(c?.quoteText).toContain('bible')
   })
 })

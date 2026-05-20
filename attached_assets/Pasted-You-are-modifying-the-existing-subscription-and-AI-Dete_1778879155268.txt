@@ -1,0 +1,173 @@
+You are modifying the existing subscription and AI Detection trial system.
+
+Implement the following changes to the FREE TRIAL system carefully without breaking existing subscription, authentication, AI Detection, or billing logic.
+
+---
+
+1. FREE TRIAL EXPIRATION CHANGE
+
+Change the current free trial system to:
+
+→ 3 DAYS ONLY
+
+The free trial must expire exactly 3 days after activation.
+
+---
+
+2. IMPORTANT TIMER BEHAVIOR (VERY IMPORTANT)
+
+Currently, the free trial timer pauses whenever the user is not actively using the AI Detection feature.
+
+This behavior must be removed completely.
+
+The timer must now run continuously in real-world time.
+
+Example:
+
+* If a user activates the free trial today at 10:00 AM
+* The trial must expire exactly 72 hours later
+* Even if the user closes the app
+* Even if the user never opens the AI Detection page
+* Even if the PC is restarted
+
+The countdown must NEVER pause.
+
+---
+
+3. REAL-TIME EXPIRATION SYSTEM
+
+Implement a true expiration timestamp system.
+
+Instead of:
+
+* Tracking only active usage time
+
+Use:
+
+* activation_timestamp
+* expiration_timestamp
+
+Example:
+
+* activation_timestamp = 2026-05-15 10:00 AM
+* expiration_timestamp = 2026-05-18 10:00 AM
+
+The system should always compare:
+Current server time vs expiration time.
+
+---
+
+4. SERVER-SIDE VALIDATION (IMPORTANT)
+
+Do NOT rely only on frontend timers.
+
+The backend/server must validate:
+
+* Whether the free trial is still active
+* Whether the expiration time has passed
+
+This prevents:
+
+* Time manipulation
+* Refresh exploits
+* Closing/reopening app exploits
+* Device clock manipulation
+
+---
+
+5. AI DETECTION ACCESS CONTROL
+
+When the 3-day trial expires:
+
+Automatically:
+
+* Lock the AI Detection feature
+* Disable Live AI Detection access
+* Prevent transcription usage
+* Prevent AI Search access if linked to the trial
+
+Display message:
+
+“Your 3-day free trial has expired. Please activate a subscription to continue using AI Detection.”
+
+---
+
+6. USER INTERFACE REQUIREMENTS
+
+Display:
+
+* Remaining days
+* Remaining hours
+* Remaining minutes
+
+Update countdown in real time.
+
+Examples:
+
+* 2 days remaining
+* 15 hours remaining
+* Trial expires in 4 hours
+
+---
+
+7. BACKEND DATABASE CHANGES
+
+Ensure the database stores:
+
+* free_trial_active
+* trial_activation_time
+* trial_expiration_time
+* subscription_status
+
+The expiration time must persist even if:
+
+* User logs out
+* App closes
+* Internet disconnects
+* PC restarts
+
+---
+
+8. AUTO CHECK ON APP START
+
+Whenever the app opens:
+
+Immediately:
+
+* Validate trial status from backend
+* Check expiration timestamp
+* Lock features instantly if expired
+
+---
+
+9. TESTING REQUIREMENTS
+
+Test:
+
+* Trial activation
+* Closing/reopening app
+* PC restart
+* Internet reconnect
+* Expiration after exactly 72 hours
+* Locking AI Detection after expiration
+
+Ensure:
+
+* No timer pause exploits
+* No reset exploits
+* No duplicate free trials
+* No local clock manipulation exploits
+
+---
+
+10. FINAL REQUIREMENT
+
+The 3-day free trial must behave like a real SaaS subscription trial:
+
+* Continuous countdown
+* Real-world expiration
+* Server-validated
+* Impossible to pause
+* Impossible to extend by inactivity
+
+Make the system stable, secure, and production-ready globally.

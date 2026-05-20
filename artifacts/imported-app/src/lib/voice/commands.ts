@@ -94,31 +94,189 @@ interface Pattern {
 }
 
 const PATTERNS: Pattern[] = [
+  // v0.7.112 — Natural-phrase chapter navigation. Listed FIRST so
+  // longer multi-word triggers ("go to the next chapter") win before
+  // the simpler "go to" trigger of go_to_reference (which would try
+  // to parse "the next chapter" as a Bible reference and fail).
+  // v0.7.110 — Chapter navigation MUST be listed before next_verse /
+  // previous_verse because the next_verse pattern includes the bare
+  // 'next' trigger, which would greedily match "next chapter" via
+  // the `lower.startsWith(trig + ' ')` rule. Same for 'previous'.
   {
-    triggers: ['next verse', 'next slide', 'next', 'forward'],
-    kind: 'next_verse',
-    label: 'Next verse',
-  },
-  {
-    triggers: ['previous verse', 'prev verse', 'previous slide', 'back', 'go back', 'previous'],
-    kind: 'previous_verse',
-    label: 'Previous verse',
-  },
-  // v0.7.4 — Chapter navigation. Placed BEFORE the bare "next" /
-  // "previous" triggers above so the longer "next chapter" pattern
-  // wins the leading-position match. (PATTERNS is iterated in order.)
-  {
-    triggers: ['next chapter'],
+    triggers: [
+      'next chapter',
+      'the next chapter',
+      'go to next chapter',
+      'go to the next chapter',
+      "let's go to the next chapter",
+      'lets go to the next chapter',
+      'let us go to the next chapter',
+      'move to next chapter',
+      'move to the next chapter',
+      'take me to the next chapter',
+      'jump to next chapter',
+      'jump to the next chapter',
+      'turn to next chapter',
+      'turn to the next chapter',
+      'open next chapter',
+      'open the next chapter',
+      'read next chapter',
+      'read the next chapter',
+      'advance chapter',
+      'advance to next chapter',
+      'forward chapter',
+    ],
     kind: 'next_chapter',
     label: 'Next chapter',
   },
   {
-    triggers: ['previous chapter', 'prev chapter', 'last chapter'],
+    triggers: [
+      'previous chapter',
+      'prev chapter',
+      'last chapter',
+      'the previous chapter',
+      'the last chapter',
+      'go to previous chapter',
+      'go to the previous chapter',
+      "let's go to the previous chapter",
+      'lets go to the previous chapter',
+      'let us go to the previous chapter',
+      'go back a chapter',
+      'go back one chapter',
+      'back one chapter',
+      'back a chapter',
+      'previous chapter please',
+      'jump to previous chapter',
+      'jump to the previous chapter',
+      'turn to previous chapter',
+      'turn to the previous chapter',
+    ],
     kind: 'previous_chapter',
     label: 'Previous chapter',
   },
+  // v0.7.112 — Natural-phrase verse navigation. Multi-word forms
+  // BEFORE the bare "next" / "previous" triggers so they win the
+  // longest-match race.
   {
-    triggers: ['go to', 'goto', 'open', 'show', 'display', 'jump to', 'turn to'],
+    triggers: [
+      'next verse',
+      'the next verse',
+      'go to next verse',
+      'go to the next verse',
+      "let's go to the next verse",
+      'lets go to the next verse',
+      'move to next verse',
+      'move to the next verse',
+      'take me to the next verse',
+      'jump to next verse',
+      'jump to the next verse',
+      'next slide',
+      'next',
+      'forward',
+      'continue',
+      'go on',
+    ],
+    kind: 'next_verse',
+    label: 'Next verse',
+  },
+  {
+    triggers: [
+      'previous verse',
+      'prev verse',
+      'the previous verse',
+      'go to previous verse',
+      'go to the previous verse',
+      "let's go to the previous verse",
+      'lets go to the previous verse',
+      'move to previous verse',
+      'move to the previous verse',
+      'take me to the previous verse',
+      'jump to previous verse',
+      'previous slide',
+      'back',
+      'go back',
+      'previous',
+    ],
+    kind: 'previous_verse',
+    label: 'Previous verse',
+  },
+  // v0.7.112 — Massively expanded preacher vocabulary for go-to-
+  // reference. Every phrase below is followed by a Bible reference
+  // ("John 3:16", "Romans chapter 8 verse 1", "the book of John
+  // chapter 3"). Without these, natural commands like "take me to
+  // John 3:16" or "let's read Romans 8" silently no-op'd because the
+  // trigger list had only 7 phrases. Each trigger goes through
+  // `parseExplicitReference` on the tail, so non-reference tails
+  // (e.g. "take me to the kitchen") naturally return null without
+  // dispatch — no false positives.
+  {
+    triggers: [
+      'go to',
+      'goto',
+      'open',
+      'open to',
+      'show',
+      'show me',
+      'display',
+      'jump to',
+      'turn to',
+      'turn with me to',
+      'turn your bible to',
+      'turn your bibles to',
+      'open your bible to',
+      'open your bibles to',
+      'open up to',
+      'open up',
+      // Take / Bring
+      'take me to',
+      'take us to',
+      'bring up',
+      'bring me',
+      // Let's
+      "let's go to",
+      'lets go to',
+      'let us go to',
+      "let's turn to",
+      'lets turn to',
+      'let us turn to',
+      "let's read",
+      'lets read',
+      'let us read',
+      "let's open",
+      'lets open',
+      'let us open',
+      "let's look at",
+      'lets look at',
+      'let us look at',
+      'look at',
+      // Read variants
+      'read',
+      'read from',
+      'read with me',
+      'read with me from',
+      // We are / will read
+      'we are reading',
+      'we will read',
+      "we'll read",
+      'we shall read',
+      'we are in',
+      "we're in",
+      // Polite forms
+      'please go to',
+      'please open',
+      'please turn to',
+      'please read',
+      // Misc
+      'navigate to',
+      'load',
+      'pull up',
+      'come with me to',
+      'with me to',
+      // From / In the book of
+      'from the book of',
+      'in the book of',
+      'the book of',
+    ],
     kind: 'go_to_reference',
     label: 'Go to reference',
     takesReference: true,
@@ -274,6 +432,119 @@ const TRANSLATION_ALIASES: Record<string, string> = {
   'oeb': 'OEB',
   'open english': 'OEB',
   'open english bible': 'OEB',
+  // v0.7.77 — Twi (Akuapem) Bible. Operators in Ghana frequently
+  // switch a verse mid-sermon to "the Twi version" so the
+  // congregation hears it in their first language. The wake-word
+  // form ("Media, Twi version") and the lead-in form ("give me
+  // the Twi version") both route through the same change_translation
+  // intent that already swaps the live verse text in place via
+  // LiveTranslationSync. "Akan" is included as the language family
+  // alias preachers also use interchangeably; "Akuapem" is the
+  // specific dialect of the underlying tw-wakna dataset.
+  'twi': 'TWIASANTE',
+  'twi version': 'TWIASANTE',
+  'twi bible': 'TWIASANTE',
+  'twi translation': 'TWIASANTE',
+  'akuapem': 'TWIASANTE',
+  'akuapem twi': 'TWIASANTE',
+  'akan': 'TWIASANTE',
+  'akan bible': 'TWIASANTE',
+  // v0.7.91 — Common mishearings of "Twi" by English-trained ASR
+  // engines. Deepgram and Whisper trained primarily on American English
+  // consistently transcribe the Akan word "Twi" (/tɕᶣi/, roughly
+  // "chwee") as "tree", "tweet", "twee", "tweed", "qui", "key", or
+  // "she" depending on the speaker's accent and mic quality. Operators
+  // in Ghana hit this on every service — they say "give me the Twi
+  // version" and the engine hears "give me the tree version" so the
+  // intent never matched. Adding the phonetic neighbors with the
+  // "version/bible/translation" suffix means we only fire on the
+  // intent-loaded form (no false positives on a literal "tree").
+  'tree version': 'TWIASANTE',
+  'tree bible': 'TWIASANTE',
+  'tree translation': 'TWIASANTE',
+  'tweet version': 'TWIASANTE',
+  'tweet bible': 'TWIASANTE',
+  'twee version': 'TWIASANTE',
+  'twee bible': 'TWIASANTE',
+  'tweed version': 'TWIASANTE',
+  'tweed bible': 'TWIASANTE',
+  'chwee': 'TWIASANTE',
+  'chwee version': 'TWIASANTE',
+  'chwee bible': 'TWIASANTE',
+  'choi version': 'TWIASANTE',
+  'qui version': 'TWIASANTE',
+  'key version': 'TWIASANTE',
+  'she version': 'TWIASANTE',
+  // v0.7.186 — Operator-supplied homophones from real-world mishears.
+  // ASR routinely mangles "Twi Asante" into these phrases; alias-routing
+  // to TWIASANTE so a switch still fires. No LLM/classifier changes.
+  'p version': 'TWIASANTE',
+  'fee vision': 'TWIASANTE',
+  'tea vision': 'TWIASANTE',
+  'key vaccine': 'TWIASANTE',
+  'key vessel': 'TWIASANTE',
+  'account version': 'TWIASANTE',
+  'twi v': 'TWIASANTE',
+  'tw version': 'TWIASANTE',
+  'ghanaian version': 'TWIASANTE',
+  'ghana version': 'TWIASANTE',
+  'ghana bible': 'TWIASANTE',
+  'local version': 'TWIASANTE',
+  'local language': 'TWIASANTE',
+  'mother tongue': 'TWIASANTE',
+  'mother tongue version': 'TWIASANTE',
+  // v0.7.137 — Twerɛ Kronkron (Asante Twi via wldeh `tw-wasna`).
+  'twere kronkron': 'TWIASANTE',
+  'twere kronkron version': 'TWIASANTE',
+  'twere kronkron bible': 'TWIASANTE',
+  'twerɛ kronkron': 'TWIASANTE',
+  'twereɛ kronkron': 'TWIASANTE',
+  'kronkron': 'TWIASANTE',
+  'kronkron version': 'TWIASANTE',
+  'kronkron bible': 'TWIASANTE',
+  'asante': 'TWIASANTE',
+  'asante twi': 'TWIASANTE',
+  'asante version': 'TWIASANTE',
+  'asante bible': 'TWIASANTE',
+  'ashanti': 'TWIASANTE',
+  'ashanti twi': 'TWIASANTE',
+  'ashanti version': 'TWIASANTE',
+  'ashanti bible': 'TWIASANTE',
+  // v0.7.163 — Operator-requested literal trigger phrases. Ghana
+  // operators sometimes count Bibles by ordinal ("the 3rd version")
+  // and want the phrase "give me 3 version" / "give me three version"
+  // / "give me 3rd version" / "third version" to swap straight to
+  // Twi Asante (Twerɛ Kronkron). Listed under multiple spellings
+  // because Deepgram and Whisper transcribe ordinals inconsistently
+  // ("3 version", "third version", "three version", "3rd version"
+  // all surface in real captures depending on the speaker's accent).
+  // We deliberately keep the trigger to the "<digit-or-word> version"
+  // shape so a literal mention of the number 3 in casual speech
+  // ("three of them came forward") never accidentally swaps the
+  // translation. The lead-in "give me " is added by callers; the
+  // alias matcher walks longest-first so these never lose to the
+  // bare "twi" alias.
+  '3 version': 'TWIASANTE',
+  '3rd version': 'TWIASANTE',
+  'three version': 'TWIASANTE',
+  'third version': 'TWIASANTE',
+  '3 bible': 'TWIASANTE',
+  '3rd bible': 'TWIASANTE',
+  'three bible': 'TWIASANTE',
+  'third bible': 'TWIASANTE',
+  'version 3': 'TWIASANTE',
+  'version three': 'TWIASANTE',
+  'bible 3': 'TWIASANTE',
+  'bible three': 'TWIASANTE',
+  // v0.7.137 — Ewe (Agbenya La via wldeh `ee-oal`).
+  'ewe': 'EWE',
+  'ewe version': 'EWE',
+  'ewe bible': 'EWE',
+  'ewe translation': 'EWE',
+  'agbenya la': 'EWE',
+  'agbenya': 'EWE',
+  'volta version': 'EWE',
+  'volta bible': 'EWE',
 }
 
 // Cached longest-first key list so we don't sort on every call.
@@ -451,7 +722,19 @@ function detectTranslationCommand(
   const aliasHit = findTranslationAlias(lower)
   if (!aliasHit) return null
 
-  if (!hasLeadIn && !wokeByWakeWord) {
+  // v0.7.93 — When the matched alias ALREADY carries an explicit
+  // intent suffix ("twi version", "tree bible", "message version",
+  // "amplified translation") the suffix itself signals translation-
+  // switch intent strongly enough that we don't need a lead-in verb
+  // OR the wake word. Stops the regression where "Twi version please"
+  // was rejected (strict canon comparison failed because of the
+  // trailing "please") even though the operator's intent was
+  // unambiguous. Suffix-less aliases ("twi", "message", "amplified")
+  // still go through strict mode below to keep "the message of the
+  // cross" from accidentally swapping translations.
+  const aliasIsIntentSuffixed = /\s+(?:version|bible|translation)$/.test(aliasHit.alias)
+
+  if (!hasLeadIn && !wokeByWakeWord && !aliasIsIntentSuffixed) {
     // Strict mode: the utterance must be JUST the alias (optionally
     // wrapped in "the ..." / "... version|bible|translation"). Stops
     // sentences like "the message of the cross" from accidentally
@@ -459,13 +742,20 @@ function detectTranslationCommand(
     //
     // We canonicalise BOTH the utterance and the alias in the same
     // way (strip a leading "the ", strip a trailing "version" /
-    // "bible" / "translation"), then compare. This way both
-    // ("new king james" → matches alias "new king james version") AND
-    // ("the message" → matches alias "message") work, regardless of
-    // whether the suffix lived in the user's utterance, the alias
-    // map, or both.
+    // "bible" / "translation", strip a trailing courtesy like
+    // "please" / "thanks" / "thank you" / "now"), then compare. This
+    // way both ("new king james" → matches alias "new king james
+    // version") AND ("the message" → matches alias "message") work,
+    // regardless of whether the suffix lived in the user's utterance,
+    // the alias map, or both. v0.7.93 added the courtesy strip after
+    // operator reports of "twi please" / "message version please"
+    // bouncing.
     const canon = (s: string) =>
-      s.replace(/^the\s+/, '').replace(/\s+(version|bible|translation)$/, '').trim()
+      s
+        .replace(/^the\s+/, '')
+        .replace(/\s+(?:please|thanks|thank\s+you|now|okay|ok)$/i, '')
+        .replace(/\s+(version|bible|translation)$/, '')
+        .trim()
     if (canon(lower) !== canon(aliasHit.alias)) return null
   }
 
@@ -507,13 +797,36 @@ function detectFindByQuoteCommand(
   // Patterns each capture the topic / quote text in group 1.
   // Order matters: more-specific patterns first so they win the
   // match (e.g. "find me the verse about X" before "find ... X").
+  //
+  // v0.7.110 — Added natural Bible-question patterns. The pre-110
+  // regex required the literal word "verse" / "scripture" / "passage"
+  // somewhere in the utterance, which silently rejected the natural
+  // questions a preacher actually asks ("Show me where Jesus wept",
+  // "Where did they say silver and gold have I none", "Where was
+  // Stephen stoned to death"). The new patterns 1-6 catch those
+  // forms and route them straight to the semantic matcher.
   const PATTERNS: RegExp[] = [
+    // ── Strict v0.7.23 patterns FIRST (most specific wins) ─────
     /^(?:please\s+)?(?:find|locate|search\s+for|search|look\s+up|look\s+for|pull\s+up|get\s+me)\s+(?:that\s+|the\s+|a\s+|me\s+(?:that\s+|the\s+|a\s+)?)?(?:verse|scripture|passage|bible\s+verse)s?\s+(?:about|on|that\s+says|that\s+talks?\s+about|that\s+mentions?|that\s+says\s+something\s+about|with|regarding|concerning)\s+(.+)$/i,
     /^(?:what(?:'s|\s+is|s)|where\s+is)\s+(?:the\s+|that\s+|a\s+)?(?:verse|scripture|passage)\s+(?:about|that\s+says|that\s+talks?\s+about|that\s+mentions?)\s+(.+)$/i,
     /^the\s+(?:verse|scripture|passage)\s+(?:about|that\s+says|that\s+talks?\s+about|that\s+mentions?)\s+(.+)$/i,
     /^where\s+(?:does\s+(?:it|the\s+bible)|in\s+the\s+bible)\s+(?:say|talk\s+about|mention|tell\s+(?:me\s+)?about)\s+(.+)$/i,
     /^which\s+(?:verse|scripture|passage)\s+(?:says|talks?\s+about|mentions?|is\s+about)\s+(.+)$/i,
     /^show\s+me\s+(?:the\s+|a\s+|that\s+)?(?:verse|scripture|passage)\s+(?:about|that\s+says|that\s+talks?\s+about)\s+(.+)$/i,
+    // ── v0.7.110 — Natural Bible questions LAST (broadest) ─────
+    // (1) "Show me where Jesus wept" / "show me where it says ..."
+    /^show\s+me\s+(?:where|when|what|how|who)\s+(.+)$/i,
+    // (2) "Where did they say silver and gold ..." / "where did Jesus weep"
+    /^where\s+did\s+(.+)$/i,
+    // (3) "Where was Stephen stoned" / "where was Jesus baptised"
+    /^where\s+was\s+(.+)$/i,
+    // (4) "Where does X" — runs only when the strict v0.7.23
+    // "where does the bible say X" above hasn't already matched.
+    /^where\s+does\s+(.+)$/i,
+    // (5) "Who said X" / "who wrote X" / "who asked X"
+    /^who\s+(?:said|wrote|asked|spoke|preached|prayed)\s+(.+)$/i,
+    // (6) "What did Jesus say about X" / "what does the bible teach about X"
+    /^what\s+(?:did|does|do)\s+(.+?)\s+(?:say|teach|mean|tell|do|talk\s+about)\s+(?:about\s+)?(.+)$/i,
     // v0.7.23 — bare "verse about X" / "scripture about X" only
     // accepted with wake word, otherwise far too easy to false-fire
     // on conversational phrases like "the verse about him giving up".
@@ -527,12 +840,25 @@ function detectFindByQuoteCommand(
   for (const re of PATTERNS) {
     const m = cleaned.match(re)
     if (!m) continue
-    let quote = m[1]!.trim()
+    // v0.7.110 — pattern 6 ("what did X say about Y") puts the topic
+    // in capture group 2; the subject in group 1 is descriptive
+    // colour we don't need for the semantic search. Every other
+    // pattern uses group 1.
+    let quote = (m[2] ?? m[1])!.trim()
     // Strip a trailing courtesy / filler ("please", "thanks", "you
     // know", "right") and trailing punctuation.
+    // v0.7.111 — Also strip a leading "in (the) bible / scripture /
+    // scriptures / word (of god)" — these prefixes leak in from the
+    // v0.7.110 broad question patterns ("show me where in the bible
+    // Jesus was crucified" → group 1 = "in the bible Jesus was
+    // crucified") and torpedo the semantic search because the
+    // matcher hashes the literal string. Operator complained the
+    // toast read `No match for "in the bible"` even though the real
+    // intent was a clear question.
     quote = quote
       .replace(/[\s,.;:!?]+$/, '')
       .replace(/\s+(?:please|thanks|thank\s+you|you\s+know|right)\s*$/i, '')
+      .replace(/^in\s+(?:the\s+)?(?:bible|scripture|scriptures|word(?:\s+of\s+god)?)\s+/i, '')
       .trim()
 
     // Sanity guard: at least 3 word chars to be a real query.
@@ -564,7 +890,22 @@ function detectShowVerseCommand(
   const lower = body.toLowerCase().trim()
   // Word forms: "verse 1" / "verse one" / "show verse 1" / "go to verse 1"
   // Post wake-word (Media): bare "verse 1".
-  const re = /^(?:show|display|go\s+to|jump\s+to|open|read)?\s*verse\s+(\d{1,3})\s*$/i
+  // v0.7.116 — Massively expanded show-verse-N triggers per operator
+  // request: "Add 'let go to verse...', 'take me to verse...', 'scroll
+  // down to verse...' etc."
+  //
+  // Pre-116 only matched: show / display / go to / jump to / open /
+  // read verse N. Now matches the natural preacher utterances:
+  //   • "let's go to verse 5" / "lets go to verse 5" / "let go to
+  //     verse 5" (ASR mishearing)
+  //   • "take me to verse 5"
+  //   • "scroll down to verse 5" / "scroll up to verse 5"
+  //   • "go down to verse 5" / "go up to verse 5"
+  //   • "move to verse 5" / "move down to verse 5"
+  //   • "skip to verse 5" / "skip down to verse 5"
+  //   • "turn to verse 5"
+  //   • "verse 5" alone (post wake-word)
+  const re = /^(?:(?:let(?:'?s)?\s+go\s+to|take\s+me\s+to|scroll\s+(?:down|up)\s+to|go\s+(?:down|up)\s+to|move(?:\s+(?:down|up))?\s+to|skip(?:\s+(?:down|up))?\s+to|turn\s+to|show|display|go\s+to|jump\s+to|open|read)\s+)?verse\s+(\d{1,3})\s*$/i
   const m = lower.match(re)
   if (!m) return null
   const n = parseInt(m[1]!, 10)
@@ -615,7 +956,18 @@ export function detectCommand(utterance: string): VoiceCommand | null {
   // be ignored.
   if (isFillerUtterance(body)) return null
 
-  const cleaned = stripLeadingFiller(body)
+  // v0.7.113 — Trailing-punctuation strip. ASR engines routinely append
+  // a period / comma / "?" to the final transcript chunk ("next chapter."
+  // / "verse 10."). Pre-113 the strict trigger comparison (`lower !==
+  // trig && !lower.startsWith(trig + ' ')`) failed on "next chapter."
+  // and the loop fell through to the next_verse pattern, where bare
+  // "next" matched `startsWith("next ")` against "next chapter." with
+  // tail "chapter." (length 8 < the 12-char tail limit) — firing
+  // next_verse instead of next_chapter. Same regression for
+  // show_verse_n's `^...verse \d+\s*$` regex which couldn't see past
+  // a trailing period. Stripping here normalises every downstream
+  // matcher in one place.
+  const cleaned = stripLeadingFiller(body).replace(/[.,;:!?]+\s*$/, '').trim()
   const lower = cleaned.toLowerCase()
 
   // v0.7.19 — Specialised intent matchers BEFORE the generic PATTERNS
@@ -646,7 +998,28 @@ export function detectCommand(utterance: string): VoiceCommand | null {
 
       if (pat.takesReference) {
         if (!after) return null
-        const ref = parseExplicitReference(after)
+        // v0.7.112 — Whole-chapter / "chapter N" fallback.
+        // parseExplicitReference requires a verse number ("John 3:16")
+        // and returns null for whole-chapter forms preachers actually
+        // say ("Psalm 23", "John 14", "Romans chapter 8"). Retry by
+        // appending ":1" so "let's read Psalm 23" loads Psalm 23:1
+        // (the dispatcher's verseEnd is undefined so the chapter-nav
+        // logic + auto-scroll can walk it). Also normalises "Romans
+        // chapter 8" → "Romans 8:1".
+        let after2 = after
+        const chapterWordMatch = after2.match(/^(.+?)\s+chapter\s+(\d+)(?:\s+verses?\s+(\d+)(?:\s*[-to]+\s*(\d+))?)?$/i)
+        if (chapterWordMatch) {
+          const book = chapterWordMatch[1]!.trim()
+          const ch = chapterWordMatch[2]!
+          const vs = chapterWordMatch[3]
+          const ve = chapterWordMatch[4]
+          after2 = vs ? `${book} ${ch}:${vs}${ve ? '-' + ve : ''}` : `${book} ${ch}:1`
+        }
+        let ref = parseExplicitReference(after2)
+        if (!ref && /\d/.test(after2) && !after2.includes(':')) {
+          // Bare "Book N" → assume verse 1.
+          ref = parseExplicitReference(after2.trim() + ':1')
+        }
         if (!ref) return null
         // v0.7.4 — kind-aware label so "the bible says" surfaces as
         // a distinct standby toast ("Standby: John 3:16") rather than

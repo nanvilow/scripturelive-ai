@@ -1,6 +1,24 @@
 import { describe, it, expect } from 'vitest'
 import { cleanReleaseNotes, previewReleaseNotes } from './release-notes'
 
+describe('cleanReleaseNotes — v0.7.140 HTML stripping', () => {
+  it('strips raw HTML tags so ReactMarkdown does not render them as text', () => {
+    const input =
+      '<h2>Download</h2> <h3><a href="https://example.com/setup.exe">Download ScriptureLive AI v0.7.131 Setup for Windows (461M)</a></h3> <p><strong>This is the only file you need.</strong> Click the link above, run the installer, and you\'re done.</p>'
+    const out = cleanReleaseNotes(input)
+    expect(out).not.toMatch(/<\/?[a-z]/i)
+    expect(out).toContain('Download ScriptureLive AI v0.7.131 Setup for Windows (461M)')
+    expect(out).toContain('This is the only file you need.')
+  })
+
+  it('preserves anchor link text after stripping', () => {
+    const out = cleanReleaseNotes('<p>See <a href="https://example.com">the docs</a> for details.</p>')
+    expect(out).not.toMatch(/<a\b/i)
+    expect(out).toContain('the docs')
+  })
+})
+
+
 describe('cleanReleaseNotes', () => {
   it('returns an empty string for null input', () => {
     expect(cleanReleaseNotes(null)).toBe('')
@@ -32,8 +50,14 @@ describe('cleanReleaseNotes', () => {
     expect(out).not.toMatch(/New Contributors/)
     expect(out).not.toMatch(/Full Changelog/)
     expect(out).not.toMatch(/@carol made their first contribution/)
-    expect(out).toContain('Fix thing by @alice in https://github.com/org/repo/pull/12')
-    expect(out).toContain('Add thing by @bob in https://github.com/org/repo/pull/13')
+    // v0.7.132 — `by @user in <github-url>` attribution and bare
+    // github.com URLs are stripped per operator request. The visible
+    // change description survives.
+    expect(out).toContain('Fix thing')
+    expect(out).toContain('Add thing')
+    expect(out).not.toMatch(/github\.com/)
+    expect(out).not.toMatch(/@alice/)
+    expect(out).not.toMatch(/@bob/)
   })
 
   it('preserves manual notes mixed with auto-generated boilerplate', () => {
@@ -57,7 +81,10 @@ describe('cleanReleaseNotes', () => {
     expect(out).toContain('### Highlights')
     expect(out).toContain('- New mixer view')
     expect(out).toContain('- Faster startup')
-    expect(out).toContain('Fix thing by @alice')
+    // v0.7.132 — `by @alice in <url>` stripped; change description kept.
+    expect(out).toContain('Fix thing')
+    expect(out).not.toMatch(/@alice/)
+    expect(out).not.toMatch(/github\.com/)
     expect(out).not.toMatch(/What['’]s Changed/)
     expect(out).not.toMatch(/New Contributors/)
     expect(out).not.toMatch(/Full Changelog/)
@@ -172,7 +199,9 @@ describe('cleanReleaseNotes', () => {
 
     expect(out).not.toMatch(/\n{3,}/)
     expect(out).toContain('- Before')
-    expect(out).toContain('* Fix thing by @alice')
+    // v0.7.132 — attribution stripped; change description kept.
+    expect(out).toContain('Fix thing')
+    expect(out).not.toMatch(/@alice/)
     expect(out).toContain('- After footer')
   })
 
@@ -192,7 +221,9 @@ describe('cleanReleaseNotes', () => {
     expect(out).not.toMatch(/changed/i)
     expect(out).not.toMatch(/contributors/i)
     expect(out).not.toMatch(/changelog/i)
-    expect(out).toContain('Fix by @alice')
+    // v0.7.132 — `by @alice` attribution stripped; "Fix" survives.
+    expect(out).toContain('Fix')
+    expect(out).not.toMatch(/@alice/)
   })
 })
 
@@ -317,7 +348,9 @@ describe('previewReleaseNotes', () => {
     expect(out).toContain('New mixer view')
     expect(out).toContain('PR 42')
     expect(out).toContain('Faster startup')
-    expect(out).toContain('Fix thing by @alice')
+    // v0.7.132 — attribution stripped; change description kept.
+    expect(out).toContain('Fix thing')
+    expect(out).not.toMatch(/@alice/)
     expect(out).not.toMatch(/https?:\/\//)
     expect(out).not.toMatch(/github\.com/)
     expect(out).not.toMatch(/What['’]s Changed/)

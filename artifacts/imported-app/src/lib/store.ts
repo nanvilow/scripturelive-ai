@@ -29,7 +29,16 @@ export interface ScheduleItem {
 }
 
 export type BibleTranslation = string
-export type DisplayMode = 'full' | 'lower-third' | 'lower-third-black'
+// v0.7.184 — In-app DisplayMode narrowed to 'full' ONLY. The two
+// 'lower-third*' variants were removed from the in-app UI entirely
+// (operator: "remove the lower third from the app, leaving only the
+// lower third that can be operated in NDI settings only"). NDI broadcast
+// keeps its own LT mode via the separate `ndiDisplayMode` field below
+// (line ~184). Migration v4→v5 silently coerces any persisted stale
+// 'lower-third' / 'lower-third-black' value to 'full' on first boot.
+// See v0.7.184 GR-A in CHANGELOG: re-introducing in-app LT requires
+// coordinated rollback of (1) this narrow + (2) the v4→v5 migration.
+export type DisplayMode = 'full'
 export type OutputDestination = 'window' | 'ndi' | 'both'
 
 export interface MediaLibraryItem {
@@ -83,6 +92,16 @@ export interface DetectedVerse {
   translation: BibleTranslation
   detectedAt: Date
   confidence: number
+  // v0.7.104 — Detection source tag drives the three-column split in
+  // the Detected Verses card. Each pipeline runs independently; the
+  // tag tells the UI which column to render the row in:
+  //   • 'explicit'   — Reference Engine v2 / regex hit ("Amos 1:3")
+  //   • 'semantic'   — preacher-phrase, keyword search, AI cosine
+  //   • 'suggestion' — low-confidence (0.10–0.60) band, manual only
+  // Optional for back-compat: any persisted detection from before
+  // v0.7.104 (or any new code path that hasn't been tagged yet) is
+  // treated as 'explicit' by the column selectors.
+  source?: 'explicit' | 'semantic' | 'suggestion'
 }
 
 export interface AppSettings {
@@ -189,6 +208,31 @@ export interface AppSettings {
   ndiTextScale?: number
   ndiTextAlign?: 'left' | 'center' | 'right' | 'justify'
 
+  // ── Lower-Third-only typography overrides (v0.7.167) ───────────
+  // Mirror of the ndi* block above, but for the IN-APP lower-third
+  // surfaces ONLY: Settings → "PREVIEW (LOWER THIRD)" box, the
+  // operator's live display window when displayMode==='lower-third',
+  // the secondary screen / projector when displayMode==='lower-third',
+  // and the OBS Browser Source URL fallback at /api/output/congregation
+  // (when the route resolves dm==='lower-third' AND IS_NDI is false).
+  // The actual NDI capture surface keeps reading the ndi* fields
+  // above so vMix/OBS broadcast feeds are decoupled from the in-room
+  // lower-third look — operators can run the in-room lower-third in
+  // a big sans-serif chyron AND a separate broadcast lower-third in
+  // a smaller serif without one disturbing the other.
+  //
+  // Resolution chain in route.ts: IS_NDI → ndi* override → fall back
+  // to body. Non-NDI lower-third (preview/live/secondary/OBS) →
+  // lowerThird* override → fall back to body. Full-screen → body
+  // only (lower-third keys are NEVER read).
+  lowerThirdFontFamily?: string
+  lowerThirdFontSize?: 'sm' | 'md' | 'lg' | 'xl'
+  lowerThirdTextShadow?: boolean
+  lowerThirdTextScale?: number
+  lowerThirdTextAlign?: 'left' | 'center' | 'right' | 'justify'
+  lowerThirdBibleColor?: string
+  lowerThirdBibleLineHeight?: number
+
   // ── NDI-only display + reference overrides (v0.5.57) ───────────
   // The NDI feed used to share aspect-ratio + reference typography
   // with Live Display. Operators piping into vMix / OBS asked for
@@ -232,6 +276,43 @@ export interface AppSettings {
    *  persisted profiles) we fall back to 1.0 in the renderer too. */
   ndiLowerThirdScale?: number
 
+  /** v0.7.194-hotfix.2 — NDI capture frame rate. The offscreen Electron
+   *  capture window uses SOFTWARE video decode (Chromium's offscreen
+   *  rendering path has no GPU video decode on Windows) which struggles
+   *  to keep a 1080p video playing in real time at 60fps capture. Drop
+   *  to 30 (default), 25, 20, or 15 to give the software decoder more
+   *  headroom and stop the background-video judder operators reported.
+   *  Changing this restarts NDI (handled via the restart guard in
+   *  ndi-output-panel.tsx). 60 stays available for high-end machines.
+   *  v0.7.194-hotfix.3 — 15fps added as a deeper relief option for very
+   *  old hardware (Ivy Bridge / pre-2015 mobile chips). */
+  ndiCaptureFps?: 60 | 30 | 25 | 20 | 15
+
+  /** v0.7.194-hotfix.3 — NDI capture resolution. The offscreen capture
+   *  window is created at this resolution. 1080p (1920×1080) is the
+   *  default and matches what vMix/OBS/Wirecast scenes are usually
+   *  configured for. 720p (1280×720) cuts per-frame work by ~56% (BGRA
+   *  buffer 8.3 MB → 3.7 MB, encoding + memory bandwidth drop in step)
+   *  which is the single biggest CPU relief for operators on older
+   *  hardware (Ivy Bridge mobile, pre-2015 laptops, integrated graphics)
+   *  where software HD video decode saturates the CPU. Downstream
+   *  vMix/Wirecast/OBS upscale 720→1080 in their program output with
+   *  hardware-accelerated bicubic; the visible quality drop on chyron
+   *  text + Bible verses is zero, and full-bleed video media is only
+   *  slightly softer but smooth. Changing this restarts NDI via the
+   *  restart guard in ndi-output-panel.tsx. */
+  ndiCaptureResolution?: '1080p' | '720p'
+
+  /** v0.7.194-hotfix.4 — NDI Full-Screen background mode. When
+   *  'themed' (default) the full-screen NDI surface renders with the
+   *  themed gradient + custom background — identical to the secondary
+   *  screen (v0.6.9 behaviour). When 'transparent' it strips both so
+   *  vMix/OBS/Wirecast receive only the verse text on a clean alpha
+   *  matte, useful when the production switcher already has its own
+   *  program-output background. Lower-third has the per-box equivalent
+   *  via `ndiLowerThirdTransparent`. */
+  ndiFullScreenBackground?: 'themed' | 'transparent'
+
   // Item #15 follow-up — when the SSE link to the secondary screen
   // drops, the page used to slam a full-screen "Reconnecting…"
   // overlay over the broadcast. Useful for debugging, ugly during a
@@ -258,6 +339,15 @@ interface AppState {
   // the Chapter Navigator / Detected Verses panels can offer a
   // one-click "Clear History" per the v0.5.5 spec.
   clearVerseHistory: () => void
+  /** v0.7.194-hotfix.4 — Remove a single entry from the Scripture
+   *  Feed history pane (per-row × button). Index-based; the React
+   *  key in the list is `${reference}-${i}` which is stable for
+   *  the render. */
+  removeVerseFromHistoryAt: (index: number) => void
+  removeVerseHistoryByIndices: (indices: number[]) => void
+  /** v0.7.194-hotfix.9 Item C — Wipe the entire Scripture Feed
+   *  History pane in one shot. Used by the new Delete All button. */
+  removeAllVerseHistory: () => void
   searchQuery: string
   setSearchQuery: (q: string) => void
 
@@ -267,6 +357,14 @@ interface AppState {
   detectedVerses: DetectedVerse[]
   addDetectedVerse: (v: DetectedVerse) => void
   clearDetectedVerses: () => void
+  // v0.7.134 — Per-column Clear button on the Detected Verses card.
+  // `'explicit'` clears the "Auto Verse Match" column (regex hits),
+  // `'semantic'` clears the "Bible Reference Quoted" column (paraphrase
+  // hits), `'suggestion'` clears the SUGGESTIONS bucket entries that
+  // live in detectedVerses (10–49% band). detectedVerseCandidates is
+  // cleared by clearDetectedVerseCandidates() — the Suggested Verses
+  // column wipe calls BOTH so the UI matches what the operator sees.
+  clearDetectedVersesBySource: (source: 'explicit' | 'semantic' | 'suggestion') => void
   // v0.7.60 — Low-confidence "candidate" detections (0.20–0.49). The
   // operator can promote one to live with a click; auto-go-live is
   // never permitted from this bucket. Kept separate from
@@ -401,10 +499,55 @@ interface AppState {
   // swap a verse slide's text in place without yanking the slide off
   // air mid-service.
   replaceSlide: (index: number, patch: Partial<Slide>) => void
+  // v0.7.194-hotfix.7 — single-click previews a verse WITHOUT
+  // yanking the current Live slide. If Live is airing, keeps the
+  // current live slide at index 0 and appends the previewed slide
+  // at index 1 (previewSlideIndex=1, liveSlideIndex=0, isLive
+  // untouched). If not airing, behaves like setSlides([slide]).
+  // De-dupes when the previewed slide has the same stable id as
+  // the live slide (just points preview at the live index).
+  stageVersePreviewOnly: (slide: Slide) => void
   previewSlideIndex: number
   setPreviewSlideIndex: (i: number) => void
   liveSlideIndex: number
   setLiveSlideIndex: (i: number) => void
+
+  // v0.7.201 — Pinned preview slide. A direct Slide reference (not an
+  // index lookup) used by the Preview pane / iframe as its source of
+  // truth when set. Set atomically by stageVersePreviewOnly /
+  // stageSlidesPreviewOnly so a single-click in any of the 5 columns
+  // (Chapter Navigator, Auto Verse Match, Bible Reference Quoted,
+  // Suggested Verses, Scripture Feed) is IMMUNE to any subsequent
+  // mutation that touches slides[] / previewSlideIndex / liveSlideIndex.
+  // Cleared on setIsLive(true), selectScheduleItem, removeAllScheduleItems,
+  // clearSchedule, or explicit clearPinnedPreview. This is the
+  // bulletproof v0.7.201 fix for the "preview snaps back to live"
+  // bug — instead of trying to identify which mystery mutation
+  // overwrites preview, we render preview from a slide reference
+  // that the operator's click planted and nothing else can move.
+  pinnedPreviewSlide: Slide | null
+  pinPreviewSlide: (s: Slide | null) => void
+  clearPinnedPreview: () => void
+
+  // v0.7.203 — Direct LIVE slide ref (symmetric mirror of
+  // pinnedPreviewSlide). When set, the buildOutputPayload helper
+  // and the in-app Live Display pane read the live frame from this
+  // reference INSTEAD of slides[liveSlideIndex]. Used by auto-fire
+  // so the AI can push detections to the projector WITHOUT
+  // mutating slides[]/previewSlideIndex/liveSlideIndex — which is
+  // what was clearing the operator's pinnedPreviewSlide via the
+  // setIsLive(true) cascade and causing the operator-reported
+  // "single-click preview snaps back to live" bug. With this field,
+  // preview and live are completely independent surfaces: the
+  // operator's single-click pins preview; the AI's detection pins
+  // live; neither can clobber the other. Cleared on any operator-
+  // manual hard reset (setSlides / setLiveSlideIndex / setIsLive(false)
+  // / clearSchedule / selectScheduleItem / removeAllScheduleItems
+  // (preserveLive=false)) so the operator's deliberate slides[]
+  // ownership immediately wins back the live surface.
+  liveSlide: Slide | null
+  setLiveAuto: (s: Slide) => void
+  clearLiveAuto: () => void
 
   // Presenter
   isPresenterMode: boolean
@@ -495,7 +638,24 @@ interface AppState {
   activeLibraryTab: LibraryTab
   setActiveLibraryTab: (t: LibraryTab) => void
   addScheduleItem: (item: Omit<ScheduleItem, 'id' | 'addedAt'>) => string
+  // v0.7.194-hotfix.8 — Same as addScheduleItem but DOES NOT mutate
+  // slides/previewSlideIndex/liveSlideIndex. Used by the single-click
+  // preview-only path so the currently-airing slide is not yanked
+  // when a verse is appended to the schedule for history/queue.
+  addScheduleItemQuiet: (item: Omit<ScheduleItem, 'id' | 'addedAt'>) => string
   removeScheduleItem: (id: string) => void
+  removeScheduleItemsByIds: (ids: string[]) => void
+  /** v0.7.194-hotfix.9 Item C — Wipe the entire Queue pane in one
+   *  shot. When `preserveLive=true` the currently-on-air schedule
+   *  item (selectedScheduleItemId AND isLive) is kept so the live
+   *  broadcast does not get yanked. */
+  removeAllScheduleItems: (preserveLive?: boolean) => void
+  /** v0.7.194-hotfix.9 Item B — Multi-slide preview-only stage.
+   *  Like stageVersePreviewOnly but accepts an array of slides
+   *  (for verses split across multiple slides). Preserves whatever
+   *  is currently live by prepending the live slide at index 0
+   *  and pointing the live cursor at it. */
+  stageSlidesPreviewOnly: (slides: Slide[]) => void
   selectScheduleItem: (id: string | null) => void
   moveScheduleItem: (id: string, direction: 'up' | 'down') => void
   clearSchedule: () => void
@@ -515,8 +675,14 @@ interface AppState {
   // Operator-controlled play/pause for media-slide videos. Broadcast
   // to all renderers (preview, secondary screen, NDI). Only
   // meaningful when the active slide is a media video.
-  mediaPaused: boolean
-  setMediaPaused: (b: boolean) => void
+  // v0.7.193-hotfix.2 — split per-surface so Preview and Live transport
+  // controls are fully independent. Each pane's Play / Pause / Stop /
+  // Loop / Scrub writes ONLY to its own pair of fields. The SSE
+  // broadcast (NDI / OBS / secondary screen) follows the LIVE pair only.
+  previewMediaPaused: boolean
+  setPreviewMediaPaused: (b: boolean) => void
+  liveMediaPaused: boolean
+  setLiveMediaPaused: (b: boolean) => void
 
   // Real-time playback signals from the actual <video> elements on
   // the Preview and Live surfaces. Used by the audio meters so they
@@ -588,8 +754,21 @@ interface AppState {
   // surfaces (Preview pane, secondary congregation screen) read this
   // value and seek to it whenever it drifts more than ~0.4s, so a
   // pause / scrub on Live freezes every screen at the same frame.
-  mediaCurrentTime: number
-  setMediaCurrentTime: (t: number) => void
+  previewMediaCurrentTime: number
+  setPreviewMediaCurrentTime: (t: number) => void
+  liveMediaCurrentTime: number
+  setLiveMediaCurrentTime: (t: number) => void
+
+  // v0.7.193 — Loop toggle for media-video transport. Persists per-
+  // session. The in-app React <video> elements (Preview + Live
+  // Display) and the iframe-renderer's <video> all read this and
+  // mirror it onto their `loop` attribute, so a clip loops on every
+  // surface (NDI / OBS / secondary screen too) as long as it's
+  // playing.
+  previewMediaLoop: boolean
+  setPreviewMediaLoop: (b: boolean) => void
+  liveMediaLoop: boolean
+  setLiveMediaLoop: (b: boolean) => void
 
   // Media library view mode. Mirrors the Windows Explorer "View"
   // menu options the user requested: Large Icons / Medium Icons /
@@ -607,7 +786,7 @@ const defaultSettings: AppSettings = {
   outputDestination: 'window',
   customBackground: null,
   lowerThirdPosition: 'bottom',
-  lowerThirdHeight: 'md',
+  lowerThirdHeight: 'lg',
   autoAdvanceSlides: false,
   slideTransitionDuration: 500,
   slideTransitionStyle: 'fade',
@@ -616,7 +795,13 @@ const defaultSettings: AppSettings = {
   textShadow: true,
   showReferenceOnOutput: true,
   displayRatio: 'fill',
-  textScale: 1,
+  // v0.7.97 — Operator request: ship the secondary screen at 90% by
+  // default. The previous 100% was too large for the typical projector
+  // distance in their venues; operators were dragging the slider down
+  // on every fresh install. 0.9 = 90% on the slider's 0.5..2.0 range.
+  // Existing installs that have already persisted a value keep theirs
+  // ("unless users want to set it to their satisfaction").
+  textScale: 0.9,
   textAlign: 'center',
   // Reference typography defaults: leave undefined so the renderer
   // falls back to the body equivalents above. Persisted operator
@@ -627,12 +812,16 @@ const defaultSettings: AppSettings = {
   referenceTextShadow: undefined,
   referenceTextScale: undefined,
   referenceTextAlign: undefined,
-  // v0.6.9 — Bible body line-height. 1.4 mirrors the typographic
-  // default the NDI panel suggested (its slider seeded at 1.40 too)
-  // so the secondary screen renders the same vertical rhythm out of
-  // the box and operators only see a visible change once they
-  // actually drag the slider.
-  bibleLineHeight: 1.4,
+  // v0.7.97 — Operator request: ship Bible line-height at 0.95 by
+  // default. The 1.40 typographic default created too much vertical
+  // breathing room for their secondary-screen layout; operators were
+  // pulling the slider toward "Tight" on every fresh install. 0.95
+  // is just past Tight (1.0) and matches what they were dialling in.
+  // The "Default (1.40)" reset button on the slider still snaps back
+  // to the typographic 1.40 — it's a one-click way for an operator
+  // who PREFERS more breathing room to opt back in.
+  // Existing installs that have already persisted a value keep theirs.
+  bibleLineHeight: 0.95,
   congregationScreenTheme: 'minimal',
   // English-only per v0.5.5 spec — the multi-language picker was a
   // footgun because Whisper's Base model is English-only and the
@@ -647,9 +836,25 @@ const defaultSettings: AppSettings = {
   aiAutoSendOnHigh: true,
   // v0.7.4 — Confidence tiers. Defaults match the operator spec:
   // ≥0.70 live / [0.30, 0.70) preview / <0.30 drop.
-  transcriptDropThreshold: 0.30,
+  transcriptDropThreshold: 0.20,
   transcriptPreviewThreshold: 0.60,
-  transcriptLiveThreshold: 0.70,
+  // v0.7.93 — Raised 0.50 → 0.65 after operator feedback that the
+  // v0.7.91 lower threshold let too many low-confidence transcript
+  // chunks reach the verse detector and command pre-pass, surfacing
+  // wrong references and slowing the operator down. 0.65 still beats
+  // the pre-v0.7.91 default of 0.70 so sensitivity is mildly improved
+  // without the false-positive flood.
+  // v0.7.115 — Lowered from 0.65 → 0.55. Operator complaint: "AI
+  // detection doesn't listen to words well and doesn't live transcript
+  // well; it kept transcribing wrongly." In real church environments
+  // (worship band, choir, congregation noise) Deepgram chunk
+  // confidence sits in the 0.50-0.70 band. The pre-115 0.65 floor
+  // dropped the entire verse-detection / semantic-match pipeline for
+  // every chunk under 0.65, which is why "AI is confused" — it never
+  // even got a chance to look. 0.55 lets the matcher run on
+  // borderline-noisy speech while still dropping pure music chunks.
+  // Voice commands are unaffected (already always-on per v0.7.112).
+  transcriptLiveThreshold: 0.55,
   ndiDisplayMode: 'full',
   // NDI typography overrides (v0.5.48): leave undefined so the NDI
   // feed mirrors Live Display by default. The operator opts in via
@@ -659,17 +864,52 @@ const defaultSettings: AppSettings = {
   ndiTextShadow: undefined,
   ndiTextScale: undefined,
   ndiTextAlign: undefined,
+  // v0.7.167 — Lower-third typography overrides default to undefined
+  // so a fresh install paints lower-third with the same body
+  // typography as full-screen. Operators opt-in via the new
+  // "Lower Third Typography" controls in Settings → Display & Output.
+  lowerThirdFontFamily: undefined,
+  lowerThirdFontSize: undefined,
+  lowerThirdTextShadow: undefined,
+  lowerThirdTextScale: undefined,
+  lowerThirdTextAlign: undefined,
+  lowerThirdBibleColor: undefined,
+  lowerThirdBibleLineHeight: undefined,
   // v0.5.57 — All undefined so existing operators see no behaviour
   // change until they explicitly opt-in via the NDI Settings panel.
   ndiAspectRatio: undefined,
   ndiBibleColor: undefined,
   ndiLowerThirdTransparent: false,
+  // v0.7.194-hotfix.4 — NDI Full-Screen background mode. 'themed'
+  // (default) keeps the v0.6.9 behaviour: full-screen NDI renders
+  // identically to the secondary screen (themed gradient + custom
+  // background visible). 'transparent' strips theme + custom bg so
+  // vMix/OBS/Wirecast receive only the verse text on a clean alpha
+  // matte — useful when the production switcher already has its
+  // own program-output background that the operator wants the NDI
+  // verse to key over. Lower-third has its own per-box toggle
+  // (ndiLowerThirdTransparent); this is the full-screen equivalent.
+  ndiFullScreenBackground: 'themed',
   // v0.7.3 — Reverted to 1.0× (was 2.0× in v0.7.0). Operator's
   // broadcast frame showed 2.0× was way too large; their lower-third
   // was covering the preacher. The slider Reset button also returns
   // to 1.0× to match (see ndi-output-panel.tsx). Pre-v0.7.0 shipped
   // undefined (effective 1.0) so this matches the original safe default.
   ndiLowerThirdScale: 1,
+  // v0.7.194-hotfix.2 — Default 30 fps. 60 was the pre-fix hardcoded
+  // value but software-decoded HD video on the offscreen capture window
+  // can't sustain it on most operator machines, causing visible judder
+  // on bg/foreground videos. 30 is the broadcast-standard cadence that
+  // vMix/OBS happily ingest and that gives the software decoder ~2× the
+  // per-frame budget. Operators on high-end machines can opt back into
+  // 60 via the dropdown in NDI Output → Source.
+  ndiCaptureFps: 30,
+  // v0.7.194-hotfix.3 — Default 1080p (no migration for existing installs;
+  // matches what vMix/OBS/Wirecast scenes are usually configured for).
+  // Operators on older hardware (Ivy Bridge mobile, pre-2015 laptops,
+  // integrated graphics) flip to 720p via the dropdown in NDI Output →
+  // "NDI Layout & Bible Body" to eliminate software-decode CPU saturation.
+  ndiCaptureResolution: '1080p',
   ndiBibleLineHeight: undefined,
   ndiRefSize: undefined,
   ndiRefStyle: undefined,
@@ -699,6 +939,26 @@ export const useAppStore = create<AppState>()(
           verseHistory: [v, ...state.verseHistory].slice(0, 50),
         })),
       clearVerseHistory: () => set({ verseHistory: [] }),
+      // v0.7.194-hotfix.4 — Per-row delete for the Scripture Feed
+      // History pane. Index-based because verseHistory items don't
+      // carry a unique ID; the index is stable for the lifetime of
+      // the rendered list (React key is `${reference}-${i}`).
+      removeVerseFromHistoryAt: (index: number) =>
+        set((state) => ({
+          verseHistory: state.verseHistory.filter((_, i) => i !== index),
+        })),
+      // v0.7.194-hotfix.7 — Bulk delete for Select-to-delete mode in the
+      // Scripture Feed. Set lookup avoids O(N×M) and the index-shift bug
+      // that comes from looping single-index deletes from the front.
+      removeVerseHistoryByIndices: (indices: number[]) =>
+        set((state) => {
+          const drop = new Set(indices)
+          return { verseHistory: state.verseHistory.filter((_, i) => !drop.has(i)) }
+        }),
+      // v0.7.194-hotfix.9 Item C — Delete All button on the Scripture
+      // Feed History pane. Pure history wipe; never touches slides/
+      // live state (verseHistory is operator scrubback memory only).
+      removeAllVerseHistory: () => set({ verseHistory: [] }),
       searchQuery: '',
       setSearchQuery: (q) => set({ searchQuery: q }),
 
@@ -707,10 +967,109 @@ export const useAppStore = create<AppState>()(
       setIsListening: (l) => set({ isListening: l }),
       detectedVerses: [],
       addDetectedVerse: (v) =>
-        set((state) => ({
-          detectedVerses: [v, ...state.detectedVerses].slice(0, 100),
-        })),
+        set((state) => {
+          // v0.7.184 — Auto-route to Chapter Navigator. Fire BEFORE the
+          // dedupe check below so the navigator updates EVEN WHEN the
+          // verse is already in the detected column. Operator-reported
+          // bug: "speaker says a verse, detector drops it; speaker
+          // mentions previous verse — detector doesn't drop it again
+          // because it's in the column already, so it doesn't auto-send."
+          // The dedupe correctly suppresses the duplicate column entry
+          // (we don't want the same verse appearing twice), but the
+          // navigator should STILL re-navigate to that verse so the
+          // operator can flip to it instantly. Done at the top so it
+          // fires regardless of whether the dedupe block returns early.
+          // `addDetectedVerseCandidate` (line ~860) is intentionally NOT
+          // wired this way — speculative <50% guesses thrash the navigator.
+          if (v.reference) {
+            try { get().requestNavigatorRef(v.reference) } catch { /* defensive */ }
+          }
+          // v0.7.119 — Cross-source dedupe. Operator reported "the
+          // verse appeared in Bible Reference Quoted but the live
+          // counter incremented in Auto Verse Match" — root cause is
+          // both pipelines firing for the same reference, leaving
+          // the same verse in BOTH columns and confusing the
+          // counter. Source priority: explicit > semantic > suggestion.
+          // Higher-priority incoming → evict any existing same-ref
+          // entries from lower-priority sources. Lower-priority
+          // incoming when a higher-priority entry already exists →
+          // skip the addition (the authoritative one stays).
+          const rank: Record<string, number> = {
+            explicit: 3, semantic: 2, suggestion: 1,
+          }
+          const incomingRank = rank[(v as { source?: string }).source ?? 'semantic'] ?? 2
+          const existing = state.detectedVerses.find((d) => d.reference === v.reference)
+          if (existing) {
+            const existingRank = rank[(existing as { source?: string }).source ?? 'semantic'] ?? 2
+            if (existingRank >= incomingRank) {
+              // v0.7.187.2 — RE-MENTION AUTO-LIVE. Operator: "speaker
+              // says Amos 1:3 → drops to column → speaker says John 3:4
+              // → drops to column → speaker says Amos 1:3 again →
+              // detector doesn't drop it again because it's in the
+              // column already, so it doesn't auto-send." Pre-fix this
+              // branch returned {} (no state change) → the auto-live
+              // useEffect in logos-shell.tsx watching `detectedVerses`
+              // never re-ran → the re-mentioned verse stayed off air.
+              //
+              // Fix: PROMOTE the existing entry to the front of the
+              // array with a fresh `detectedAt` AND a NEW `id`, so:
+              //   (1) array reference changes → useEffect re-fires
+              //   (2) new id ≠ lastAutoVerseId.current (the gate at
+              //       logos-shell.tsx:3360 that prevents re-firing the
+              //       same verse twice in a row) → auto-live actually
+              //       sends to broadcast on re-mention
+              //   (3) authoritative `source` + `confidence` from the
+              //       existing entry are preserved so the column UI +
+              //       stability gate still see the higher-quality data
+              //   (4) shouldFireAutoLiveStable picks the front-of-array
+              //       entry as the live winner, so the re-mentioned
+              //       verse goes live exactly as the original mention
+              //       did. requestNavigatorRef already fired at the top
+              //       of this reducer so the navigator updates too.
+              const promoted = {
+                ...existing,
+                id: `det-rementioned-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                detectedAt: new Date(),
+              }
+              const filtered = state.detectedVerses.filter((d) => d.reference !== v.reference)
+              return { detectedVerses: [promoted, ...filtered].slice(0, 100) }
+            }
+            // Incoming wins — evict the lower-ranked one(s) for this ref.
+            const filtered = state.detectedVerses.filter((d) => d.reference !== v.reference)
+            return { detectedVerses: [v, ...filtered].slice(0, 100) }
+          }
+          return {
+            detectedVerses: [v, ...state.detectedVerses].slice(0, 100),
+          }
+        }),
       clearDetectedVerses: () => set({ detectedVerses: [] }),
+      // v0.7.134 — Per-column wipe. Source matching mirrors
+      // verse-auto-live.ts `sourceOf()`: untagged detections default
+      // to 'explicit'. SUGGESTION wipe drops anything below the
+      // SEMANTIC floor (0.50) — that's the same band the Suggested
+      // Verses column renders via suggestionsFor() — so the operator
+      // sees the column actually empty after the click. We deliberately
+      // keep it source-agnostic for the suggestion band because the
+      // 10–49% suggestions bucket can contain rows from EITHER pipeline
+      // (an explicit regex hit at 0.45 still falls into suggestions).
+      clearDetectedVersesBySource: (source) =>
+        set((state) => {
+          if (source === 'suggestion') {
+            return {
+              detectedVerses: state.detectedVerses.filter(
+                (v) => (v.confidence ?? 0) >= 0.5,
+              ),
+            }
+          }
+          return {
+            detectedVerses: state.detectedVerses.filter((v) => {
+              const conf = v.confidence ?? 0
+              if (conf < 0.5) return true // leave the suggestions band alone
+              const vSrc = (v.source as 'explicit' | 'semantic' | undefined) ?? 'explicit'
+              return vSrc !== source
+            }),
+          }
+        }),
       // v0.7.60 — Candidates bucket. Cap at 50 entries (operator only
       // ever scans the recent few in a service, and we don't want a
       // long quiet stretch of low-confidence noise to keep growing).
@@ -817,15 +1176,125 @@ export const useAppStore = create<AppState>()(
 
       // Slides
       slides: [],
-      setSlides: (s) => set({ slides: s, previewSlideIndex: 0, liveSlideIndex: -1 }),
-      replaceSlide: (index, patch) =>
+      // v0.7.203 — setSlides is the operator's hard-reset hook. Clear
+      // liveSlide so the new slides[] array is the unambiguous source
+      // of truth for the live surface.
+      // v0.7.213 — also clear pinnedPreviewSlide. A stale pin from an
+      // earlier Media single-click would otherwise survive into the
+      // new slides[]-based Preview content (e.g. detected/suggested
+      // verses arrive via setSlides), and v0.7.212's goLive reads the
+      // pin first — promoting the stale media instead of the new verse.
+      setSlides: (s) => set({ slides: s, previewSlideIndex: 0, liveSlideIndex: -1, liveSlide: null, pinnedPreviewSlide: null }),
+      // v0.7.201 — pinnedPreviewSlide. See interface comment.
+      pinnedPreviewSlide: null,
+      pinPreviewSlide: (s) => set({ pinnedPreviewSlide: s }),
+      clearPinnedPreview: () => set({ pinnedPreviewSlide: null }),
+      // v0.7.203 — liveSlide direct ref. See interface comment.
+      liveSlide: null,
+      setLiveAuto: (s) => set((state) => {
+        // v0.7.221 — Atomic transport reset on media-video promotion.
+        // Operator $1600 escalation: "clicking GO LIVE also sends video
+        // from the preview to the live display to IMMEDIATELY START
+        // PLAYING". Pre-fix root cause: setLiveAuto only set
+        // {liveSlide, isLive:true, hasShownContent:true}. If a previous
+        // live media-video had been paused by the operator,
+        // `liveMediaPaused` was sticky-true in the store; the new
+        // promotion then mounted the fresh <video> but the
+        // MediaVideoSurface effect (L388: `shouldPlay = isLive &&
+        // !mediaPaused`) saw mediaPaused=true and never called
+        // v.play(). Same for `liveMediaCurrentTime`: leftover seek
+        // position from clip A made clip B start at the wrong frame
+        // (or past EOF → frozen on first frame). The two shell goLive
+        // call sites tried to fix this by calling setLiveMediaPaused +
+        // setLiveMediaCurrentTime BEFORE setLiveAuto, but (a) the EW
+        // shell goLive pinned path never wired in the resets at all
+        // (was just `setLiveAuto(pinned); return`), and (b) every
+        // setLiveAuto call site outside goLive (speech-provider × 5,
+        // live-translation-sync × 2, library-compact double-click,
+        // logos-shell AI auto-fire) had the same gap. Fix the store
+        // contract once: when promoting a NEW media-video (different
+        // mediaUrl from current liveSlide), atomically clear the
+        // transport state. Text-slide rebuilds (translation switch,
+        // AI verse handoff) and same-URL re-promotions preserve
+        // transport — they have no playback to reset and the
+        // translation-switch test (ai-live-only.test.ts L80) asserts
+        // the rebuild keeps in-place behaviour.
+        const update: {
+          liveSlide: typeof s
+          isLive: boolean
+          hasShownContent: boolean
+          liveMediaPaused?: boolean
+          liveMediaCurrentTime?: number
+        } = { liveSlide: s, isLive: true, hasShownContent: true }
+        const sAny = s as { type?: string; mediaKind?: string; mediaUrl?: string } | null
+        const curAny = state.liveSlide as { type?: string; mediaKind?: string; mediaUrl?: string } | null
+        const newUrl = sAny && sAny.type === 'media' && sAny.mediaKind === 'video' ? sAny.mediaUrl ?? null : null
+        const curUrl = curAny && curAny.type === 'media' && curAny.mediaKind === 'video' ? curAny.mediaUrl ?? null : null
+        if (newUrl && newUrl !== curUrl) {
+          update.liveMediaPaused = false
+          update.liveMediaCurrentTime = 0
+        }
+        return update
+      }),
+      clearLiveAuto: () => set({ liveSlide: null }),
+      // v0.7.194-hotfix.7 — see interface comment above.
+      // v0.7.201 — Atomically PIN the staged slide so the Preview
+      // pane / iframe renders directly from this reference and is
+      // immune to any subsequent slides[] / previewSlideIndex /
+      // liveSlideIndex mutation. Cleared on setIsLive(true) /
+      // selectScheduleItem / removeAllScheduleItems / clearSchedule.
+      stageVersePreviewOnly: (slide) =>
         set((state) => {
+          const cur =
+            state.isLive && state.liveSlideIndex >= 0
+              ? state.slides[state.liveSlideIndex]
+              : null
+          if (cur && cur.id === slide.id) {
+            return { previewSlideIndex: state.liveSlideIndex, pinnedPreviewSlide: slide }
+          }
+          if (cur) {
+            return { slides: [cur, slide], previewSlideIndex: 1, liveSlideIndex: 0, pinnedPreviewSlide: slide }
+          }
+          return { slides: [slide], previewSlideIndex: 0, liveSlideIndex: -1, pinnedPreviewSlide: slide }
+        }),
+      // v0.7.194-hotfix.9 Item B — Multi-slide preview-only. Same
+      // contract as stageVersePreviewOnly (preserve live, only
+      // change preview) but for verses split into 2+ slides by
+      // splitForSlides(). When live, the live slide is preserved
+      // at index 0 with liveSlideIndex=0 and the preview slides
+      // follow at indices 1..N; previewSlideIndex points at 1.
+      stageSlidesPreviewOnly: (slides) =>
+        set((state) => {
+          if (!slides.length) return {}
+          const cur =
+            state.isLive && state.liveSlideIndex >= 0
+              ? state.slides[state.liveSlideIndex]
+              : null
+          // v0.7.201 — Pin the first preview slide (the one at the
+          // previewSlideIndex after this mutation) so render is
+          // immune to subsequent mutations.
+          const pinTarget = slides[0]
+          if (cur) {
+            const sameAsLive = slides.length === 1 && slides[0].id === cur.id
+            if (sameAsLive) return { previewSlideIndex: state.liveSlideIndex, pinnedPreviewSlide: pinTarget }
+            return {
+              slides: [cur, ...slides],
+              previewSlideIndex: 1,
+              liveSlideIndex: 0,
+              pinnedPreviewSlide: pinTarget,
+            }
+          }
+          return { slides, previewSlideIndex: 0, liveSlideIndex: -1, pinnedPreviewSlide: pinTarget }
+        }),
+      replaceSlide: (index, patch) => {
+        return set((state) => {
           if (index < 0 || index >= state.slides.length) return {}
           const nextSlides = state.slides.map((sl, i) =>
             i === index ? { ...sl, ...patch } : sl,
           )
           return { slides: nextSlides }
-        }),
+        })
+      },
       previewSlideIndex: 0,
       setPreviewSlideIndex: (i) => set({ previewSlideIndex: i }),
       liveSlideIndex: -1,
@@ -836,13 +1305,32 @@ export const useAppStore = create<AppState>()(
           // permanently dismissed for this session — no matter which
           // panel (Media, Bible, Songs, Schedule) initiated the cue.
           hasShownContent: i >= 0 ? true : s.hasShownContent,
+          // v0.7.203 — Operator explicitly pointed live at a slides[]
+          // slot. Release the auto liveSlide ref so slides[i] wins.
+          liveSlide: null,
         })),
 
       // Presenter
       isPresenterMode: false,
       setIsPresenterMode: (m) => set({ isPresenterMode: m }),
       isLive: false,
-      setIsLive: (m) => set({ isLive: m }),
+      // v0.7.201 — Going live clears the operator's pinned preview
+      // because the act of pushing-to-air consumes the staging
+      // intent. Auto-fire effect's curPreview preservation still
+      // restores slides[previewIdx]=curPreview, so the visible
+      // preview keeps showing the operator's choice via the normal
+      // slides[previewSlideIndex] fallback. setIsLive(false) does
+      // NOT clear the pin — operator pressing Black should not
+      // wipe their staged preview.
+      // v0.7.203 — setIsLive(false) ALSO clears liveSlide so the
+      // operator's "BLACK / kill live" intent fully releases the auto
+      // ref. setIsLive(true) keeps liveSlide untouched (auto-fire's
+      // setLiveAuto already sets it; manual double-clicks go through
+      // setSlides+setLiveSlideIndex which clear liveSlide anyway).
+      setIsLive: (m) =>
+        set(m
+          ? { isLive: m, pinnedPreviewSlide: null }
+          : { isLive: m, liveSlide: null }),
 
       // NDI Output
       ndiConnected: false,
@@ -913,6 +1401,55 @@ export const useAppStore = create<AppState>()(
         }))
         return id
       },
+      // v0.7.194-hotfix.8 — Schedule-only mutation; does NOT touch
+      // slides/previewSlideIndex/liveSlideIndex. Pairs with
+      // stageVersePreviewOnly so single-click append-to-history can run
+      // without yanking the on-air slide. selectedScheduleItemId is
+      // ALSO preserved (not switched to the new id) so the live
+      // operator stays anchored to whatever they were broadcasting.
+      addScheduleItemQuiet: (item) => {
+        const id = `sch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+        const full: ScheduleItem = { ...item, id, addedAt: Date.now() }
+        set((state) => ({
+          schedule: [...state.schedule, full],
+        }))
+        return id
+      },
+      // v0.7.194-hotfix.9 Item C — Delete All on the Queue pane.
+      // preserveLive (default true) keeps the currently-selected
+      // schedule item if it is on air, so the wipe does NOT yank
+      // the live broadcast. When false (operator confirmation
+      // dialog could override), the entire queue is cleared and
+      // the slide stage is reset.
+      removeAllScheduleItems: (preserveLive = true) =>
+        set((state) => {
+          if (!preserveLive) {
+            return {
+              schedule: [],
+              selectedScheduleItemId: null,
+              slides: [],
+              previewSlideIndex: 0,
+              liveSlideIndex: -1,
+              pinnedPreviewSlide: null,
+              liveSlide: null,
+            }
+          }
+          const liveId =
+            state.isLive && state.selectedScheduleItemId
+              ? state.selectedScheduleItemId
+              : null
+          if (!liveId) {
+            return {
+              schedule: [],
+              selectedScheduleItemId: null,
+            }
+          }
+          const liveItem = state.schedule.find((s) => s.id === liveId)
+          return {
+            schedule: liveItem ? [liveItem] : [],
+            selectedScheduleItemId: liveItem ? liveId : null,
+          }
+        }),
       removeScheduleItem: (id) =>
         set((state) => {
           const next = state.schedule.filter((s) => s.id !== id)
@@ -925,9 +1462,25 @@ export const useAppStore = create<AppState>()(
             liveSlideIndex: wasSelected ? -1 : state.liveSlideIndex,
           }
         }),
+      // v0.7.194-hotfix.7 — Bulk delete for Select-to-delete mode in the
+      // Scripture Feed Queue tab. Currently-live item is preserved on
+      // air; only schedule references are removed.
+      removeScheduleItemsByIds: (ids) =>
+        set((state) => {
+          const drop = new Set(ids)
+          const next = state.schedule.filter((s) => !drop.has(s.id))
+          const wasSelected = state.selectedScheduleItemId && drop.has(state.selectedScheduleItemId)
+          return {
+            schedule: next,
+            selectedScheduleItemId: wasSelected ? next[0]?.id ?? null : state.selectedScheduleItemId,
+            slides: wasSelected ? next[0]?.slides ?? [] : state.slides,
+            previewSlideIndex: wasSelected ? 0 : state.previewSlideIndex,
+            liveSlideIndex: wasSelected ? -1 : state.liveSlideIndex,
+          }
+        }),
       selectScheduleItem: (id) =>
         set((state) => {
-          if (id === null) return { selectedScheduleItemId: null }
+          if (id === null) return { selectedScheduleItemId: null, pinnedPreviewSlide: null, liveSlide: null }
           const item = state.schedule.find((s) => s.id === id)
           if (!item) return {}
           return {
@@ -935,6 +1488,8 @@ export const useAppStore = create<AppState>()(
             slides: item.slides,
             previewSlideIndex: 0,
             liveSlideIndex: -1,
+            pinnedPreviewSlide: null,
+            liveSlide: null,
           }
         }),
       moveScheduleItem: (id, direction) =>
@@ -954,6 +1509,8 @@ export const useAppStore = create<AppState>()(
           slides: [],
           previewSlideIndex: 0,
           liveSlideIndex: -1,
+          pinnedPreviewSlide: null,
+          liveSlide: null,
         }),
 
       // Settings
@@ -966,8 +1523,10 @@ export const useAppStore = create<AppState>()(
       // Startup logo / media playback flags (not persisted).
       hasShownContent: false,
       setHasShownContent: (b) => set({ hasShownContent: b }),
-      mediaPaused: false,
-      setMediaPaused: (b) => set({ mediaPaused: b }),
+      previewMediaPaused: false,
+      setPreviewMediaPaused: (b) => set({ previewMediaPaused: b }),
+      liveMediaPaused: false,
+      setLiveMediaPaused: (b) => set({ liveMediaPaused: b }),
       previewVideoPlaying: false,
       setPreviewVideoPlaying: (b) => set({ previewVideoPlaying: b }),
       liveVideoPlaying: false,
@@ -1019,8 +1578,14 @@ export const useAppStore = create<AppState>()(
       setAutoLiveThreshold: (t) =>
         set({ autoLiveThreshold: Math.max(0, Math.min(1, t)) }),
 
-      mediaCurrentTime: 0,
-      setMediaCurrentTime: (t) => set({ mediaCurrentTime: Math.max(0, t) }),
+      previewMediaCurrentTime: 0,
+      setPreviewMediaCurrentTime: (t) => set({ previewMediaCurrentTime: Math.max(0, t) }),
+      liveMediaCurrentTime: 0,
+      setLiveMediaCurrentTime: (t) => set({ liveMediaCurrentTime: Math.max(0, t) }),
+      previewMediaLoop: false,
+      setPreviewMediaLoop: (b) => set({ previewMediaLoop: b }),
+      liveMediaLoop: false,
+      setLiveMediaLoop: (b) => set({ liveMediaLoop: b }),
 
       // Media library view density. Defaults to a comfortable middle
       // ground; user pick is persisted via partialize below.
@@ -1037,11 +1602,19 @@ export const useAppStore = create<AppState>()(
       // automatically, but every field they explicitly set survives.
       // This stops the "I upgraded and my trial reset / my fonts
       // changed / my mic gain went back to 1" complaints.
-      version: 3,
+      // v0.7.184 — bumped to 5 so the v4→v5 LT-coercion migration block
+      // below actually executes on existing installs upgrading from v0.7.183
+      // and earlier. Without this bump the migration is dead code: zustand
+      // only runs migration steps where `version < currentVersion`, so
+      // leaving this at 4 means stale persisted `displayMode='lower-third'`
+      // / `'lower-third-black'` would never be coerced and the in-app LT
+      // surfaces (now deleted) would render in undefined mode.
+      version: 5,
       migrate: (persistedState: unknown, version: number) => {
         const ps = (persistedState as {
-          settings?: Partial<AppSettings>
+          settings?: Partial<AppSettings> & { defaultTranslation?: string; ndiTranslation?: string }
           voiceControlEnabled?: boolean
+          selectedTranslation?: string
         } | undefined) ?? {}
         // v0.5.34 → v1: flip autoGoLiveOnDetection on for early adopters.
         if (version < 1) {
@@ -1086,6 +1659,62 @@ export const useAppStore = create<AppState>()(
             voiceControlEnabled: true,
           }
         }
+        // v0.7.167 → v4: rewrite persisted Akuapem 'TWI' → 'TWIASANTE'.
+        // v0.7.163 dropped the Akuapem TWI key from TRANSLATIONS_INFO,
+        // but seats that ran v0.7.137–v0.7.162 still had 'TWI' baked
+        // into their persisted store under three keys:
+        //   - settings.defaultTranslation
+        //   - settings.ndiTranslation
+        //   - selectedTranslation
+        // After the upgrade those values become orphans: not in the
+        // dropdown options list, but still rendered as the SELECTED
+        // label and still sent to /api/bible as translation='TWI'.
+        // Result: operators saw "TWI" stuck in the header dropdown
+        // and on the verse badge, and the API silently fell through
+        // to whatever code path used to fetch Akuapem text. This
+        // migration is a one-time rewrite — anyone whose persisted
+        // value was ALREADY 'TWIASANTE' or any other key passes
+        // through untouched.
+        if (version < 4) {
+          const s = (ps.settings ?? {}) as Partial<AppSettings> & { defaultTranslation?: string; ndiTranslation?: string }
+          const fixedSettings: typeof s = { ...s }
+          if (s.defaultTranslation === ('TWI' as string)) {
+            fixedSettings.defaultTranslation = 'TWIASANTE' as BibleTranslation
+          }
+          if (s.ndiTranslation === ('TWI' as string)) {
+            fixedSettings.ndiTranslation = 'TWIASANTE' as BibleTranslation
+          }
+          const fixedSelected = (ps.selectedTranslation === ('TWI' as string))
+            ? ('TWIASANTE' as BibleTranslation)
+            : ps.selectedTranslation
+          return {
+            ...ps,
+            settings: fixedSettings,
+            selectedTranslation: fixedSelected,
+          }
+        }
+        // v0.7.184 → v5: coerce stale in-app `displayMode` of
+        // 'lower-third' or 'lower-third-black' → 'full'. The in-app
+        // Lower Third UI was removed in v0.7.184 (operator-explicit:
+        // "remove the lower third from the app, leaving only the lower
+        // third that can be operated in NDI settings only"). Without
+        // this migration, an existing install that last persisted
+        // `displayMode='lower-third'` would render NOTHING on the
+        // in-app Live Display surface (the LT branch in route.ts is
+        // now NDI-only). Idempotent: a fresh install at version 5
+        // already has displayMode='full' and the equality check skips.
+        // NDI's separate `ndiDisplayMode` field is intentionally NOT
+        // touched — operators who configured an LT NDI broadcast keep it.
+        if (version < 5) {
+          const s = (ps.settings ?? {}) as Omit<Partial<AppSettings>, 'displayMode'> & { displayMode?: string }
+          if (s.displayMode === 'lower-third' || s.displayMode === 'lower-third-black') {
+            return {
+              ...ps,
+              settings: { ...s, displayMode: 'full' as DisplayMode },
+            }
+          }
+          return ps
+        }
         return ps
       },
       partialize: (state) => ({
@@ -1117,3 +1746,14 @@ export const useAppStore = create<AppState>()(
     }
   )
 )
+
+// v0.7.216 follow-up #2 — dev-only diagnostic hook. Exposes the Zustand store on
+// `window.__appStore` so Playwright (and operators debugging via DevTools) can
+// stage repro scenarios — e.g. push a media-video slide to Live, then open
+// Settings and click a dropdown to verify the z-[60] portal fix holds while a
+// HW-decoded video is actively repainting the live compositor layer. Guarded
+// on `process.env.NODE_ENV !== 'production'` so production builds never expose
+// the store. No-op outside the browser (SSR safety).
+if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
+  ;(window as unknown as { __appStore?: typeof useAppStore }).__appStore = useAppStore
+}
