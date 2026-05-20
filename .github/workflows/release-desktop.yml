@@ -535,7 +535,7 @@ jobs:
     permissions:
       contents: read
       actions: read
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: ${{ !cancelled() && needs.build.result == 'success' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
     steps:
       # We need the repo (and its tags) checked out so the opt-out step can
       # read annotated-tag messages — `actions/download-artifact` alone
@@ -772,7 +772,7 @@ jobs:
     name: Publish GitHub Release
     needs: [build, verify-macos]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.verify-macos.result == 'success' || needs.verify-macos.result == 'skipped') && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
     steps:
       # Needed so the opt-out step can read annotated-tag messages.
       - name: Checkout (for tag annotation reads)
