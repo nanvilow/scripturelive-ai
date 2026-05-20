@@ -1,0 +1,56 @@
+name: Ruleset drift check
+
+# Daily drift check between the committed JSON in `.github/rulesets/`
+# (source of truth) and the live rulesets on GitHub. Catches the case
+# where someone edits a ruleset in the GitHub UI (Settings → Rules →
+# Rulesets) and the JSON falls out of sync — without this check, the
+# drift would only be noticed the next time `apply-rulesets` happened
+# to run.
+#
+# On drift the job fails AND opens (or comments on) a tracking issue
+# labelled `ruleset-drift` so the signal is visible outside the Actions
+# tab.
+
+on:
+  schedule:
+    # 07:23 UTC daily — off-hour, off-the-hour to dodge the cron rush
+    # at :00 (same rationale as codeql.yml's :17).
+    - cron: "23 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  # Reading rulesets and opening drift-tracking issues both require
+  # write on issues; ruleset reads themselves are covered by the
+  # default GITHUB_TOKEN repo scope.
+  contents: read
+  issues: write
+  # `administration: read` is what lets GITHUB_TOKEN call
+  # /repos/:owner/:repo/rulesets — without it the API returns 403.
+  administration: read
+
+concurrency:
+  group: ruleset-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: Diff committed JSON against live rulesets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install scripts package
+        run: pnpm install --frozen-lockfile --filter @workspace/scripts...
+
+      - name: Check for ruleset drift
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: pnpm --filter @workspace/scripts run check-ruleset-drift

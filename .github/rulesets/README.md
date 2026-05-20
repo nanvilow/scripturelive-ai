@@ -75,6 +75,29 @@ Falling back to the UI or raw `gh api` calls is no longer recommended —
 they let the live config drift from these JSON files, which is the
 exact problem the script exists to prevent.
 
+## Drift check
+
+`.github/workflows/ruleset-drift.yml` runs daily and after manual
+dispatch. It fetches every ruleset from
+`/repos/:owner/:repo/rulesets/{id}`, matches it to the file with the
+same `name` in this directory, and fails the job if any field other
+than server-assigned ids/timestamps differs. The check is **two-way**:
+a JSON file with no matching ruleset on GitHub fails (someone deleted
+it in the UI), AND a ruleset on GitHub with no matching JSON file
+fails (someone created one in the UI without committing the source of
+truth). On failure it also opens (or comments on) an issue labelled
+`ruleset-drift` so the signal shows up outside the Actions tab.
+
+The same check is runnable locally:
+
+```bash
+pnpm --filter @workspace/scripts run check-ruleset-drift
+```
+
+If it reports drift, either re-run `apply-rulesets` to push the JSON
+back over the UI change, or pull the UI change into the JSON file and
+commit it — whichever reflects the intended state.
+
 ## How "release tags must come from main" is enforced (two layers)
 
 Two complementary controls work together. Either alone has a gap; the
