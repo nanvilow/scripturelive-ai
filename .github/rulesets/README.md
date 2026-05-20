@@ -56,36 +56,24 @@ once both land" hole.
 
 ## Applying the ruleset
 
-GitHub does not auto-import files from this directory. Apply once via
-either the UI or the API; thereafter, edit the JSON here and re-apply on
-change.
-
-### UI (one-off, easiest)
-
-1. Repo → **Settings** → **Rules** → **Rulesets** → **New ruleset** →
-   **Import a ruleset**.
-2. Upload each file in this directory in turn
-   (`main-branch-protection.json`, `release-tag-protection.json`).
-   They are independent rulesets and must each be imported once.
-3. Set **Enforcement status** to **Active** (the JSON already sets it,
-   but the UI confirms).
-4. Save.
-
-### API (scriptable, preferred when iterating)
-
-With a token that has `repo` admin scope:
+GitHub does not auto-import files from this directory. Run the apply
+script — it iterates every `*.json` file here, looks up whether a
+ruleset of that `name` already exists on the repo, and POSTs new ones
+or PUTs existing ones accordingly. The JSON files are the source of
+truth; re-run after every edit.
 
 ```bash
-gh api \
-  --method POST \
-  -H "Accept: application/vnd.github+json" \
-  /repos/:owner/:repo/rulesets \
-  --input .github/rulesets/main-branch-protection.json
+pnpm --filter @workspace/scripts run apply-rulesets
 ```
 
-Repeat for `release-tag-protection.json`. To update an existing ruleset,
-swap `POST /rulesets` for `PUT /rulesets/{ruleset_id}` (find the id with
-`gh api /repos/:owner/:repo/rulesets`).
+Requires the `gh` CLI authenticated with a token that has `repo` admin
+scope, and the current working directory must be inside a clone of the
+target GitHub repo (the script reads the repo slug from
+`gh repo view`).
+
+Falling back to the UI or raw `gh api` calls is no longer recommended —
+they let the live config drift from these JSON files, which is the
+exact problem the script exists to prevent.
 
 ## How "release tags must come from main" is enforced (two layers)
 
