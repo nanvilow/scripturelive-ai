@@ -608,6 +608,13 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
             echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # v0.7.232 fix — branch-dispatch: synthesise tag_name from
+            # package.json version so downstream artifactName globs
+            # (`ScriptureLive-AI-${ver}-Setup-*.exe`) match the real
+            # filename instead of `refs/heads/release/v0.7.N`.
+            version=$(node -p "require('./artifacts/imported-app/package.json').version")
+            echo "name=v${version}" >> "$GITHUB_OUTPUT"
           else
             echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
@@ -832,6 +839,13 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
             echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # v0.7.232 fix — branch-dispatch: synthesise tag_name from
+            # package.json version so downstream artifactName globs
+            # (`ScriptureLive-AI-${ver}-Setup-*.exe`) match the real
+            # filename instead of `refs/heads/release/v0.7.N`.
+            version=$(node -p "require('./artifacts/imported-app/package.json').version")
+            echo "name=v${version}" >> "$GITHUB_OUTPUT"
           else
             echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
