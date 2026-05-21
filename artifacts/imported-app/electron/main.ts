@@ -198,6 +198,16 @@ let frameCaptureFlags: {
   // of the URL-bake fix.
   lowerThirdHeight: 'sm' | 'md' | 'lg' | null
   lowerThirdScale: number | null
+  // v0.7.230 — Track the operator-picked OBS-compat BGRA opt-in on
+  // the running sender so a toggle WHILE NDI is running forces a true
+  // rebuild instead of short-circuiting. The FourCC is baked into the
+  // sender at ndilib_send_create and CANNOT be live-applied — without
+  // this field the equality check below would short-circuit (same
+  // source/geometry/fps/transparent/LT...) and the wire FourCC would
+  // stay on the OLD value while the panel UI shows the new toggle
+  // state. Same lesson as v0.6.6 transparent toggle + v0.7.5.1 LT
+  // height/scale drag — any sender-create-time option MUST live here.
+  forceBgraForObs: boolean
 } | null = null
 let mainWindow: BrowserWindow | null = null
 // v0.7.121 — Tracked kiosk-style output BrowserWindows (congregation,
@@ -2336,7 +2346,10 @@ function setupIpc() {
           frameCaptureFlags.lowerThird === wantLT &&
           (!wantLT || frameCaptureFlags.lowerThirdPosition === wantLTPos) &&
           (!wantLT || frameCaptureFlags.lowerThirdHeight === wantLTHeight) &&
-          (!wantLT || frameCaptureFlags.lowerThirdScale === wantLTScale)
+          (!wantLT || frameCaptureFlags.lowerThirdScale === wantLTScale) &&
+          // v0.7.230 — see frameCaptureFlags.forceBgraForObs comment
+          // above. Toggle while running MUST trigger rebuild.
+          frameCaptureFlags.forceBgraForObs === (opts.forceBgraForObs === true)
         ) {
           broadcastNdiStatus(cur)
           return { ok: true, status: cur }
@@ -2438,6 +2451,9 @@ function setupIpc() {
           // ndi:start can detect operator-dragged changes.
           lowerThirdHeight: wantLTHeight,
           lowerThirdScale: wantLTScale,
+          // v0.7.230 — persist the BGRA-compat pick alongside the
+          // other build-time flags. See frameCaptureFlags type def.
+          forceBgraForObs: opts.forceBgraForObs === true,
         }
         broadcastNdiStatus(ndi.getStatus())
         return { ok: true, status: ndi.getStatus() }

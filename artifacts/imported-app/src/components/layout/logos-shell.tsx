@@ -1420,7 +1420,14 @@ function PreviewCard() {
                   // when the operator single-clicks a DIFFERENT tile.
                   <div
                     className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
-                    style={{ aspectRatio: '16 / 9' }}
+                    // v0.7.230 follow-up — container aspect MUST also
+                    // derive from resolveMediaFit so '16:9' / '4:3'
+                    // picks constrain the standby preview frame the
+                    // same way MediaVideoSurface (L518) does.
+                    // Hardcoding '16 / 9' here left '4:3' clips
+                    // letterboxed in the standby surface even after
+                    // the objectFit fix below — half-baked lockstep.
+                    style={{ aspectRatio: resolveMediaFit(previewSlide.mediaFit).aspect ?? '16 / 9' }}
                   >
                     <video
                       key={previewSlide.mediaUrl}
