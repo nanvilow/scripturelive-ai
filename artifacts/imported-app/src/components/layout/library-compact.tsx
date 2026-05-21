@@ -1155,6 +1155,7 @@ interface MediaItem {
   name: string
   dataUrl: string
   kind: 'image' | 'video'
+  posterUrl?: string
 }
 
 const MEDIA_KEY = 'scripturelive.media.v1'
@@ -1199,9 +1200,76 @@ export function MediaLibraryCompact() {
     })
   }
 
+  // v0.7.233 — Upload-time first-frame extraction. The v0.7.231 freezeBg
+  // pattern on the video tile (preload="auto" + play().then(pause) on
+  // loadeddata) relies on the browser actually firing loadeddata and
+  // honouring play() promptly — for freshly-uploaded data: URLs the
+  // demux + GOP-fetch can take seconds, and on some Chromium builds the
+  // muted-autoplay-style play() call silently fails before any frame is
+  // committed to the compositor. Operators reported they could not
+  // visually identify uploaded clips with similar filenames. Fix: decode
+  // frame 0 to a 320px-wide canvas at upload time and persist a small
+  // JPEG dataURL as `posterUrl`. The video tile then renders with the
+  // poster attribute so a thumbnail appears INSTANTLY on mount with no
+  // play()/pause() gymnastics and no HW decoder probe. The freezeBg
+  // pattern is preserved as a secondary path for legacy media items
+  // (uploaded before v0.7.233) that lack a posterUrl.
+  //
+  // Bounded cost: 5s timeout, 320px canvas (~15-30KB JPEG @ q=0.7),
+  // single extraction per upload (NOT per tile mount), released
+  // immediately. Uses createObjectURL for the source so we don't have
+  // to wait for the FileReader-produced 200MB base64 dataURL to be
+  // re-parsed by the video element.
+  const extractFirstFrameJpeg = (file: File): Promise<string | null> => new Promise((resolve) => {
+    let settled = false
+    const settle = (val: string | null) => { if (!settled) { settled = true; resolve(val) } }
+    try {
+      const objUrl = URL.createObjectURL(file)
+      const v = document.createElement('video')
+      v.muted = true
+      v.playsInline = true
+      v.preload = 'auto'
+      v.crossOrigin = 'anonymous'
+      v.src = objUrl
+      const cleanup = () => { try { URL.revokeObjectURL(objUrl) } catch { /* noop */ } }
+      const timer = setTimeout(() => { cleanup(); settle(null) }, 5000)
+      const grab = () => {
+        try {
+          const vw = v.videoWidth || 320
+          const vh = v.videoHeight || 180
+          const w = Math.min(vw, 320)
+          const h = Math.max(1, Math.round(w * (vh / vw)))
+          const c = document.createElement('canvas')
+          c.width = w; c.height = h
+          const ctx = c.getContext('2d')
+          if (!ctx) { clearTimeout(timer); cleanup(); settle(null); return }
+          ctx.drawImage(v, 0, 0, w, h)
+          const data = c.toDataURL('image/jpeg', 0.7)
+          clearTimeout(timer); cleanup(); settle(data || null)
+        } catch {
+          clearTimeout(timer); cleanup(); settle(null)
+        }
+      }
+      // Some codecs need a play()→pause() kick before drawImage will
+      // pull a real frame (paused-from-cold returns transparent black).
+      // Race loadeddata + the play kick; whichever produces a non-zero
+      // canvas wins via the settled guard.
+      v.addEventListener('loadeddata', () => {
+        const pp = v.play()
+        if (pp && pp.then) {
+          pp.then(() => { try { v.pause() } catch { /* noop */ } grab() })
+            .catch(() => grab())
+        } else { grab() }
+      }, { once: true })
+      v.addEventListener('error', () => { clearTimeout(timer); cleanup(); settle(null) }, { once: true })
+    } catch {
+      settle(null)
+    }
+  })
+
   const handleFiles = (files: FileList | null) => {
     if (!files || !files.length) return
-    Array.from(files).forEach((file) => {
+    Array.from(files).forEach(async (file) => {
       const isImage = file.type.startsWith('image/')
       const isVideo = file.type.startsWith('video/')
       if (!isImage && !isVideo) {
@@ -1217,6 +1285,13 @@ export function MediaLibraryCompact() {
         toast.error(`${file.name} is over 200 MB — too large to load`)
         return
       }
+      // v0.7.233 — extract first-frame poster BEFORE the heavy base64
+      // serialisation so the canvas reads from the cheap object URL
+      // and not from a re-parsed 200MB string. Failure (timeout / no
+      // decoder / unsupported codec) returns null and we fall back to
+      // the v0.7.231 freezeBg pattern on the tile itself — no UX
+      // regression vs pre-v0.7.233.
+      const posterUrl = isVideo ? (await extractFirstFrameJpeg(file)) ?? undefined : undefined
       const reader = new FileReader()
       reader.onload = () => {
         const dataUrl = reader.result as string
@@ -1229,6 +1304,7 @@ export function MediaLibraryCompact() {
           name: file.name,
           dataUrl,
           kind: isImage ? 'image' : 'video',
+          posterUrl,
         })
         toast.success(`${file.name} added`)
       }
@@ -1475,13 +1551,18 @@ export function MediaLibraryCompact() {
                      races the loadeddata kick and spams AbortError. */
                   <video
                     src={m.dataUrl}
+                    poster={m.posterUrl}
                     className="w-full aspect-video object-cover bg-black"
                     muted
                     playsInline
-                    preload="auto"
+                    preload={m.posterUrl ? 'none' : 'auto'}
                     disablePictureInPicture
                     disableRemotePlayback
                     onLoadedData={(e) => {
+                      // v0.7.233 — poster attribute paints instantly; we
+                      // only need the freezeBg play→pause kick for legacy
+                      // items (uploaded pre-v0.7.233) that lack posterUrl.
+                      if (m.posterUrl) return
                       const v = e.currentTarget
                       v.play().then(() => v.pause()).catch(() => { try { v.pause() } catch (_e) { /* swallow */ } })
                     }}
