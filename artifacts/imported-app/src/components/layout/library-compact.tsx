@@ -1299,6 +1299,19 @@ export function MediaLibraryCompact() {
   // Same-media case is unchanged — it already short-circuits at the
   // PreviewCard "ON AIR" placard (v0.7.193-hotfix.2) and never mounts
   // a 2nd <video>.
+  // v0.7.229 — Mirror the v0.7.222 Fix #8 URL-tail fallback used by the
+  // render-side `liveIsMediaVideo` predicate (logos-shell.tsx L1197).
+  // Legacy persisted live slides have `mediaUrl` but no `mediaKind`, so
+  // without this fallback the click handler's gate misses → the
+  // `setPreviewMediaPaused(true)` flip never fires → the v0.7.227
+  // standby poster gate (logos-shell.tsx L1204) doesn't engage when
+  // the operator single-clicks a video tile while a legacy live video
+  // is playing. Result before v0.7.229: full MediaVideoSurface mounts
+  // in Preview, autoplay competes with live decoder, operator sees
+  // either a stuck poster or a stalled live feed. Same regex shape
+  // used by L1197 — keep them in lockstep.
+  const isVideoUrl = (u?: string | null) =>
+    !!u && /\.(mp4|webm|mov|m4v|mkv|ogv)(\?|#|$)/i.test(u)
   const sendMediaToPreview = (m: MediaItem) => {
     const slide = buildMediaSlide(m)
     const st = useAppStore.getState()
@@ -1306,8 +1319,8 @@ export function MediaLibraryCompact() {
     const liveIsPlayingDifferentMediaVideo = !!(
       liveSlide &&
       liveSlide.type === 'media' &&
-      liveSlide.mediaKind === 'video' &&
       liveSlide.mediaUrl &&
+      (liveSlide.mediaKind === 'video' || isVideoUrl(liveSlide.mediaUrl)) &&
       m.kind === 'video' &&
       slide.mediaUrl &&
       liveSlide.mediaUrl !== slide.mediaUrl
@@ -1439,23 +1452,43 @@ export function MediaLibraryCompact() {
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={m.dataUrl} alt={m.name} className="w-full aspect-video object-cover" />
                 ) : (
-                  /* v0.7.222 Fix #5 (architect code-review) — library-popout
-                     grid thumbnail MUST use preload="none" + disable PIP /
-                     remote playback so it never triggers a decoder-capability
-                     probe. Pre-fix the bare <video> tag inherited Chromium's
-                     default preload behaviour (often eager metadata fetch +
-                     transient HW decoder slot), compounding the v0.7.222
-                     LIVE-pane contention by N more slot-probes per popout
-                     render. Operator identifies clips via the hover overlay
-                     (filename + delete button) — no thumbnail frame needed. */
+                  /* v0.7.231 — Library tile now PAINTS the first frame
+                     of the video as a thumbnail so operators can
+                     visually identify uploaded clips (the v0.7.222
+                     "operator identifies clips via filename" rationale
+                     turned out to be wrong — operators upload several
+                     clips with similar names like "Holyfire Template-
+                     1_2.mp4" / "OCT AMI.mp4" and can't tell them apart
+                     from text alone). Re-uses the v0.7.225 freezeBg
+                     pattern: preload="auto" + play().then(pause) on
+                     loadeddata to force a single decoded frame onto the
+                     compositor then release the HW decoder slot
+                     immediately. Cost is bounded — N tile-mounts on
+                     initial render allocate N brief decoder probes,
+                     released within a few ms each, then ZERO steady-
+                     state decoder cost (no autoplay, no loop). The
+                     v0.7.222 contention concern is now satisfied by
+                     the release-after-first-frame discipline, not by
+                     refusing to ever paint. setTimeout(pause, 0) on
+                     `play` mirrors v0.7.225 / v0.7.227 / v0.7.230 lock-
+                     step — synchronous pause inside the play listener
+                     races the loadeddata kick and spams AbortError. */
                   <video
                     src={m.dataUrl}
-                    className="w-full aspect-video object-cover"
+                    className="w-full aspect-video object-cover bg-black"
                     muted
                     playsInline
-                    preload="none"
+                    preload="auto"
                     disablePictureInPicture
                     disableRemotePlayback
+                    onLoadedData={(e) => {
+                      const v = e.currentTarget
+                      v.play().then(() => v.pause()).catch(() => { try { v.pause() } catch (_e) { /* swallow */ } })
+                    }}
+                    onPlay={(e) => {
+                      const v = e.currentTarget
+                      setTimeout(() => { try { v.pause() } catch (_e) { /* swallow */ } }, 0)
+                    }}
                   />
                 )}
                 <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-1">

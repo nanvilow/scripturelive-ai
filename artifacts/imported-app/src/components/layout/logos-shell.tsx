@@ -1468,25 +1468,25 @@ function PreviewCard() {
                         setTimeout(() => { try { v.pause() } catch (_e) { /* swallow */ } }, 0)
                       }}
                     />
-                    <div className="absolute top-2 left-2 z-10 flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/90 text-black text-[10px] uppercase tracking-wider font-semibold pointer-events-none">
-                      <span className="w-1.5 h-1.5 rounded-full bg-black/70" />
-                      Standby
-                    </div>
-                    <div className="absolute inset-x-0 bottom-0 z-10 flex flex-col items-center gap-1 px-3 py-2 bg-gradient-to-t from-black/85 via-black/55 to-transparent">
-                      <div className="text-[10px] uppercase tracking-wider text-amber-300/90 font-semibold">
-                        Preview ready · Live is on air
-                      </div>
-                      <div className="text-[10px] text-white/70 max-w-[90%] truncate">
-                        {previewSlide.title || 'Video clip'}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setPreviewMediaPaused(false)}
-                        className="mt-0.5 h-7 px-3 rounded bg-amber-500/90 hover:bg-amber-500 text-black text-[10px] uppercase tracking-wider font-semibold"
-                      >
-                        Play preview
-                      </button>
-                    </div>
+                    {/* v0.7.231 — Standby badge + "Play preview" amber
+                        CTA REMOVED per operator request. The freezeBg
+                        poster <video> above already gives the operator
+                        visual confirmation of which clip they single-
+                        clicked (v0.7.227 lesson); the amber overlay
+                        chrome on top of it was confusing operators who
+                        expected the SAME Preview transport bar at the
+                        bottom of the card (▶ ⬛ 🔁 + scrubber, rendered
+                        unconditionally for media-video preview slides
+                        at L1551) to monitor the clip — instead the bar
+                        is BELOW the Card and the amber CTA was inside
+                        the Card, making it look like two competing
+                        controls. The transport bar's Play button now
+                        flips previewMediaPaused=false (see
+                        VideoTransport.onPlay) which unmounts this
+                        standby branch and mounts the full
+                        MediaVideoSurface (autoPlay-on-mount per
+                        v0.7.216 gate). Single source of truth for
+                        preview playback = the transport bar. */}
                   </div>
                 ) : (
                   <MediaVideoSurface
@@ -1618,13 +1618,26 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
     document.querySelector<HTMLVideoElement>(`video[data-surface="${surface}"]`)
 
   const onPlay = () => {
-    const el = findVideo()
-    if (!el) return
+    // v0.7.231 — Flip the master mediaPaused flag FIRST so the standby-
+    // poster branch in PreviewCard (L1421) un-renders and the full
+    // MediaVideoSurface mounts with autoPlay=true (per v0.7.216 gate
+    // `!mediaPaused && surface === 'preview'`). Before v0.7.231 this
+    // function did `if (!el) return` BEFORE the flag flip — the standby
+    // poster has no `data-surface="preview"` attribute (deliberate —
+    // we don't want the transport scrubbing to apply to the muted
+    // first-frame poster), so `findVideo()` returned null and the
+    // Play button was a no-op while standby was active. Operators
+    // reported "clicking play on the transport does nothing when live
+    // is already playing video." Flipping the flag first triggers a
+    // React render → MediaVideoSurface mounts → autoPlay fires → the
+    // poll loop above picks up the newly-mounted element on the next
+    // rAF tick and the transport stays in sync.
     // Mirror to the master mediaPaused flag so iframe consumers (NDI,
     // OBS, secondary screen) follow the operator's play/pause from
     // either Preview or Live transport.
     setMediaPaused(false)
-    el.play().catch(() => {})
+    const el = findVideo()
+    if (el) el.play().catch(() => {})
   }
   const onPause = () => {
     const el = findVideo()
