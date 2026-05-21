@@ -1269,48 +1269,86 @@ export function MediaLibraryCompact() {
 
   const handleFiles = (files: FileList | null) => {
     if (!files || !files.length) return
-    Array.from(files).forEach(async (file) => {
-      const isImage = file.type.startsWith('image/')
-      const isVideo = file.type.startsWith('video/')
-      if (!isImage && !isVideo) {
-        toast.error(`Unsupported file type: ${file.name}`)
-        return
-      }
-      // Generous in-memory cap. Browsers comfortably handle this for
-      // a single live-production session; very large clips simply
-      // won't survive a page reload but they DO appear immediately
-      // in Preview / Live Display, which is what operators expect.
-      const MAX = 200 * 1024 * 1024 // 200 MB
-      if (file.size > MAX) {
-        toast.error(`${file.name} is over 200 MB — too large to load`)
-        return
-      }
-      // v0.7.233 — extract first-frame poster BEFORE the heavy base64
-      // serialisation so the canvas reads from the cheap object URL
-      // and not from a re-parsed 200MB string. Failure (timeout / no
-      // decoder / unsupported codec) returns null and we fall back to
-      // the v0.7.231 freezeBg pattern on the tile itself — no UX
-      // regression vs pre-v0.7.233.
-      const posterUrl = isVideo ? (await extractFirstFrameJpeg(file)) ?? undefined : undefined
-      const reader = new FileReader()
-      reader.onload = () => {
-        const dataUrl = reader.result as string
-        if (!dataUrl) {
-          toast.error(`Empty file: ${file.name}`)
-          return
+    // v0.7.233 — Bulk uploads are SERIALISED, not parallelised. Each
+    // extractFirstFrameJpeg() mounts a real <video preload="auto"> and
+    // kicks play() to force first-frame paint; running N of those in
+    // parallel for a bulk upload of (say) 15 worship-loop clips would
+    // saturate finite HW decoder slots and CONTEND with the foreground
+    // Preview / Live <video> surfaces operators are actively driving on
+    // a live service. That is exactly the class of regression guarded
+    // by v0.7.216 (HW-decoder budget protection on the autoplay gate)
+    // and v0.7.222 (5-condition STANDBY gate; finite decoder count
+    // invariant). Pre-v0.7.233 the original handleFiles also looked
+    // parallel (forEach over a FileReader), but FileReader.readAsDataURL
+    // does NOT hold a decoder slot — it's pure byte→base64 work on a
+    // worker pool. Poster extraction DOES hold a slot, so the same
+    // shape is no longer safe.
+    //
+    // Serialised via an explicit for-of loop with `await` rather than
+    // forEach(async ...) firehose. Each file's extraction completes
+    // (decoder released) before the next one starts. The user-perceived
+    // cost: a 10-file bulk upload takes 10 * ~1s = ~10s for thumbnails
+    // to all appear instead of all-at-once (but more reliably, since
+    // the parallel firehose was failing extraction on most files past
+    // the decoder slot count anyway). Image-only and oversized branches
+    // are cheap and unaffected by ordering.
+    const queue = Array.from(files)
+    void (async () => {
+      for (const file of queue) {
+        const isImage = file.type.startsWith('image/')
+        const isVideo = file.type.startsWith('video/')
+        if (!isImage && !isVideo) {
+          toast.error(`Unsupported file type: ${file.name}`)
+          continue
         }
-        addMediaItem({
-          id: `media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          name: file.name,
-          dataUrl,
-          kind: isImage ? 'image' : 'video',
-          posterUrl,
+        // Generous in-memory cap. Browsers comfortably handle this for
+        // a single live-production session; very large clips simply
+        // won't survive a page reload but they DO appear immediately
+        // in Preview / Live Display, which is what operators expect.
+        const MAX = 200 * 1024 * 1024 // 200 MB
+        if (file.size > MAX) {
+          toast.error(`${file.name} is over 200 MB — too large to load`)
+          continue
+        }
+        // v0.7.233 — extract first-frame poster BEFORE the heavy base64
+        // serialisation so the canvas reads from the cheap object URL
+        // and not from a re-parsed 200MB string. Failure (timeout / no
+        // decoder / unsupported codec) returns null and we fall back to
+        // the v0.7.231 freezeBg pattern on the tile itself — no UX
+        // regression vs pre-v0.7.233. AWAITed inside the for-of loop
+        // so only ONE decoder slot is in use at any time across the
+        // whole bulk upload (see decoder-pressure comment above).
+        const posterUrl = isVideo ? (await extractFirstFrameJpeg(file)) ?? undefined : undefined
+        // FileReader wrapped in a Promise so the for-of loop awaits its
+        // completion too — keeps the per-file ordering deterministic
+        // (toast / addMediaItem fire in upload order, not race order)
+        // AND prevents two parallel FileReaders from spiking memory on
+        // bulk uploads of large clips (each readAsDataURL allocates a
+        // base64 string roughly 1.33x the file size).
+        await new Promise<void>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = () => {
+            const dataUrl = reader.result as string
+            if (!dataUrl) {
+              toast.error(`Empty file: ${file.name}`)
+              resolve()
+              return
+            }
+            addMediaItem({
+              id: `media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              name: file.name,
+              dataUrl,
+              kind: isImage ? 'image' : 'video',
+              posterUrl,
+            })
+            toast.success(`${file.name} added`)
+            resolve()
+          }
+          reader.onerror = () => { toast.error(`Could not read ${file.name}`); resolve() }
+          reader.readAsDataURL(file)
         })
-        toast.success(`${file.name} added`)
       }
-      reader.onerror = () => toast.error(`Could not read ${file.name}`)
-      reader.readAsDataURL(file)
-    })
+    })()
   }
 
   const removeItem = (id: string) => {
