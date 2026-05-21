@@ -32,6 +32,13 @@ export type NdiStartOptions = {
   // is the canonical EasyWorship-class smoothness trick. See
   // nativeSendFrame for the FourCC selection.
   transparent?: boolean
+  // v0.7.230 — Operator escalation: OBS Studio's NDI Source plugin
+  // (some versions) refuses to enumerate or display FourCC BGRX
+  // sources, leaving the operator with an apparent "OBS doesn't see my
+  // NDI" state. When true the sender forces BGRA on every frame even in
+  // opaque mode (the v0.7.223 BGRX optimisation is bypassed). Default
+  // false preserves v0.7.223 perf for vMix / Wirecast / modern OBS NDI.
+  forceBgraForObs?: boolean
 }
 
 export type NdiStatus = {
@@ -223,6 +230,11 @@ export class NdiService extends EventEmitter {
   // NdiStartOptions.transparent; reset in stop() so a subsequent
   // start() can't inherit a stale flag.
   private senderTransparent = false
+  // v0.7.230 — Mirrors NdiStartOptions.forceBgraForObs; reset in stop()
+  // so a subsequent start() can't inherit a stale flag (mirrors the
+  // v0.7.223 senderTransparent reset pattern). When true the FourCC
+  // selector at nativeSendFrame forces BGRA even in opaque mode.
+  private forceBgraForObs = false
   // v0.7.56 — Tracks whether NDIlib_initialize() is currently active.
   // The operator-initiated stop() path now calls NDIlib_destroy() to
   // fully recycle the NDI runtime — killing the mDNS responder and
@@ -526,6 +538,10 @@ export class NdiService extends EventEmitter {
     // nativeSendFrame can pick the right FourCC on every frame. Default
     // false matches the explicit-opt-in semantics enforced in main.ts.
     this.senderTransparent = opts.transparent === true
+    // v0.7.230 — Capture the operator's OBS-compat opt-in for FourCC
+    // selection. See nativeSendFrame FourCC switch and the field
+    // comment in NdiStartOptions for the rationale.
+    this.forceBgraForObs = opts.forceBgraForObs === true
     this.status = {
       running: true,
       source: wantedName,
@@ -660,7 +676,12 @@ export class NdiService extends EventEmitter {
       const frame = {
         xres: width,
         yres: height,
-        FourCC: this.senderTransparent ? FOURCC_BGRA : FOURCC_BGRX,
+        // v0.7.230 — OBS Studio's NDI Source plugin (some versions)
+        // refuses BGRX sources; operator-opt-in forceBgraForObs forces
+        // BGRA in opaque mode too. Transparent always picks BGRA
+        // because the alpha channel is meaningful. Otherwise default
+        // to BGRX for the v0.7.223 EW-class smoothness optimisation.
+        FourCC: (this.senderTransparent || this.forceBgraForObs) ? FOURCC_BGRA : FOURCC_BGRX,
         frame_rate_N: fps * 1000,
         frame_rate_D: 1000,
         picture_aspect_ratio: width / height,
@@ -734,6 +755,10 @@ export class NdiService extends EventEmitter {
     // toggled transparent lower-third on, then off, then started a
     // new session — pre-fix the FourCC would still be BGRA).
     this.senderTransparent = false
+    // v0.7.230 — Mirror the v0.7.223 senderTransparent reset so the
+    // next start() observes the operator's CURRENT pick, not a stale
+    // one from a prior session.
+    this.forceBgraForObs = false
     this.status = { running: false, frameCount: this.status.frameCount }
 
     // v0.7.56 — Full NDI runtime recycle on operator-initiated stop.

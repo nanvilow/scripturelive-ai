@@ -19,6 +19,7 @@ import { StableStage } from '@/components/presenter/stable-stage'
 import { OutputPreview } from '@/components/settings/output-preview'
 import { attachAnalyser, readLevel } from '@/lib/audio-level'
 import { cn, resolveMediaUrl } from '@/lib/utils'
+import { resolveMediaFit } from '@/lib/media-fit'
 import { toast } from 'sonner'
 import {
   Mic,
@@ -501,13 +502,22 @@ function MediaVideoSurface({
     }
   }, [surface, src, setOwnCurrentTime])
 
-  const objectFit: 'contain' | 'cover' | 'fill' =
-    fit === 'fill' ? 'cover' : fit === 'stretch' ? 'fill' : 'contain'
+  // v0.7.230 — Use the canonical 5-way mapping from resolveMediaFit so
+  // the preview box honours '16:9' and '4:3' the same way the output
+  // renderer does. Before v0.7.230 this was an inline 3-case ternary
+  // that silently mapped '16:9' / '4:3' → contain inside a hardcoded
+  // 16/9 frame, so the operator saw a letterboxed clip even when the
+  // secondary screen / NDI / OBS was rendering the picked aspect ratio.
+  // GUARD-RAIL: do NOT reintroduce inline mapping — the four-surface
+  // lockstep (route.ts L1824 / slide-renderer.tsx L19 / MediaVideoSurface
+  // here / standby poster L1434) is enforced by importing this helper.
+  const { objectFit, aspect } = resolveMediaFit(fit as Slide['mediaFit'])
+  const containerAspect = aspect ?? '16 / 9'
 
   return (
     <div
       className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
-      style={{ aspectRatio: '16 / 9' }}
+      style={{ aspectRatio: containerAspect }}
     >
       <video
         ref={videoRef}
@@ -1420,7 +1430,21 @@ function PreviewCard() {
                       preload="auto"
                       disablePictureInPicture
                       disableRemotePlayback
-                      className="absolute inset-0 w-full h-full object-contain bg-black"
+                      className="absolute inset-0 w-full h-full bg-black"
+                      // v0.7.230 — Use the canonical 5-way resolveMediaFit
+                      // helper (same import as MediaVideoSurface above) so
+                      // the standby poster honours '16:9' / '4:3' too, not
+                      // just 'fill' / 'stretch' / default. v0.7.229 shipped
+                      // a 3-case inline mapping here which silently dropped
+                      // the picked aspect ratio for '16:9' / '4:3' clips —
+                      // operator saw letterboxing in the preview box even
+                      // when the secondary screen / NDI / OBS were honouring
+                      // the picked frame. Folded into the shared helper so
+                      // the 4-surface lockstep (route.ts / slide-renderer /
+                      // MediaVideoSurface / this poster) can't drift again.
+                      style={{
+                        objectFit: resolveMediaFit(previewSlide.mediaFit).objectFit,
+                      }}
                       onLoadedData={(e) => {
                         const v = e.currentTarget
                         // Force first frame onto compositor then release
@@ -3793,14 +3817,21 @@ function MediaCard() {
         // direct ref).
         const st = useAppStore.getState()
         const liveSlide = st.liveSlide ?? (st.liveSlideIndex >= 0 ? st.slides[st.liveSlideIndex] : null)
+        // v0.7.229 — Mirror v0.7.222 Fix #8 / library-compact.tsx L1316
+        // URL-tail fallback so legacy live videos (mediaUrl present,
+        // mediaKind missing — pre-stamping deck shape) still engage the
+        // standby gate. Same regex as PreviewCard's `isVideoUrl` at
+        // L1197. Keep all three sites in lockstep.
+        const liveMediaUrl = (liveSlide as { mediaUrl?: string } | null | undefined)?.mediaUrl
         const liveIsPlayingDifferentMediaVideo = !!(
           liveSlide &&
           liveSlide.type === 'media' &&
-          (liveSlide as { mediaKind?: string }).mediaKind === 'video' &&
-          (liveSlide as { mediaUrl?: string }).mediaUrl &&
+          liveMediaUrl &&
+          ((liveSlide as { mediaKind?: string }).mediaKind === 'video' ||
+            /\.(mp4|webm|mov|m4v|mkv|ogv)(\?|#|$)/i.test(liveMediaUrl)) &&
           item.kind === 'video' &&
           slide.mediaUrl &&
-          (liveSlide as { mediaUrl?: string }).mediaUrl !== slide.mediaUrl
+          liveMediaUrl !== slide.mediaUrl
         )
         if (liveIsPlayingDifferentMediaVideo) {
           st.setPreviewMediaPaused(true)

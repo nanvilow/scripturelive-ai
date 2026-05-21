@@ -267,6 +267,19 @@ export interface AppSettings {
    *  keep their familiar "branded card" look on NDI. */
   ndiLowerThirdTransparent?: boolean
 
+  /** v0.7.230 — Operator escalation: OBS Studio (some NDI plugin
+   *  versions, esp. older builds) refuses to enumerate or display NDI
+   *  sources that advertise FourCC `BGRX`. v0.7.223 made BGRX the
+   *  opaque default for the EW-class smoothness optimisation (vMix /
+   *  Wirecast / NDI Studio Monitor all accept it). When this flag is
+   *  ON the sender forces FourCC `BGRA` even in opaque mode so the
+   *  operator's OBS-only setup can discover and pull the source.
+   *  Trade-off: receivers pay the per-pixel alpha-composite step on
+   *  every frame even when there's no meaningful alpha — measurable
+   *  but only matters at 4K60. Default OFF preserves v0.7.223 perf
+   *  for the 99% who run vMix / Wirecast / OBS-with-modern-NDI. */
+  ndiForceBgraForObs?: boolean
+
   /** v0.6.4 — Operator-tunable size multiplier for the NDI lower-third
    *  bar. Multiplies the verse + reference font sizes AND the BOX
    *  height/width on the NDI surface. 1 = stock; 0.5 = half; 2 = double.
@@ -895,6 +908,7 @@ const defaultSettings: AppSettings = {
   ndiAspectRatio: undefined,
   ndiBibleColor: undefined,
   ndiLowerThirdTransparent: false,
+  ndiForceBgraForObs: false,
   // v0.7.194-hotfix.4 — NDI Full-Screen background mode. 'themed'
   // (default) keeps the v0.6.9 behaviour: full-screen NDI renders
   // identically to the secondary screen (themed gradient + custom

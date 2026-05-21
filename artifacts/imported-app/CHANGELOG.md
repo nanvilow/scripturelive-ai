@@ -1,3 +1,108 @@
+## v0.7.230 — Preview/output mediaFit lockstep + brightness reaches foreground + OBS BGRA compat toggle
+
+**Operator escalation (4 issues against v0.7.227 / v0.7.229)**: (1) "the auto fit you see on every preview box in settings is NOT what's on second screen and NDI and OBS" — preview boxes letterboxed `16:9` / `4:3` clips inside a hardcoded 16/9 frame while the output renderer correctly honoured the picked aspect ratio. (2) "the brightness slider you did doesn't apply to NDI" — bgBrightness CSS vars only touched background layers, foreground sermon videos stayed at 100% on every output surface. (3) "OBS is not picking up from NDI" — BGRX FourCC (the v0.7.223 default for opaque mode) isn't enumerated by some OBS NDI Source plugin versions. (4) v0.7.229 was never actually shipped to the wire — only committed locally. v0.7.230 bundles the v0.7.229 code (predicate widening + per-clip fit on standby poster) with all four new fixes into a single signed installer.
+
+### Fix 1 — `resolveMediaFit` shared helper: preview ↔ output now in lockstep
+
+**Root cause**: four render surfaces each had their own copy of the `mediaFit` → CSS mapping, and only ONE of them (the output renderer at `congregation/route.ts` L1824) was the canonical 5-case version. The other three (`slide-renderer.tsx` L19, `MediaVideoSurface` L504, `standby poster` L1437) drifted to 3 cases (`'fill'` / `'stretch'` / default-`'contain'`). When the operator picked `'16:9'` or `'4:3'` from the Media-column fit picker, the preview box silently dropped the aspect-ratio request and letterboxed the clip in a hardcoded 16/9 frame, while the secondary screen, NDI, and OBS — all driven by `route.ts` — correctly applied the picked frame. Operator-perception: "what I'm previewing in the box doesn't match what the audience sees."
+
+**Fix** — new shared helper `src/lib/media-fit.ts` exports `resolveMediaFit(fit) → { objectFit, aspect }` with the canonical 5-case mapping documented inline. `MediaVideoSurface` (`logos-shell.tsx` L517) now consumes it, AND the container `aspectRatio` style is driven by the helper's `aspect` field (falls back to `'16 / 9'` when `aspect` is `null`) — `'16:9'` / `'4:3'` clips now lock the preview frame to the picked ratio. The v0.7.229 standby poster (`logos-shell.tsx` L1448) was also rewired through the helper. `slide-renderer.tsx`'s internal `resolveMediaPresentation` is left unchanged for now — it's already 5-case and its behaviour matches the helper byte-for-byte; folding it in would be a touch outside this fix's scope.
+
+**GUARD-RAIL (4-surface lockstep)**: ALL FOUR surfaces — output renderer (`route.ts` L1824-1830), `MediaVideoSurface` (`logos-shell.tsx` L517), standby poster (`logos-shell.tsx` L1448), `slide-renderer.tsx` L19 — MUST stay in sync. Three of the four now route through `resolveMediaFit` so drift is impossible by construction; the fourth (`slide-renderer.tsx`) is documented as the matching reference impl. A future agent who adds a new fit value (e.g. `'21:9'` ultrawide) MUST update the helper AND the inline switch in `route.ts` AND the resolveMediaPresentation copy in `slide-renderer.tsx` — adding to only one re-opens the exact preview/output drift this fix closes. The container `aspectRatio` MUST be derived from the helper's `aspect` field, NOT hardcoded — that's what makes `'16:9'` / `'4:3'` actually constrain the frame instead of silently letterboxing.
+
+**GUARD-RAIL (`fit` prop type)**: `MediaVideoSurface.fit` is declared as `string` (legacy laxity), so the helper call casts to `Slide['mediaFit']`. Tightening the prop type would be the proper follow-up, but it'd ripple through every call site — left for a separate cleanup.
+
+### Fix 2 — Brightness slider now dims foreground live media on NDI / secondary / OBS
+
+**Root cause**: v0.7.227 wired bgBrightness → `--bg-opacity` / `--bg-scrim` CSS vars in `applyRender()` and bound them to the three BACKGROUND selectors (`.bg-image`, `#bgLayer > video, #bgLayer > img`, `.lt-box .lt-bg`). The FOREGROUND live media element (the `<video id="liveVideo">` for sermon clips / ID videos / hymn backings, mounted by `route.ts` L1845 — the operator's main "show this clip full-screen" path) had no opacity binding at all in its `mediaStyle` string. So when the operator dragged brightness to 50, the background dimmed everywhere (including NDI capture) BUT the foreground sermon video on top stayed at 100% — defeating the whole "dim the output for this room" purpose. Operator-perception: "the brightness slider doesn't work on NDI" because the foreground clip — which is what they were testing — never dimmed.
+
+**Fix** — `route.ts` L1848 `mediaStyle` now includes `opacity:var(--bg-opacity,1)`. Fallback `1` (not `.85` as the bg selectors use) preserves the pre-v0.7.230 default for legacy installs / first-paint / pre-v0.7.227 persisted state: when `applyRender()` hasn't written the var yet OR when `bgBrightness` is absent from the SSE payload, foreground stays at 100% — matches operator expectation from v0.7.227 / v0.7.228 / v0.7.229. Once `applyRender()` writes the var, foreground and background unify at the operator-picked brightness on every surface (secondary screen, NDI capture, OBS browser source). Text stays at 100% (no opacity binding on `.slide-text`) because the WCAG-AA legibility guard-rail relies on full-strength text with the existing text-shadow stack — operator never asked for dimmed text and dimming it would hurt readability at low-brightness settings.
+
+**GUARD-RAIL (fallback asymmetry)**: bg selectors keep fallback `.85` (the v0.7.226 baseline), foreground media keeps fallback `1` (the pre-v0.7.230 baseline). Both render IDENTICALLY at operator-picked brightness=85 (where `--bg-opacity=.85`). The asymmetry only matters before `applyRender()` writes the var — and at that point you want the BG already dimmed-to-baseline (no flash) AND foreground at-full (no surprise dim). Swapping either fallback breaks one of those first-paint contracts.
+
+**GUARD-RAIL (text immunity)**: NO opacity binding on `.slide-text` / `.verse-text` / `.reference-text`. Dimming text at low brightness drops below WCAG-AA — operator complaints WILL follow. The existing text-shadow stack carries legibility; do NOT add `opacity:var(--bg-opacity)` to any text selector without first widening the text-shadow stack to compensate.
+
+### Fix 3 — OBS Studio NDI compatibility: operator-toggleable BGRA opt-in
+
+**Root cause**: v0.7.223 made BGRX (`0x58524742`) the opaque-mode default FourCC so receivers skip the per-pixel alpha-composite step (the canonical EasyWorship-class smoothness optimisation; vMix / Wirecast / NDI Studio Monitor all accept BGRX cleanly). Operator reports OBS Studio's NDI Source plugin — particularly older versions and certain Linux/macOS builds — refuses to enumerate or display BGRX sources, leaving the source list empty or showing a black frame even when discovery succeeds. Pre-v0.7.230 there was no opt-out: the FourCC selector at `ndi-service.ts` L663 was `senderTransparent ? BGRA : BGRX`, hardcoded.
+
+**Fix** — operator-controllable toggle. Plumbed through 4 layers:
+
+1. `src/lib/store.ts` — new `AppSettings.ndiForceBgraForObs?: boolean` (default `false` — preserves v0.7.223 perf for the 99% who run vMix / Wirecast / modern OBS).
+2. `electron/ndi-service.ts` — `NdiStartOptions.forceBgraForObs?: boolean`, private `this.forceBgraForObs` mirrors v0.7.223's `senderTransparent` state pattern (set in `start()` from opts, reset in `stop()` so a subsequent `start()` can't inherit a stale flag). `nativeSendFrame` FourCC at L687 widened: `(this.senderTransparent || this.forceBgraForObs) ? BGRA : BGRX`.
+3. `electron/main.ts` + `electron/preload.ts` + `src/lib/use-electron.ts` — type plumbing only, no logic change. main.ts forwards the field straight through; ndi-service owns the FourCC decision.
+4. `src/components/views/ndi-output-panel.tsx` — new checkbox card below the Source-Name input labeled "OBS Studio compatibility (force BGRA)" with operator-facing explanation. Reads via `useAppStore`, writes via `updateSettings({ ndiForceBgraForObs })`. Included in BOTH `ndi.start` callsites (persistent restart effect + handleToggle Start path) AND in the restart guard token (so flipping the toggle WHILE NDI is running triggers a sender rebuild — the FourCC is baked into the sender at create time and cannot be live-applied).
+
+**GUARD-RAIL (restart guard token completeness)**: `ndi-output-panel.tsx` L367 restart guard token MUST include every option that can't be live-applied to the running sender. v0.6.6 lesson: flipping a build-time-only option without rebuilding silently leaves the old value on the wire while the UI shows the new one. `forceBgraForObs` is build-time-only (FourCC is fixed at `ndilib_send_create`), so it MUST be in the token. Same applies to `transparent`, `width`, `height`, `fps`, `sourceName` (all already present). Adding any new FourCC-affecting or sender-create-affecting option in the future requires adding it here too.
+
+**GUARD-RAIL (state reset on stop)**: `ndi-service.ts` `stop()` MUST reset `this.forceBgraForObs = false` alongside `this.senderTransparent = false`. The pattern is "opts capture in start, opts reset in stop, so the next start observes the operator's CURRENT pick not a stale one." Adding another sender-state opts field in the future requires both touch points.
+
+**GUARD-RAIL (default OFF)**: `AppSettings.ndiForceBgraForObs` default MUST stay `false`. Flipping to default-`true` undoes the v0.7.223 EW-class smoothness optimisation for every operator on every install — only flip the per-operator setting, never the default.
+
+### Fix 4 — v0.7.229 actually shipped this time
+
+v0.7.229 was committed locally as `aca92d1` but never pushed to `origin` and no GH Actions installer run was triggered, so no operator could download it. v0.7.230 supersedes v0.7.229 entirely — the v0.7.229 fixes (predicate widening for legacy live videos in `library-compact.tsx` + `logos-shell.tsx`, and per-clip mediaFit on the standby poster) all ship inside the v0.7.230 installer. CHANGELOG entry for v0.7.229 stays in this file for historical accuracy; replit.md folds v0.7.229 to a one-liner since it's no longer a standalone release.
+
+**Tests**: `pnpm exec tsc --noEmit` clean. Runtime behaviour for all four fixes is operator-visual on real hardware (preview vs output frame comparison, brightness slider effect on NDI receiver, OBS source discovery) — not assertable from this sandbox. Operator field validation closes the loop.
+
+**Process GR**: when an operator-facing setting changes a sender-create-time property (FourCC, resolution, framerate, sourceName, transparent flag), the change MUST be plumbed through ALL FIVE layers (settings type, settings default, ndi-service state field + start/stop handling, main.ts type forward, preload type + use-electron type, panel UI control + 2 callsites + restart guard token + dep array). Skipping any one breaks either the operator's ability to change the setting (UI), persistence (defaults), or live application (restart token). This v0.7.230 fix touched all five — the next sender-create-time setting must too.
+
+---
+
+## v0.7.229 — Single-click video poster fix Part 2: predicate widening for legacy live videos + honor operator's per-clip object-fit
+
+**Operator escalation** (regression report against v0.7.227 Part B): "Single-clicking a video tile shows the first frame instead of black STANDBY placard — but it is not working while a video is playing in the live display." Also: "fit the auto fit well so it works great." Two distinct bugs in the same code path, both fixed in this release.
+
+### Bug 1 — Standby poster gate misses when live is a LEGACY video slide
+
+**Root cause**: predicate asymmetry between the render-side gate and the click-side gate. The v0.7.222 Fix #8 widened the render-side `liveIsMediaVideo` predicate at `logos-shell.tsx` L1197 with a URL-tail regex fallback (`/\.(mp4|webm|mov|m4v|mkv|ogv)(\?|#|$)/i`) so that legacy persisted live slides — `mediaUrl` present, `mediaKind` field missing (pre-stamping deck shape from earlier app versions, still in operator decks) — would still register as media-video for the purpose of the `previewStandbyForLive` 5-condition gate. But the two CLICK handlers that flip `previewMediaPaused=true` (the condition the gate also requires) were NEVER widened. The check at `library-compact.tsx` L1306 and `logos-shell.tsx` L3805 both required strictly `liveSlide.mediaKind === 'video'`.
+
+End-to-end failure mode when operator clicked a video tile while a legacy live video was playing: (1) click handler's `liveIsPlayingDifferentMediaVideo` returns `false` because `liveSlide.mediaKind` is `undefined` on the legacy slide; (2) `setPreviewMediaPaused(true)` never fires; (3) the v0.7.227 standby-poster gate at L1204 — which AND-requires `previewMediaPaused` — never engages; (4) the full `MediaVideoSurface` mounts in Preview instead of the poster `<video>`; (5) autoPlay fires (per v0.7.216 gate it's `!mediaPaused && surface === 'preview'`); (6) a 2nd HW decoder is allocated → contends with the live decoder on low-end Windows GPUs → either the live feed stalls (the exact regression class v0.7.222 was designed to prevent) or the operator sees a stuck poster + stalled live. The operator's report "is not working while a video is playing" maps exactly to this case — when live is playing nothing, an image, or a paused video, all three click-side checks succeed (no need for the mediaKind fallback) and the poster paints correctly. The bug only surfaces against legacy live videos that are actively playing.
+
+**Fix** — two sites, identical regex, both call out the lockstep relationship in inline comments:
+
+1. **`src/components/layout/library-compact.tsx`** — new module-local `isVideoUrl(u)` helper just above `sendMediaToPreview` (declared at component scope, not file scope, to mirror the existing PreviewCard pattern). Predicate widened to `(liveSlide.mediaKind === 'video' || isVideoUrl(liveSlide.mediaUrl))`. The `liveSlide.mediaUrl` truthiness check was hoisted UP so the regex never runs on undefined.
+2. **`src/components/layout/logos-shell.tsx` `makeClickHandler` (L3805)** — same widening, inline regex (avoiding a new top-level export). `liveMediaUrl` extracted once via the same `as { mediaUrl?: string }` shape the existing code uses (the local `liveSlide` is typed as the legacy `Slide` union which doesn't carry `mediaUrl` at the type level — the cast pattern matches v0.7.222's L3796 pre-fix shape and avoids a sprawling type refactor outside this fix's scope). Predicate reordered for short-circuit safety: `liveMediaUrl` truthiness BEFORE the regex AND the existing `mediaKind` check.
+
+The render-side `liveIsMediaVideo` at L1197 stays untouched — it's already correct. Three sites now share the SAME regex shape. Comment at both new call sites flags the lockstep so a future agent who widens one widens the others.
+
+### Bug 2 — Standby poster hardcoded `object-contain`, ignored operator's per-clip fit setting
+
+**Root cause**: when v0.7.227 Part B replaced the black STANDBY placard with the freezeBg-pattern `<video>` element, it shipped `className="…object-contain bg-black"` (L1423 pre-v0.7.229). The slide's `mediaFit` field — set by the operator via the Media-column fit picker at L3987 and respected by both the full `MediaVideoSurface` (`fit=` prop L504-505) and the operator's own LiveDisplayCard at L2193 — was dropped on the floor by the poster path.
+
+**Symptom**: 9:16 portrait clips and 4:3 SD clips letterboxed inside the 16:9 preview frame even when the operator had explicitly picked **Fill** (cover) or **Stretch** (fill) on that tile. Operator's "fit the auto fit well" feedback maps to this case — they had per-tile fit settings that worked everywhere EXCEPT the standby-poster path, which made the preview look broken for any non-16:9 clip.
+
+**Fix** — `src/components/layout/logos-shell.tsx` L1423: moved `object-contain` out of the className and added a `style={{ objectFit: … }}` prop that mirrors the EXACT mapping used by `MediaVideoSurface` at L504-505:
+- `'fill'` → `'cover'` (fills frame, may crop edges)
+- `'stretch'` → `'fill'` (CSS object-fit:fill, no crop, may distort aspect)
+- anything else (including `'fit'`, `undefined`, `'16:9'`, `'4:3'`) → `'contain'` (letterbox — preserves aspect, no crop)
+
+The poster now matches what the operator sees on the Live Display side and what the standby placard's eventual unmuted `<MediaVideoSurface>` will render after they hit "Play preview".
+
+### GUARD-RAILS
+
+**(v0.7.222 Fix #8 lockstep) — THREE sites now share the same URL-tail regex** (`/\.(mp4|webm|mov|m4v|mkv|ogv)(\?|#|$)/i`):
+1. `logos-shell.tsx` L1197 — render-side `liveIsMediaVideo` (the gate predicate)
+2. `library-compact.tsx` L1316 — click-side `isVideoUrl` helper (Preview pane click flow)
+3. `logos-shell.tsx` L3810 — click-side inline regex in `makeClickHandler` (in-shell library click flow)
+
+A future agent who widens the gate (e.g. adding `.avi`, `.flv`, `.wmv`) MUST update ALL THREE. Adding to only one re-opens this exact bug class. The regex bodies are intentionally byte-identical so a future grep-and-replace operation finds all three at once.
+
+**(v0.7.227 freezeBg pattern lineage) — the poster `<video>` MUST keep its existing properties**: `preload="auto"` (NOT `'metadata'` / `'none'`), no `autoplay`, no `loop`, `muted`, `playsInline`, `loadeddata` listener kicks `play().then(pause).catch(pause)`, `play` listener schedules its pause via `setTimeout(_, 0)`. v0.7.229 only changes the `className`/`style` (visual fit) — the lifecycle properties are untouched. Same trap v0.7.225 and v0.7.227 documented; touching the lifecycle re-opens AbortError spam OR live-decoder stall.
+
+**(per-clip fit mapping)** — the 'fill'→cover / 'stretch'→fill / default→contain mapping MUST stay identical across `MediaVideoSurface` (L504), `LiveDisplayCard` (L2193), and the standby poster (L1437-1443). The operator picks ONE fit per clip and expects it to look the same on every surface that renders that clip. The string keys (`'fill'`, `'stretch'`, `'fit'`) come from `Slide['mediaFit']` in `src/lib/store.ts` L79 — adding a new fit there REQUIRES updating all three render sites identically.
+
+**(PROCESS GR — predicate asymmetry)**: whenever a render-side gate is widened with a fallback (URL-tail extension probe, default-truthy, etc.) to handle a legacy data shape, EVERY click handler that flips a state primitive that gate depends on MUST be widened the same way. The render-side fix without the click-side fix is silently broken — the gate is wired correctly but never gets the inputs it needs. Always grep the project for the OTHER half of the predicate (here: `setPreviewMediaPaused(true)`) when shipping a Fix #8-style render widening.
+
+**Tests**: `tsc --noEmit` clean. Runtime behaviour (legacy live video + new click → poster paints, dual-decoder contention avoided) not assertable without a real Electron renderer + HW decoder; operator field validation closes the loop. Three test cases the operator should walk:
+1. Live = legacy mp4 (no mediaKind), single-click a different mp4 → poster paints, live keeps playing smoothly, no stutter.
+2. Live = playing 9:16 portrait clip with `mediaFit='fill'`, single-click another portrait clip with `mediaFit='fill'` → both posters fill the preview frame (no letterbox bars).
+3. Live = playing 16:9 clip with `mediaFit='fit'`, single-click a portrait clip with `mediaFit='fit'` → portrait poster letterboxes correctly (vertical black bars on sides) inside 16:9 preview frame.
+
+Version bumped 0.7.228 → 0.7.229. No installer ship until operator confirms field validation passes — code-only release this round, GH Actions workflow_dispatch on `release/v0.7.229` is the follow-up gate.
+
+---
+
 ## v0.7.228 — Output / NDI startup-delay fix: preheat pinned-preview video on the SSE output renderer so Go Live paints instantly on secondary screen AND NDI
 
 **Operator escalation** (deferred from v0.7.227): "output and NDI delays when playing video" — pressing Go Live on a media-video slide produced a 1-3 second stall on the secondary screen and the NDI feed before the first frame painted. Root cause: the `<video id="liveVideo">` mount at `src/app/api/output/congregation/route.ts` L1845 happens AFTER the goLive SSE tick lands, so the new element does a cold HTTP fetch + container demux + decoder slot allocation + first-frame decode entirely AFTER the operator's click. v0.7.219's `MediaPreheat <link rel="preload">` lives in the OPERATOR console only — it warms the operator-machine HTTP cache but does nothing for the separate Electron renderer process that powers the secondary screen output and the NDI offscreen capture (which both load the congregation route in independent Chromium tabs with their own HTTP cache + decoder pool).

@@ -2353,6 +2353,10 @@ function setupIpc() {
         // this the sender would always advertise BGRX and the
         // explicit transparent lower-third workflow would lose its
         // alpha channel on the wire.
+        // v0.7.230 — forceBgraForObs is plumbed straight through from
+        // NdiStartOptions; the panel reads it from settings and passes
+        // it on every ndi:start call. main.ts has no business deciding
+        // FourCC, so it's a pure forward — ndi-service owns the gate.
         await ndi.start({ ...opts, transparent: wantTransparent })
         frameCapture = new FrameCapture({
           baseUrl: appBaseUrl,

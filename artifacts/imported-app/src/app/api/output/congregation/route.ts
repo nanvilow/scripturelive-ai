@@ -1828,7 +1828,21 @@ function render(s){
     else if(mf==='stretch'){of='fill';}
     else if(mf==='16:9'){of='contain';ar='16/9';}
     else if(mf==='4:3'){of='contain';ar='4/3';}
-    var mediaStyle='width:100%;height:100%;object-fit:'+of+';background:#000;display:block';
+    // v0.7.230 — Operator brightness slider now also dims the foreground
+    // live media element (sermon clips, ID videos, etc.). Before v0.7.230
+    // the brightness CSS vars only reached background layers (.bg-image /
+    // #bgLayer / .lt-bg) — operator could dim the bg to 50 but the
+    // sermon video on top stayed at 100% on NDI, secondary screen and
+    // OBS, defeating the whole point of "dim the output for this room".
+    // Fallback 1 (not .85) preserves the pre-v0.7.230 default: when
+    // applyRender hasn't run yet OR when bgBrightness is absent from the
+    // SSE payload (legacy installs / first paint), foreground media stays
+    // at 100% — matches operator expectation from v0.7.227-v0.7.229. Once
+    // applyRender writes the var, foreground unifies with bg at the
+    // operator-picked brightness. Text stays at 100% (no opacity binding
+    // on .slide-text) because the WCAG-AA legibility guard-rail relies
+    // on full-strength text with the existing text-shadow stack.
+    var mediaStyle='width:100%;height:100%;object-fit:'+of+';opacity:var(--bg-opacity,1);background:#000;display:block';
     // Reuse path: if the SAME media URL is already mounted, we only
     // toggle play/pause on the live <video> element instead of
     // tearing down the DOM. Rebuilding would seek the video back to
