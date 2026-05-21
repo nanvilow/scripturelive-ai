@@ -279,9 +279,25 @@ jobs:
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
+            # Operator supplied an explicit tag via dispatch input.
             tag_name="${{ inputs.tag }}"
+            version="${tag_name#v}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # v0.7.232 fix — branch-dispatch path (no `inputs.tag`).
+            # Previously fell through to `tag_name="${GITHUB_REF#refs/tags/}"`
+            # which on a branch leaves the literal `refs/heads/release/v0.7.N`
+            # value, breaking the upload-artifact glob downstream
+            # (looks for `ScriptureLive-AI-refs/heads/release/v0.7.N-Setup-*.exe`
+            # which obviously does not exist — the real file is
+            # `ScriptureLive-AI-0.7.N-Setup-x64.exe` named off
+            # package.json's `version`). Read package.json directly
+            # so branch dispatches produce the correct glob.
+            version=$(node -p "require('./artifacts/imported-app/package.json').version")
+            tag_name="v${version}"
           else
+            # Tag push (the original happy path).
             tag_name="${GITHUB_REF#refs/tags/}"
+            version="${tag_name#v}"
           fi
           echo "name=$tag_name" >> "$GITHUB_OUTPUT"
           # Also expose the version without the leading "v" so steps that
@@ -289,7 +305,7 @@ jobs:
           # ${version} from package.json, NOT the git tag) have an exact
           # filename component to glob with — e.g. v0.7.51 → 0.7.51 →
           # ScriptureLive-AI-0.7.51-Setup-x64.exe.
-          echo "version=${tag_name#v}" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Determine unsigned-release opt-out
         id: optout
