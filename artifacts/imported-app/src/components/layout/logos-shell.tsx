@@ -1319,7 +1319,22 @@ function PreviewCard() {
       }
       bodyClassName="bg-black flex flex-col overflow-hidden"
     >
-      <div className="flex-1 min-h-0 flex items-stretch p-2 gap-2">
+      {/* v0.7.232 — `overflow-hidden` on the stage MUST stay. When the
+          operator drags the horizontal splitter up to make the bottom
+          row taller, this Preview Card shrinks. The video frame inside
+          uses `aspectRatio` (resolveMediaFit) which is an intrinsic
+          size contribution — without `overflow-hidden` here the frame's
+          width-derived height pushes the stage past its `flex-1`
+          allocation, the body's `overflow-hidden` then clips the
+          bottom of the Card, and the VideoTransport bar at L1551
+          (which is a shrink-0 sibling of this stage inside the body)
+          disappears off-screen even though it's still in the DOM.
+          Adding `overflow-hidden` here clips the video frame
+          (preferred — operator still sees the preview, just letter-
+          boxed) instead of clipping the transport bar (broken — no
+          way to scrub or play). Same pattern applies in
+          LiveDisplayCard's stage (L2177). */}
+      <div className="flex-1 min-h-0 overflow-hidden flex items-stretch p-2 gap-2">
         {/* LEFT audio rail — sits OUTSIDE the preview frame on the
             left edge, exactly like the Wirecast reference. Stack:
             VU meter on top, speaker toggle on the bottom. */}
@@ -2174,7 +2189,14 @@ function LiveDisplayCard({
       }
       bodyClassName="bg-black overflow-hidden"
     >
-      <div className="flex-1 min-h-0 flex items-stretch p-2 gap-2 relative">
+      {/* v0.7.232 — `overflow-hidden` mirror of the PreviewCard stage
+          fix at L1322. Same root cause: aspect-ratio-locked Live video
+          frame pushes the stage past its `flex-1` allocation when the
+          splitter shrinks the top row, body's overflow-hidden then
+          clips the bottom of the Card, and the Live VideoTransport
+          bar at L2363 (along with the LiveBottomControls toolbar
+          above it) disappears even though still in the DOM. */}
+      <div className="flex-1 min-h-0 overflow-hidden flex items-stretch p-2 gap-2 relative">
         <div className="flex-1 min-w-0 flex items-center justify-center relative">
         {/* v0.7.158 — Startup splash overlay REMOVED. The congregation
             route renders the identical "Scripture AI / Powered By
