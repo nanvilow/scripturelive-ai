@@ -20,6 +20,56 @@ permissions:
   contents: write
 
 jobs:
+  # Defense-in-depth ancestry check for Task #108. The companion
+  # `.github/rulesets/release-tag-protection.json` ruleset requires the
+  # tagged SHA to already carry passing CodeQL + gitleaks status, which
+  # in practice means the SHA was merged via PR into `main` (the only
+  # path that records those checks under `main-branch-protection.json`).
+  # However, `gitleaks` and `CodeQL` also run on PR events, so a
+  # feature-branch commit that opened a PR can pick up green check runs
+  # without ever being merged. Without this job, a contributor with
+  # push access could `git tag v0.7.x <feature-branch-sha>` on that
+  # never-merged commit and the release would still ship.
+  #
+  # This job fails fast (≈10s) if the tagged commit is not reachable
+  # from `refs/remotes/origin/main`, closing that bypass. It runs ahead
+  # of preflight so we don't burn the 2-minute Next.js build on a tag
+  # that's going to be rejected anyway.
+  #
+  # Skipped on `workflow_dispatch` (no associated tag SHA to verify);
+  # the operator running a manual dispatch is trusted to pick the SHA.
+  tag-ancestry:
+    name: Verify tag is on main
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout with full history
+        uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 is required so `git merge-base --is-ancestor`
+          # can walk back from the tag SHA through main's history. A
+          # shallow clone would `exit 128` with "Not a valid commit name"
+          # the moment the ancestry walk crosses the shallow boundary.
+          fetch-depth: 0
+
+      - name: Ensure tag commit is reachable from origin/main
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_SHA="${GITHUB_SHA}"
+          # `actions/checkout` already fetched `refs/remotes/origin/main`
+          # when fetch-depth=0 on a tag push; double-check explicitly so
+          # this fails loudly with a clear message if the remote layout
+          # ever changes.
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$TAG_SHA" refs/remotes/origin/main; then
+            echo "::error::Tag ${GITHUB_REF#refs/tags/} points at $TAG_SHA, which is not reachable from origin/main."
+            echo "::error::Release tags MUST be cut from a commit that was merged into main via PR (so CodeQL + gitleaks have been enforced as a merge gate, not just as a PR check)."
+            echo "::error::Re-tag the matching commit on main, or open a PR that merges this commit into main first."
+            exit 1
+          fi
+          echo "OK: $TAG_SHA is reachable from origin/main."
+
   # Fast Linux preflight that catches release-build files which an overly-
   # broad .gitignore rule has silently dropped from the source tree at tag
   # time. This has bitten us at least three times — v0.7.47
@@ -41,6 +91,13 @@ jobs:
   #      know about (including imports added by future PRs).
   preflight:
     name: Verify release-build files
+    # `needs: tag-ancestry` would be ideal, but `tag-ancestry` is gated
+    # on `github.event_name == 'push'` and would be `skipped` on a
+    # `workflow_dispatch` run — which propagates to `preflight` and the
+    # whole pipeline would silently skip too. Encode the dependency as a
+    # conditional needs via `always() && (skipped || success)`.
+    needs: tag-ancestry
+    if: always() && (needs.tag-ancestry.result == 'success' || needs.tag-ancestry.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -84,6 +141,12 @@ jobs:
   build:
     name: Build Windows installer
     needs: preflight
+    # Explicit gate so build runs whenever preflight actually succeeded —
+    # GHA's implicit `success()` was treating build as skipped because the
+    # upstream `tag-ancestry` carries `if: github.event_name == 'push'` and
+    # ends up `skipped` on workflow_dispatch runs (release/<tag> branch
+    # pattern, see ship-v0.7.228 task notes).
+    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     runs-on: windows-latest
     steps:
       # `fetch-depth: 0` so the opt-out step below can read annotated-tag
@@ -472,7 +535,7 @@ jobs:
     permissions:
       contents: read
       actions: read
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: ${{ !cancelled() && needs.build.result == 'success' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
     steps:
       # We need the repo (and its tags) checked out so the opt-out step can
       # read annotated-tag messages — `actions/download-artifact` alone
@@ -709,7 +772,7 @@ jobs:
     name: Publish GitHub Release
     needs: [build, verify-macos]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.verify-macos.result == 'success' || needs.verify-macos.result == 'skipped') && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
     steps:
       # Needed so the opt-out step can read annotated-tag messages.
       - name: Checkout (for tag annotation reads)
