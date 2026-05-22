@@ -141,6 +141,12 @@ jobs:
   build:
     name: Build Windows installer
     needs: preflight
+    # Explicit gate so build runs whenever preflight actually succeeded —
+    # GHA's implicit `success()` was treating build as skipped because the
+    # upstream `tag-ancestry` carries `if: github.event_name == 'push'` and
+    # ends up `skipped` on workflow_dispatch runs (release/<tag> branch
+    # pattern, see ship-v0.7.228 task notes).
+    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     runs-on: windows-latest
     steps:
       # `fetch-depth: 0` so the opt-out step below can read annotated-tag
@@ -529,7 +535,7 @@ jobs:
     permissions:
       contents: read
       actions: read
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: ${{ !cancelled() && needs.build.result == 'success' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
     steps:
       # We need the repo (and its tags) checked out so the opt-out step can
       # read annotated-tag messages — `actions/download-artifact` alone
@@ -766,7 +772,7 @@ jobs:
     name: Publish GitHub Release
     needs: [build, verify-macos]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.verify-macos.result == 'success' || needs.verify-macos.result == 'skipped') && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
     steps:
       # Needed so the opt-out step can read annotated-tag messages.
       - name: Checkout (for tag annotation reads)
