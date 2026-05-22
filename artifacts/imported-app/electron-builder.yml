@@ -149,6 +149,12 @@ win:
   # and gets a 404 — so auto-update silently fails. Hardcoding a
   # slug-safe name keeps both names identical.
   artifactName: "ScriptureLive-AI-${version}-Setup-${arch}.${ext}"
+  # v0.7.226 emergency-build override: Replit container blocks the 32-bit
+  # rcedit-ia32.exe used to stamp PE metadata. signAndEditExecutable=false
+  # skips both signing AND PE editing so the portable .exe can be produced
+  # without wine i386 ABI. GH Actions Windows runner ignores this flag
+  # (runs signtool natively) so production NSIS builds are unaffected.
+  signAndEditExecutable: false
   # Authenticode code signing.
   # electron-builder reads the certificate from these standard env vars:
   #   CSC_LINK            path to .pfx, base64-encoded .pfx contents, or https URL
