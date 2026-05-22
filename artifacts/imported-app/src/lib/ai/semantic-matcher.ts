@@ -34,6 +34,7 @@
 
 import OpenAI from 'openai'
 import { POPULAR_VERSES_KJV, type PopularVerse } from './popular-verses'
+import { PARAPHRASE_VERSES } from './paraphrase-verses'
 import { PREACHER_PHRASES } from '@/lib/bibles/preacher-phrases'
 import { getConfig } from '@/lib/licensing/storage'
 import { getOpenAIKey as getBakedOpenAIKey } from '@/lib/baked-credentials'
@@ -366,7 +367,18 @@ async function ensureCache(): Promise<CachedVerse[]> {
     // quotations the local engine already does, even when the
     // local engine's ≥80% token-overlap fuzzy gate dropped the
     // utterance.
-    const verses = [...POPULAR_VERSES_KJV, ...preacherCatalogueAsVerses()]
+    // v0.7.235 — Also fold in PARAPHRASE_VERSES (100 short, modern,
+    // conversational paraphrases). Same "more surface forms per
+    // reference = more cosine recall" pattern as the v0.7.67
+    // preacher-catalogue fold-in. Duplicates of references already
+    // in POPULAR_VERSES_KJV are intentional — each entry embeds a
+    // distinct surface form, and the chip/dedupe layer collapses on
+    // `reference` at display time.
+    const verses = [
+      ...POPULAR_VERSES_KJV,
+      ...PARAPHRASE_VERSES,
+      ...preacherCatalogueAsVerses(),
+    ]
     const out: CachedVerse[] = []
     // OpenAI embeddings endpoint accepts arrays of up to ~2048 inputs.
     // 200 verses fits comfortably in a single request — but we batch
