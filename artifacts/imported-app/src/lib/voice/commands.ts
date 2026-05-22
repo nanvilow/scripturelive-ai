@@ -48,6 +48,14 @@ export type CommandKind =
   | 'change_translation'
   | 'delete_previous_verse'
   | 'show_verse_n'
+  // v0.7.235 — Jump to chapter N within the current book. Mirror of
+  // show_verse_n but at chapter granularity. Operator says
+  // "chapter 5" / "go to chapter 5" / "chapter five" and the
+  // dispatcher loads <currentBook> 5:1 in the active translation.
+  // Also paired with the ASR mishearing "vest" → "verse" (Deepgram/
+  // Whisper consistently mishear "verse" as "vest" — both routes
+  // through detectShowVerseCommand).
+  | 'show_chapter_n'
   // v0.7.23 — AI Verse Search. Operator describes a verse in their
   // own words ("find the verse about loving your enemies") and the
   // dispatcher calls the existing /api/scripture/semantic-match
@@ -69,6 +77,8 @@ export interface VoiceCommand {
   translation?: string
   /** Verse number (1-indexed) if kind === 'show_verse_n'. */
   verseNumber?: number
+  /** Chapter number (1-indexed) if kind === 'show_chapter_n'. v0.7.235 */
+  chapterNumber?: number
   /**
    * v0.7.23 — Free-form quote / topic the operator is asking the
    * semantic matcher to find when kind === 'find_by_quote'.
@@ -905,7 +915,16 @@ function detectShowVerseCommand(
   //   • "skip to verse 5" / "skip down to verse 5"
   //   • "turn to verse 5"
   //   • "verse 5" alone (post wake-word)
-  const re = /^(?:(?:let(?:'?s)?\s+go\s+to|take\s+me\s+to|scroll\s+(?:down|up)\s+to|go\s+(?:down|up)\s+to|move(?:\s+(?:down|up))?\s+to|skip(?:\s+(?:down|up))?\s+to|turn\s+to|show|display|go\s+to|jump\s+to|open|read)\s+)?verse\s+(\d{1,3})\s*$/i
+  //
+  // v0.7.235 — Accept "vest" as an ASR mishearing of "verse".
+  // Deepgram + Whisper consistently transcribe "verse N" as "vest N"
+  // when the operator speaks quickly or has a non-American accent;
+  // operators in Ghana hit this on every service. Listed as a regex
+  // alternation (not a separate alias map) so the existing prefix
+  // grammar ("go to vest 5", "let's go to vest 5") works without
+  // duplicating the whole pattern. Also accept "verses" (transcript
+  // pluralisation) and "vs" (occasional shorthand the engine emits).
+  const re = /^(?:(?:let(?:'?s)?\s+go\s+to|take\s+me\s+to|scroll\s+(?:down|up)\s+to|go\s+(?:down|up)\s+to|move(?:\s+(?:down|up))?\s+to|skip(?:\s+(?:down|up))?\s+to|turn\s+to|show|display|go\s+to|jump\s+to|open|read)\s+)?(?:verse|verses|vest|vs)\s+(\d{1,3})\s*$/i
   const m = lower.match(re)
   if (!m) return null
   const n = parseInt(m[1]!, 10)
@@ -915,6 +934,31 @@ function detectShowVerseCommand(
     confidence: wokeByWakeWord ? 95 : 88,
     label: `Verse ${n}`,
     verseNumber: n,
+    wakeWord: wokeByWakeWord,
+  }
+}
+
+// v0.7.235 — "chapter N" / "go to chapter N" / (after wake word) bare
+// "chapter N". Mirrors detectShowVerseCommand at chapter granularity.
+// N must be 1..150 — longest book is Psalms with 150 chapters. The
+// dispatcher resolves <currentBook> from the live slide and fetches
+// chapter N verse 1. No ASR alias needed — "chapter" doesn't have a
+// systematic mishearing the way "verse" does.
+function detectShowChapterCommand(
+  body: string,
+  wokeByWakeWord: boolean,
+): VoiceCommand | null {
+  const lower = body.toLowerCase().trim()
+  const re = /^(?:(?:let(?:'?s)?\s+go\s+to|take\s+me\s+to|scroll\s+(?:down|up)\s+to|go\s+(?:down|up)\s+to|move(?:\s+(?:down|up))?\s+to|skip(?:\s+(?:down|up))?\s+to|turn\s+to|show|display|go\s+to|jump\s+to|open|read)\s+)?chapter\s+(\d{1,3})\s*$/i
+  const m = lower.match(re)
+  if (!m) return null
+  const n = parseInt(m[1]!, 10)
+  if (!isFinite(n) || n < 1 || n > 150) return null
+  return {
+    kind: 'show_chapter_n',
+    confidence: wokeByWakeWord ? 95 : 88,
+    label: `Chapter ${n}`,
+    chapterNumber: n,
     wakeWord: wokeByWakeWord,
   }
 }
@@ -983,6 +1027,11 @@ export function detectCommand(utterance: string): VoiceCommand | null {
   if (findCmd) return findCmd
   const verseCmd = detectShowVerseCommand(cleaned, woke)
   if (verseCmd) return verseCmd
+  // v0.7.235 — chapter-N navigation, after verse-N so a hypothetical
+  // future "verse chapter 5" collision (none today) would never
+  // misroute. Each is mutually exclusive at the regex level.
+  const chapterCmd = detectShowChapterCommand(cleaned, woke)
+  if (chapterCmd) return chapterCmd
 
   for (const pat of PATTERNS) {
     for (const trig of pat.triggers) {
