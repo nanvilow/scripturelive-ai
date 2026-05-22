@@ -198,6 +198,16 @@ let frameCaptureFlags: {
   // of the URL-bake fix.
   lowerThirdHeight: 'sm' | 'md' | 'lg' | null
   lowerThirdScale: number | null
+  // v0.7.230 — Track the operator-picked OBS-compat BGRA opt-in on
+  // the running sender so a toggle WHILE NDI is running forces a true
+  // rebuild instead of short-circuiting. The FourCC is baked into the
+  // sender at ndilib_send_create and CANNOT be live-applied — without
+  // this field the equality check below would short-circuit (same
+  // source/geometry/fps/transparent/LT...) and the wire FourCC would
+  // stay on the OLD value while the panel UI shows the new toggle
+  // state. Same lesson as v0.6.6 transparent toggle + v0.7.5.1 LT
+  // height/scale drag — any sender-create-time option MUST live here.
+  forceBgraForObs: boolean
 } | null = null
 let mainWindow: BrowserWindow | null = null
 // v0.7.121 — Tracked kiosk-style output BrowserWindows (congregation,
@@ -2285,7 +2295,23 @@ function setupIpc() {
         // "did nothing while broadcasting" was this short-circuit.
         const cur = ndi.getStatus()
         const wantLayout = opts.layout === 'ndi' ? 'ndi' : 'mirror'
-        const wantTransparent = wantLayout === 'ndi' && opts.transparent !== false
+        // v0.7.223 — Operator escalation: "NDI output for video background
+        // is transparent — shouldn't be so at all." Pre-fix default was
+        // `opts.transparent !== false` which meant ANY NDI session
+        // defaulted to TRANSPARENT (alpha matte). Receivers that respect
+        // alpha (vMix, Wirecast, OBS with alpha-aware composition) then
+        // showed the video background as see-through whenever the
+        // renderer's compositing produced any non-opaque pixels (which
+        // happens on a video element while it is fetching, between
+        // frames, or in the letterbox area of a contain-fit video).
+        // EW-class behaviour: NDI fullscreen output is OPAQUE by default;
+        // transparency is an explicit opt-in feature exclusively for
+        // lower-third / overlay workflows where the receiver is doing
+        // chromakey-style composition over its own program. We require
+        // `opts.transparent === true` (explicit) to enable. The lower-
+        // third path below still works because operators that turn on
+        // lower-third also explicitly check the transparent toggle.
+        const wantTransparent = wantLayout === 'ndi' && opts.transparent === true
         const wantLT = wantLayout === 'ndi' && Boolean(opts.lowerThird?.enabled)
         const wantLTPos: 'top' | 'bottom' =
           opts.lowerThird?.position === 'top' ? 'top' : 'bottom'
@@ -2320,7 +2346,10 @@ function setupIpc() {
           frameCaptureFlags.lowerThird === wantLT &&
           (!wantLT || frameCaptureFlags.lowerThirdPosition === wantLTPos) &&
           (!wantLT || frameCaptureFlags.lowerThirdHeight === wantLTHeight) &&
-          (!wantLT || frameCaptureFlags.lowerThirdScale === wantLTScale)
+          (!wantLT || frameCaptureFlags.lowerThirdScale === wantLTScale) &&
+          // v0.7.230 — see frameCaptureFlags.forceBgraForObs comment
+          // above. Toggle while running MUST trigger rebuild.
+          frameCaptureFlags.forceBgraForObs === (opts.forceBgraForObs === true)
         ) {
           broadcastNdiStatus(cur)
           return { ok: true, status: cur }
@@ -2331,7 +2360,17 @@ function setupIpc() {
         // a no-op when no sender exists yet (first start of a session).
         ndi.armBridge(3000)
         if (frameCapture) { await frameCapture.stop(); frameCapture = null }
-        await ndi.start(opts)
+        // v0.7.223 — Pass the resolved transparent flag through to the
+        // NDI sender so it can pick BGRX (opaque, EW-class smooth) vs
+        // BGRA (alpha matte preserved) at the FourCC level. Without
+        // this the sender would always advertise BGRX and the
+        // explicit transparent lower-third workflow would lose its
+        // alpha channel on the wire.
+        // v0.7.230 — forceBgraForObs is plumbed straight through from
+        // NdiStartOptions; the panel reads it from settings and passes
+        // it on every ndi:start call. main.ts has no business deciding
+        // FourCC, so it's a pure forward — ndi-service owns the gate.
+        await ndi.start({ ...opts, transparent: wantTransparent })
         frameCapture = new FrameCapture({
           baseUrl: appBaseUrl,
           onFrame: (buf, w, h) => ndi.sendFrame(buf, w, h),
@@ -2356,7 +2395,20 @@ function setupIpc() {
         params.set('ndi', '1')
         let transparent = false
         if (layout === 'ndi') {
-          transparent = opts.transparent !== false
+          // v0.7.223 — Mirror the explicit-opt-in change at L2307. The
+          // URL-side `?transparent=1` flag (which tells the congregation
+          // renderer to strip its own background colour) MUST follow the
+          // same explicit-opt-in rule as the BrowserWindow's `transparent`
+          // attribute. Pre-fix `opts.transparent !== false` defaulted ON,
+          // so even when the BrowserWindow was opaque the renderer page
+          // was sending a transparent background — Chromium's compositor
+          // would composite the renderer's transparent pixels onto the
+          // BrowserWindow's opaque black, producing visibly darker /
+          // partially-transparent video backgrounds at the receiver.
+          // The two flags MUST stay in lockstep: either both ON (full
+          // alpha matte for lower-third workflows) or both OFF (opaque
+          // fullscreen for normal broadcast).
+          transparent = opts.transparent === true
           const lt = opts.lowerThird || {}
           if (transparent) params.set('transparent', '1')
           if (lt.enabled) params.set('lowerThird', '1')
@@ -2399,6 +2451,9 @@ function setupIpc() {
           // ndi:start can detect operator-dragged changes.
           lowerThirdHeight: wantLTHeight,
           lowerThirdScale: wantLTScale,
+          // v0.7.230 — persist the BGRA-compat pick alongside the
+          // other build-time flags. See frameCaptureFlags type def.
+          forceBgraForObs: opts.forceBgraForObs === true,
         }
         broadcastNdiStatus(ndi.getStatus())
         return { ok: true, status: ndi.getStatus() }
