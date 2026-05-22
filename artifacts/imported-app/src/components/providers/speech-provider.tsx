@@ -1208,6 +1208,58 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         useAppStore.getState().setLiveActiveVerseIndex(0)
         break
       }
+      // ── v0.7.235 — Show chapter N within current book ─────────────
+      // Operator says "chapter 5" / "go to chapter 5" / "take me to
+      // chapter 5". Resolve the current book from the live slide and
+      // load <currentBook> N:1 in the active translation. Mirror of
+      // show_verse_n Case B but at chapter granularity. If we can't
+      // recover any book context (no live verse currently), surface a
+      // toast — the operator probably meant to wake-prefix this with
+      // a book reference first.
+      case 'show_chapter_n': {
+        if (!cmd.chapterNumber) break
+        const n = cmd.chapterNumber
+        const slide = s.liveSlide ?? (liveIdx >= 0 ? slides[liveIdx] : null)
+        if (!slide || slide.type !== 'verse' || !slide.title) {
+          toast.error(`No live passage — say "<book> chapter ${n}" first`, { duration: 2200, position: 'bottom-right' })
+          break
+        }
+        const refFromSlide = parseExplicitReference(slide.title)
+        if (!refFromSlide) {
+          toast.error(`Cannot parse current passage: ${slide.title}`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const struct = (bibleStructure as unknown as Record<string, number[]>)[refFromSlide.book]
+        const chapterCount = struct?.length ?? 0
+        if (chapterCount && (n < 1 || n > chapterCount)) {
+          toast.error(`${refFromSlide.book} only has ${chapterCount} chapters`, { duration: 2200, position: 'bottom-right' })
+          break
+        }
+        const tx = s.selectedTranslation
+        const refKey = `${refFromSlide.book} ${n}:1`
+        let textOut: string | null = lookupVerse(refFromSlide.book, n, 1, tx)
+        if (!textOut && !isTranslationBundled(tx)) {
+          try {
+            const v = await fetchBibleVerse(refKey, tx)
+            if (v) textOut = v.text
+          } catch { /* fall through */ }
+        }
+        if (!textOut) {
+          toast.error(`Could not load ${refKey}`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const slideNew = {
+          id: `slide-${Date.now()}`,
+          type: 'verse' as const,
+          title: refKey,
+          subtitle: tx,
+          content: textOut.split('\n').filter(Boolean),
+          background: s.settings.congregationScreenTheme,
+        }
+        useAppStore.getState().setLiveAuto(slideNew)
+        useAppStore.getState().setLiveActiveVerseIndex(0)
+        break
+      }
     }
   }, [])
 
