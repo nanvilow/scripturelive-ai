@@ -66,6 +66,7 @@ export const LLM_INTENT_KINDS = [
   'change_translation',
   'delete_previous_verse',
   'show_verse_n',
+  'show_chapter_n',
   'find_by_quote',
 ] as const satisfies readonly CommandKind[]
 
@@ -83,6 +84,7 @@ export const LlmClassifierResponseSchema = z.object({
       reference: z.string().optional(),
       translation: z.string().optional(),
       verseNumber: z.number().int().positive().optional(),
+      chapterNumber: z.number().int().positive().optional(),
       quoteText: z.string().optional(),
     })
     .optional(),
@@ -164,6 +166,7 @@ const SYSTEM_PROMPT = [
   '  change_translation                      — switch Bible version (set args.translation, e.g. "niv", "kjv", "esv", "amp", "msg")',
   '  delete_previous_verse                   — undo the most recent live push',
   '  show_verse_n                            — jump to verse N within the current chapter (set args.verseNumber)',
+  '  show_chapter_n                          — jump to chapter N within the current book (set args.chapterNumber)',
   '  find_by_quote                           — fuzzy search by topic / quote (set args.quoteText)',
   '',
   'Rules:',
@@ -180,6 +183,8 @@ const SYSTEM_PROMPT = [
   '      "give me the tree version", "switch to tweet bible", "chwee version please", "akan translation",',
   '      "the local language", "mother tongue version", "twi please", "akuapem bible".',
   '    Confidence on these should be ≥ 90 — operators in Ghana ask for this multiple times per service and a missed switch is a visible production error.',
+  '  - v0.7.235 — ASR mishearing: when the transcript contains "vest N" (e.g. "vest 5", "go to vest 5"), treat it as the SAME utterance as "verse N". Deepgram and Whisper consistently mis-transcribe "verse" as "vest" for non-American-English speakers; emit show_verse_n with args.verseNumber = N at confidence ≥ 90. Same applies to "verces N", "verce N" — anything obviously phonetically adjacent to "verse" followed by a small integer.',
+  '  - v0.7.235 — Chapter navigation: "chapter N" / "go to chapter N" / "take me to chapter N" (with no book name) maps to show_chapter_n with args.chapterNumber = N. The dispatcher resolves the current book from the live slide. If the operator DID say a book name ("John chapter 5", "Romans chapter 8"), prefer go_to_reference with args.reference = "<book> <N>:1" instead — the explicit reference is more specific.',
   '  - Never invent a reference for go_to_reference; if you cannot extract a clear book+chapter+verse, fall back to find_by_quote with the operator\'s words as quoteText.',
 ].join('\n')
 
@@ -236,6 +241,13 @@ export function llmResponseToCommand(
       if (typeof n !== 'number' || n < 1) return null
       return { ...base, verseNumber: n }
     }
+    case 'show_chapter_n': {
+      // v0.7.235 — Chapter-N navigation. Dispatcher resolves the
+      // current book from the live slide and loads chapter N verse 1.
+      const n = parsed.args?.chapterNumber
+      if (typeof n !== 'number' || n < 1) return null
+      return { ...base, chapterNumber: n }
+    }
     case 'find_by_quote': {
       const q = parsed.args?.quoteText?.trim()
       if (!q) return null
@@ -281,6 +293,7 @@ function defaultLabelFor(kind: CommandKind): string {
     case 'change_translation': return 'Change translation'
     case 'delete_previous_verse': return 'Delete previous verse'
     case 'show_verse_n': return 'Show verse'
+    case 'show_chapter_n': return 'Show chapter'
     case 'find_by_quote': return 'Find by quote'
   }
 }
