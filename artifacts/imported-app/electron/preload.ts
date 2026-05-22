@@ -20,6 +20,9 @@ export type NdiStartOptions = {
   fps: number
   layout?: NdiLayout
   transparent?: boolean
+  // v0.7.230 — OBS Studio compatibility: force BGRA FourCC even in
+  // opaque mode. See store.ts ndiForceBgraForObs for the rationale.
+  forceBgraForObs?: boolean
   lowerThird?: NdiLowerThirdConfig
 }
 
