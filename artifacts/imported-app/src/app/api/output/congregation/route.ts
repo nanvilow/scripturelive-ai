@@ -45,8 +45,25 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 #output.ratio-16x9{aspect-ratio:16/9;width:min(100vw,calc(100vh*16/9));height:min(100vh,calc(100vw*9/16))}
 #output.ratio-4x3{aspect-ratio:4/3;width:min(100vw,calc(100vh*4/3));height:min(100vh,calc(100vw*3/4))}
 #output.ratio-21x9{aspect-ratio:21/9;width:min(100vw,calc(100vh*21/9));height:min(100vh,calc(100vw*9/21))}
-.bg-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;pointer-events:none}
-.bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);pointer-events:none;z-index:1}
+/* v0.7.221 — Operator escalation: image AND video backgrounds were too
+   dark to read on the projector / NDI feed. Effective brightness was
+   .4 * (1 - .3) = .28 of source pixel value (bg opacity * (1 - scrim
+   alpha)). Operator side-by-side proof approved opacity .4 → .6 +
+   scrim .3 → .2, taking effective brightness to .6 * .8 = .48 (~70%
+   brighter) while keeping enough contrast for white verse text +
+   text-shadow to stay WCAG-AA legible. Same pair applied to .lt-bg
+   / .lt-bg-overlay (lower-third surface) so chyron and full-screen
+   modes match. The legacy .bg-image class shares the .bg-overlay
+   stack so it follows the same axis. */
+/* v0.7.227 — Operator brightness slider: both members of the
+   v0.7.226 pair-invariant are now driven by CSS variables set by
+   applyRender() from s.settings.bgBrightness. Fallback to the
+   v0.7.226 baseline (.85 / .05) when the var is unset so first-paint
+   before SSE settles AND pre-v0.7.227 persisted state render
+   identically to v0.7.226. Pair invariant preserved by SOURCE:
+   --bg-opacity = brightness/100, --bg-scrim = (1 - opacity) * 0.333. */
+.bg-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:var(--bg-opacity,.85);pointer-events:none}
+.bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,var(--bg-scrim,.05));pointer-events:none;z-index:1}
 /* v0.7.187 — Persistent BG VIDEO layer (PERFORMANCE FIX). Pre-fix, the
    verse-background <video> was inlined into #output's innerHTML on every
    render. Because the renderer reassigns $('output').innerHTML on every
@@ -66,7 +83,26 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 #bgLayer.ratio-16x9{aspect-ratio:16/9;width:min(100vw,calc(100vh*16/9));height:min(100vh,calc(100vw*9/16))}
 #bgLayer.ratio-4x3{aspect-ratio:4/3;width:min(100vw,calc(100vh*4/3));height:min(100vh,calc(100vw*3/4))}
 #bgLayer.ratio-21x9{aspect-ratio:21/9;width:min(100vw,calc(100vh*21/9));height:min(100vh,calc(100vw*9/21))}
-#bgLayer > video, #bgLayer > img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;display:block}
+/* v0.7.221 — GPU compositing hints for the background <video>/<img>.
+   #bgLayer sits at z:0 with #output painting opaque slide content at
+   z:1 on top. Without an explicit compositing hint Chromium puts both
+   layers on the same paint surface, so every text re-render (slide
+   transition, animation, anti-aliasing pass) invalidates the bg
+   pixels too and the bg video has to repaint from scratch. That is
+   the dominant source of judder operators saw on the Live Display
+   pane + Secondary Screen popup, and the dominant source of dropped
+   frames on the NDI offscreen capture. translateZ(0) promotes the bg
+   to its own GPU layer (independent of #output's paint), will-change
+   tells the compositor to keep it on the GPU between frames, and
+   backface-visibility:hidden avoids subpixel snap glitches on scaled
+   surfaces (Secondary Screen popup at non-integer DPRs). These are
+   the same primitives EasyWorship/ProPresenter use for their bg
+   video layers. Cheap (1 extra compositor layer) and broadcast-safe. */
+/* v0.7.221 — opacity:.4 → .6 (brightness fix, see .bg-image comment
+   above). GPU compositing hints unchanged (also v0.7.221). */
+/* v0.7.227 — opacity driven by --bg-opacity (set by applyRender from
+   settings.bgBrightness). Fallback .85 preserves v0.7.226 baseline. */
+#bgLayer > video, #bgLayer > img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:var(--bg-opacity,.85);display:block;transform:translateZ(0);will-change:transform,opacity;backface-visibility:hidden}
 #output{position:relative;z-index:1}
 .slide-content{position:relative;z-index:1;text-align:center;width:90%;max-width:90vw;height:100%;max-height:100%;min-height:0;box-sizing:border-box;overflow:hidden;padding:4vh 3vw;display:flex;flex-direction:column;align-items:center;justify-content:center}
 /* v0.6.3 — Bible reference text: BOLD by default + full opacity. The
@@ -89,7 +125,17 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 .theme-easter{background:linear-gradient(135deg,#0a3c2a,#042f2e)}
 .theme-christmas{background:linear-gradient(135deg,#3c0a0a,#4c0519)}
 .theme-praise{background:linear-gradient(135deg,#3c3a0a,#451a03)}
-.theme-minimal{background:linear-gradient(135deg,#0a0a0a,#171717)}
+/* v0.7.221 — Operator escalation: "I can't see anything when no
+   background uploaded". With Minimal as the default theme and no
+   customBackground configured, the surface was a near-black void
+   (#0a0a0a → #171717). Brightened to a visible slate (#1e1e24 →
+   #2a2a35) so the projector / NDI feed reads as an actual surface
+   even when the operator has not yet uploaded a custom background.
+   Still firmly in the modern dark-UI register — keeps high text
+   contrast and reads as intentional design, not a fade-to-black.
+   Same value applied to .lt-box.theme-minimal so the lower-third
+   chyron card matches the full-screen Minimal surface. */
+.theme-minimal{background:linear-gradient(135deg,#1e1e24,#2a2a35)}
 /* v0.7.15 — Lower-third stretched to fill ~95% of the frame width.
    Operator screenshot (red box covering near-edge-to-edge of preview)
    showed the v0.7.8-restored 68rem max-width was capping the card at
@@ -156,7 +202,19 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 .lt-box.theme-easter{background:linear-gradient(135deg,#0a3c2a,#042f2e)}
 .lt-box.theme-christmas{background:linear-gradient(135deg,#3c0a0a,#4c0519)}
 .lt-box.theme-praise{background:linear-gradient(135deg,#3c3a0a,#451a03)}
-.lt-box.theme-minimal{background:linear-gradient(135deg,#0a0a0a,#171717)}
+/* v0.7.221 — Lower-third Minimal MUST be an explicit compound
+   selector .lt-box.theme-minimal (no space, no comment between),
+   NOT a descendant selector .lt-box .theme-minimal nor a comment-
+   collapsed .lt-box/**/.theme-minimal (architect medium-risk
+   caveat: comment-collapsed compound selectors are technically
+   valid per CSS tokenizer but rely on cascade ordering and are
+   brittle to unrelated reorders). Value MUST match the full-screen
+   .theme-minimal slate gradient defined at L132 so the lower-third
+   chyron and the full-screen Minimal surface stay pixel-identical
+   when the operator toggles Display Mode mid-event. (ASCII quotes
+   only — this CSS lives inside a JS template literal and backticks
+   in the comment would close the outer string.) */
+.lt-box.theme-minimal{background:linear-gradient(135deg,#1e1e24,#2a2a35)}
 /* v0.6.3 — NDI lower-third transparent matte. When the operator flips
    "Transparent lower-third" on the NDI tab, the rounded card drops
    its gradient + drop-shadow so vMix / OBS receive a clean alpha
@@ -166,8 +224,14 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 .lt-box.transparent{background:transparent !important;box-shadow:none !important}
 .lt-box.transparent .lt-bg,.lt-box.transparent .lt-bg-overlay{display:none !important}
 /* Custom background image — clipped to the rounded box only. */
-.lt-box .lt-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4;border-radius:inherit;pointer-events:none}
-.lt-box .lt-bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);border-radius:inherit;pointer-events:none}
+/* v0.7.221 — Operator brightness fix (see .bg-image comment at top
+   of CSS): opacity .4 → .6, scrim alpha .3 → .2. Lower-third bg
+   stack mirrors the full-screen bg stack so chyron and full
+   surfaces stay visually consistent. */
+/* v0.7.227 — Lower-third bg pair also driven by --bg-opacity /
+   --bg-scrim. 3-surface lockstep invariant preserved (v0.7.226). */
+.lt-box .lt-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:var(--bg-opacity,.85);border-radius:inherit;pointer-events:none}
+.lt-box .lt-bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,var(--bg-scrim,.05));border-radius:inherit;pointer-events:none}
 .lt-box .lt-content{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;width:100%;height:100%;overflow:hidden;min-height:0}
 /* v0.7.5 — Hard clamp the verse text to N lines inside the FIXED
    lower-third frame (T503). Combined with the auto-fit ltFs clamp
@@ -214,7 +278,7 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:#000;font-family:-
 <!-- v0.5.33 — bake the splash watermark into the initial body so the
      surface is NEVER visually blank, even before SSE connects or the
      first poll lands. The renderer replaces this on first state. -->
-<div id="stage"><div id="bgLayer"></div><div id="output"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;color:#fff;text-align:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif"><div style="font-size:clamp(2rem,7vmin,7rem);font-weight:600;letter-spacing:-.01em;line-height:1.05;opacity:.4">Scripture AI</div><div style="margin-top:1.4vmin;font-size:clamp(.85rem,1.8vmin,1.6rem);opacity:.3;font-weight:500">Powered By WassMedia (+233246798526)</div></div></div></div>
+<div id="stage"><div id="bgLayer"></div><div id="preheatLayer" style="position:absolute;left:-99999px;top:-99999px;width:1px;height:1px;overflow:hidden;pointer-events:none;opacity:0"></div><div id="output"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;color:#fff;text-align:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif"><div style="font-size:clamp(2rem,7vmin,7rem);font-weight:600;letter-spacing:-.01em;line-height:1.05;opacity:.4">Scripture AI</div><div style="margin-top:1.4vmin;font-size:clamp(.85rem,1.8vmin,1.6rem);opacity:.3;font-weight:500">Powered By WassMedia (+233246798526)</div></div></div></div>
 <script>
 // Surface any uncaught script error as a visible red banner instead of
 // silently leaving the splash up forever (which is exactly how the
@@ -282,6 +346,8 @@ var FORCE_POS=null;
 var IS_PREVIEW=false;
 var FORCE_FULL=false;
 var IS_NO_MEDIA=false;
+// v0.7.221 — see freezeBg parser block below.
+var IS_FROZEN_BG=false;
 // v0.7.5.1 — FORCE_LH / FORCE_SC let the Electron NDI capture pin the
 // operator's lower-third HEIGHT bucket and SCALE multiplier into the
 // URL itself, so the captured BrowserWindow renders the right box
@@ -326,6 +392,24 @@ try{
   // NDI FrameCapture, Browser Source) do NOT pass this flag, so
   // operator + congregation + OBS still see video.
   IS_NO_MEDIA=(__qp.get('noMedia')==='1');
+  // v0.7.221 — When ?freezeBg=1 is set, the custom-background <video>
+  // in #bgLayer mounts WITHOUT autoplay/loop and is paused on the
+  // first frame so the surface shows a still poster instead of a
+  // playing clip. Used by every operator-facing PREVIEW surface that
+  // is NOT the real broadcast target: Settings PREVIEW (TYPOGRAPHY),
+  // Settings Custom Background thumbnail, Settings NDI LIVE PREVIEW,
+  // Settings Display & Output LIVE PREVIEW, and the Main Console
+  // PREVIEW pane (the middle column in the operator view). Operator
+  // escalation: a background video was animating in 5+ places on a
+  // single screen, distracting the operator from the actual live
+  // pane and chewing decoder slots/CPU. Real broadcast targets do
+  // NOT pass this flag and keep playing: Main Console LIVE DISPLAY
+  // pane (OutputPreview mirrorLive=true), Secondary Screen popup
+  // window (opened with no query params), Offscreen NDI FrameCapture
+  // (its own URL builder in electron/, no freezeBg). This is a
+  // separate axis from noMedia: noMedia hides media-video SLIDES
+  // (foreground content); freezeBg pauses the BACKGROUND layer.
+  IS_FROZEN_BG=(__qp.get('freezeBg')==='1');
 }catch(e){}
 // v0.7.209 — Force the operator-chosen background with !important
 // inline so it beats OBS Browser Source default Custom CSS
@@ -600,7 +684,24 @@ function applyRatio(r){
 function dropLiveVideoCache(){
   window.__liveVideoEl=null;
   window.__liveVideoKey='';
+  // v0.7.235 — Reset transport-event tracking when the live <video>
+  // is dropped. A fresh mount must not be misclassified as a transport
+  // event by stale prev values from the previous clip.
+  __prevMediaPaused=undefined;
+  __prevMediaCurrentTime=undefined;
 }
+
+// v0.7.235 — Module-scope transport-event tracking for the strict-
+// follow sync model. See the reconciler block (~L1910) for the full
+// rationale. We compare slide.mediaPaused / slide.mediaCurrentTime
+// against the last-rendered values to distinguish (a) operator-driven
+// transport events that MUST hard-snap regardless of drift / NDI
+// exemption, from (b) routine SSE jitter that gets the gentle
+// playbackRate trim. undefined means "no prior render" — first
+// render after a fresh clip mount is treated as a transport event by
+// the !== check, which correctly hard-snaps to the operator's clock.
+var __prevMediaPaused=undefined;
+var __prevMediaCurrentTime=undefined;
 
 // v0.7.187 — Persistent BG video/image cache (PERFORMANCE FIX for
 // Bible-verse video backgrounds). See the CSS comment at #bgLayer
@@ -745,13 +846,114 @@ function setBgVid(url){
   if(!u) return;
   if(isVideoBg(u)){
     var v=document.createElement('video');
-    v.src=__scrMedia(u);
-    v.autoplay=true;v.loop=true;v.muted=true;v.playsInline=true;
-    v.preload='auto';
-    try{v.setAttribute('crossorigin','anonymous');}catch(e){}
-    v.onerror=function(){try{v.style.display='none';}catch(_e){}};
-    layer.appendChild(v);
-    var pp=v.play();if(pp&&pp.catch)pp.catch(function(){});
+    // v0.7.221 — IS_FROZEN_BG path: settings/preview surfaces mount the
+    // bg <video> as a still poster, not a playing clip. We append
+    // a "#t=0.1" media-fragment so the browser fetches and paints
+    // the frame at 0.1 seconds and sits there (avoids the all-black
+    // first-frame poster many codecs ship with). preload="metadata"
+    // is the cheapest mode that still produces a visible frame — no
+    // decoder slot is held for ongoing playback. Real broadcast
+    // surfaces fall through to the historical autoplay/loop path.
+    // NOTE: backticks are forbidden anywhere inside this inline JS
+    // because the entire script lives inside the outer template
+    // literal at L20 (const html = ...), and an un-escaped backtick
+    // here would close that template literal mid-string and fail
+    // typecheck (TS1005). Use plain ASCII quotes in comments.
+    if(IS_FROZEN_BG){
+      // v0.7.225 — Operator escalation: bg video in the SETTINGS preview
+      // boxes (and every other freezeBg surface) was taking 1-3s to
+      // paint its first frame, leaving the box black-with-text until
+      // the metadata fetch + first-frame decode finished. Root cause:
+      // preload="metadata" only fetches container headers + dimensions;
+      // many Chromium builds will NOT decode + paint a frame from that
+      // alone until something explicitly triggers a decode pass. The
+      // "#t=0.1" media fragment hints AT a target frame but does
+      // nothing without a load that actually fetches enough bytes to
+      // reach that frame. Fix: preload="auto" so the browser fetches +
+      // decodes the first GOP up-front. The pause-on-play /
+      // pause-on-loadeddata listeners stay in place AND we add an
+      // explicit one-shot play().then(pause) on loadeddata to force
+      // the first decoded frame onto the compositor (Chromium will
+      // refuse to paint a paused video that has never been told to
+      // play, even with preload="auto", on some HW decoder paths).
+      // Decoder slot is held only for the brief play→pause window,
+      // then released, so this does NOT regress the v0.7.222 finite-
+      // HW-decoder invariant (which targets the FOREGROUND Preview/
+      // Live <video>, a separate codepath through MediaVideoSurface).
+      v.src=__scrMedia(u)+'#t=0.1';
+      v.autoplay=false;v.loop=false;v.muted=true;v.playsInline=true;
+      v.preload='auto';
+      try{v.setAttribute('crossorigin','anonymous');}catch(e){}
+      v.onerror=function(){try{v.style.display='none';}catch(_e){}};
+      // Defensive: some Electron/Chromium versions still start playing
+      // when autoplay=false but the element has been added to the DOM
+      // and previously played. Pause on every loadeddata + once
+      // immediately so we never animate. The loadeddata handler also
+      // kicks the one-shot play→pause to force first-frame paint
+      // (v0.7.225 fix above).
+      v.addEventListener('loadeddata',function(){
+        try{
+          var pp=v.play();
+          if(pp&&pp.then){pp.then(function(){try{v.pause();}catch(_e){}}).catch(function(){try{v.pause();}catch(_e){}});}
+          else {try{v.pause();}catch(_e){}}
+        }catch(_e){try{v.pause();}catch(__e){}}
+      });
+      v.addEventListener('play',function(){
+        // Re-pause on EVERY play except the loadeddata-triggered one
+        // already handled above. The .then(pause) above resolves
+        // AFTER this listener fires, so we'd be racing — instead
+        // schedule the pause one tick out so the play() promise
+        // resolves cleanly first (avoids AbortError spam).
+        setTimeout(function(){try{v.pause();}catch(_e){}},0);
+      });
+      layer.appendChild(v);
+      // Don't pre-pause synchronously here — let loadeddata drive the
+      // first-frame paint sequence. Pre-fix this call put the element
+      // in a paused state BEFORE preload could begin a decode pass,
+      // which was part of why preload="metadata" was so slow.
+    } else {
+      v.src=__scrMedia(u);
+      v.autoplay=true;v.loop=true;v.muted=true;v.playsInline=true;
+      v.preload='auto';
+      // v0.7.221 — Broadcast-smoothness hardening for the three real
+      // output surfaces (Live Display pane, Secondary Screen popup,
+      // NDI offscreen FrameCapture). Together these mirror what
+      // ProPresenter/EasyWorship do for their bg video layers.
+      //
+      // (1) disablePictureInPicture + disableRemotePlayback — kill
+      //     the Chromium overlay buttons that periodically repaint
+      //     the video surface (and silently steal a compositor pass).
+      //     The operator never wants PiP on the projector output.
+      // (2) playbackRate=1 explicit — guards against the rare case
+      //     where a previous element on the same compositor left a
+      //     non-1.0 rate cached at the codec layer.
+      // (3) controls=false, controlsList=nodownload — defence in
+      //     depth; controls were never on, but if Electron flips
+      //     them on by default in a future Chromium bump the video
+      //     surface would repaint on hover.
+      // (4) waiting/stalled/error self-heal — if the network hiccups
+      //     and Chromium suspends playback, re-issue play() so the
+      //     projector doesn't freeze for the operator. The "loop"
+      //     attribute alone doesn't handle the stall case.
+      try{v.disablePictureInPicture=true;}catch(_e){}
+      try{v.disableRemotePlayback=true;}catch(_e){}
+      try{v.controls=false;}catch(_e){}
+      try{v.setAttribute('controlslist','nodownload noremoteplayback noplaybackrate');}catch(_e){}
+      try{v.setAttribute('crossorigin','anonymous');}catch(e){}
+      v.onerror=function(){try{v.style.display='none';}catch(_e){}};
+      var __bgResume=function(){try{var p=v.play();if(p&&p.catch)p.catch(function(){});}catch(_e){}};
+      v.addEventListener('waiting',__bgResume);
+      v.addEventListener('stalled',__bgResume);
+      v.addEventListener('pause',function(){
+        // Chromium briefly pauses on tab-throttle / decoder reset; only
+        // self-heal if the operator-visible looping playback was
+        // expected (i.e. we did NOT mount this in IS_FROZEN_BG mode).
+        if(!IS_FROZEN_BG)__bgResume();
+      });
+      layer.appendChild(v);
+      try{v.playbackRate=1;}catch(_e){}
+      var pp=v.play();if(pp&&pp.catch)pp.catch(function(){});
+    }
   } else {
     var img=document.createElement('img');
     img.src=__scrMedia(u);img.alt='';
@@ -759,6 +961,60 @@ function setBgVid(url){
     img.onerror=function(){try{img.style.display='none';}catch(_e){}};
     layer.appendChild(img);
   }
+}
+
+// v0.7.228 — Output / NDI startup-delay fix. Mounts a hidden <video> in
+// #preheatLayer for the pinned-preview video URL so HTTP bytes,
+// container demux, and first-frame decode all complete BEFORE the
+// operator clicks Go Live. When goLive promotes that URL into the
+// live slide, the foreground <video id="liveVideo"> mount at L1845
+// hits a warm HTTP cache + warm decoder and paints near-instantly on
+// the secondary screen AND the NDI offscreen capture (NDI captures
+// this same renderer, so any preheat benefit propagates automatically).
+//
+// Uses the v0.7.225 freezeBg pattern so the decoder slot is held only
+// briefly: preload="auto" + play().then(pause) on loadeddata to force
+// first-frame paint, then setTimeout(pause, 0) on the play listener
+// to release the decoder cleanly without AbortError spam. Steady-state
+// decoder cost is ZERO once the first frame is paged in — protects
+// the v0.7.222 finite-HW-decoder invariant.
+//
+// Dedup by URL: same URL = no-op. Empty/null URL = teardown.
+var __preheatUrl='';
+function setPreheatVid(url){
+  var layer=document.getElementById('preheatLayer');
+  if(!layer) return;
+  var u=url||'';
+  if(u===__preheatUrl) return;
+  __preheatUrl=u;
+  while(layer.firstChild){
+    var old=layer.firstChild;
+    if(old.tagName==='VIDEO'){try{old.pause();old.removeAttribute('src');old.load();}catch(e){}}
+    layer.removeChild(old);
+  }
+  if(!u) return;
+  if(!isVideoBg(u)) return; // images don't need decoder preheat; <link rel=preload> in operator console covers byte cache
+  var v=document.createElement('video');
+  v.src=__scrMedia(u);
+  v.autoplay=false;v.loop=false;v.muted=true;v.playsInline=true;
+  v.preload='auto';
+  try{v.disablePictureInPicture=true;}catch(_e){}
+  try{v.disableRemotePlayback=true;}catch(_e){}
+  try{v.setAttribute('crossorigin','anonymous');}catch(e){}
+  v.onerror=function(){try{v.style.display='none';}catch(_e){}};
+  // v0.7.225 freezeBg pattern: kick play().then(pause) on loadeddata to
+  // force the first decoded frame onto the GPU, then release decoder.
+  v.addEventListener('loadeddata',function(){
+    try{
+      var pp=v.play();
+      if(pp&&pp.then){pp.then(function(){try{v.pause();}catch(_e){}}).catch(function(){try{v.pause();}catch(_e){}});}
+      else {try{v.pause();}catch(_e){}}
+    }catch(_e){try{v.pause();}catch(__e){}}
+  });
+  v.addEventListener('play',function(){
+    setTimeout(function(){try{v.pause();}catch(_e){}},0);
+  });
+  layer.appendChild(v);
 }
 
 // applyAudio — pushes the operator's audio toggles down to the live
@@ -822,6 +1078,28 @@ function applyRender(s){
   if(dur<0)dur=0;if(dur>1000)dur=1000; // cap at 1 s — anything longer felt sluggish to operators
   var el=$('output');
   if(el)el.style.setProperty('--slide-fade-ms',dur+'ms');
+  // v0.7.227 — Apply operator brightness slider. Both members of the
+  // v0.7.226 pair-invariant (bg opacity + dark scrim alpha) move in
+  // lockstep across all three surfaces (.bg-image / #bgLayer / .lt-bg)
+  // because they read the same two CSS variables from :root. Mapping
+  // chosen so brightness=85 reproduces the v0.7.226 operator pick
+  // exactly (op=.85, scrim=.05): scrim = (1 - op) * 0.333.
+  try{
+    var bb=(s&&s.settings&&typeof s.settings.bgBrightness==='number')?s.settings.bgBrightness:85;
+    if(bb<0)bb=0;if(bb>100)bb=100;
+    var bbOp=bb/100;
+    var bbSc=Math.max(0,(1-bbOp)*0.333);
+    var root=document.documentElement;
+    root.style.setProperty('--bg-opacity',bbOp.toFixed(3));
+    root.style.setProperty('--bg-scrim',bbSc.toFixed(3));
+  }catch(e){}
+  // v0.7.228 — Honour preheat URL from the operator console's pinned
+  // preview. setPreheatVid is URL-dedup'd, so calling it on every
+  // applyRender is cheap (no churn when the value is unchanged). Null
+  // / undefined / same-as-live URL all tear the hidden element down
+  // and release its decoder slot — see output-payload.ts L132-140
+  // for the source-side gate.
+  try{ setPreheatVid(s && s.preheatMediaUrl ? String(s.preheatMediaUrl) : ''); }catch(e){}
   // Decide whether this update is a true SLIDE change (worth animating)
   // or a settings-only adjustment (must NOT animate). The fingerprint
   // intentionally excludes settings, audio, and transport flags.
@@ -1567,6 +1845,35 @@ function render(s){
     else if(mf==='stretch'){of='fill';}
     else if(mf==='16:9'){of='contain';ar='16/9';}
     else if(mf==='4:3'){of='contain';ar='4/3';}
+    // v0.7.230 — Operator brightness slider now also dims the foreground
+    // live media element (sermon clips, ID videos, etc.). Before v0.7.230
+    // the brightness CSS vars only reached background layers (.bg-image /
+    // #bgLayer / .lt-bg) — operator could dim the bg to 50 but the
+    // sermon video on top stayed at 100% on NDI, secondary screen and
+    // OBS, defeating the whole point of "dim the output for this room".
+    // Fallback 1 (not .85) preserves the pre-v0.7.230 default: when
+    // applyRender hasn't run yet OR when bgBrightness is absent from the
+    // SSE payload (legacy installs / first paint), foreground media stays
+    // at 100% — matches operator expectation from v0.7.227-v0.7.229. Once
+    // applyRender writes the var, foreground unifies with bg at the
+    // operator-picked brightness. Text stays at 100% (no opacity binding
+    // on .slide-text) because the WCAG-AA legibility guard-rail relies
+    // on full-strength text with the existing text-shadow stack.
+    // v0.7.235 — Drop the v0.7.230 opacity:var(--bg-opacity,1) binding
+    // on foreground media. Operator escalation: "video on the live
+    // display looks brighter than the same video on secondary / NDI /
+    // OBS / Wirecast". Root cause: v0.7.230 reached the bg-brightness
+    // slider into foreground media to "unify" all surfaces, but the
+    // OPERATOR LIVE CARD (MediaVideoSurface in logos-shell.tsx) has no
+    // equivalent opacity binding — so at the default bgBrightness=85,
+    // foreground media played at opacity 1.00 on the operator's monitor
+    // but 0.85 on every receiver (15% mismatch). The bgBrightness
+    // slider was introduced (v0.7.221+) for text-over-background
+    // readability, not for dimming full-frame sermon clips. When the
+    // operator drops a clip into Live, they expect 100% brightness on
+    // every surface. Background image / background video / lower-third
+    // bg bindings (L65, L105, L233) intentionally stay — those are the
+    // surfaces the slider is for.
     var mediaStyle='width:100%;height:100%;object-fit:'+of+';background:#000;display:block';
     // Reuse path: if the SAME media URL is already mounted, we only
     // toggle play/pause on the live <video> element instead of
@@ -1615,9 +1922,81 @@ function render(s){
         // Pairs with logos-shell.tsx L420 (writeback throttle 0.10s →
         // 0.50s) which already keeps local→broadcast latency inside
         // 0.50s, well under the new tolerance.
-        if(!IS_NDI&&typeof slide.mediaCurrentTime==='number'&&slide.mediaCurrentTime>0){
-          var drift=Math.abs((existingVid.currentTime||0)-slide.mediaCurrentTime);
-          if(drift>1.5){try{existingVid.currentTime=slide.mediaCurrentTime;}catch(e){}}
+        // v0.7.234 — Drift tolerance tightened 1.5s → 0.5s. The
+        // v0.7.216 follow-up #4 rationale (raise from 0.20s to 1.5s
+        // to eliminate decoder-flush thrash from SSE jitter) still
+        // holds in its lower bound — 0.20s was too tight — but 1.5s
+        // overshot to the point that operators reported the OBS
+        // Browser source visibly trailing the in-app Live Display by
+        // up to a second on sermon clips ("OBS not in sync with what
+        // the app is playing, too slow and not smooth"). 0.5s pairs
+        // with logos-shell.tsx L476 (writeback 0.50s → 0.20s) so the
+        // local→broadcast latency stays inside 0.20s and only true
+        // transport events (operator scrub, GO LIVE promotion, jump-
+        // to-chapter) exceed the tolerance. Routine SSE jitter at
+        // 100-300ms still sits well below 0.5s — the decoder-flush
+        // thrash the 1.5s number was designed to prevent does not
+        // re-emerge.
+        // v0.7.235 — Strict-follow sync. Operator escalation against
+        // v0.7.234: "when users click pause or drag back, OBS/Wirecast
+        // play a different time frame from the app". Pre-v0.7.235 ran
+        // the SAME drift>0.5 check for both routine SSE jitter AND
+        // operator transport events (pause, scrub, jump). Two bugs:
+        //   1. Pause snapped to receiver's drifted frame, not the
+        //      operator's frame. Operator pauses at 100, receiver at
+        //      113 (drift 0.43s < 0.5), receiver pauses at 113.
+        //   2. Scrub-back ignored on NDI entirely (!IS_NDI gate from
+        //      v0.7.194-hotfix.2 freeze guard).
+        // Fix: detect transport events from CHANGES in mediaPaused or
+        // discontinuous CHANGES in mediaCurrentTime (backward jump > 0.3s
+        // = scrub-back; forward jump > 2s = chapter-jump). Transport
+        // events ALWAYS hard-snap, on every surface including NDI —
+        // they fire at human-action cadence (~hertz, not per-frame), so
+        // the occasional NDI decoder flush is acceptable. The v0.7.194
+        // freeze guard was sized for the per-frame routine-drift loop,
+        // not for transport events. Routine forward drift 0.10-0.50s
+        // now uses playbackRate trim (0.97/1.03) for smooth catch-up
+        // on EVERY surface (no decoder flush). Routine drift > 0.5s on
+        // secondary still hard-seeks (unchanged v0.7.234 floor); NDI
+        // stays exempt from the routine forward-drift seek (preserves
+        // v0.7.194-hotfix.2 freeze guard for the per-frame jitter path).
+        var __isTransportEvent=(
+          __prevMediaPaused!==slide.mediaPaused
+          ||(typeof slide.mediaCurrentTime==='number'
+             &&typeof __prevMediaCurrentTime==='number'
+             &&(slide.mediaCurrentTime<__prevMediaCurrentTime-0.3
+                ||slide.mediaCurrentTime>__prevMediaCurrentTime+2.0))
+        );
+        if(typeof slide.mediaCurrentTime==='number'&&slide.mediaCurrentTime>=0){
+          var __cur=existingVid.currentTime||0;
+          var __drift=__cur-slide.mediaCurrentTime;
+          var __absDrift=__drift<0?-__drift:__drift;
+          if(__isTransportEvent){
+            // Operator transport event: hard-snap every surface, NDI
+            // included. Reset playbackRate so any in-flight trim from
+            // the previous steady-state doesn't carry over.
+            try{existingVid.currentTime=slide.mediaCurrentTime;}catch(e){}
+            try{existingVid.playbackRate=1.0;}catch(e){}
+          }else if(__absDrift>0.5&&!IS_NDI){
+            // Routine secondary drift (v0.7.234 path preserved).
+            try{existingVid.currentTime=slide.mediaCurrentTime;}catch(e){}
+            try{existingVid.playbackRate=1.0;}catch(e){}
+          }else if(__absDrift>0.10){
+            // Steady-state trim. NDI included. Ahead → slow to 0.97;
+            // behind → speed to 1.03. Catches up ~0.30s every second.
+            // Dead band below 0.10s so the rate doesn't oscillate
+            // around exact match.
+            try{existingVid.playbackRate=__drift>0?0.97:1.03;}catch(e){}
+          }else{
+            // Inside dead band — restore nominal rate so a previous
+            // trim eventually ends (otherwise playbackRate stays
+            // trimmed and the receiver overshoots the other way).
+            try{existingVid.playbackRate=1.0;}catch(e){}
+          }
+        }
+        __prevMediaPaused=slide.mediaPaused;
+        if(typeof slide.mediaCurrentTime==='number'){
+          __prevMediaCurrentTime=slide.mediaCurrentTime;
         }
         if(slide.mediaPaused){existingVid.pause();}
         else{var p=existingVid.play();if(p&&p.catch)p.catch(function(){});}
@@ -1653,6 +2032,16 @@ function render(s){
     if(slide.mediaKind==='video'){
       window.__liveVideoEl=$('liveVideo');
       window.__liveVideoKey=liveKey;
+      // v0.7.235 — Seed transport-event tracking from THIS mount's
+      // values so the very NEXT reconcile pass treats unchanged state
+      // as routine (not a transport event). Without this, the prev
+      // values from the dropped clip (or undefined from a fresh
+      // process) would force a spurious hard-snap on the first
+      // post-mount payload, wiping the seedSeek we're about to do.
+      __prevMediaPaused=slide.mediaPaused;
+      __prevMediaCurrentTime=(typeof slide.mediaCurrentTime==='number')
+        ? slide.mediaCurrentTime
+        : 0;
       // Seed the new <video> with the current master clock so a
       // freshly-opened secondary screen joins on the right frame.
       if(window.__liveVideoEl&&typeof slide.mediaCurrentTime==='number'&&slide.mediaCurrentTime>0){
