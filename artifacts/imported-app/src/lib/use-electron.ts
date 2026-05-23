@@ -74,6 +74,9 @@ export type ScriptureLiveDesktop = {
       fps: number
       layout?: 'mirror' | 'ndi'
       transparent?: boolean
+      // v0.7.230 — OBS Studio compatibility BGRA opt-in. See
+      // electron/preload.ts NdiStartOptions for the rationale.
+      forceBgraForObs?: boolean
       lowerThird?: {
         enabled?: boolean
         position?: 'top' | 'bottom'
