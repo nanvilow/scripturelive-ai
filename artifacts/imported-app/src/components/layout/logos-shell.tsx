@@ -19,6 +19,7 @@ import { StableStage } from '@/components/presenter/stable-stage'
 import { OutputPreview } from '@/components/settings/output-preview'
 import { attachAnalyser, readLevel } from '@/lib/audio-level'
 import { cn, resolveMediaUrl } from '@/lib/utils'
+import { resolveMediaFit } from '@/lib/media-fit'
 import { toast } from 'sonner'
 import {
   Mic,
@@ -109,6 +110,7 @@ function Card({
   badge,
   actions,
   children,
+  footer,
   className,
   bodyClassName,
 }: {
@@ -116,6 +118,24 @@ function Card({
   badge?: ReactNode
   actions?: ReactNode
   children: ReactNode
+  // v0.7.238 — Optional footer slot rendered as a section-level
+  // sibling of header + body, OUTSIDE the body's overflow region.
+  // Use this for shrink-0 chrome (transport bars, action toolbars)
+  // that MUST stay visible even when the operator drags the
+  // splitter small enough that the body can't allocate room for
+  // them. Pre-238 these lived as the last children of the body and
+  // got clipped by body's overflow-hidden when total height of
+  // (stage_min=0 + toolbar + transport) exceeded body height —
+  // the v0.7.232 stage `overflow-hidden` quartet only solved
+  // intrinsic-size pressure from the stage's aspect-ratio video
+  // frame; the second clipping path (shrink-0 footer rows pushed
+  // past body's overflow boundary) was unfixed and was the actual
+  // operator-visible "transport bar vanishes when splitter goes up"
+  // bug. By placing the footer OUTSIDE the body's overflow region
+  // entirely, no body-level clip can ever hide it. The section's
+  // own `overflow-hidden` still clips footer chrome that would
+  // bleed past the Card border, so the visual contract is preserved.
+  footer?: ReactNode
   className?: string
   bodyClassName?: string
 }) {
@@ -150,6 +170,7 @@ function Card({
           `bodyClassName="overflow-hidden …"` — twMerge swaps the
           overflow keyword cleanly. */}
       <div className={cn('flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden', bodyClassName)}>{children}</div>
+      {footer != null && <div className="shrink-0 flex flex-col">{footer}</div>}
     </section>
   )
 }
@@ -407,7 +428,37 @@ function MediaVideoSurface({
       // start playing the instant the browser is ready. Cleanup tears
       // down the listener if the effect re-runs before `canplay` fires
       // (e.g. operator rapidly swaps the live clip again).
-      const onCanPlay = () => { v.play().catch(() => {}) }
+      // v0.7.224 — Operator $1600-customer escalation (re-fired on
+      // v0.7.223): "go live also send video from preview to live
+      // display to immediately start playing — still not working".
+      // Part B of the fix (part A is at goLive pinned path L4378+):
+      // when the live <video> mounts FRESH (key={mediaUrl} change) and
+      // the store carries a non-zero mediaCurrentTime (operator was
+      // mid-clip in preview when they pressed GO LIVE), the top-of-
+      // effect seek attempt above silently no-ops because Chromium
+      // refuses currentTime writes on a fresh element before metadata
+      // loads. The post-load store update (goLive's resumeFrom
+      // re-apply) would normally re-run this effect, but by then the
+      // first play() has already started from frame 0. Fix: also
+      // re-apply the pending seek inside the canplay handler — by the
+      // time canplay fires the metadata has loaded so the seek lands
+      // before play resumes. Reads the store directly (NOT the
+      // closed-over mediaCurrentTime) so an in-flight setLiveMediaCurrentTime
+      // from goLive lands too, even if the effect closed over the
+      // stale 0 from setLiveAuto's atomic reset.
+      const onCanPlay = () => {
+        const targetTime = surface === 'preview'
+          ? useAppStore.getState().previewMediaCurrentTime
+          : useAppStore.getState().liveMediaCurrentTime
+        if (
+          Number.isFinite(targetTime) &&
+          targetTime > 0 &&
+          Math.abs(v.currentTime - targetTime) > 0.5
+        ) {
+          try { v.currentTime = targetTime } catch { /* ignore */ }
+        }
+        v.play().catch(() => {})
+      }
       v.addEventListener('canplay', onCanPlay, { once: true })
       return () => v.removeEventListener('canplay', onCanPlay)
     }
@@ -442,7 +493,18 @@ function MediaVideoSurface({
   useEffect(() => {
     const v = videoRef.current
     if (!v) return
-    const writeThreshold = surface === 'live' ? 0.50 : 0.25
+    // v0.7.234 — Drop live writeback threshold 0.50s → 0.20s. v0.7.217
+    // sized the throttle at 0.50s when receiver drift tolerance was
+    // 1.5s (matched per route.ts L1895). v0.7.234 tightens receiver
+    // tolerance to 0.5s, so a 0.50s writeback would routinely sit
+    // exactly at the edge of the new tolerance and trigger needless
+    // seek-corrections. 0.20s keeps the broadcast rate inside what
+    // even a busy SSE pipe can sustain (5Hz steady-state, well below
+    // the v0.7.57 16ms debounce floor) AND keeps OBS Browser source
+    // /  secondary screen within 0.2s of the operator's clock — the
+    // perceived "OBS is laggy / out of sync" escalation against
+    // v0.7.233 directly traces to the 0.50s lag floor here.
+    const writeThreshold = surface === 'live' ? 0.20 : 0.25
     const onTimeUpdate = () => {
       const cur = v.currentTime
       const stored = surface === 'preview'
@@ -471,13 +533,22 @@ function MediaVideoSurface({
     }
   }, [surface, src, setOwnCurrentTime])
 
-  const objectFit: 'contain' | 'cover' | 'fill' =
-    fit === 'fill' ? 'cover' : fit === 'stretch' ? 'fill' : 'contain'
+  // v0.7.230 — Use the canonical 5-way mapping from resolveMediaFit so
+  // the preview box honours '16:9' and '4:3' the same way the output
+  // renderer does. Before v0.7.230 this was an inline 3-case ternary
+  // that silently mapped '16:9' / '4:3' → contain inside a hardcoded
+  // 16/9 frame, so the operator saw a letterboxed clip even when the
+  // secondary screen / NDI / OBS was rendering the picked aspect ratio.
+  // GUARD-RAIL: do NOT reintroduce inline mapping — the four-surface
+  // lockstep (route.ts L1824 / slide-renderer.tsx L19 / MediaVideoSurface
+  // here / standby poster L1434) is enforced by importing this helper.
+  const { objectFit, aspect } = resolveMediaFit(fit as Slide['mediaFit'])
+  const containerAspect = aspect ?? '16 / 9'
 
   return (
     <div
       className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
-      style={{ aspectRatio: '16 / 9' }}
+      style={{ aspectRatio: containerAspect }}
     >
       <video
         ref={videoRef}
@@ -518,10 +589,57 @@ function MediaVideoSurface({
         // pinnedPreviewSlide). Live decoder stays uncontested.
         autoPlay={surface === 'preview' && !mediaPaused}
         playsInline
-        preload={surface === 'preview' && mediaPaused ? 'metadata' : 'auto'}
+        // v0.7.222 — Operator $1600-customer escalation: v0.7.221 did
+        // NOT close this bug. v0.7.218 set preload="metadata" when
+        // preview is paused, on the assumption that "metadata" is
+        // decoder-free. Empirically (Chromium 130+ on the operator's
+        // Windows hardware), "metadata" still:
+        //   1. Opens an HTTP range request for the moov atom
+        //   2. Demuxes the container header
+        //   3. Performs a one-off "decoder capability check" that
+        //      transiently allocates a HW decoder slot to confirm
+        //      the codec can be played
+        // On a low-end GPU with the live <video> already holding 1 of
+        // 2-4 decoder slots and the NDI offscreen capture window
+        // holding another, even a transient capability-check probe is
+        // enough to evict the live decoder for one frame — operator
+        // sees live stall. preload="none" tells the browser to do
+        // ABSOLUTELY NOTHING (no fetch, no demux, no decoder probe)
+        // until play() is called explicitly. Combined with the
+        // PreviewCard STANDBY placard (v0.7.222 follow-up at
+        // logos-shell L~1241), this guarantees zero decoder pressure
+        // from the preview pane during the LIVE-contention window.
+        preload={surface === 'preview' && mediaPaused ? 'none' : 'auto'}
         crossOrigin="anonymous"
+        // v0.7.221 — GPU compositing + stall-resistance for the LIVE
+        // media surface. The live <video> for media-video slides
+        // paints behind the slide's caption/overlay layers; without
+        // an explicit GPU promotion every overlay repaint forces the
+        // video pixels to repaint too, costing roughly a frame on
+        // low-end hardware (the same root cause as the bgLayer
+        // judder addressed in route.ts L69). translateZ(0) +
+        // will-change moves it to its own composited layer.
+        // disablePictureInPicture/disableRemotePlayback kill the
+        // Chromium overlay buttons that periodically repaint the
+        // surface (operators never want PiP on a broadcast pane).
+        // Gated to surface === 'live' to preserve the v0.7.216-218
+        // decoder-slot invariants on the preview pane (those gates
+        // assume preview is the "cheap" surface; promoting preview
+        // to its own GPU layer would change the contention budget).
+        disablePictureInPicture={surface === 'live'}
+        disableRemotePlayback={surface === 'live'}
+        controlsList="nodownload noremoteplayback noplaybackrate"
         className="absolute inset-0 w-full h-full"
-        style={{ objectFit }}
+        style={
+          surface === 'live'
+            ? {
+                objectFit,
+                transform: 'translateZ(0)',
+                willChange: 'transform, opacity',
+                backfaceVisibility: 'hidden',
+              }
+            : { objectFit }
+        }
       />
     </div>
   )
@@ -1083,6 +1201,55 @@ function PreviewCard() {
     previewSlide.mediaUrl &&
     previewSlide.mediaUrl === liveSlide.mediaUrl
   )
+  // v0.7.222 — Operator $1600-customer escalation: live STOPS when
+  // operator single-clicks ANOTHER media-video tile while one is on
+  // air. v0.7.216 / v0.7.218 / v0.7.221 each closed a layer of the
+  // bug (autoPlay gate, preload="metadata" gate, live key remount on
+  // swap-live respectively) but the underlying root cause survived:
+  // mounting ANY <video> element with a different mediaUrl while the
+  // live <video> holds a HW decoder slot races the new element's
+  // decoder-capability probe against the live element's steady-state
+  // decode. On low-end Windows GPUs (2-4 total HW decoder slots, with
+  // 1 used by Live + 1 used by the NDI offscreen capture window),
+  // even a transient probe is enough to evict the live decoder and
+  // stall its playback. The bulletproof fix: when LIVE is playing a
+  // DIFFERENT media-video, do NOT mount a <video> element in the
+  // Preview pane AT ALL. Render a STANDBY placard with the slide
+  // metadata + a hint that the operator can press Play in the
+  // transport bar to materialise a real <video> when ready.
+  //
+  // When the operator presses Play, `previewMediaPaused` flips to
+  // false → this gate releases → the real MediaVideoSurface mounts.
+  // The operator has opted into the decoder contention at that point.
+  // The same-media-on-Live case is handled separately by
+  // `previewMediaIsLive` (renders an ON-AIR placard, no <video>).
+  const previewMediaPaused = useAppStore((s) => s.previewMediaPaused)
+  const setPreviewMediaPaused = useAppStore((s) => s.setPreviewMediaPaused)
+  // v0.7.222 Fix #8 (architect final review) — widen the predicate to
+  // include legacy persisted media slides that have `mediaUrl` but lack
+  // `mediaKind` (older shape; some older decks / NDI bridge inputs do
+  // not stamp mediaKind). Without this fallback the standby gate
+  // (`previewStandbyForLive`) never engages on those legacy slides,
+  // so an HW-decoder-allocating MediaVideoSurface mounts in Preview
+  // and re-opens the v0.7.222 regression for users with older saved
+  // state. The fallback infers "video" from a video MIME/extension at
+  // the URL tail; covers .mp4 / .webm / .mov / .m4v / .mkv with or
+  // without a query string or fragment.
+  const isVideoUrl = (u?: string | null) =>
+    !!u && /\.(mp4|webm|mov|m4v|mkv|ogv)(\?|#|$)/i.test(u)
+  const liveIsMediaVideo = !!(
+    liveSlide?.type === 'media' &&
+    liveSlide?.mediaUrl &&
+    (liveSlide.mediaKind === 'video' || isVideoUrl(liveSlide.mediaUrl))
+  )
+  const previewStandbyForLive = !!(
+    previewSlide?.type === 'media' &&
+    previewSlide.mediaKind === 'video' &&
+    previewSlide.mediaUrl &&
+    liveIsMediaVideo &&
+    liveSlide?.mediaUrl !== previewSlide.mediaUrl &&
+    previewMediaPaused
+  )
   const effectivePreviewSlide = previewMediaIsLive && previewSlide
     ? { ...previewSlide, mediaPaused: true }
     : previewSlide
@@ -1182,8 +1349,70 @@ function PreviewCard() {
         </div>
       }
       bodyClassName="bg-black flex flex-col overflow-hidden"
+      footer={
+        <>
+          {/* v0.7.215 — Symmetry strip now carries an explicit Clear
+              button that wipes the Preview pane only. Independent of
+              the Live pane's Clear (see LiveDisplayCard's bottom
+              toolbar). Operator asked for one-click wipe per pane so
+              the two surfaces never interfere. Internally calls
+              clearPinnedPreview() + setPreviewSlideIndex(-1) only —
+              slides[] / live state untouched.
+              v0.7.238 — Moved from Card body's last-child position to
+              the Card primitive's new `footer` slot. Pre-238 lived
+              inside body's overflow-hidden region, so when the
+              horizontal splitter shrunk the panel below
+              (toolbar + transport) natural height, this row + the
+              VideoTransport below it got clipped off the bottom of
+              the Card even though still in the DOM. As a footer-slot
+              child it now renders OUTSIDE the body's overflow region
+              and is guaranteed visible. */}
+          <div className="border-t border-border/60 px-3 py-2 flex items-center justify-end gap-3 bg-card/30">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                useAppStore.getState().clearPinnedPreview()
+                useAppStore.getState().setPreviewSlideIndex(-1)
+              }}
+              disabled={!previewSlide}
+              title="Clear the Preview pane (does not affect Live)"
+              className="h-7 px-3 text-[10px] uppercase tracking-wider font-semibold text-muted-foreground hover:text-foreground border border-border gap-1.5"
+            >
+              <CircleSlash className="h-3 w-3" />
+              Clear Preview
+            </Button>
+          </div>
+          {/* Preview transport — Play / Pause + scrubbable seek bar. Only
+              rendered for media-video preview slides; controls the actual
+              <video data-surface="preview"> element so scrubs apply
+              immediately. Live Display has its own dedicated Pause row
+              below its body. */}
+          {previewSlide?.type === 'media' && previewSlide?.mediaKind === 'video' && (
+            <VideoTransport surface="preview" />
+          )}
+        </>
+      }
     >
-      <div className="flex-1 min-h-0 flex items-stretch p-2 gap-2">
+      {/* v0.7.232 — `overflow-hidden` on the stage MUST stay. When the
+          operator drags the horizontal splitter up to make the bottom
+          row taller, this Preview Card shrinks. The video frame inside
+          uses `aspectRatio` (resolveMediaFit) which is an intrinsic
+          size contribution — without `overflow-hidden` here the frame's
+          width-derived height pushes the stage past its `flex-1`
+          allocation, the body's `overflow-hidden` then clips the
+          bottom of the Card, and the VideoTransport bar (now rendered
+          in the Card's `footer` slot at L~1320 as of v0.7.238) would
+          have previously disappeared off-screen even though it's still
+          in the DOM. The stage `overflow-hidden` still matters for the
+          intrinsic-size clipping path — it clips the video frame
+          (preferred — operator still sees the preview, just letter-
+          boxed) instead of letting the frame's natural height bleed
+          past the stage. The v0.7.238 footer-slot refactor handles
+          the COMPLEMENTARY clipping path (shrink-0 footer rows
+          overflowing body's clip rect). Same pattern applies in
+          LiveDisplayCard. */}
+      <div className="flex-1 min-h-0 overflow-hidden flex items-stretch p-2 gap-2">
         {/* LEFT audio rail — sits OUTSIDE the preview frame on the
             left edge, exactly like the Wirecast reference. Stack:
             VU meter on top, speaker toggle on the bottom. */}
@@ -1243,6 +1472,115 @@ function PreviewCard() {
                       This clip is on air — Preview is paused to keep playback smooth.
                     </div>
                   </div>
+                ) : previewStandbyForLive ? (
+                  // v0.7.227 — Single-click on a video tile MUST paint
+                  // the first frame in Preview (operator escalation
+                  // following v0.7.222). v0.7.222 rendered a black
+                  // text-only placard which operators perceived as
+                  // "single-click is broken — I can't see what I just
+                  // clicked". Pure text feedback is not enough.
+                  //
+                  // The fix re-applies the v0.7.225 freezeBg pattern
+                  // here: a real <video> with preload="auto" is
+                  // mounted, the first decoded frame is forced onto
+                  // the compositor via play().then(pause) inside the
+                  // loadeddata handler, and the element STAYS PAUSED
+                  // afterwards. The HW decoder slot is held only for
+                  // the brief play→pause window (a few ms) then
+                  // released — no continuous decode runs in parallel
+                  // with Live. This preserves the v0.7.222 $1600-
+                  // customer protection (Live decoder never evicted
+                  // by a competing steady-state preview decode) while
+                  // delivering the visual confirmation operators
+                  // expect from single-click.
+                  //
+                  // The Standby badge + "Play preview" button stay as
+                  // OVERLAYS on top of the poster frame so the
+                  // operator still understands they need to press
+                  // Play to monitor with audio + scrub controls. The
+                  // button continues to flip previewMediaPaused=false
+                  // → the full MediaVideoSurface mounts and the
+                  // operator accepts the dual-decoder risk knowingly.
+                  //
+                  // GUARD-RAIL (v0.7.222 lineage): the <video> MUST
+                  // stay muted, MUST NOT autoplay, MUST NOT loop, and
+                  // MUST execute the play().then(pause) kick exactly
+                  // once (loadeddata, not loadedmetadata). The pause
+                  // in the play listener MUST be setTimeout(_, 0) —
+                  // a synchronous pause races the loadeddata kick and
+                  // emits AbortError spam (same trap v0.7.225 hit on
+                  // freezeBg). key={mediaUrl} forces a clean remount
+                  // when the operator single-clicks a DIFFERENT tile.
+                  <div
+                    className="relative w-full h-full bg-black overflow-hidden ring-1 ring-border"
+                    // v0.7.230 follow-up — container aspect MUST also
+                    // derive from resolveMediaFit so '16:9' / '4:3'
+                    // picks constrain the standby preview frame the
+                    // same way MediaVideoSurface (L518) does.
+                    // Hardcoding '16 / 9' here left '4:3' clips
+                    // letterboxed in the standby surface even after
+                    // the objectFit fix below — half-baked lockstep.
+                    style={{ aspectRatio: resolveMediaFit(previewSlide.mediaFit).aspect ?? '16 / 9' }}
+                  >
+                    <video
+                      key={previewSlide.mediaUrl}
+                      src={previewSlide.mediaUrl}
+                      muted
+                      playsInline
+                      preload="auto"
+                      disablePictureInPicture
+                      disableRemotePlayback
+                      className="absolute inset-0 w-full h-full bg-black"
+                      // v0.7.230 — Use the canonical 5-way resolveMediaFit
+                      // helper (same import as MediaVideoSurface above) so
+                      // the standby poster honours '16:9' / '4:3' too, not
+                      // just 'fill' / 'stretch' / default. v0.7.229 shipped
+                      // a 3-case inline mapping here which silently dropped
+                      // the picked aspect ratio for '16:9' / '4:3' clips —
+                      // operator saw letterboxing in the preview box even
+                      // when the secondary screen / NDI / OBS were honouring
+                      // the picked frame. Folded into the shared helper so
+                      // the 4-surface lockstep (route.ts / slide-renderer /
+                      // MediaVideoSurface / this poster) can't drift again.
+                      style={{
+                        objectFit: resolveMediaFit(previewSlide.mediaFit).objectFit,
+                      }}
+                      onLoadedData={(e) => {
+                        const v = e.currentTarget
+                        // Force first frame onto compositor then release
+                        // the decoder slot. .catch(pause) handles the
+                        // case where play() rejects (autoplay policy on
+                        // some Chromium builds) — pause still wins.
+                        v.play().then(() => v.pause()).catch(() => { try { v.pause() } catch (_e) { /* swallow */ } })
+                      }}
+                      onPlay={(e) => {
+                        // Async pause — see GUARD-RAIL above. Sync
+                        // pause inside the play listener races the
+                        // loadeddata .then(pause) and spams AbortError.
+                        const v = e.currentTarget
+                        setTimeout(() => { try { v.pause() } catch (_e) { /* swallow */ } }, 0)
+                      }}
+                    />
+                    {/* v0.7.231 — Standby badge + "Play preview" amber
+                        CTA REMOVED per operator request. The freezeBg
+                        poster <video> above already gives the operator
+                        visual confirmation of which clip they single-
+                        clicked (v0.7.227 lesson); the amber overlay
+                        chrome on top of it was confusing operators who
+                        expected the SAME Preview transport bar at the
+                        bottom of the card (▶ ⬛ 🔁 + scrubber, rendered
+                        unconditionally for media-video preview slides
+                        at L1551) to monitor the clip — instead the bar
+                        is BELOW the Card and the amber CTA was inside
+                        the Card, making it look like two competing
+                        controls. The transport bar's Play button now
+                        flips previewMediaPaused=false (see
+                        VideoTransport.onPlay) which unmounts this
+                        standby branch and mounts the full
+                        MediaVideoSurface (autoPlay-on-mount per
+                        v0.7.216 gate). Single source of truth for
+                        preview playback = the transport bar. */}
+                  </div>
                 ) : (
                   <MediaVideoSurface
                     surface="preview"
@@ -1275,37 +1613,9 @@ function PreviewCard() {
           )}
         </div>
       </div>
-      {/* v0.7.215 — Symmetry strip now carries an explicit Clear
-          button that wipes the Preview pane only. Independent of
-          the Live pane's Clear (see LiveDisplayCard's bottom
-          toolbar). Operator asked for one-click wipe per pane so
-          the two surfaces never interfere. Internally calls
-          clearPinnedPreview() + setPreviewSlideIndex(-1) only —
-          slides[] / live state untouched. */}
-      <div className="border-t border-border/60 px-3 py-2 flex items-center justify-end gap-3 bg-card/30 shrink-0">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            useAppStore.getState().clearPinnedPreview()
-            useAppStore.getState().setPreviewSlideIndex(-1)
-          }}
-          disabled={!previewSlide}
-          title="Clear the Preview pane (does not affect Live)"
-          className="h-7 px-3 text-[10px] uppercase tracking-wider font-semibold text-muted-foreground hover:text-foreground border border-border gap-1.5"
-        >
-          <CircleSlash className="h-3 w-3" />
-          Clear Preview
-        </Button>
-      </div>
-      {/* Preview transport — Play / Pause + scrubbable seek bar. Only
-          rendered for media-video preview slides; controls the actual
-          <video data-surface="preview"> element so scrubs apply
-          immediately. Live Display has its own dedicated Pause row
-          below its body. */}
-      {previewSlide?.type === 'media' && previewSlide?.mediaKind === 'video' && (
-        <VideoTransport surface="preview" />
-      )}
+      {/* v0.7.238 — Symmetry strip + Preview transport moved to the
+          Card primitive's `footer` slot (see L~1320). Keeps them out
+          of body's overflow region. */}
     </Card>
   )
 }
@@ -1373,13 +1683,26 @@ function VideoTransport({ surface }: { surface: 'preview' | 'live' }) {
     document.querySelector<HTMLVideoElement>(`video[data-surface="${surface}"]`)
 
   const onPlay = () => {
-    const el = findVideo()
-    if (!el) return
+    // v0.7.231 — Flip the master mediaPaused flag FIRST so the standby-
+    // poster branch in PreviewCard (L1421) un-renders and the full
+    // MediaVideoSurface mounts with autoPlay=true (per v0.7.216 gate
+    // `!mediaPaused && surface === 'preview'`). Before v0.7.231 this
+    // function did `if (!el) return` BEFORE the flag flip — the standby
+    // poster has no `data-surface="preview"` attribute (deliberate —
+    // we don't want the transport scrubbing to apply to the muted
+    // first-frame poster), so `findVideo()` returned null and the
+    // Play button was a no-op while standby was active. Operators
+    // reported "clicking play on the transport does nothing when live
+    // is already playing video." Flipping the flag first triggers a
+    // React render → MediaVideoSurface mounts → autoPlay fires → the
+    // poll loop above picks up the newly-mounted element on the next
+    // rAF tick and the transport stays in sync.
     // Mirror to the master mediaPaused flag so iframe consumers (NDI,
     // OBS, secondary screen) follow the operator's play/pause from
     // either Preview or Live transport.
     setMediaPaused(false)
-    el.play().catch(() => {})
+    const el = findVideo()
+    if (el) el.play().catch(() => {})
   }
   const onPause = () => {
     const el = findVideo()
@@ -1515,7 +1838,51 @@ function LiveBottomAudioControls() {
   // they pick a transport action (Start / Pause / Stop) so it doesn't
   // sit open over the Live Display covering the next verse. Made the
   // Popover controlled and close it from each handler.
+  // v0.7.240 — extended to the gain slider: auto-close 600 ms after
+  // pointer-up so the operator sees the new value land then the panel
+  // gets out of the way. Same pattern for the Master Volume popover
+  // below. 600 ms is long enough to read the percentage that just
+  // updated, short enough that the panel never sits stale over the
+  // Live Display covering the next verse.
   const [micPopoverOpen, setMicPopoverOpen] = useState(false)
+  const [volumePopoverOpen, setVolumePopoverOpen] = useState(false)
+  const micCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const volumeCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearMicCloseTimer = () => {
+    if (micCloseTimerRef.current) {
+      clearTimeout(micCloseTimerRef.current)
+      micCloseTimerRef.current = null
+    }
+  }
+  const clearVolumeCloseTimer = () => {
+    if (volumeCloseTimerRef.current) {
+      clearTimeout(volumeCloseTimerRef.current)
+      volumeCloseTimerRef.current = null
+    }
+  }
+  // Cancel any pending close when the popover closes by other means
+  // (Esc, click-outside, transport handlers) so a stale timer can't
+  // fire after the operator re-opens the popover and snap it shut.
+  useEffect(() => {
+    if (!micPopoverOpen) clearMicCloseTimer()
+  }, [micPopoverOpen])
+  useEffect(() => {
+    if (!volumePopoverOpen) clearVolumeCloseTimer()
+  }, [volumePopoverOpen])
+  useEffect(() => {
+    return () => {
+      clearMicCloseTimer()
+      clearVolumeCloseTimer()
+    }
+  }, [])
+  const scheduleMicClose = (ms = 600) => {
+    clearMicCloseTimer()
+    micCloseTimerRef.current = setTimeout(() => setMicPopoverOpen(false), ms)
+  }
+  const scheduleVolumeClose = (ms = 600) => {
+    clearVolumeCloseTimer()
+    volumeCloseTimerRef.current = setTimeout(() => setVolumePopoverOpen(false), ms)
+  }
 
   const startMic = () => {
     if (!speechSupported) {
@@ -1662,7 +2029,24 @@ function LiveBottomAudioControls() {
             min={0}
             max={200}
             value={micPct}
-            onChange={(e) => setMicGain(Number(e.target.value) / 100)}
+            onChange={(e) => {
+              setMicGain(Number(e.target.value) / 100)
+              // While the operator is actively dragging, postpone any
+              // pending close. Final close is scheduled by onPointerUp
+              // / onKeyUp below so we never snap the panel away mid-drag.
+              clearMicCloseTimer()
+            }}
+            onPointerUp={() => scheduleMicClose()}
+            onKeyUp={(e) => {
+              if (
+                e.key === 'ArrowLeft' || e.key === 'ArrowRight' ||
+                e.key === 'ArrowUp' || e.key === 'ArrowDown' ||
+                e.key === 'Home' || e.key === 'End' ||
+                e.key === 'PageUp' || e.key === 'PageDown'
+              ) {
+                scheduleMicClose()
+              }
+            }}
             className="w-full accent-rose-500 mt-1"
             aria-label="Microphone gain"
           />
@@ -1670,7 +2054,12 @@ function LiveBottomAudioControls() {
             <span>0</span>
             <button
               type="button"
-              onClick={() => setMicGain(1)}
+              onClick={() => {
+                setMicGain(1)
+                // Reset is a one-shot decision → close immediately.
+                clearMicCloseTimer()
+                setMicPopoverOpen(false)
+              }}
               className="hover:text-foreground underline-offset-2 hover:underline"
               title="Reset mic gain to 100%"
             >
@@ -1684,7 +2073,7 @@ function LiveBottomAudioControls() {
           </p>
         </PopoverContent>
       </Popover>
-      <Popover>
+      <Popover open={volumePopoverOpen} onOpenChange={setVolumePopoverOpen}>
         <PopoverTrigger asChild>
           <button
             type="button"
@@ -1710,7 +2099,14 @@ function LiveBottomAudioControls() {
               Master Volume
             </span>
             <button
-              onClick={() => setGlobalMuted(!globalMuted)}
+              onClick={() => {
+                // Mute toggle is a one-shot decision → close
+                // immediately so the operator can confirm the new
+                // state from the trigger label.
+                setGlobalMuted(!globalMuted)
+                clearVolumeCloseTimer()
+                setVolumePopoverOpen(false)
+              }}
               className={cn(
                 'inline-flex items-center gap-1 px-1.5 h-5 rounded text-[10px] font-semibold border',
                 globalMuted
@@ -1731,6 +2127,20 @@ function LiveBottomAudioControls() {
               const v = Number(e.target.value) / 100
               setGlobalVolume(v)
               if (globalMuted && v > 0) setGlobalMuted(false)
+              // Cancel pending close while actively dragging; the
+              // pointer-up / key-up handlers will reschedule.
+              clearVolumeCloseTimer()
+            }}
+            onPointerUp={() => scheduleVolumeClose()}
+            onKeyUp={(e) => {
+              if (
+                e.key === 'ArrowLeft' || e.key === 'ArrowRight' ||
+                e.key === 'ArrowUp' || e.key === 'ArrowDown' ||
+                e.key === 'Home' || e.key === 'End' ||
+                e.key === 'PageUp' || e.key === 'PageDown'
+              ) {
+                scheduleVolumeClose()
+              }
             }}
             className="w-full accent-sky-500"
             aria-label="Master volume"
@@ -1813,8 +2223,15 @@ function LiveDisplayCard({
   const actualSize = useEasedNumber(size)
   // Show the inline transport row only when the live slide is a
   // video — for everything else there is nothing to play or pause.
+  // v0.7.222 Fix #8 (architect final review) — symmetric widening of the
+  // LiveDisplayCard predicate so legacy slides without mediaKind still
+  // show the transport row (operator can pause/play). See the matching
+  // widening at the PreviewCard predicate above for full rationale.
   const liveIsMediaVideo =
-    liveSlide?.type === 'media' && liveSlide?.mediaKind === 'video'
+    liveSlide?.type === 'media' &&
+    !!liveSlide.mediaUrl &&
+    (liveSlide.mediaKind === 'video' ||
+      /\.(mp4|webm|mov|m4v|mkv|ogv)(\?|#|$)/i.test(liveSlide.mediaUrl))
   // Show the centred WassMedia splash here too — exactly while the
   // operator is on a fresh session and hasn't sent anything yet. This
   // is the operator's mirror of the congregation route's startup
@@ -1908,8 +2325,87 @@ function LiveDisplayCard({
         </div>
       }
       bodyClassName="bg-black overflow-hidden"
+      footer={
+        <>
+          {/* v0.7.238 — LiveBottomControls toolbar moved from body's
+              last-child position into Card's new `footer` slot.
+              Pre-238 this row + the VideoTransport beneath it were
+              clipped off the bottom of the Card by body's
+              overflow-hidden when the operator dragged the horizontal
+              splitter up enough to shrink the panel below
+              (toolbar + transport) natural height — operator-visible
+              symptom: Go Live / Stop Live / Clear / Prev / Next AND
+              the entire video transport bar vanished simultaneously.
+              As footer-slot children they now render OUTSIDE the
+              body's overflow region and are guaranteed visible. */}
+          <div className="border-t border-border/60 px-3 py-2 flex items-center justify-end gap-3 bg-card/30">
+            {/* Mic toggle + master-volume control. Operators asked for
+                these to live at the right-bottom of the Live Display so
+                they're reachable without leaving the live pane. The mic
+                button drives the same `setSpeechCommand` action the Live
+                Transcription card uses; the volume popover wraps the
+                global master volume the slide renderer already honours. */}
+            <LiveBottomAudioControls />
+            <div className="flex items-center gap-1">
+              {/* v0.7.215 — Explicit Clear Live button. Always visible
+                  and independent of the GO LIVE / STOP LIVE toggle so
+                  the operator can wipe the Live pane in one click even
+                  when isLive=false but a stale slide (e.g. AI direct
+                  ref) is still showing. Mirrors the Preview pane's
+                  Clear button at the symmetry strip — the two are
+                  fully independent. */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onClearLive}
+                disabled={!liveSlide && !isLive}
+                title="Clear the Live pane (does not affect Preview)"
+                className="h-7 px-2 text-[10px] uppercase tracking-wider font-semibold text-muted-foreground hover:text-foreground border border-border gap-1.5"
+              >
+                <CircleSlash className="h-3 w-3" />
+                Clear
+              </Button>
+              <Button variant="ghost" size="icon" onClick={onPrev} className="h-7 w-7 text-foreground hover:text-foreground border border-border">
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </Button>
+              {/* GO LIVE / STOP LIVE — toggle. While LIVE the button
+                  flips to a muted "Stop Live" with a Square icon so the
+                  operator can kill the live feed from the same spot they
+                  started it. */}
+              <Button
+                onClick={isLive ? onClearLive : onSendLive}
+                title={isLive ? 'Stop the live output' : 'Send this slide to the live output'}
+                className={cn(
+                  'h-7 px-3 text-[10px] uppercase tracking-wider font-semibold text-white gap-1.5 transition-colors',
+                  isLive
+                    ? 'bg-muted hover:bg-muted-foreground/40 border border-rose-500/60'
+                    : 'bg-rose-600 hover:bg-rose-700',
+                )}
+              >
+                {isLive ? <Square className="h-3 w-3 fill-white" /> : <Send className="h-3 w-3" />}
+                {isLive ? 'Stop Live' : 'Go Live'}
+              </Button>
+              <Button variant="ghost" size="icon" onClick={onNext} className="h-7 w-7 text-foreground hover:text-foreground border border-border">
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+          {/* v0.7.193 — Full Live transport (Play/Pause/Stop/Loop + scrub
+              bar) instead of the v0.7.186 single Pause button. Operator
+              asked for parity with EasyWorship/ProPresenter — full deck
+              of broadcast-style controls reachable from the same column
+              the cue was sent from. */}
+          {liveIsMediaVideo && <VideoTransport surface="live" />}
+        </>
+      }
     >
-      <div className="flex-1 min-h-0 flex items-stretch p-2 gap-2 relative">
+      {/* v0.7.232 — `overflow-hidden` mirror of the PreviewCard stage
+          fix. Aspect-ratio-locked Live video frame would otherwise
+          push the stage past its `flex-1` allocation when the
+          splitter shrinks the top row. The complementary clipping
+          path (shrink-0 footer rows pushed past body's clip rect)
+          is now handled by the v0.7.238 footer-slot refactor above. */}
+      <div className="flex-1 min-h-0 overflow-hidden flex items-stretch p-2 gap-2 relative">
         <div className="flex-1 min-w-0 flex items-center justify-center relative">
         {/* v0.7.158 — Startup splash overlay REMOVED. The congregation
             route renders the identical "Scripture AI / Powered By
@@ -1945,7 +2441,28 @@ function LiveDisplayCard({
             // browser source, secondary screen) keep playing the same
             // media independently from store-pushed SSE state.
             <StableStage scale={actualSize} isLive={!!liveSlide}>
+              {/* v0.7.221 — `key={liveSlide.mediaUrl}` forces a clean
+                  unmount/remount of the <video> when the live source
+                  URL changes (e.g. operator swaps live to a different
+                  clip via setLiveAuto). Without the key, React reuses
+                  the same DOM <video> with a mutated `src` attribute;
+                  the browser aborts the in-flight playback and races
+                  the new fetch against the still-allocated GPU decoder
+                  slot of the previous clip. Clean unmount releases the
+                  decoder synchronously BEFORE the new element mounts —
+                  no HW decoder slot contention with the preview pane
+                  or NDI capture window during the swap. Operator-
+                  visible bug this fixes: "clicking another media tile
+                  stops the live video" — root cause was decoder slot
+                  exhaustion during a contended swap, masked by the
+                  fact that the EFFECT layer is idempotent (so React
+                  source-grep tests passed) but the BROWSER layer is
+                  not. Same-URL re-renders (pin changes, parent re-
+                  renders driven by other store mutations) keep the
+                  key stable and DO NOT remount — the live <video>
+                  is fully isolated from preview pin clicks. */}
               <MediaVideoSurface
+                key={liveSlide.mediaUrl}
                 surface="live"
                 src={liveSlide.mediaUrl}
                 fit={liveSlide.mediaFit ?? 'fit'}
@@ -2017,64 +2534,8 @@ function LiveDisplayCard({
         </div>
       </div>
 
-      <div className="border-t border-border/60 px-3 py-2 flex items-center justify-end gap-3 bg-card/30 shrink-0">
-        {/* Mic toggle + master-volume control. Operators asked for
-            these to live at the right-bottom of the Live Display so
-            they're reachable without leaving the live pane. The mic
-            button drives the same `setSpeechCommand` action the Live
-            Transcription card uses; the volume popover wraps the
-            global master volume the slide renderer already honours. */}
-        <LiveBottomAudioControls />
-        <div className="flex items-center gap-1">
-          {/* v0.7.215 — Explicit Clear Live button. Always visible
-              and independent of the GO LIVE / STOP LIVE toggle so
-              the operator can wipe the Live pane in one click even
-              when isLive=false but a stale slide (e.g. AI direct
-              ref) is still showing. Mirrors the Preview pane's
-              Clear button at the symmetry strip — the two are
-              fully independent. */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onClearLive}
-            disabled={!liveSlide && !isLive}
-            title="Clear the Live pane (does not affect Preview)"
-            className="h-7 px-2 text-[10px] uppercase tracking-wider font-semibold text-muted-foreground hover:text-foreground border border-border gap-1.5"
-          >
-            <CircleSlash className="h-3 w-3" />
-            Clear
-          </Button>
-          <Button variant="ghost" size="icon" onClick={onPrev} className="h-7 w-7 text-foreground hover:text-foreground border border-border">
-            <ChevronLeft className="h-3.5 w-3.5" />
-          </Button>
-          {/* GO LIVE / STOP LIVE — toggle. While LIVE the button
-              flips to a muted "Stop Live" with a Square icon so the
-              operator can kill the live feed from the same spot they
-              started it. */}
-          <Button
-            onClick={isLive ? onClearLive : onSendLive}
-            title={isLive ? 'Stop the live output' : 'Send this slide to the live output'}
-            className={cn(
-              'h-7 px-3 text-[10px] uppercase tracking-wider font-semibold text-white gap-1.5 transition-colors',
-              isLive
-                ? 'bg-muted hover:bg-muted-foreground/40 border border-rose-500/60'
-                : 'bg-rose-600 hover:bg-rose-700',
-            )}
-          >
-            {isLive ? <Square className="h-3 w-3 fill-white" /> : <Send className="h-3 w-3" />}
-            {isLive ? 'Stop Live' : 'Go Live'}
-          </Button>
-          <Button variant="ghost" size="icon" onClick={onNext} className="h-7 w-7 text-foreground hover:text-foreground border border-border">
-            <ChevronRight className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
-      {/* v0.7.193 — Full Live transport (Play/Pause/Stop/Loop + scrub
-          bar) instead of the v0.7.186 single Pause button. Operator
-          asked for parity with EasyWorship/ProPresenter — full deck
-          of broadcast-style controls reachable from the same column
-          the cue was sent from. */}
-      {liveIsMediaVideo && <VideoTransport surface="live" />}
+      {/* v0.7.238 — LiveBottomControls + Live VideoTransport moved
+          to Card's `footer` slot. See L~2200 footer prop. */}
     </Card>
   )
 }
@@ -2874,6 +3335,89 @@ interface MediaItem {
   url: string // data: URL so it travels through the SSE broadcast intact
   kind: 'image' | 'video'
   size?: number
+  // v0.7.239 — First-frame JPEG dataURL captured at upload time
+  // (or lazily backfilled for legacy items uploaded before v0.7.239).
+  // Painted via the <video poster=…> attribute on the media-library
+  // tile so a thumbnail appears INSTANTLY with ZERO HW decoder cost,
+  // preserving the v0.7.222 `preload="none"` decoder-pressure
+  // invariant. Mirrors MediaLibraryItem.posterUrl in store.ts —
+  // both ends MUST carry the field for persistence to round-trip.
+  posterUrl?: string
+}
+
+// v0.7.239 — Client-side first-frame poster extractor. Mounts a
+// hidden <video> with the given src, races loadeddata + a play→pause
+// kick (some codecs return transparent-black on cold drawImage), and
+// rasterises frame 0 to a 320px-wide JPEG dataURL. 5s timeout, single
+// extraction per call, releases the HW decoder slot immediately so
+// it's safe to invoke during a live service. Returns null on any
+// failure (timeout, unsupported codec, no decoder slot) so the
+// caller can fall back without surfacing an error to the operator.
+//
+// Source can be a `blob:` URL (new upload path — cheap, the File
+// is already in memory) OR a remote URL like `/api/upload?file=…`
+// (legacy-backfill path — same-origin so no CORS dance, but a brief
+// network fetch before frame 0 is available). Both shapes funnel
+// through the same <video src=…> + grab() pipeline so behaviour is
+// identical across the two callers.
+//
+// GUARD-RAIL: callers MUST serialise invocations (one at a time) so
+// only ONE decoder slot is in use at any moment — running N of these
+// in parallel for a bulk upload or a 50-item backfill would saturate
+// the operator's 2-4 HW decoder slots and contend with the live
+// Preview/Live <video> surfaces (v0.7.216 + v0.7.222 + v0.7.233
+// invariant). The two callers in this file (uploadOne + the
+// backfill useEffect) BOTH honour this contract.
+function extractFirstFrameJpegFromSrc(src: string, revoke?: () => void): Promise<string | null> {
+  return new Promise((resolve) => {
+    let settled = false
+    const settle = (val: string | null) => {
+      if (!settled) {
+        settled = true
+        try { revoke?.() } catch { /* noop */ }
+        resolve(val)
+      }
+    }
+    try {
+      const v = document.createElement('video')
+      v.muted = true
+      v.playsInline = true
+      v.preload = 'auto'
+      v.crossOrigin = 'anonymous'
+      v.src = src
+      const timer = setTimeout(() => settle(null), 5000)
+      const grab = () => {
+        try {
+          const vw = v.videoWidth || 320
+          const vh = v.videoHeight || 180
+          const w = Math.min(vw, 320)
+          const h = Math.max(1, Math.round(w * (vh / vw)))
+          const c = document.createElement('canvas')
+          c.width = w
+          c.height = h
+          const ctx = c.getContext('2d')
+          if (!ctx) { clearTimeout(timer); settle(null); return }
+          ctx.drawImage(v, 0, 0, w, h)
+          const data = c.toDataURL('image/jpeg', 0.7)
+          clearTimeout(timer)
+          settle(data || null)
+        } catch {
+          clearTimeout(timer)
+          settle(null)
+        }
+      }
+      v.addEventListener('loadeddata', () => {
+        const pp = v.play()
+        if (pp && pp.then) {
+          pp.then(() => { try { v.pause() } catch { /* noop */ } grab() })
+            .catch(() => grab())
+        } else { grab() }
+      }, { once: true })
+      v.addEventListener('error', () => { clearTimeout(timer); settle(null) }, { once: true })
+    } catch {
+      settle(null)
+    }
+  })
 }
 
 type MediaFit = NonNullable<Slide['mediaFit']>
@@ -2978,11 +3522,28 @@ function MediaItemsView({
                     <span className="text-[8px] uppercase tracking-wider font-bold">File missing</span>
                   </div>
                 ) : m.kind === 'video' ? (
+                  // v0.7.222 Fix #5 (architect code-review): thumbnails
+                  // for media-library video tiles MUST NOT trigger a
+                  // decoder-capability probe. Pre-fix `preload="metadata"`
+                  // mounted a real <video> per tile and let Chromium
+                  // open an HTTP range for the moov atom + allocate a
+                  // transient HW decoder slot to confirm codec support
+                  // — on the operator's 2-4 HW slot Windows GPU this
+                  // compounded the v0.7.222 LIVE-pane contention by
+                  // adding N more slot-probes per Media-card render
+                  // (N = number of video tiles visible). preload="none"
+                  // is the only attr value that does ZERO network and
+                  // ZERO decoder probe (operator already has the
+                  // overlaid Film icon + filename below to identify
+                  // the clip; no per-frame thumbnail rendered).
                   <video
                     src={m.url}
+                    poster={m.posterUrl}
                     muted
                     playsInline
-                    preload="metadata"
+                    preload="none"
+                    disablePictureInPicture
+                    disableRemotePlayback
                     className="w-full h-full object-contain"
                     onError={() => onBroken(m.id)}
                   />
@@ -3060,11 +3621,17 @@ function MediaItemsView({
                 {broken ? (
                   <ImageOff className="h-5 w-5 text-rose-400" />
                 ) : m.kind === 'video' ? (
+                  // v0.7.222 Fix #5 — see preload="none" rationale on
+                  // the grid-mode thumbnail above. Same root cause and
+                  // same fix; this is the tiles-mode variant.
                   <video
                     src={m.url}
+                    poster={m.posterUrl}
                     muted
                     playsInline
-                    preload="metadata"
+                    preload="none"
+                    disablePictureInPicture
+                    disableRemotePlayback
                     className="w-full h-full object-cover"
                     onError={() => onBroken(m.id)}
                   />
@@ -3332,6 +3899,52 @@ function MediaCard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // v0.7.239 — Legacy-item poster backfill. Items uploaded before
+  // v0.7.239 have no `posterUrl` in the persisted MediaLibraryItem,
+  // so their tiles previously rendered as a plain black <video>
+  // (preload="none" → zero frames decoded) + filename overlay only,
+  // which the operator reported as "still no thumbnail". This effect
+  // walks the library once on mount, finds every video item missing
+  // a posterUrl, and lazily fetches frame 0 to fill it in — STRICTLY
+  // serialised (one at a time) so the v0.7.222/v0.7.233 HW-decoder
+  // budget invariant is preserved during a live service. Each item
+  // gets a fresh extract attempt, then persisted via setMediaLibrary
+  // so the result survives a relaunch and the backfill never runs
+  // twice for the same file. Broken items (already in brokenIds)
+  // are skipped — their file is gone, no point asking Chromium to
+  // decode it. Items added later in the same session go through the
+  // upload-time path in uploadOne, not this backfill.
+  useEffect(() => {
+    let cancelled = false
+    const pending = mediaLibrary.filter(
+      (m) => m.kind === 'video' && !m.posterUrl && !brokenIds.has(m.id),
+    )
+    if (!pending.length) return
+    ;(async () => {
+      for (const item of pending) {
+        if (cancelled) return
+        const poster = await extractFirstFrameJpegFromSrc(item.url)
+        if (cancelled || !poster) continue
+        // Re-read the latest library from the store inside the loop —
+        // an upload or delete could land between iterations and we
+        // don't want a stale closure to clobber concurrent edits.
+        const cur = useAppStore.getState().mediaLibrary
+        const next = cur.map((m) => (m.id === item.id ? { ...m, posterUrl: poster } : m))
+        // Only write if our item is still present (operator may have
+        // removed it mid-backfill) AND the posterUrl is still empty
+        // (avoid a redundant store mutation that would re-render the
+        // whole grid for no visible change).
+        const target = cur.find((m) => m.id === item.id)
+        if (target && !target.posterUrl) setMediaLibrary(next)
+      }
+    })()
+    return () => { cancelled = true }
+    // Run only when the library identity changes; brokenIds intentionally
+    // omitted so flipping an item broken mid-backfill doesn't restart
+    // the whole queue.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mediaLibrary.length])
+
   const selectedItem = items.find((m) => m.id === selectedId) || null
 
   const onPick = useCallback(() => fileRef.current?.click(), [])
@@ -3362,13 +3975,30 @@ function MediaCard() {
           let data: { error?: string; url?: string; kind?: 'image' | 'video' } = {}
           try { data = raw ? JSON.parse(raw) : {} } catch { /* HTML / non-JSON */ }
           if (xhr.status >= 200 && xhr.status < 300 && data.url) {
-            resolve({
+            const kind = data.kind || (f.type.startsWith('video/') ? 'video' : 'image')
+            const finalise = (posterUrl?: string) => resolve({
               id: `media-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
               name: f.name,
-              url: data.url,
-              kind: data.kind || (f.type.startsWith('video/') ? 'video' : 'image'),
+              url: data.url as string,
+              kind,
               size: f.size,
+              posterUrl,
             })
+            // v0.7.239 — Extract a first-frame JPEG poster from the
+            // original File (still in memory at this point — cheap
+            // blob: URL, no extra network) so the library tile shows
+            // a real thumbnail INSTANTLY after upload completes.
+            // Decoder slot is held for ~ms and released; serialised
+            // by the outer for-of in onFiles so bulk uploads don't
+            // contend with the live Preview/Live <video> surfaces.
+            if (kind === 'video') {
+              const blobUrl = URL.createObjectURL(f)
+              extractFirstFrameJpegFromSrc(blobUrl, () => {
+                try { URL.revokeObjectURL(blobUrl) } catch { /* noop */ }
+              }).then((poster) => finalise(poster ?? undefined))
+            } else {
+              finalise(undefined)
+            }
           } else {
             reject(new Error(
               data.error
@@ -3499,21 +4129,90 @@ function MediaCard() {
         /* probe failed — proceed; downstream will catch a real error */
       }
       setSelectedId(item.id)
+      const slide = makeSlide(item)
       if (stagedItemId !== item.id) {
-        // First click: stage it on the preview pane only.
-        const slide = makeSlide(item)
-        // Drop any prior preview and put just this slide in.
-        setSlides([slide])
-        setPreviewSlideIndex(0)
-        setLiveSlideIndex(-1)
-        setIsLive(false)
+        // v0.7.222 — Operator $1600-customer escalation (architect
+        // code-review surfaced this as a SECOND live-stop path the
+        // initial v0.7.222 attempt missed): the in-shell MediaCard
+        // first-click path used to call `setSlides([slide]) +
+        // setLiveSlideIndex(-1) + setIsLive(false)`, which DELIBERATELY
+        // wiped live. The library-compact panel's `sendMediaToPreview`
+        // (library-compact.tsx L1302) had already been migrated to
+        // the pin-only pattern in v0.7.210 + v0.7.216, but the
+        // operator can ALSO trigger first-click via this in-shell
+        // path, which v0.7.222 must close to honour the user
+        // requirement: "When media is played on the live display,
+        // make sure that video keeps playing and only send the single
+        // clicked video to the preview without interfering with the
+        // live display video playing."
+        //
+        // The contract here is now identical to library-compact's
+        // sendMediaToPreview: (1) when LIVE is already playing a
+        // DIFFERENT media-video, flip previewMediaPaused=true +
+        // reset previewMediaCurrentTime=0 BEFORE the pin (so the
+        // PreviewCard hits the v0.7.222 STANDBY placard branch —
+        // zero <video> element, zero HW decoder contention with the
+        // live decoder); (2) ALWAYS use pinPreviewSlide (the v0.7.201
+        // direct-ref primitive) — NEVER setSlides + setPreviewSlideIndex
+        // + setLiveSlideIndex(-1) + setIsLive(false), which clobbers
+        // live. The legacy setSlides([slide]) was also responsible
+        // for v0.7.213's regression class (clearing the AI liveSlide
+        // direct ref).
+        // v0.7.241 — Operator escalation against v0.7.222 / v0.7.227 /
+        // v0.7.231: single-click on a tile MUST auto-play the clip in
+        // Preview (the pre-fix behaviour painted the v0.7.231 freezeBg
+        // poster — a muted PAUSED <video> — whenever LIVE was already
+        // playing a different video, gated by `previewMediaPaused=true`
+        // explicitly armed here). The new requirement chooses the
+        // operator-UX side of the trade-off over the v0.7.222 HW-
+        // decoder-eviction protection: single-click always auto-plays,
+        // even when LIVE is concurrently playing a different clip.
+        //
+        // The v0.7.222 `liveIsPlayingDifferentMediaVideo` paused-set
+        // branch is REMOVED. pinPreviewSlide (store.ts) now atomically
+        // resets previewMediaPaused=false + previewMediaCurrentTime=0
+        // alongside setting pinnedPreviewSlide, which also clears the
+        // sticky-true state left over from any prior goLive's
+        // setPreviewMediaPaused(true) — without that store-level
+        // reset, EVERY post-goLive single-click stayed frozen on the
+        // standby poster (the operator-visible bug reported in
+        // v0.7.241).
+        //
+        // The HW-decoder eviction risk this protection covered (low-
+        // end GPUs with 2-4 decoder slots, NDI capture window + live
+        // + preview competing) is now an accepted trade-off — the
+        // operator explicitly chose UX feedback over the protection.
+        // If the eviction symptom returns, the right fix is at the
+        // decoder layer (codec priority, NDI offscreen capture mode,
+        // hardware-accel toggle), NOT a re-introduced standby gate.
+        useAppStore.getState().pinPreviewSlide(slide)
         setStagedItemId(item.id)
         // Suppress notifications for media-column actions; the
         // amber preview-frame ring already signals the change.
       } else {
-        // Second click on the same item: send it live.
-        setLiveSlideIndex(0)
-        setIsLive(true)
+        // v0.7.222 — Second click MUST use setLiveAuto (the v0.7.203
+        // direct-ref primitive) so the live promotion preserves the
+        // operator's preview pin AND survives the v0.7.213 + v0.7.214
+        // invariants. Pre-v0.7.222 this called
+        // `setLiveSlideIndex(0) + setIsLive(true)` which only worked
+        // because the first-click path had stuffed the slide into
+        // `slides[0]` via setSlides — now that the first-click pins
+        // instead, slides[] may not contain the staged item at all,
+        // so the legacy index-based promote would have promoted the
+        // wrong slide (or nothing). setLiveAuto is also the same
+        // primitive AI/voice/library-compact use, so behaviour stays
+        // uniform across surfaces.
+        // v0.7.241 — Always prepend setLiveMediaPaused(false) before
+        // setLiveAuto so a same-URL double-click (operator double-
+        // clicks the SAME tile that's already on air to re-cue from
+        // frame 0) ALSO auto-plays. setLiveAuto's atomic transport
+        // reset (store.ts L1270) ONLY fires when newUrl !== curUrl, so
+        // same-URL re-promotes inherited whatever liveMediaPaused
+        // value the previous transport-bar pause left behind. Belt-
+        // and-suspenders for the operator-asked "double-click MUST
+        // auto-play live" contract.
+        useAppStore.getState().setLiveMediaPaused(false)
+        useAppStore.getState().setLiveAuto(slide)
         // Logo splash only shows until the operator first puts
         // something on air; trip the flag so the secondary screen and
         // the operator's Live Display drop the splash from now on.
@@ -3525,10 +4224,6 @@ function MediaCard() {
     [
       stagedItemId,
       makeSlide,
-      setSlides,
-      setPreviewSlideIndex,
-      setLiveSlideIndex,
-      setIsLive,
       setHasShownContent,
       brokenIds,
       markBroken,
@@ -3564,26 +4259,32 @@ function MediaCard() {
       // staged or live — otherwise the operator is just pre-configuring
       // the asset and we shouldn't touch the active deck.
       if (stagedItemId === item.id) {
-        // setSlides() unconditionally resets liveSlideIndex to -1 (see
-        // store), which would yank the slide off-air the moment the
-        // operator adjusts Fit on a LIVE asset. Capture the live state
-        // first and re-engage it after replacing the deck so the
-        // congregation/NDI feed never blinks to black.
-        const wasLive = useAppStore.getState().liveSlideIndex >= 0
-        setSlides([refreshed])
-        setPreviewSlideIndex(0)
+        // v0.7.222 Fix #6 (architect code-review): the pre-fix
+        // `wasLive = liveSlideIndex >= 0` was the v0.7.214 / v0.7.213
+        // anti-pattern in disguise. Live can be active via the
+        // v0.7.208 `setLiveAuto` direct-ref path (`isLive=true`,
+        // `liveSlide` populated, `liveSlideIndex === -1`) — in that
+        // configuration the legacy check returns false and the
+        // post-setSlides re-engage block was skipped, silently
+        // wiping the on-air clip the moment the operator adjusted
+        // Fit on a LIVE asset. The cure is the same direct-ref-first
+        // read used everywhere else now (speech-provider, goLive,
+        // sendMediaToPreview, MediaCard.onItemClick): consult
+        // `liveSlide` first AND `isLive`, then promote via the
+        // `setLiveAuto` direct-ref primitive (so the refreshed slide
+        // becomes the new live anchor without a setSlides clobber).
+        // pinPreviewSlide replaces the setSlides + setPreviewSlideIndex
+        // combo on the preview side for the same reason.
+        const st = useAppStore.getState()
+        const wasLive = !!(st.isLive && (st.liveSlide || st.liveSlideIndex >= 0))
+        st.pinPreviewSlide(refreshed)
         if (wasLive) {
-          setLiveSlideIndex(0)
-          setIsLive(true)
+          st.setLiveAuto(refreshed)
         }
       }
     },
     [
       stagedItemId,
-      setSlides,
-      setPreviewSlideIndex,
-      setLiveSlideIndex,
-      setIsLive,
       setMediaFit,
     ]
   )
@@ -4146,18 +4847,71 @@ export function LogosShell() {
     // route through setLiveAuto (canonical promote-to-live primitive).
     const pinned = useAppStore.getState().pinnedPreviewSlide
     if (pinned) {
-      // Mirror the smooth handoff: capture preview video timestamp +
-      // unpause live media so playback resumes seamlessly on the
-      // promoted slide (same UX as the schedule-based path below).
+      // v0.7.224 — Operator $1600-customer escalation, re-fired on
+      // v0.7.223: "user clicking on go live also sends video from the
+      // preview to the live display to immediately start playing —
+      // still not working." Root cause (third layer beyond v0.7.221's
+      // store-contract reset + v0.7.216's canplay retry):
+      //
+      // Pre-fix sequence was:
+      //   1. setLiveMediaCurrentTime(pv.currentTime)  ← captured
+      //   2. setLiveMediaPaused(false)
+      //   3. setPreviewMediaPaused(true)
+      //   4. setLiveAuto(pinned)                      ← atomically
+      //      resets liveMediaPaused=false + liveMediaCurrentTime=0
+      //      when promoting a NEW media URL (store L1233-1236, the
+      //      v0.7.221 defence-in-depth). That clobbered the captured
+      //      preview time in step 1, so live mounted with time=0 and
+      //      either started over from the beginning OR stalled when
+      //      the receiver-side payload race produced an inconsistent
+      //      seek target during the swap.
+      //
+      // Fix part A (this site): swap the order — run setLiveAuto
+      // FIRST so its atomic transport reset applies on the new URL,
+      // THEN set the captured preview time so live resumes from the
+      // operator's watch point. The reset is still correct for every
+      // OTHER setLiveAuto caller (AI auto-fire, speech-provider,
+      // library-compact double-click) — none of them have a preview
+      // <video> playback context to inherit, so starting at 0 is
+      // exactly right for those paths.
+      //
+      // Fix part B lives in MediaVideoSurface's play effect: the
+      // canplay one-shot listener also re-applies the pending seek
+      // before calling play(), because Chromium ignores currentTime
+      // writes on a freshly-mounted <video> before metadata loads
+      // (so the post-mount effect re-run with the new mediaCurrentTime
+      // would silently no-op on the seek without part B).
+      let resumeFrom = 0
       if (typeof document !== 'undefined') {
         const pv = document.querySelector<HTMLVideoElement>('video[data-surface="preview"]')
-        if (pv && Number.isFinite(pv.currentTime)) {
-          try { useAppStore.getState().setLiveMediaCurrentTime(pv.currentTime) } catch { /* ignore */ }
+        if (pv && Number.isFinite(pv.currentTime) && pv.currentTime > 0) {
+          resumeFrom = pv.currentTime
         }
       }
-      useAppStore.getState().setLiveMediaPaused(false)
       useAppStore.getState().setPreviewMediaPaused(true)
+      // v0.7.241 — Belt-and-suspenders: also force liveMediaPaused=false
+      // BEFORE setLiveAuto. setLiveAuto's atomic transport reset only
+      // fires on URL CHANGE (store.ts L1270 `if (newUrl && newUrl !==
+      // curUrl)`); when the operator presses GO LIVE while the same
+      // URL is already on air (e.g. they paused live, re-pinned the
+      // same clip on Preview, then pressed GO LIVE to re-cue from
+      // their preview-side scrub point), the URL-match path skipped
+      // the reset and the live <video> stayed paused — operator
+      // pressed GO LIVE and nothing happened. Always-set ensures the
+      // live element receives mediaPaused=false on every GO LIVE,
+      // independent of URL equality.
+      useAppStore.getState().setLiveMediaPaused(false)
+      // setLiveAuto handles isLive=true + liveSlide + atomic transport
+      // reset (liveMediaPaused=false + liveMediaCurrentTime=0) when
+      // the new media URL differs from the current one.
       useAppStore.getState().setLiveAuto(pinned)
+      // Override the just-reset time with the captured preview
+      // resume point so live picks up where preview was watching.
+      // Only meaningful when resumeFrom > 0 (operator had actually
+      // played the preview); a 0 here is identical to the reset.
+      if (resumeFrom > 0) {
+        useAppStore.getState().setLiveMediaCurrentTime(resumeFrom)
+      }
       return
     }
     if (!slides.length) {
