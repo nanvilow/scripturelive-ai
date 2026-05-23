@@ -97,6 +97,65 @@
   !insertmacro killRunningApp
 !macroend
 
+; v0.7.236 — Operator-initiated clean uninstall (EasyWorship / Wirecast parity).
+;
+; Operator escalation: "when users uninstall the app delete everything
+; that include the app just like other apps do (EasyWorship, Wirecast,
+; etc.)". Previously NSIS only removed the program files — Electron's
+; user-data folder (`%APPDATA%\ScriptureLive AI\`) and any persisted
+; LocalAppData survived uninstall, so a fresh reinstall on the same PC
+; loaded the OLD persisted Zustand store / electron-store / SQLite
+; back into the new build. Operators saw "most of the fixes didn't
+; apply on this PC" because a v0.7.235 binary was running on top of
+; v0.7.220-era state objects that lacked fields the new code reads
+; (mediaKind, bgBrightness, throttle envelope, etc.).
+;
+; Fix: customUnInstall macro that prompts the operator on uninstall
+; and (default YES) recursively deletes the four canonical user-data
+; locations Electron / Next / our SQLite layer write to. The prompt
+; matches the language operators already see in EasyWorship's uninstall
+; wizard so the affordance is familiar.
+;
+; CRITICAL: silent uninstall (the /S flag electron-updater sets when
+; the auto-updater installs an upgrade) MUST skip the wipe. Otherwise
+; EVERY in-app update would erase the operator's saved library, weekly
+; schedule, NDI settings, and recent-files list — catastrophic data
+; loss on a Sunday morning. `IfSilent skipDataWipe` BEFORE the prompt
+; is the load-bearing guard; do not remove it.
+;
+; Default action when the dialog is shown is YES (wipe). That matches
+; the operator's intent — they're uninstalling because they don't want
+; the app on this PC anymore. Operators who are about to reinstall a
+; different build can click No to keep their state for the next run.
+;
+; Paths wiped:
+;   • $APPDATA\ScriptureLive AI    — Electron userData (electron-store,
+;                                    Zustand persist, IndexedDB, Local
+;                                    Storage, Service Worker caches,
+;                                    Network cookies, GPUCache).
+;   • $LOCALAPPDATA\ScriptureLive AI — Code cache, partition data,
+;                                      crash dumps, log files written
+;                                      by the bundled Next server.
+;   • $APPDATA\@workspace\imported-app — pre-v0.7.x namespace; some
+;                                        long-time operators still have
+;                                        state here from the migration
+;                                        window. Cheap to clean.
+;   • $LOCALAPPDATA\@workspace\imported-app — same, LocalAppData side.
+;
+; ClearErrors at the end so a "folder did not exist" error code from
+; RMDir on a clean machine doesn't poison the installer exit code and
+; trigger Windows' "Uninstall failed" toast.
+!macro customUnInstall
+  IfSilent skipDataWipe
+  MessageBox MB_YESNO|MB_ICONQUESTION "Do you also want to delete your ScriptureLive AI settings, library, saved schedules, and cached data?$\r$\n$\r$\nClick Yes for a complete clean uninstall (recommended if you are not planning to reinstall).$\r$\n$\r$\nClick No to keep your data on this PC for a future reinstall." /SD IDYES IDNO skipDataWipe
+    RMDir /r "$APPDATA\ScriptureLive AI"
+    RMDir /r "$LOCALAPPDATA\ScriptureLive AI"
+    RMDir /r "$APPDATA\@workspace\imported-app"
+    RMDir /r "$LOCALAPPDATA\@workspace\imported-app"
+  skipDataWipe:
+  ClearErrors
+!macroend
+
 ; v0.7.126 — Branded MUI2 wizard customisations.
 ;
 ; electron-builder's NSIS template already wires up MUI2 with our
