@@ -1439,13 +1439,58 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           mediaLibrary: [item, ...state.mediaLibrary.filter((m) => m.id !== item.id)],
         })),
+      // v0.7.243 — Operator escalation: deleting a video from Media
+      // while it's playing on Live Display USED to leave the video
+      // playing because the <video> element on the receiver/Live
+      // surface still had the src loaded in browser memory. The
+      // delete handler only filtered the mediaLibrary array — it
+      // never checked whether the deleted item was the one currently
+      // staged on liveSlide / pinnedPreviewSlide. Fix: look up the
+      // removed item's dataUrl, then if liveSlide or pinnedPreviewSlide
+      // is a media slide referencing that exact url, clear them in the
+      // same atomic `set` AND reset the per-surface media transport
+      // (paused=true, currentTime=0) so the surface goes blank
+      // immediately. liveSlideIndex/slides[] schedule entries are
+      // intentionally NOT touched — the operator may want to keep the
+      // slide stub in the schedule and re-upload the asset later.
       removeMediaLibraryItem: (id) =>
-        set((state) => ({
-          mediaLibrary: state.mediaLibrary.filter((m) => m.id !== id),
-          mediaFitById: Object.fromEntries(
-            Object.entries(state.mediaFitById).filter(([k]) => k !== id),
-          ),
-        })),
+        set((state) => {
+          const item = state.mediaLibrary.find((m) => m.id === id)
+          const removedUrl = item?.url
+          const liveMatches = !!(
+            removedUrl &&
+            state.liveSlide &&
+            state.liveSlide.type === 'media' &&
+            state.liveSlide.mediaUrl === removedUrl
+          )
+          const pinMatches = !!(
+            removedUrl &&
+            state.pinnedPreviewSlide &&
+            state.pinnedPreviewSlide.type === 'media' &&
+            state.pinnedPreviewSlide.mediaUrl === removedUrl
+          )
+          return {
+            mediaLibrary: state.mediaLibrary.filter((m) => m.id !== id),
+            mediaFitById: Object.fromEntries(
+              Object.entries(state.mediaFitById).filter(([k]) => k !== id),
+            ),
+            ...(liveMatches
+              ? {
+                  liveSlide: null,
+                  isLive: false,
+                  liveMediaPaused: true,
+                  liveMediaCurrentTime: 0,
+                }
+              : {}),
+            ...(pinMatches
+              ? {
+                  pinnedPreviewSlide: null,
+                  previewMediaPaused: true,
+                  previewMediaCurrentTime: 0,
+                }
+              : {}),
+          }
+        }),
       mediaFitById: {},
       setMediaFit: (id, fit) =>
         set((state) => ({ mediaFitById: { ...state.mediaFitById, [id]: fit } })),
