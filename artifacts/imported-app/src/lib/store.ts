@@ -1663,7 +1663,19 @@ export const useAppStore = create<AppState>()(
       setPreviewAudio: (b) => set({ previewAudio: b }),
       liveBroadcastAudio: true,
       setLiveBroadcastAudio: (b) => set({ liveBroadcastAudio: b }),
-      liveMonitorAudio: true,
+      // v0.7.244 — Default the Live pane's headphone monitor to OFF.
+      // Operator escalation: "audio duplicates when video plays on
+      // second screen". Both the operator's in-app Live <video> AND
+      // the second-screen / congregation receiver were emitting audio
+      // simultaneously, doubling the sound in the operator's room.
+      // The receiver IS the broadcast audio source (per
+      // route.ts L1035 — "Visible secondary screen / congregation TV:
+      // plays the media audio at master volume"); the operator's
+      // Live pane is a MONITOR that should stay silent until the
+      // operator explicitly puts on headphones and flips the
+      // headphone icon. Defaulting to false makes the receiver the
+      // sole audio source out of the box.
+      liveMonitorAudio: false,
       setLiveMonitorAudio: (b) => set({ liveMonitorAudio: b }),
 
       globalVolume: 1,
