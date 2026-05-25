@@ -153,6 +153,36 @@ const isDev = !app.isPackaged
 // only baked into Chrome — packaged Electron builds will hit
 // `network` errors. The renderer-side hook now detects this and
 // shows a clear actionable error instead of bouncing on/off forever.
+// v0.7.239 — Force Electron's runtime identity to "ScriptureLive AI" so
+// Windows Task Manager groups the main + helper processes under that
+// name (and uses the AppUserModelID to attach the round product icon to
+// the grouped row in the task bar / jump list). Without these two calls
+// the operator sees "Electron (8)" in Task Manager with the generic
+// Electron atom icon, because:
+//   • `app.name` defaults to package.json `name` = "@workspace/imported-app"
+//     (npm scope name, not the product name). Electron-builder renames the
+//     packaged .exe correctly via `productName`, but Electron's RUNTIME
+//     name (used for some Windows window-class grouping calls) stays at
+//     the package.json value unless we override it here.
+//   • The AppUserModelID is what Windows uses to group windows of the
+//     "same app" in Task Manager and the task bar. NSIS sets it on the
+//     installed shortcut, but Electron must ALSO call setAppUserModelId
+//     so the running process advertises the same AUMID — otherwise
+//     Windows falls back to a process-name-derived AUMID and the group
+//     row is labelled with the binary stem ("Electron" in dev,
+//     "ScriptureLive AI" in production but without icon attachment).
+// MUST be called BEFORE any BrowserWindow is created (i.e. BEFORE
+// app.whenReady) so the very first window already advertises the AUMID.
+// Must come BEFORE the commandLine.appendSwitch block so the AUMID is
+// set during Electron's earliest init phase.
+app.setName('ScriptureLive AI')
+if (process.platform === 'win32') {
+  // Mirror electron-builder.yml `appId`. Single source of truth in NSIS
+  // is the installer; runtime mirror here keeps Task Manager grouping
+  // consistent for both packaged AND dev (`electron .`) launches.
+  app.setAppUserModelId('ai.scripturelive.desktop')
+}
+
 app.commandLine.appendSwitch('enable-features', 'WebSpeechAPI,SpeechSynthesisAPI,WebRTC-Audio-Red-For-Opus')
 app.commandLine.appendSwitch('enable-speech-dispatcher')
 // Auto-grant getUserMedia for the bundled origin so the mic doesn't
@@ -198,6 +228,16 @@ let frameCaptureFlags: {
   // of the URL-bake fix.
   lowerThirdHeight: 'sm' | 'md' | 'lg' | null
   lowerThirdScale: number | null
+  // v0.7.230 — Track the operator-picked OBS-compat BGRA opt-in on
+  // the running sender so a toggle WHILE NDI is running forces a true
+  // rebuild instead of short-circuiting. The FourCC is baked into the
+  // sender at ndilib_send_create and CANNOT be live-applied — without
+  // this field the equality check below would short-circuit (same
+  // source/geometry/fps/transparent/LT...) and the wire FourCC would
+  // stay on the OLD value while the panel UI shows the new toggle
+  // state. Same lesson as v0.6.6 transparent toggle + v0.7.5.1 LT
+  // height/scale drag — any sender-create-time option MUST live here.
+  forceBgraForObs: boolean
 } | null = null
 let mainWindow: BrowserWindow | null = null
 // v0.7.121 — Tracked kiosk-style output BrowserWindows (congregation,
@@ -2285,7 +2325,23 @@ function setupIpc() {
         // "did nothing while broadcasting" was this short-circuit.
         const cur = ndi.getStatus()
         const wantLayout = opts.layout === 'ndi' ? 'ndi' : 'mirror'
-        const wantTransparent = wantLayout === 'ndi' && opts.transparent !== false
+        // v0.7.223 — Operator escalation: "NDI output for video background
+        // is transparent — shouldn't be so at all." Pre-fix default was
+        // `opts.transparent !== false` which meant ANY NDI session
+        // defaulted to TRANSPARENT (alpha matte). Receivers that respect
+        // alpha (vMix, Wirecast, OBS with alpha-aware composition) then
+        // showed the video background as see-through whenever the
+        // renderer's compositing produced any non-opaque pixels (which
+        // happens on a video element while it is fetching, between
+        // frames, or in the letterbox area of a contain-fit video).
+        // EW-class behaviour: NDI fullscreen output is OPAQUE by default;
+        // transparency is an explicit opt-in feature exclusively for
+        // lower-third / overlay workflows where the receiver is doing
+        // chromakey-style composition over its own program. We require
+        // `opts.transparent === true` (explicit) to enable. The lower-
+        // third path below still works because operators that turn on
+        // lower-third also explicitly check the transparent toggle.
+        const wantTransparent = wantLayout === 'ndi' && opts.transparent === true
         const wantLT = wantLayout === 'ndi' && Boolean(opts.lowerThird?.enabled)
         const wantLTPos: 'top' | 'bottom' =
           opts.lowerThird?.position === 'top' ? 'top' : 'bottom'
@@ -2320,7 +2376,10 @@ function setupIpc() {
           frameCaptureFlags.lowerThird === wantLT &&
           (!wantLT || frameCaptureFlags.lowerThirdPosition === wantLTPos) &&
           (!wantLT || frameCaptureFlags.lowerThirdHeight === wantLTHeight) &&
-          (!wantLT || frameCaptureFlags.lowerThirdScale === wantLTScale)
+          (!wantLT || frameCaptureFlags.lowerThirdScale === wantLTScale) &&
+          // v0.7.230 — see frameCaptureFlags.forceBgraForObs comment
+          // above. Toggle while running MUST trigger rebuild.
+          frameCaptureFlags.forceBgraForObs === (opts.forceBgraForObs === true)
         ) {
           broadcastNdiStatus(cur)
           return { ok: true, status: cur }
@@ -2331,7 +2390,17 @@ function setupIpc() {
         // a no-op when no sender exists yet (first start of a session).
         ndi.armBridge(3000)
         if (frameCapture) { await frameCapture.stop(); frameCapture = null }
-        await ndi.start(opts)
+        // v0.7.223 — Pass the resolved transparent flag through to the
+        // NDI sender so it can pick BGRX (opaque, EW-class smooth) vs
+        // BGRA (alpha matte preserved) at the FourCC level. Without
+        // this the sender would always advertise BGRX and the
+        // explicit transparent lower-third workflow would lose its
+        // alpha channel on the wire.
+        // v0.7.230 — forceBgraForObs is plumbed straight through from
+        // NdiStartOptions; the panel reads it from settings and passes
+        // it on every ndi:start call. main.ts has no business deciding
+        // FourCC, so it's a pure forward — ndi-service owns the gate.
+        await ndi.start({ ...opts, transparent: wantTransparent })
         frameCapture = new FrameCapture({
           baseUrl: appBaseUrl,
           onFrame: (buf, w, h) => ndi.sendFrame(buf, w, h),
@@ -2356,7 +2425,20 @@ function setupIpc() {
         params.set('ndi', '1')
         let transparent = false
         if (layout === 'ndi') {
-          transparent = opts.transparent !== false
+          // v0.7.223 — Mirror the explicit-opt-in change at L2307. The
+          // URL-side `?transparent=1` flag (which tells the congregation
+          // renderer to strip its own background colour) MUST follow the
+          // same explicit-opt-in rule as the BrowserWindow's `transparent`
+          // attribute. Pre-fix `opts.transparent !== false` defaulted ON,
+          // so even when the BrowserWindow was opaque the renderer page
+          // was sending a transparent background — Chromium's compositor
+          // would composite the renderer's transparent pixels onto the
+          // BrowserWindow's opaque black, producing visibly darker /
+          // partially-transparent video backgrounds at the receiver.
+          // The two flags MUST stay in lockstep: either both ON (full
+          // alpha matte for lower-third workflows) or both OFF (opaque
+          // fullscreen for normal broadcast).
+          transparent = opts.transparent === true
           const lt = opts.lowerThird || {}
           if (transparent) params.set('transparent', '1')
           if (lt.enabled) params.set('lowerThird', '1')
@@ -2399,6 +2481,9 @@ function setupIpc() {
           // ndi:start can detect operator-dragged changes.
           lowerThirdHeight: wantLTHeight,
           lowerThirdScale: wantLTScale,
+          // v0.7.230 — persist the BGRA-compat pick alongside the
+          // other build-time flags. See frameCaptureFlags type def.
+          forceBgraForObs: opts.forceBgraForObs === true,
         }
         broadcastNdiStatus(ndi.getStatus())
         return { ok: true, status: ndi.getStatus() }
@@ -2648,9 +2733,75 @@ function setupIpc() {
     // disconnect output display from the other screen from the app,
     // the app output… becomes Blank").
     kioskWindows.add(win)
-    win.on('closed', () => { kioskWindows.delete(win) })
+    // v0.7.247 — tag the kiosk window with its semantic role at
+    // creation time. URL-based detection (`webContents.getURL()`
+    // matching '/api/output/congregation') races against loadURL —
+    // immediately after `kioskWindows.add(win)` the URL is still
+    // blank/about:blank and substring counts as zero, so the very
+    // first open broadcast would emit `false` and the in-app Live
+    // would stay unmuted until another lifecycle event arrived.
+    // Tagging avoids the race entirely; URL filtering remains as a
+    // belt-and-braces fallback for any future caller that forgets
+    // to set the tag.
+    ;(win as BrowserWindow & { __outputRole?: string }).__outputRole =
+      opts.path.includes('/api/output/congregation') ? 'congregation'
+      : opts.path.includes('/api/output/stage') ? 'stage'
+      : 'unknown'
+    win.on('closed', () => {
+      kioskWindows.delete(win)
+      // re-broadcast congregation-open whenever a kiosk window
+      // closes. The renderer mirrors this into a store flag that
+      // mutes the in-app Live <video> so the operator doesn't hear
+      // duplicate room audio (console speakers + projector).
+      broadcastCongregationOpen()
+    })
+    // Same broadcast on open — the renderer's audio gating flips
+    // true the moment the kiosk window mounts.
+    broadcastCongregationOpen()
     return win
   }
+
+  // v0.7.247 — count of OPEN congregation kiosk windows (excludes the
+  // stage-display popout — that's an operator monitor, not a broadcast
+  // surface, and doesn't carry audio). Sent to every operator
+  // BrowserWindow's renderer via webContents.send so the store flag
+  // `outputWindowOpen` stays in sync across re-renders. Counts by the
+  // `__outputRole === 'congregation'` tag set in createKioskOutput so
+  // the result is correct from the very first call even before
+  // `loadURL` resolves; falls back to URL substring match for
+  // robustness against future un-tagged callers.
+  function getCongregationOpen(): boolean {
+    for (const w of kioskWindows) {
+      if (!w || w.isDestroyed()) continue
+      const role = (w as BrowserWindow & { __outputRole?: string }).__outputRole
+      if (role === 'congregation') return true
+      if (!role) {
+        try {
+          const url = w.webContents.getURL() || ''
+          if (url.includes('/api/output/congregation')) return true
+        } catch { /* per-window failure non-fatal */ }
+      }
+    }
+    return false
+  }
+  function broadcastCongregationOpen() {
+    const isOpen = getCongregationOpen()
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w || w.isDestroyed()) continue
+      // Skip the kiosk windows themselves — they don't need this flag.
+      if (kioskWindows.has(w)) continue
+      try { w.webContents.send('output:congregation-open', isOpen) }
+      catch { /* renderer may have unloaded */ }
+    }
+  }
+  // v0.7.247 — renderer handshake. The shell calls this on mount to
+  // restore the flag after a hot-reload / remount while a congregation
+  // kiosk is still open. Without it, the cleanup-on-unmount that sets
+  // `outputWindowOpen=false` would strand the flag false until the
+  // NEXT kiosk lifecycle event — meaning the in-app Live <video>
+  // would unmute and double-feed audio the moment the operator
+  // rebuilt the React tree.
+  ipcMain.handle('output:get-congregation-open', () => getCongregationOpen())
 
   // v0.7.121 — Auto-recover kiosk output windows when their host display
   // is unplugged. Without this, the BrowserWindow stays at coordinates
