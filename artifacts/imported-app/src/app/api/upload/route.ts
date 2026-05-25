@@ -125,6 +125,128 @@ export async function GET(request: NextRequest) {
 
     const contentType = getContentType(filename)
 
+    // v0.7.241 — HTTP Range / 206 Partial Content support.
+    //
+    // Why this exists: the receiver page at /api/output/congregation
+    // mounts a <video> element whose drift-correction logic (v0.7.235)
+    // performs HARD-SNAP seeks on every operator transport event
+    // (pause-change, scrub-back > 0.3s, scrub-fwd > 2.0s) AND
+    // playbackRate-trim on routine drift. When OBS Browser Source on a
+    // SEPARATE PC loads this page, the embedded Chromium <video>
+    // element issues a `Range: bytes=X-` request on EVERY seek. Pre-
+    // v0.7.241 the GET handler advertised `Accept-Ranges: bytes` (the
+    // L151 header below) but never parsed the Range request header
+    // and never returned 206 Partial Content — every seek re-streamed
+    // the file from byte 0 over the LAN, manifesting as multi-second
+    // stutter at the OBS source AND as decoder re-buffer pressure on
+    // even the local NDI offscreen renderer (which is also driven by
+    // the same /api/upload-backed <video> element). The "Accept-
+    // Ranges: bytes" advertisement was a load-bearing lie: many
+    // Chromium versions will tighten their buffer policy and seek
+    // more aggressively when they trust the server's Range claim, so
+    // removing the header WOULD have been worse than the unfulfilled
+    // promise — the correct fix is to actually honour Range.
+    //
+    // Behaviour:
+    //   • No Range header  → 200 OK + full body (existing path)
+    //   • Range header     → 206 Partial Content + slice + Content-
+    //                        Range + correct Content-Length
+    //   • Malformed Range  → 416 Requested Range Not Satisfiable
+    //                        + Content-Range: bytes */<size> so the
+    //                        client can re-issue a valid request
+    //                        (RFC 7233 §4.4 compliance).
+    //
+    // GUARD-RAIL (Range parsing): only `bytes=start-end`, `bytes=start-`,
+    // and `bytes=-suffixLength` are supported — multipart ranges
+    // (bytes=0-100,200-300) are NOT supported because <video> never
+    // emits them and the multipart/byteranges response shape would
+    // double the implementation surface. Browsers fall back to
+    // single-range fetches when the server omits the multipart
+    // capability, so this is safe.
+    //
+    // GUARD-RAIL (small-file path also honours Range): the v0.7.241
+    // fix moves the entire response shape under a single Range-aware
+    // branch — even files ≤20 MB benefit because the 20 MB threshold
+    // is about RAM (avoid `readFile` ballooning), NOT about seek
+    // behaviour. A 5 MB clip on the receiver page still seeks and
+    // still needs Partial-Content responses.
+    //
+    // GUARD-RAIL (Cache-Control kept `immutable`): uploads/ filenames
+    // are content-hashed at upload time so the same URL always returns
+    // the same bytes — `immutable` lets OBS Chromium reuse cached
+    // range slices across reconnects, which is the correct long-term
+    // perf win and is unchanged from pre-v0.7.241.
+    const rangeHeader = request.headers.get('range')
+    if (rangeHeader) {
+      // Match `bytes=start-end`, `bytes=start-`, `bytes=-suffix`. Anything
+      // else (including multipart) falls through to 416.
+      const m = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim())
+      let start = 0
+      let end = info.size - 1
+      let valid = false
+      if (m) {
+        const startStr = m[1]
+        const endStr = m[2]
+        if (startStr === '' && endStr !== '') {
+          // Suffix range: last N bytes.
+          const suffix = parseInt(endStr, 10)
+          if (suffix > 0) {
+            start = Math.max(0, info.size - suffix)
+            end = info.size - 1
+            valid = true
+          }
+        } else if (startStr !== '') {
+          start = parseInt(startStr, 10)
+          end = endStr === '' ? info.size - 1 : parseInt(endStr, 10)
+          if (
+            !Number.isNaN(start) &&
+            !Number.isNaN(end) &&
+            start >= 0 &&
+            end >= start &&
+            start < info.size
+          ) {
+            end = Math.min(end, info.size - 1)
+            valid = true
+          }
+        }
+      }
+      if (!valid) {
+        return new NextResponse(null, {
+          status: 416,
+          headers: {
+            'Content-Range': `bytes */${info.size}`,
+            'Accept-Ranges': 'bytes',
+          },
+        })
+      }
+      const chunkSize = end - start + 1
+      const nodeStream = createReadStream(filepath, { start, end })
+      const webStream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          nodeStream.on('data', (chunk) =>
+            controller.enqueue(
+              chunk instanceof Buffer ? new Uint8Array(chunk) : (chunk as Uint8Array),
+            ),
+          )
+          nodeStream.on('end', () => controller.close())
+          nodeStream.on('error', (err) => controller.error(err))
+        },
+        cancel() {
+          nodeStream.destroy()
+        },
+      })
+      return new NextResponse(webStream, {
+        status: 206,
+        headers: {
+          'Content-Type': contentType,
+          'Cache-Control': 'public, max-age=31536000, immutable',
+          'Content-Length': chunkSize.toString(),
+          'Content-Range': `bytes ${start}-${end}/${info.size}`,
+          'Accept-Ranges': 'bytes',
+        },
+      })
+    }
+
     // For large files (>20 MB) stream the body so we don't pull GBs
     // into memory just to serve the response.
     if (info.size > 20 * 1024 * 1024) {
@@ -159,6 +281,7 @@ export async function GET(request: NextRequest) {
         'Content-Type': contentType,
         'Cache-Control': 'public, max-age=31536000, immutable',
         'Content-Length': buffer.length.toString(),
+        'Accept-Ranges': 'bytes',
       },
     })
   } catch (error) {
