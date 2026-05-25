@@ -504,7 +504,21 @@ function MediaVideoSurface({
     // /  secondary screen within 0.2s of the operator's clock — the
     // perceived "OBS is laggy / out of sync" escalation against
     // v0.7.233 directly traces to the 0.50s lag floor here.
-    const writeThreshold = surface === 'live' ? 0.20 : 0.25
+    // v0.7.244 — Path A sync. Operator escalation: "video on second
+    // screen / receiver lags behind operator's Live pane by a visible
+    // 100-300ms in steady state". Root cause stack: writeback
+    // threshold 0.20s + timeupdate event firing at ~4Hz + SSE
+    // throttle + receiver-side soft-trim 30ms/sec. Even when every
+    // hop is "in tolerance", they compound into a visible offset.
+    //
+    // Fix (live surface only): drop writeThreshold 0.20s → 0.05s AND
+    // bolt a 60Hz rAF loop alongside timeupdate so the clock writes
+    // continuously while playing instead of waiting for the next
+    // <video> timeupdate fire. Preview keeps 0.25s — it doesn't
+    // broadcast, so the 4Hz tick is plenty for the local transport
+    // UI and avoids needless store churn on a non-broadcasting
+    // surface.
+    const writeThreshold = surface === 'live' ? 0.05 : 0.25
     const onTimeUpdate = () => {
       const cur = v.currentTime
       const stored = surface === 'preview'
@@ -524,12 +538,45 @@ function MediaVideoSurface({
     v.addEventListener('pause', onTransport)
     v.addEventListener('seeked', onTransport)
     v.addEventListener('loadedmetadata', onTransport)
+    // v0.7.244 — rAF clock loop (LIVE only). Same threshold gate as
+    // timeupdate so we don't write more often than 0.05s of drift
+    // demands, but the loop wakes every frame so a moving clock
+    // always lands inside one frame of broadcast. Cancelled when
+    // paused so a long pause doesn't burn CPU.
+    let raf = 0
+    const rafTick = () => {
+      raf = 0
+      if (!v.paused && !v.ended) {
+        onTimeUpdate()
+        raf = requestAnimationFrame(rafTick)
+      }
+    }
+    const onPlayStartRaf = () => { if (!raf) raf = requestAnimationFrame(rafTick) }
+    const onPauseStopRaf = () => { if (raf) { cancelAnimationFrame(raf); raf = 0 } }
+    if (surface === 'live') {
+      v.addEventListener('play', onPlayStartRaf)
+      v.addEventListener('playing', onPlayStartRaf)
+      v.addEventListener('pause', onPauseStopRaf)
+      v.addEventListener('ended', onPauseStopRaf)
+      v.addEventListener('emptied', onPauseStopRaf)
+      // Seed if already playing on mount (e.g. effect re-runs from a
+      // src swap mid-playback).
+      if (!v.paused && !v.ended) onPlayStartRaf()
+    }
     return () => {
       v.removeEventListener('timeupdate', onTimeUpdate)
       v.removeEventListener('play', onTransport)
       v.removeEventListener('pause', onTransport)
       v.removeEventListener('seeked', onTransport)
       v.removeEventListener('loadedmetadata', onTransport)
+      if (surface === 'live') {
+        v.removeEventListener('play', onPlayStartRaf)
+        v.removeEventListener('playing', onPlayStartRaf)
+        v.removeEventListener('pause', onPauseStopRaf)
+        v.removeEventListener('ended', onPauseStopRaf)
+        v.removeEventListener('emptied', onPauseStopRaf)
+        if (raf) cancelAnimationFrame(raf)
+      }
     }
   }, [surface, src, setOwnCurrentTime])
 
@@ -2500,11 +2547,21 @@ function LiveDisplayCard({
             a no-op flag pre-fix; MediaVideoSurface now honours
             `liveBroadcastAudio` via its `muted` computation). */}
         <div className="w-7 shrink-0 flex flex-col items-center gap-1.5 py-1">
+          {/* v0.7.244 — Live AudioMeter forced to 'green' to match the
+              Preview meter. Operator escalation: "remove that red
+              line on the live display". The rose/red gradient on
+              the LEFT edge of the Live Display card stage read as
+              an alarming static red strip, especially with the
+              broadcast speaker on (which was the default + most-
+              common state). Both surfaces now use the same green VU
+              tone — the speaker-toggle button next to the meter
+              still communicates broadcast on/off via its own rose-
+              tinted state. */}
           <div className="flex-1 min-h-0 w-full flex justify-center">
             <AudioMeter
               active={liveBroadcastAudio}
               playing={liveVideoPlaying}
-              tone={liveBroadcastAudio ? 'red' : 'green'}
+              tone="green"
               surface="live"
             />
           </div>
