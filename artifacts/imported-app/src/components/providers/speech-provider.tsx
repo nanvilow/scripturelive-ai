@@ -13,6 +13,16 @@ import { detectBestPreacherPhrase } from '@/lib/bibles/preacher-phrases'
 // voice commands. Same JSON the reference engine uses for validation.
 import bibleStructure from '@/data/bible-structure.json'
 import { detectCommand, detectCommandChain, type VoiceCommand } from '@/lib/voice/commands'
+// v0.7.241 — Local sub-millisecond n-gram paraphrase matcher. Wired
+// here so a 2-4 word distinctive paraphrase ("king couldn't sleep",
+// "let there be light", "valley of the shadow") fires INSTANTLY,
+// without the /api/bible keyword search or the OpenAI embedding
+// roundtrip the cosine matcher needs. Shipped as a library in
+// v0.7.239 + a standalone API route, but never invoked from the
+// live voice pipeline — operator escalation "search should be fast
+// even when speaker say any 4 words should know the verse fast" was
+// the visible symptom of that gap.
+import { matchTranscript as matchPhraseIndex, warmPhraseIndex } from '@/lib/ai/phrase-index'
 // v0.7.29 — LLM-classifier command-likeness gate (Phase 2 of v0.8.0).
 // Used as a CHEAP local pre-check before we POST to /api/voice/classify
 // so most non-command transcripts skip the OpenAI roundtrip entirely.
@@ -281,6 +291,15 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // that started before the lock fired.
   const licenseLocked = useAppStore((s) => s.licenseLocked)
 
+  // v0.7.241 — Warm the local n-gram phrase index ONCE on mount so
+  // the ~30-50 ms cold-build cost (tokenise + n-gram all ~1300
+  // catalogue entries) lands BEFORE the operator's first spoken
+  // phrase, not in the critical path of the first transcript chunk.
+  // Subsequent matchPhraseIndex() calls are sub-millisecond.
+  useEffect(() => {
+    try { warmPhraseIndex() } catch { /* defensive */ }
+  }, [])
+
   // ── Sync hook state → store (so any view can read it) ──────────────
   useEffect(() => {
     setLiveTranscript(hookTranscript)
@@ -498,6 +517,14 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // the search API every couple of words as the transcript grows.
   const lastTextSearchAtRef = useRef<number>(0)
   const processedTextHitsRef = useRef<Set<string>>(new Set())
+  // v0.7.241 — Sub-ms local phrase-index throttle. Set to 200 ms (not
+  // 800/1000 like the network paths) because phrase-index is pure
+  // in-memory Map lookup — no API quota to protect, no latency to
+  // amortize. The only purpose of this throttle is to avoid hammering
+  // the index on rapid-fire interim chunks; processedTextHitsRef
+  // dedupes per-reference, so a second chunk that returns the same
+  // hit is a no-op anyway.
+  const lastPhraseAtRef = useRef<number>(0)
 
   // v0.7.60 — Live AI semantic-match throttle + dedupe. The semantic
   // matcher costs one OpenAI embedding per call (~80–150 ms); we
@@ -1208,6 +1235,58 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         useAppStore.getState().setLiveActiveVerseIndex(0)
         break
       }
+      // ── v0.7.235 — Show chapter N within current book ─────────────
+      // Operator says "chapter 5" / "go to chapter 5" / "take me to
+      // chapter 5". Resolve the current book from the live slide and
+      // load <currentBook> N:1 in the active translation. Mirror of
+      // show_verse_n Case B but at chapter granularity. If we can't
+      // recover any book context (no live verse currently), surface a
+      // toast — the operator probably meant to wake-prefix this with
+      // a book reference first.
+      case 'show_chapter_n': {
+        if (!cmd.chapterNumber) break
+        const n = cmd.chapterNumber
+        const slide = s.liveSlide ?? (liveIdx >= 0 ? slides[liveIdx] : null)
+        if (!slide || slide.type !== 'verse' || !slide.title) {
+          toast.error(`No live passage — say "<book> chapter ${n}" first`, { duration: 2200, position: 'bottom-right' })
+          break
+        }
+        const refFromSlide = parseExplicitReference(slide.title)
+        if (!refFromSlide) {
+          toast.error(`Cannot parse current passage: ${slide.title}`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const struct = (bibleStructure as unknown as Record<string, number[]>)[refFromSlide.book]
+        const chapterCount = struct?.length ?? 0
+        if (chapterCount && (n < 1 || n > chapterCount)) {
+          toast.error(`${refFromSlide.book} only has ${chapterCount} chapters`, { duration: 2200, position: 'bottom-right' })
+          break
+        }
+        const tx = s.selectedTranslation
+        const refKey = `${refFromSlide.book} ${n}:1`
+        let textOut: string | null = lookupVerse(refFromSlide.book, n, 1, tx)
+        if (!textOut && !isTranslationBundled(tx)) {
+          try {
+            const v = await fetchBibleVerse(refKey, tx)
+            if (v) textOut = v.text
+          } catch { /* fall through */ }
+        }
+        if (!textOut) {
+          toast.error(`Could not load ${refKey}`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const slideNew = {
+          id: `slide-${Date.now()}`,
+          type: 'verse' as const,
+          title: refKey,
+          subtitle: tx,
+          content: textOut.split('\n').filter(Boolean),
+          background: s.settings.congregationScreenTheme,
+        }
+        useAppStore.getState().setLiveAuto(slideNew)
+        useAppStore.getState().setLiveActiveVerseIndex(0)
+        break
+      }
     }
   }, [])
 
@@ -1492,13 +1571,24 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               liveSlide && liveSlide.type === 'verse' && typeof liveSlide.title === 'string'
                 ? liveSlide.title
                 : undefined
-            // v0.7.93 — Outer fetch timeout dropped 2000 → 1000 ms so a
-            // hung classifier round-trip never blocks the next utterance
-            // by more than a second. classifyIntent itself now caps at
-            // 800 ms (was 1500 ms), so 1000 ms here gives the network
-            // 200 ms headroom and still fails fast.
+            // v0.7.241 — Outer fetch timeout MUST stay > classifier's
+            // internal DEFAULT_TIMEOUT_MS (currently 1200 ms; see
+            // llm-classifier.ts). Pre-v0.7.241 the outer was 1000 ms
+            // and the inner was 1200 ms — the outer AbortController
+            // fired BEFORE the inner could return, the catch silently
+            // swallowed the result, and EVERY slow-network LLM call
+            // looked to the operator like "the AI didn't hear me."
+            // This is the v0.7.169 timeout regression repeating: that
+            // release raised inner 800 → 1200, but the stale comment
+            // here ("classifyIntent caps at 800 ms") meant the outer
+            // wrapper was never lifted in lockstep. 1500 ms keeps
+            // 300 ms of network headroom above the inner cap while
+            // still bounding total wall time per utterance.
+            // GUARD-RAIL: any future change to DEFAULT_TIMEOUT_MS in
+            // llm-classifier.ts MUST be paired with a matching bump
+            // here (outer = inner + ≥200 ms). Drift = silent regression.
             const ac = new AbortController()
-            const timer = setTimeout(() => ac.abort(), 1000)
+            const timer = setTimeout(() => ac.abort(), 1500)
             let resp: Response
             try {
               resp = await fetch('/api/voice/classify', {
@@ -1809,6 +1899,77 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       const minKeywords = hasAttribution ? 2 : 3
       const minWords = hasAttribution ? 3 : 4
       const throttle = hasAttribution ? 500 : 800
+
+      // ── v0.7.241 — FAST local n-gram phrase matcher ───────────────
+      // Sub-millisecond, zero network, no API key required. Runs
+      // BEFORE the keyword search + semantic embedding paths so a
+      // 2-4 word distinctive paraphrase fires INSTANTLY without
+      // waiting on the slower remote calls. Covers exactly the
+      // operator-asked case "any 4 words should know the verse fast":
+      //   "king couldn't sleep"        → Esther 6:1
+      //   "let there be light"         → Genesis 1:3
+      //   "valley of the shadow"       → Psalm 23:4
+      //   "be still and know"          → Psalm 46:10
+      //   "ask and it shall be given"  → Matthew 7:7
+      // The local matcher requires only 2+ words (vs minWords=4 on
+      // the network paths) because n-gram lookup is precise — a
+      // 2-3 token hit on the curated paraphrase catalogue is
+      // intrinsically high-signal, no quota cost to spending probes
+      // on shorter tails. Throttle is 200 ms vs 800 ms on the network
+      // paths because phrase-index lookups are free.
+      // Score 0.65 floor = 3-token n-gram (lengthBase 0.75) OR
+      // 2-token + meaningful rarity bonus. Below 0.65 we let the
+      // slower network paths arbitrate. GUARD-RAIL: do NOT lower
+      // this below 0.55 — 2-token n-grams with no rarity bonus
+      // (i.e. tokens that appear in many verses) would flood the
+      // detected-verse column with false positives.
+      if (allWords.length >= 2 && now - lastPhraseAtRef.current > 200) {
+        lastPhraseAtRef.current = now
+        try {
+          const phraseRes = matchPhraseIndex(recentText, { topK: 3, minN: 2 })
+          const topPhrase = phraseRes.matches[0]
+          if (
+            topPhrase &&
+            topPhrase.score >= 0.65 &&
+            !processedTextHitsRef.current.has(topPhrase.reference) &&
+            !processedRefsRef.current.has(topPhrase.reference) &&
+            !references.includes(topPhrase.reference)
+          ) {
+            processedTextHitsRef.current = new Set(processedTextHitsRef.current).add(
+              topPhrase.reference,
+            )
+            const detected: DetectedVerse = {
+              id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              reference: topPhrase.reference,
+              text: topPhrase.text,
+              translation: state.selectedTranslation,
+              detectedAt: new Date(),
+              confidence: topPhrase.score,
+              // 'semantic' source routes to the paraphrase column
+              // (column 2 in v0.7.104 UI architecture) — identical
+              // tagging to the cosine path below so the existing
+              // auto-go-live + stability-gate logic in logos-shell
+              // applies without special-casing.
+              source: topPhrase.score < 0.5 ? 'suggestion' : 'semantic',
+            }
+            const tBefore = useAppStore.getState().liveTranscript
+            useAppStore.getState().pushTranscriptBreak(tBefore.length)
+            useAppStore.getState().addDetectedVerse(detected)
+            useAppStore.getState().addToVerseHistory({
+              reference: topPhrase.reference,
+              text: topPhrase.text,
+              translation: state.selectedTranslation,
+              book: topPhrase.book,
+              chapter: topPhrase.chapter,
+              verseStart: topPhrase.verseStart,
+            })
+            state.setDetectionStatus('detected')
+          }
+        } catch {
+          /* defensive — index build failure must not break the rest of the pipeline */
+        }
+      }
+
       if (
         allWords.length >= minWords &&
         keywords.length >= minKeywords &&
