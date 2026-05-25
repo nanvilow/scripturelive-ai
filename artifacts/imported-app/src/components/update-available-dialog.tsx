@@ -232,6 +232,31 @@ export function UpdateAvailableDialog() {
   }
 
   const handleDismiss = () => {
+    // v0.7.244 — "Later" must ALSO cancel the 60s background auto-
+    // download timer for this session. Operator escalation: "I
+    // clicked Later and the update downloaded anyway." Root cause:
+    // electron/updater.ts L286 scheduleAutoDownload() fires 60s after
+    // 'update-available' regardless of dialog dismissal — only an
+    // explicit IPC call to 'updater:set-auto-download' (false) clears
+    // the timer (see updater.ts L535). The dialog was writing the
+    // per-version localStorage flag but never reaching into the main
+    // process to disable the timer, so the download started 60s
+    // later anyway and the operator saw their "Later" choice get
+    // silently overridden.
+    //
+    // Calling setAutoDownload(false) here is per-SESSION: the flag
+    // resets to true on the next app launch, so the operator still
+    // gets the background-prefetch benefit on subsequent launches —
+    // they just get to OPT OUT for the current session when they
+    // explicitly click Later. Guarded so the web build (no desktop
+    // bridge) never throws.
+    try {
+      void desktop.updater.setAutoDownload?.(false)
+    } catch {
+      // Non-desktop build or missing handler — swallow. The per-
+      // version localStorage dismissal below still suppresses the
+      // dialog itself; only the background timer is desktop-only.
+    }
     writeDismissed(offer.version)
     setOpen(false)
   }
