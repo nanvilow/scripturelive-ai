@@ -47,6 +47,13 @@ export interface MediaLibraryItem {
   url: string
   kind: 'image' | 'video'
   size?: number
+  // v0.7.239 — First-frame JPEG dataURL captured client-side at
+  // upload time (or lazily backfilled for legacy items). Painted
+  // via the <video poster=…> attribute so a thumbnail appears
+  // INSTANTLY on every tile mount with ZERO decoder cost — fully
+  // compatible with the v0.7.222 `preload="none"` decoder-pressure
+  // invariant on the media-library grid.
+  posterUrl?: string
 }
 
 export interface BibleVerse {
@@ -109,6 +116,16 @@ export interface AppSettings {
   displayMode: DisplayMode
   outputDestination: OutputDestination
   customBackground: string | null
+  /** v0.7.227 — Operator-controlled brightness for the custom-background
+   *  image AND video on every output surface (full-screen verse bg,
+   *  persistent #bgLayer, lower-third .lt-bg). Integer 0-100. The
+   *  congregation renderer derives BOTH the bg opacity AND the dark
+   *  scrim alpha from this single value to preserve the v0.7.226
+   *  pair-invariant: opacity = brightness/100, scrim alpha ≈
+   *  (1 - opacity) * 0.333. Default 85 matches the v0.7.226 operator
+   *  pick. Optional for back-compat — pre-v0.7.227 saved settings have
+   *  no key and the renderer falls back to the same default. */
+  bgBrightness?: number
   lowerThirdPosition: 'bottom' | 'top'
   lowerThirdHeight: 'sm' | 'md' | 'lg'
   autoAdvanceSlides: boolean
@@ -256,6 +273,19 @@ export interface AppSettings {
    *  matte (text-only). Off by default so existing operator setups
    *  keep their familiar "branded card" look on NDI. */
   ndiLowerThirdTransparent?: boolean
+
+  /** v0.7.230 — Operator escalation: OBS Studio (some NDI plugin
+   *  versions, esp. older builds) refuses to enumerate or display NDI
+   *  sources that advertise FourCC `BGRX`. v0.7.223 made BGRX the
+   *  opaque default for the EW-class smoothness optimisation (vMix /
+   *  Wirecast / NDI Studio Monitor all accept it). When this flag is
+   *  ON the sender forces FourCC `BGRA` even in opaque mode so the
+   *  operator's OBS-only setup can discover and pull the source.
+   *  Trade-off: receivers pay the per-pixel alpha-composite step on
+   *  every frame even when there's no meaningful alpha — measurable
+   *  but only matters at 4K60. Default OFF preserves v0.7.223 perf
+   *  for the 99% who run vMix / Wirecast / OBS-with-modern-NDI. */
+  ndiForceBgraForObs?: boolean
 
   /** v0.6.4 — Operator-tunable size multiplier for the NDI lower-third
    *  bar. Multiplies the verse + reference font sizes AND the BOX
@@ -725,6 +755,26 @@ interface AppState {
   liveMonitorAudio: boolean
   setLiveMonitorAudio: (b: boolean) => void
 
+  // v0.7.247 — Tracks whether at least one external congregation
+  // output window is currently open (Electron kiosk BrowserWindow
+  // OR browser popup). When true, the in-app Live <video> mutes its
+  // local speaker because the external window now owns the room
+  // audio — without this, the operator hears the same clip twice
+  // (once from the operator console speakers, once from the
+  // projector / TV speakers). EasyWorship + Wirecast behave this
+  // way by default. Wired by:
+  //   electron path: main.ts broadcasts 'output:congregation-open'
+  //     on every kiosk window open/close; preload.ts forwards via
+  //     desktop.output.onCongregationOpenChanged; shell mounts a
+  //     subscription effect at module init.
+  //   browser path: openOnScreen polls the popup Window.closed
+  //     every 1s and writes the flag.
+  // NOT persisted — every fresh session starts at false; the
+  // electron broadcast fires on launch with the current count
+  // (zero by definition right after app start).
+  outputWindowOpen: boolean
+  setOutputWindowOpen: (b: boolean) => void
+
   // Global master volume (0..1) and master mute. Multiplies into every
   // <video> element across Preview, Live and the secondary screen so a
   // single slider on the toolbar can raise / lower / silence the whole
@@ -785,6 +835,11 @@ const defaultSettings: AppSettings = {
   displayMode: 'full',
   outputDestination: 'window',
   customBackground: null,
+  // v0.7.227 — Default 85 = .85 opacity / .05 scrim, matching the
+  // v0.7.226 operator-picked baseline. Operator slider in Settings →
+  // Custom Background can dial it to taste live, with both members
+  // of the opacity/scrim pair moving in lockstep.
+  bgBrightness: 85,
   lowerThirdPosition: 'bottom',
   lowerThirdHeight: 'lg',
   autoAdvanceSlides: false,
@@ -880,6 +935,7 @@ const defaultSettings: AppSettings = {
   ndiAspectRatio: undefined,
   ndiBibleColor: undefined,
   ndiLowerThirdTransparent: false,
+  ndiForceBgraForObs: false,
   // v0.7.194-hotfix.4 — NDI Full-Screen background mode. 'themed'
   // (default) keeps the v0.6.9 behaviour: full-screen NDI renders
   // identically to the secondary screen (themed gradient + custom
@@ -1187,11 +1243,85 @@ export const useAppStore = create<AppState>()(
       setSlides: (s) => set({ slides: s, previewSlideIndex: 0, liveSlideIndex: -1, liveSlide: null, pinnedPreviewSlide: null }),
       // v0.7.201 — pinnedPreviewSlide. See interface comment.
       pinnedPreviewSlide: null,
-      pinPreviewSlide: (s) => set({ pinnedPreviewSlide: s }),
+      // v0.7.241 — pinPreviewSlide ATOMICALLY resets the preview
+      // transport (previewMediaPaused=false, previewMediaCurrentTime=0)
+      // alongside setting pinnedPreviewSlide. Pre-fix, pinPreviewSlide
+      // only mutated pinnedPreviewSlide, leaving previewMediaPaused at
+      // whatever value the previous operator action set it to. The
+      // v0.7.193-hotfix.2 + v0.7.222 paths both flip
+      // previewMediaPaused=true on GO LIVE / on first-click-while-
+      // live-plays-video, and nothing ever flipped it back. Net
+      // operator-visible bug: after a single GO LIVE, EVERY
+      // subsequent media-tile single-click left previewMediaPaused
+      // sticky-true → the v0.7.222 standby gate (PreviewCard L1252,
+      // requires previewMediaPaused=true to engage) painted a paused
+      // freezeBg poster instead of mounting the auto-playing
+      // MediaVideoSurface, so the operator's preview pane was
+      // permanently stuck "frozen on first frame" with no audio.
+      // currentTime=0 is the matching reset so the new clip starts
+      // from the beginning (leftover seek positions from a prior
+      // clip would otherwise jump the new pin past its own first
+      // frame). Together with the v0.7.241 user-action call-site
+      // tweaks in MediaCard.onItemClick + goLive (always prepend
+      // setLiveMediaPaused(false) before setLiveAuto so same-URL
+      // re-promotes also play), this restores the operator-asked
+      // contract: single-click auto-plays preview, double-click +
+      // GO LIVE auto-play live. Acknowledges the trade-off vs the
+      // v0.7.222 HW-decoder-eviction protection (operator chose UX
+      // over protection in the latest escalation).
+      pinPreviewSlide: (s) => set({
+        pinnedPreviewSlide: s,
+        previewMediaPaused: false,
+        previewMediaCurrentTime: 0,
+      }),
       clearPinnedPreview: () => set({ pinnedPreviewSlide: null }),
       // v0.7.203 — liveSlide direct ref. See interface comment.
       liveSlide: null,
-      setLiveAuto: (s) => set({ liveSlide: s, isLive: true, hasShownContent: true }),
+      setLiveAuto: (s) => set((state) => {
+        // v0.7.221 — Atomic transport reset on media-video promotion.
+        // Operator $1600 escalation: "clicking GO LIVE also sends video
+        // from the preview to the live display to IMMEDIATELY START
+        // PLAYING". Pre-fix root cause: setLiveAuto only set
+        // {liveSlide, isLive:true, hasShownContent:true}. If a previous
+        // live media-video had been paused by the operator,
+        // `liveMediaPaused` was sticky-true in the store; the new
+        // promotion then mounted the fresh <video> but the
+        // MediaVideoSurface effect (L388: `shouldPlay = isLive &&
+        // !mediaPaused`) saw mediaPaused=true and never called
+        // v.play(). Same for `liveMediaCurrentTime`: leftover seek
+        // position from clip A made clip B start at the wrong frame
+        // (or past EOF → frozen on first frame). The two shell goLive
+        // call sites tried to fix this by calling setLiveMediaPaused +
+        // setLiveMediaCurrentTime BEFORE setLiveAuto, but (a) the EW
+        // shell goLive pinned path never wired in the resets at all
+        // (was just `setLiveAuto(pinned); return`), and (b) every
+        // setLiveAuto call site outside goLive (speech-provider × 5,
+        // live-translation-sync × 2, library-compact double-click,
+        // logos-shell AI auto-fire) had the same gap. Fix the store
+        // contract once: when promoting a NEW media-video (different
+        // mediaUrl from current liveSlide), atomically clear the
+        // transport state. Text-slide rebuilds (translation switch,
+        // AI verse handoff) and same-URL re-promotions preserve
+        // transport — they have no playback to reset and the
+        // translation-switch test (ai-live-only.test.ts L80) asserts
+        // the rebuild keeps in-place behaviour.
+        const update: {
+          liveSlide: typeof s
+          isLive: boolean
+          hasShownContent: boolean
+          liveMediaPaused?: boolean
+          liveMediaCurrentTime?: number
+        } = { liveSlide: s, isLive: true, hasShownContent: true }
+        const sAny = s as { type?: string; mediaKind?: string; mediaUrl?: string } | null
+        const curAny = state.liveSlide as { type?: string; mediaKind?: string; mediaUrl?: string } | null
+        const newUrl = sAny && sAny.type === 'media' && sAny.mediaKind === 'video' ? sAny.mediaUrl ?? null : null
+        const curUrl = curAny && curAny.type === 'media' && curAny.mediaKind === 'video' ? curAny.mediaUrl ?? null : null
+        if (newUrl && newUrl !== curUrl) {
+          update.liveMediaPaused = false
+          update.liveMediaCurrentTime = 0
+        }
+        return update
+      }),
       clearLiveAuto: () => set({ liveSlide: null }),
       // v0.7.194-hotfix.7 — see interface comment above.
       // v0.7.201 — Atomically PIN the staged slide so the Preview
@@ -1329,13 +1459,58 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           mediaLibrary: [item, ...state.mediaLibrary.filter((m) => m.id !== item.id)],
         })),
+      // v0.7.243 — Operator escalation: deleting a video from Media
+      // while it's playing on Live Display USED to leave the video
+      // playing because the <video> element on the receiver/Live
+      // surface still had the src loaded in browser memory. The
+      // delete handler only filtered the mediaLibrary array — it
+      // never checked whether the deleted item was the one currently
+      // staged on liveSlide / pinnedPreviewSlide. Fix: look up the
+      // removed item's dataUrl, then if liveSlide or pinnedPreviewSlide
+      // is a media slide referencing that exact url, clear them in the
+      // same atomic `set` AND reset the per-surface media transport
+      // (paused=true, currentTime=0) so the surface goes blank
+      // immediately. liveSlideIndex/slides[] schedule entries are
+      // intentionally NOT touched — the operator may want to keep the
+      // slide stub in the schedule and re-upload the asset later.
       removeMediaLibraryItem: (id) =>
-        set((state) => ({
-          mediaLibrary: state.mediaLibrary.filter((m) => m.id !== id),
-          mediaFitById: Object.fromEntries(
-            Object.entries(state.mediaFitById).filter(([k]) => k !== id),
-          ),
-        })),
+        set((state) => {
+          const item = state.mediaLibrary.find((m) => m.id === id)
+          const removedUrl = item?.url
+          const liveMatches = !!(
+            removedUrl &&
+            state.liveSlide &&
+            state.liveSlide.type === 'media' &&
+            state.liveSlide.mediaUrl === removedUrl
+          )
+          const pinMatches = !!(
+            removedUrl &&
+            state.pinnedPreviewSlide &&
+            state.pinnedPreviewSlide.type === 'media' &&
+            state.pinnedPreviewSlide.mediaUrl === removedUrl
+          )
+          return {
+            mediaLibrary: state.mediaLibrary.filter((m) => m.id !== id),
+            mediaFitById: Object.fromEntries(
+              Object.entries(state.mediaFitById).filter(([k]) => k !== id),
+            ),
+            ...(liveMatches
+              ? {
+                  liveSlide: null,
+                  isLive: false,
+                  liveMediaPaused: true,
+                  liveMediaCurrentTime: 0,
+                }
+              : {}),
+            ...(pinMatches
+              ? {
+                  pinnedPreviewSlide: null,
+                  previewMediaPaused: true,
+                  previewMediaCurrentTime: 0,
+                }
+              : {}),
+          }
+        }),
       mediaFitById: {},
       setMediaFit: (id, fit) =>
         set((state) => ({ mediaFitById: { ...state.mediaFitById, [id]: fit } })),
@@ -1508,8 +1683,26 @@ export const useAppStore = create<AppState>()(
       setPreviewAudio: (b) => set({ previewAudio: b }),
       liveBroadcastAudio: true,
       setLiveBroadcastAudio: (b) => set({ liveBroadcastAudio: b }),
-      liveMonitorAudio: true,
+      // v0.7.244 — Default the Live pane's headphone monitor to OFF.
+      // Operator escalation: "audio duplicates when video plays on
+      // second screen". Both the operator's in-app Live <video> AND
+      // the second-screen / congregation receiver were emitting audio
+      // simultaneously, doubling the sound in the operator's room.
+      // The receiver IS the broadcast audio source (per
+      // route.ts L1035 — "Visible secondary screen / congregation TV:
+      // plays the media audio at master volume"); the operator's
+      // Live pane is a MONITOR that should stay silent until the
+      // operator explicitly puts on headphones and flips the
+      // headphone icon. Defaulting to false makes the receiver the
+      // sole audio source out of the box.
+      liveMonitorAudio: false,
       setLiveMonitorAudio: (b) => set({ liveMonitorAudio: b }),
+      // v0.7.247 — see field-decl comment. Default false: at fresh
+      // launch no congregation window exists; the broadcast / poll
+      // wiring flips this true the moment one opens, and back to
+      // false when the last one closes.
+      outputWindowOpen: false,
+      setOutputWindowOpen: (b) => set({ outputWindowOpen: b }),
 
       globalVolume: 1,
       setGlobalVolume: (v) => set({ globalVolume: Math.max(0, Math.min(1, v)) }),
