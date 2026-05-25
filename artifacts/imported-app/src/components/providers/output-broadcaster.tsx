@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { useAppStore } from '@/lib/store'
 import { buildOutputPayload } from '@/lib/output-payload'
+import { isBroadcastSuppressed, onSuppressionChange, setBroadcastSuppressed } from '@/lib/broadcast-gate'
 
 /**
  * Global Output Broadcaster.
@@ -288,6 +289,12 @@ export function OutputBroadcaster() {
 
     const schedule = () => {
       if (cancelled) return
+      // v0.7.234 — Defer the POST while a slider is actively being
+      // dragged. The gate is module-local (broadcast-gate.ts) so this
+      // check is one boolean read, no React subscription. dirtyRef
+      // stays true; the suppression-change listener below drains it
+      // with a single immediate flush on pointer release.
+      if (isBroadcastSuppressed()) return
       if (flushTimerRef.current !== null) return
       // 16ms ≈ one frame at 60Hz. Coalesces bursty store updates into
       // a single POST while keeping the NDI feed responsive even when
@@ -318,9 +325,89 @@ export function OutputBroadcaster() {
     // triggers exactly one rebuild + one debounced flush.
     const unsubscribe = useAppStore.subscribe(onChange)
 
+    // v0.7.234 — Global pointerdown sentinel for ALL slider widgets.
+    //
+    // Why this is necessary IN ADDITION to the per-Slider gate flip in
+    // `ui/slider.tsx`: the high-traffic operator sliders in Settings
+    // (text scale, line height, bg brightness, font size, etc.) and
+    // the operator console (volume, mic gain) are native
+    // `<input type="range">` elements, NOT the Radix Slider component.
+    // The per-Slider handler covers the Radix path; this document-
+    // level capture-phase listener covers the native-range path AND
+    // anything else that semantically behaves like a slider (Radix
+    // SliderPrimitive descendants exposed via `data-slot="slider-*"`).
+    //
+    // Capture phase: ensures we flip the gate BEFORE any onPointerDown
+    // / onChange handler the slider attaches further down the tree
+    // can run and call `updateSettings({...})` → store update →
+    // schedule(). The schedule() short-circuit on the very first
+    // store update of the drag depends on the gate being true by
+    // then.
+    //
+    // Release: window-level pointerup/pointercancel one-shot — same
+    // pattern as the per-Slider handler. Self-removing on first fire.
+    //
+    // Idempotent: setBroadcastSuppressed(true) is a no-op when already
+    // true, so the per-Slider + global paths layered together cause
+    // no extra listener fan-out.
+    const isSliderTarget = (t: EventTarget | null): boolean => {
+      if (!(t instanceof Element)) return false
+      // Native range input — every Settings slider in this codebase.
+      if (t.matches('input[type="range"]')) return true
+      // Radix Slider primitives — covers thumb, track, range, and the
+      // Root itself. The per-Slider handler is the primary, this is
+      // belt-and-brace for any callsite that uses Radix without going
+      // through our wrapper.
+      if (t.matches('[data-slot^="slider"]')) return true
+      if (t.closest('[data-slot^="slider"]')) return true
+      return false
+    }
+    const onGlobalPointerDown = (e: PointerEvent) => {
+      if (!isSliderTarget(e.target)) return
+      // setBroadcastSuppressed is idempotent so layered triggers
+      // (this listener + the per-Slider handler firing on the same
+      // event) collapse to a single true flip + a single listener
+      // fan-out.
+      setBroadcastSuppressed(true)
+      const release = () => {
+        setBroadcastSuppressed(false)
+        window.removeEventListener('pointerup', release)
+        window.removeEventListener('pointercancel', release)
+      }
+      window.addEventListener('pointerup', release)
+      window.addEventListener('pointercancel', release)
+    }
+    document.addEventListener('pointerdown', onGlobalPointerDown, true)
+
+    // v0.7.234 — When the slider-drag gate flips back to false, drain
+    // any accumulated dirty snapshot in a single immediate flush so
+    // receivers snap to the operator's final value with sub-frame
+    // latency. Without this listener the dirty bit would only get
+    // flushed on the NEXT store mutation — which can be many seconds
+    // later if the operator just released a slider and walked away.
+    const unsubGate = onSuppressionChange(() => {
+      if (cancelled) return
+      if (isBroadcastSuppressed()) return
+      if (!dirtyRef.current) return
+      // Skip the 16ms debounce on release — operator finished an
+      // explicit drag, they want the result NOW.
+      if (flushTimerRef.current !== null) {
+        clearTimeout(flushTimerRef.current)
+        flushTimerRef.current = null
+      }
+      void flush()
+    })
+
     return () => {
       cancelled = true
       unsubscribe()
+      unsubGate()
+      document.removeEventListener('pointerdown', onGlobalPointerDown, true)
+      // v0.7.234 — Release the gate on unmount. If the broadcaster
+      // ever unmounts mid-drag (HMR, root teardown), a stuck-true
+      // gate would silently freeze every SSE broadcast on the next
+      // mount until something else flipped it back.
+      setBroadcastSuppressed(false)
       if (flushTimerRef.current !== null) {
         clearTimeout(flushTimerRef.current)
         flushTimerRef.current = null
