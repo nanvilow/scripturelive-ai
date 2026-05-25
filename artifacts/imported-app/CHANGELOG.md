@@ -1,3 +1,87 @@
+## v0.7.244 — Sync (Path A), audio-dup fix, red Live meter, "Later" actually means later
+
+Operator escalation, four issues against v0.7.243, addressed together so they ship in one binary:
+
+### A — Sync: receiver / second screen behind operator's Live pane
+
+**Symptom.** Operator reports video on second screen / OBS Browser source lags the operator's Live pane by a visible 100–300ms in steady state — visible enough to call out, not an acceptable broadcast offset.
+
+**Root cause stack.** Even though every hop is "in tolerance" individually, they compound:
+- `MediaVideoSurface` writeback threshold was 0.20s (set in v0.7.234).
+- Chromium fires `timeupdate` at ~4Hz (browser-dictated).
+- SSE pipe is throttle-gated.
+- Receiver-side soft-trim (`playbackRate` 0.97/1.03/1.0) accumulates ~30ms/sec correction.
+
+Sum: a visible steady-state offset that no single component "owns".
+
+**Fix — Path A (operator-approved).** In `MediaVideoSurface`'s timeupdate effect (logos-shell.tsx L493+):
+1. Drop the live-surface writeback threshold from `0.20s` → `0.05s`. Preview stays at 0.25s — it doesn't broadcast, so the existing 4Hz tick is plenty.
+2. Bolt a 60Hz `requestAnimationFrame` clock loop alongside `timeupdate`, **live surface only**, gated by the same 0.05s threshold so we don't write more often than drift actually demands. The loop wakes every frame so a moving clock always lands inside one frame of the broadcast tick.
+3. rAF cancels on `pause`, `ended`, `emptied`; re-arms on `play`, `playing`. Seeded if `!v.paused && !v.ended` on mount (src swap mid-playback case).
+
+Net: every frame the operator's Live `<video>` advances by ~16ms, the gate fires after ~3 frames at the new 0.05s threshold (vs ~12 frames at the old 0.20s threshold), so the receiver gets a fresh target ~4x as often and the soft-trim envelope has 4x less drift to chase. Preview stays at the previous tick rate (no broadcasting → no benefit from faster writes, just store churn).
+
+**GUARD-RAIL (rAF lives in the same effect as `timeupdate` and shares its cleanup).** Splitting them into two effects re-introduces an ordering bug where the rAF loop can outlive a src-swap by one frame and write stale `currentTime` into the new clip's clock.
+
+**GUARD-RAIL (rAF is LIVE-only).** Preview's 0.25s threshold + 4Hz timeupdate is intentional: preview isn't broadcasting, so faster writes only add Zustand churn and downstream React render cost (the audio meter + scrubber both read this value). Don't widen rAF to preview without proving a UX gain.
+
+**GUARD-RAIL (gate-then-write, NOT write-every-frame).** The `if (Math.abs(cur - stored) > writeThreshold)` check inside `onTimeUpdate` means rAF + timeupdate together write at most ~20Hz to the store (every 0.05s of clock drift). Removing the gate would write 60 times per second to a Zustand atom and re-render every consumer 60 times per second — that's a different regression class.
+
+### B — Audio duplicates when video plays on the second screen
+
+**Symptom.** Operator: "audio duplicates when video plays on the second screen". Two voices/copies of the same audio in the operator's room.
+
+**Root cause.** Both audio sources are emitting simultaneously:
+- The operator's in-app Live `<video>` (slide-renderer.tsx L141 / MediaVideoSurface) plays unmuted when `liveMonitorAudio === true`.
+- The visible secondary screen / congregation TV (route.ts L1035 — `applyAudio`) plays unmuted at master volume (this IS the broadcast audio source).
+
+`liveMonitorAudio` defaulted to `true` (store.ts L1666), so the operator's Live pane and the receiver both emitted audio out of the box.
+
+**Fix.** Change `liveMonitorAudio` initial value `true → false` (store.ts L1681). The operator's Live pane is a MONITOR — silent until the operator explicitly puts on headphones and clicks the headphone toggle. The receiver remains the sole audio source by default.
+
+**GUARD-RAIL (don't conflate `liveMonitorAudio` with `liveBroadcastAudio`).** `liveBroadcastAudio` (default `true`) is the BROADCAST speaker — controls receiver + NDI + the in-app live `<video>` `muted` attribute via MediaVideoSurface (per v0.7.216 follow-up #3). `liveMonitorAudio` (now default `false`) is the OPERATOR HEADPHONE monitor — controls the slide-renderer `<video>` `muted` attribute via the `audible` computation. Two independent toggles, two different mute paths.
+
+**GUARD-RAIL (broadcast stays default ON, monitor stays default OFF).** A first-launch operator expects audio to leave the building (broadcast on) and expects their own room to be silent unless they ask for monitor audio (headphones off). Don't flip either default without a separate operator decision.
+
+**GUARD-RAIL (persisted operators who already toggled monitor ON stay ON).** `liveMonitorAudio` is in the persisted Zustand slice — existing installs that explicitly set it `true` will keep their preference. The new default only affects fresh installs and operators who never touched the headphone toggle.
+
+### C — Red vertical line on the Live Display
+
+**Symptom.** Operator's screenshot arrow at the LEFT EDGE of the LIVE DISPLAY card stage. The strip read as alarming — they said "remove that red line".
+
+**Root cause.** The Live Display card's right-rail audio meter (`AudioMeter` at logos-shell.tsx L2553) was rendered with `tone={liveBroadcastAudio ? 'red' : 'green'}`. With `liveBroadcastAudio` defaulting to `true` (the desired broadcast-on state), the meter rendered with the rose/red gradient (`from-rose-500 via-rose-400 to-amber-400`), which painted a static red strip whenever any audio was flowing. The narrow `w-2` strip on the LEFT edge of the stage container read as a vertical alarm bar.
+
+**Fix.** Force `tone="green"` for the Live meter (same as Preview). Both surfaces now use the same green VU gradient. The broadcast on/off state is still communicated by the speaker-toggle BUTTON right next to the meter — that button still flips between rose-tinted (on) and grey (off) so the operator hasn't lost the visual cue, just the alarming meter colour.
+
+**GUARD-RAIL (the meter is information, not an alarm).** Audio meters are status indicators (signal flowing / silent) — they should not double as state indicators (broadcast on / off). State belongs on a button with explicit affordance + click target; status belongs on a passive VU bar with a single non-alarming colour. Don't re-introduce a state-tone on the meter without a separate operator decision.
+
+### D — "Later" button on the update dialog downloads anyway
+
+**Symptom.** Operator clicks "Later" on the v0.7.x update popup, dialog closes, ~60s later the installer downloads anyway in the background.
+
+**Root cause.** `electron/updater.ts L286` calls `scheduleAutoDownload()` from the `update-available` handler. That timer (60s grace) fires regardless of dialog dismissal — only an explicit IPC call to `updater:set-auto-download` (false) clears the timer (handler at updater.ts L535). The dialog's `handleDismiss` was writing the per-version `localStorage` dismissal flag but never reaching into the main process to disable the background timer. Operator saw their "Later" choice silently overridden 60s later.
+
+**Fix.** `update-available-dialog.tsx` `handleDismiss` now calls `desktop.updater.setAutoDownload?.(false)` BEFORE writing the dismissal flag. The IPC handler clears `autoDownloadTimer` immediately (`updater.ts L535: if (!autoDownloadEnabled) clearAutoDownloadTimer()`). Guarded with try/catch and `?.` so a web build (no desktop bridge) never throws.
+
+**GUARD-RAIL (opt-out is PER-SESSION, not permanent).** `autoDownloadEnabled` is a process-local `let` (updater.ts L121), reset to `true` on each app launch. The operator gets the background-prefetch benefit on subsequent launches — they only opt out for the CURRENT session when they explicitly click Later. Don't promote this to a persisted setting without a separate operator request — the current behaviour matches the operator's mental model ("I clicked Later, so don't download THIS time").
+
+**GUARD-RAIL (dialog AND banner BOTH need to honour Later).** The `<UpdateBanner>` (update-banner.tsx) is the secondary surface for the same update — if a future change adds a Later button to the banner, that handler must ALSO call `setAutoDownload(false)`. Currently the banner only has Download/Install actions, so no parity bug yet.
+
+### Files changed
+
+- `artifacts/imported-app/src/components/layout/logos-shell.tsx` — fixes A + C
+- `artifacts/imported-app/src/lib/store.ts` — fix B
+- `artifacts/imported-app/src/components/update-available-dialog.tsx` — fix D
+- `artifacts/imported-app/package.json` — version bump
+- `artifacts/imported-app/CHANGELOG.md` — this entry
+- `replit.md` — Recent (full detail) for v0.7.244, demote v0.7.243 to one-liner
+
+### Tests
+
+`pnpm exec tsc --noEmit` clean. No new dependencies. No schema migrations. Ship via the canonical pipeline (bulk-drift PUT to `release/v0.7.244` from `release/v0.7.243` ancestor + workflow_dispatch on `release-desktop.yml`).
+
+---
+
 ## v0.7.243 — Deleting a video from Media now stops it on Live Display + Preview
 
 Operator escalation: "when a video is playing on the live display and a user deletes the same video from media, that video still continues to play and shouldn't be like that."
