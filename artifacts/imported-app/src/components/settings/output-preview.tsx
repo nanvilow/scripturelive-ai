@@ -181,8 +181,18 @@ export function OutputPreview({
     // rendering. See route.ts L320-330 for the gate. Baked into the
     // memoized src so iframe never reloads from a noMedia toggle.
     if (noMedia) params.set('noMedia', '1')
+    // v0.7.221 — Operator $1600 escalation: "the background video keeps
+    // playing anywhere". Every OutputPreview instance that is NOT a
+    // faithful mirror of the real broadcast (mirrorLive=false) is a
+    // preview/settings/typography surface, and the operator wants the
+    // background video frozen on its first frame there. Only the
+    // mirrorLive=true Live Display pane animates the bg. Real
+    // broadcast paths (secondary screen popup, offscreen NDI
+    // FrameCapture) construct their own URLs without OutputPreview
+    // and do not pass freezeBg, so they keep playing.
+    if (!mirrorLive) params.set('freezeBg', '1')
     return `/api/output/congregation?${params.toString()}`
-  }, [mode, noMedia])
+  }, [mode, noMedia, mirrorLive])
 
   // Read these at build time so the synthetic-slide branch below
   // can resolve a sample verse when nothing is on air. Not subscribed
