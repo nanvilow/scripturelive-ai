@@ -1,0 +1,19 @@
+ScriptureLive AI v0.7.226 — Portable Windows Build
+====================================================
+
+1. Right-click the ZIP → Extract All → pick a folder (e.g. C:\Apps\ScriptureLive)
+2. Inside the extracted "ScriptureLive-AI-0.7.226-portable-x64" folder, double-click:
+        ScriptureLive AI.exe
+3. Windows SmartScreen will warn ("Windows protected your PC") because this
+   build is unsigned. Click "More info" → "Run anyway".
+4. Optional: right-click "ScriptureLive AI.exe" → Send to → Desktop (shortcut)
+
+NOTES
+-----
+* This is the EMERGENCY portable build (built on Linux). It will NOT
+  auto-update — when v0.7.227+ ships, you'll need to download the new
+  build manually.
+* For the proper signed installer with auto-update, ship a tag to
+  GitHub and let the release-desktop.yml workflow build it (~20 min).
+* NDI runtime ships inside this build (Processing.NDI.Lib.x64.dll
+  bundled — no separate NDI Tools install required).
