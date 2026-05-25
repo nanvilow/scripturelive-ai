@@ -203,6 +203,10 @@ export function NdiOutputPanel() {
   }
 
   const ndiDisplayMode = useAppStore((s) => s.settings.ndiDisplayMode)
+  // v0.7.230 — OBS-compat BGRA toggle. Read once at the top so both
+  // ndi.start callsites (restart effect + handleToggle) AND the restart
+  // guard token see the same value. See store.ts for the rationale.
+  const ndiForceBgraForObs = useAppStore((s) => s.settings.ndiForceBgraForObs === true)
   const updateSettings = useAppStore((s) => s.updateSettings)
 
   // Live Display values that NDI controls fall back to when set to
@@ -352,7 +356,12 @@ export function NdiOutputPanel() {
     // ndiDisplayMode per hotfix.5). The only restart that remains
     // is when transparency itself toggles (e.g. LT ↔ Full+themed),
     // which is genuinely unavoidable.
-    const want = `${wantTransparent}:${lowerThirdPosition}:${sourceName.trim()}:${ndiCaptureFps}:${ndiCaptureResolution}`
+    // v0.7.230 — Include forceBgraForObs in the restart guard token so
+    // flipping it WHILE NDI is running triggers a sender rebuild (the
+    // FourCC is baked into the running sender; live-toggling has no
+    // effect without a restart). Matches the v0.6.6 lesson that any
+    // option which can't be live-applied MUST be in this token.
+    const want = `${wantTransparent}:${lowerThirdPosition}:${sourceName.trim()}:${ndiCaptureFps}:${ndiCaptureResolution}:${ndiForceBgraForObs ? 'bgra' : 'bgrx'}`
     if (restartGuardRef.current === want) return
     if (restartGuardRef.current === '') {
       // First settle — record what's already on the wire so the next
@@ -385,6 +394,9 @@ export function NdiOutputPanel() {
       // (see definition above). Themed default → opaque BrowserWindow
       // → Wirecast sees fully painted frame matching in-app preview.
       transparent: wantTransparent,
+      // v0.7.230 — OBS Studio NDI Source plugin compat. See store.ts
+      // ndiForceBgraForObs comment for the rationale and trade-offs.
+      forceBgraForObs: ndiForceBgraForObs,
       lowerThird: {
         // v0.6.8 — Honour the operator's display-mode pick. When they
         // choose Full Screen the renderer now actually renders
@@ -402,7 +414,7 @@ export function NdiOutputPanel() {
       },
     }).catch(() => { /* surfaced by the ndi:status broadcast */ })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName, ndiCaptureFps, ndiCaptureResolution, ndiCaptureWidth, ndiCaptureHeight, ndiFullScreenBackground, wantTransparent])
+  }, [isRunningForEffect, desktop, ndiDisplayMode, lowerThirdPosition, sourceName, ndiCaptureFps, ndiCaptureResolution, ndiCaptureWidth, ndiCaptureHeight, ndiFullScreenBackground, wantTransparent, ndiForceBgraForObs])
 
   // Reset the guard when NDI stops so the first toggle after the next
   // Start does the right thing (record-then-skip).
@@ -472,6 +484,8 @@ export function NdiOutputPanel() {
           layout: 'ndi',
           // v0.7.194-hotfix.7 — see wantTransparent definition above.
           transparent: wantTransparent,
+          // v0.7.230 — OBS compat BGRA. Mirrors the restart effect above.
+          forceBgraForObs: ndiForceBgraForObs,
           lowerThird: {
             enabled: ndiDisplayMode === 'lower-third',
             position: lowerThirdPosition === 'top' ? 'top' : 'bottom',
@@ -753,6 +767,33 @@ export function NdiOutputPanel() {
               </p>
             </div>
 
+            {/* v0.7.230 — OBS Studio compatibility (BGRA FourCC).
+                Default OFF preserves the v0.7.223 BGRX optimisation
+                (vMix / Wirecast / modern OBS NDI all accept it). Flip
+                ON when OBS can't discover or pull the source, then
+                stop + restart the sender to apply. */}
+            <div className="rounded-md border border-border bg-muted/10 p-3 space-y-1.5">
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={ndiForceBgraForObs}
+                  onChange={(e) => updateSettings({ ndiForceBgraForObs: e.target.checked })}
+                  className="mt-0.5 h-3.5 w-3.5 accent-emerald-500"
+                />
+                <div className="flex-1">
+                  <div className="text-[11px] font-semibold text-foreground">
+                    OBS Studio compatibility (force BGRA)
+                  </div>
+                  <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">
+                    Turn ON if OBS can&apos;t see the NDI source. Forces
+                    the older BGRA pixel format that every OBS NDI plugin
+                    version supports. Slightly slower than the default,
+                    but always works. Stop and restart the sender to apply.
+                  </p>
+                </div>
+              </label>
+            </div>
+
             {/* NDI Display Mode */}
             <div className="rounded-md border border-border/60 bg-muted/10 p-3 space-y-2">
               <div className="flex items-center justify-between gap-2">
@@ -796,6 +837,41 @@ export function NdiOutputPanel() {
                   switcher receives only the verse text on a clean
                   alpha matte — same idea as the per-box transparent
                   toggle for Lower Third mode below. */}
+              {/* v0.7.239 — NDI Text Size picker. Operator escalation:
+                  default 'xl' was oversized when receivers (Wirecast,
+                  vMix, OBS) composited the NDI feed into a larger
+                  program canvas. Writes to settings.ndiFontSize which
+                  route.ts L1694 honours, overriding NDI_DEFAULTS.fontSize
+                  (now defaults to 'lg' instead of 'xl'). Lower-Third
+                  mode keeps using its own lowerThirdFontSize chain. */}
+              {ndiDisplayMode === 'full' && (
+                <div className="flex items-center justify-between gap-3 mt-2 pt-2 border-t border-border/40">
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold text-foreground">NDI text size</div>
+                    <p className="text-[10px] text-muted-foreground leading-snug">
+                      Controls verse text size on the NDI feed. Lower if Wirecast / vMix / OBS show text overflowing the program canvas; raise for in-room projector mirrors that need bigger type.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 rounded-md border border-border bg-background overflow-hidden">
+                    {(['sm', 'md', 'lg', 'xl'] as const).map((size, i) => (
+                      <button
+                        key={size}
+                        onClick={() => updateSettings({ ndiFontSize: size })}
+                        className={cn(
+                          'h-7 px-2.5 text-[10px] uppercase tracking-wider transition-colors',
+                          i > 0 && 'border-l border-border',
+                          (ndiFontSize ?? 'lg') === size
+                            ? 'bg-emerald-500/15 text-emerald-200'
+                            : 'text-muted-foreground hover:bg-muted/40',
+                        )}
+                      >
+                        {size}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {ndiDisplayMode === 'full' && (
                 <div className="flex items-center justify-between gap-3 mt-2 pt-2 border-t border-border/40">
                   <div className="min-w-0">
@@ -920,95 +996,6 @@ export function NdiOutputPanel() {
                   </p>
                 </div>
               )}
-            </div>
-
-            {/* v0.7.194-hotfix.4 — NDI Typography is now FULLY
-                disconnected from Live Display. Pre-fix each control had
-                a "Mirror Live (X)" first option that resolved to the
-                Live Display setting if left unset; operators reported
-                this as confusing ("why does my NDI font change when I
-                touch the projector font?"). Post-fix the dropdowns show
-                concrete NDI defaults from route.ts NDI_DEFAULTS
-                (sans-serif / xl / on / center) and "Reset all" returns
-                to those defaults explicitly. The underlying store still
-                accepts `undefined` (which route.ts resolves to NDI
-                defaults) so persisted state from older installs migrates
-                with zero behaviour change. */}
-            <div className="rounded-md border border-border bg-muted/10 p-3 space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <div className="text-[11px] font-semibold text-foreground">NDI Typography</div>
-                  <p className="text-[10px] text-muted-foreground leading-snug">
-                    Independent of Live Display. These controls affect the NDI broadcast feed only.
-                  </p>
-                </div>
-                {ndiHasOverrides && (
-                  <button
-                    onClick={handleResetAllOverrides}
-                    className="text-[10px] text-muted-foreground hover:text-foreground underline"
-                  >
-                    Reset to NDI defaults
-                  </button>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Font</label>
-                  <select
-                    value={ndiFontFamily ?? 'sans'}
-                    onChange={(e) => updateSettings({ ndiFontFamily: e.target.value })}
-                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
-                  >
-                    <option value="sans">Sans-serif (NDI default)</option>
-                    <option value="serif">Serif</option>
-                    <option value="mono">Monospace</option>
-                    <option value="playfair">Playfair</option>
-                    <option value="merriweather">Merriweather</option>
-                    <option value="lora">Lora</option>
-                    <option value="inter">Inter</option>
-                    <option value="poppins">Poppins</option>
-                    <option value="roboto">Roboto</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Size</label>
-                  <select
-                    value={ndiFontSize ?? 'xl'}
-                    onChange={(e) => updateSettings({ ndiFontSize: e.target.value as 'sm' | 'md' | 'lg' | 'xl' })}
-                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
-                  >
-                    <option value="sm">Small</option>
-                    <option value="md">Medium</option>
-                    <option value="lg">Large</option>
-                    <option value="xl">Extra Large (NDI default)</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Drop shadow</label>
-                  <select
-                    value={ndiTextShadow === undefined ? 'on' : ndiTextShadow ? 'on' : 'off'}
-                    onChange={(e) => updateSettings({ ndiTextShadow: e.target.value === 'on' })}
-                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
-                  >
-                    <option value="on">On (NDI default)</option>
-                    <option value="off">Off</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Align</label>
-                  <select
-                    value={ndiTextAlign ?? 'center'}
-                    onChange={(e) => updateSettings({ ndiTextAlign: e.target.value as 'left' | 'center' | 'right' | 'justify' })}
-                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
-                  >
-                    <option value="left">Left</option>
-                    <option value="center">Center (NDI default)</option>
-                    <option value="right">Right</option>
-                    <option value="justify">Justify</option>
-                  </select>
-                </div>
-              </div>
             </div>
 
             {/* NDI Layout & Bible Body */}
@@ -1202,6 +1189,95 @@ export function NdiOutputPanel() {
                     onChange={(e) => updateSettings({ ndiTextScale: parseFloat(e.target.value) })}
                     className="w-full accent-emerald-500"
                   />
+                </div>
+              </div>
+            </div>
+
+            {/* v0.7.194-hotfix.4 — NDI Typography is now FULLY
+                disconnected from Live Display. Pre-fix each control had
+                a "Mirror Live (X)" first option that resolved to the
+                Live Display setting if left unset; operators reported
+                this as confusing ("why does my NDI font change when I
+                touch the projector font?"). Post-fix the dropdowns show
+                concrete NDI defaults from route.ts NDI_DEFAULTS
+                (sans-serif / xl / on / center) and "Reset all" returns
+                to those defaults explicitly. The underlying store still
+                accepts `undefined` (which route.ts resolves to NDI
+                defaults) so persisted state from older installs migrates
+                with zero behaviour change. */}
+            <div className="rounded-md border border-border bg-muted/10 p-3 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-[11px] font-semibold text-foreground">NDI Typography</div>
+                  <p className="text-[10px] text-muted-foreground leading-snug">
+                    Independent of Live Display. These controls affect the NDI broadcast feed only.
+                  </p>
+                </div>
+                {ndiHasOverrides && (
+                  <button
+                    onClick={handleResetAllOverrides}
+                    className="text-[10px] text-muted-foreground hover:text-foreground underline"
+                  >
+                    Reset to NDI defaults
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Font</label>
+                  <select
+                    value={ndiFontFamily ?? 'sans'}
+                    onChange={(e) => updateSettings({ ndiFontFamily: e.target.value })}
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <option value="sans">Sans-serif (NDI default)</option>
+                    <option value="serif">Serif</option>
+                    <option value="mono">Monospace</option>
+                    <option value="playfair">Playfair</option>
+                    <option value="merriweather">Merriweather</option>
+                    <option value="lora">Lora</option>
+                    <option value="inter">Inter</option>
+                    <option value="poppins">Poppins</option>
+                    <option value="roboto">Roboto</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Size</label>
+                  <select
+                    value={ndiFontSize ?? 'xl'}
+                    onChange={(e) => updateSettings({ ndiFontSize: e.target.value as 'sm' | 'md' | 'lg' | 'xl' })}
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <option value="sm">Small</option>
+                    <option value="md">Medium</option>
+                    <option value="lg">Large</option>
+                    <option value="xl">Extra Large (NDI default)</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Drop shadow</label>
+                  <select
+                    value={ndiTextShadow === undefined ? 'on' : ndiTextShadow ? 'on' : 'off'}
+                    onChange={(e) => updateSettings({ ndiTextShadow: e.target.value === 'on' })}
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <option value="on">On (NDI default)</option>
+                    <option value="off">Off</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Align</label>
+                  <select
+                    value={ndiTextAlign ?? 'center'}
+                    onChange={(e) => updateSettings({ ndiTextAlign: e.target.value as 'left' | 'center' | 'right' | 'justify' })}
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <option value="left">Left</option>
+                    <option value="center">Center (NDI default)</option>
+                    <option value="right">Right</option>
+                    <option value="justify">Justify</option>
+                  </select>
                 </div>
               </div>
             </div>
@@ -1446,6 +1522,16 @@ function NdiPreviewSurface(props: NdiPreviewSurfaceProps): React.JSX.Element {
     // OBS via NDI, OBS via Browser Source) keep playing video — they
     // do NOT pass noMedia=1.
     p.set('noMedia', '1')
+    // v0.7.221 — Freeze the custom-background <video> on its first
+    // frame. This iframe is the operator-facing Settings NDI Live
+    // Preview, NOT the offscreen FrameCapture surface that feeds
+    // OBS/vMix/Wirecast. Operator escalation: bg video was animating
+    // here alongside 3 other settings previews and the main console,
+    // distracting from the actual live pane. The real NDI output (a
+    // separate Electron offscreen window in electron/frame-capture.ts
+    // + frame-capture/ndi-service.ts) does NOT load this URL and is
+    // unaffected — vMix / OBS / Wirecast still see the animated bg.
+    p.set('freezeBg', '1')
     // v0.7.159 — DO NOT pass `transparent=1` here. The actual NDI capture
     // (a hidden FrameCapture BrowserWindow elsewhere in the Electron main
     // process) keeps `transparent=1` so OBS / vMix get a clean alpha

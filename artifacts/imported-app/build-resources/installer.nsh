@@ -97,6 +97,65 @@
   !insertmacro killRunningApp
 !macroend
 
+; v0.7.236 — Operator-initiated clean uninstall (EasyWorship / Wirecast parity).
+;
+; Operator escalation: "when users uninstall the app delete everything
+; that include the app just like other apps do (EasyWorship, Wirecast,
+; etc.)". Previously NSIS only removed the program files — Electron's
+; user-data folder (`%APPDATA%\ScriptureLive AI\`) and any persisted
+; LocalAppData survived uninstall, so a fresh reinstall on the same PC
+; loaded the OLD persisted Zustand store / electron-store / SQLite
+; back into the new build. Operators saw "most of the fixes didn't
+; apply on this PC" because a v0.7.235 binary was running on top of
+; v0.7.220-era state objects that lacked fields the new code reads
+; (mediaKind, bgBrightness, throttle envelope, etc.).
+;
+; Fix: customUnInstall macro that prompts the operator on uninstall
+; and (default YES) recursively deletes the four canonical user-data
+; locations Electron / Next / our SQLite layer write to. The prompt
+; matches the language operators already see in EasyWorship's uninstall
+; wizard so the affordance is familiar.
+;
+; CRITICAL: silent uninstall (the /S flag electron-updater sets when
+; the auto-updater installs an upgrade) MUST skip the wipe. Otherwise
+; EVERY in-app update would erase the operator's saved library, weekly
+; schedule, NDI settings, and recent-files list — catastrophic data
+; loss on a Sunday morning. `IfSilent skipDataWipe` BEFORE the prompt
+; is the load-bearing guard; do not remove it.
+;
+; Default action when the dialog is shown is YES (wipe). That matches
+; the operator's intent — they're uninstalling because they don't want
+; the app on this PC anymore. Operators who are about to reinstall a
+; different build can click No to keep their state for the next run.
+;
+; Paths wiped:
+;   • $APPDATA\ScriptureLive AI    — Electron userData (electron-store,
+;                                    Zustand persist, IndexedDB, Local
+;                                    Storage, Service Worker caches,
+;                                    Network cookies, GPUCache).
+;   • $LOCALAPPDATA\ScriptureLive AI — Code cache, partition data,
+;                                      crash dumps, log files written
+;                                      by the bundled Next server.
+;   • $APPDATA\@workspace\imported-app — pre-v0.7.x namespace; some
+;                                        long-time operators still have
+;                                        state here from the migration
+;                                        window. Cheap to clean.
+;   • $LOCALAPPDATA\@workspace\imported-app — same, LocalAppData side.
+;
+; ClearErrors at the end so a "folder did not exist" error code from
+; RMDir on a clean machine doesn't poison the installer exit code and
+; trigger Windows' "Uninstall failed" toast.
+!macro customUnInstall
+  IfSilent skipDataWipe
+  MessageBox MB_YESNO|MB_ICONQUESTION "Do you also want to delete your ScriptureLive AI settings, library, saved schedules, and cached data?$\r$\n$\r$\nClick Yes for a complete clean uninstall (recommended if you are not planning to reinstall).$\r$\n$\r$\nClick No to keep your data on this PC for a future reinstall." /SD IDYES IDNO skipDataWipe
+    RMDir /r "$APPDATA\ScriptureLive AI"
+    RMDir /r "$LOCALAPPDATA\ScriptureLive AI"
+    RMDir /r "$APPDATA\@workspace\imported-app"
+    RMDir /r "$LOCALAPPDATA\@workspace\imported-app"
+  skipDataWipe:
+  ClearErrors
+!macroend
+
 ; v0.7.126 — Branded MUI2 wizard customisations.
 ;
 ; electron-builder's NSIS template already wires up MUI2 with our
@@ -128,8 +187,8 @@
 !macroend
 
 !macro customWelcomePage
-  !define MUI_WELCOMEPAGE_TITLE "Welcome to ScriptureLive AI"
-  !define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of ScriptureLive AI v${VERSION}.$\r$\n$\r$\nReal-time scripture detection, AI-powered slide generation, and broadcast-quality NDI output for live worship.$\r$\n$\r$\nClick Next to continue."
+  !define MUI_WELCOMEPAGE_TITLE "Welcome to ScriptureLive AI v${VERSION} Setup"
+  !define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of ScriptureLive AI.$\r$\n$\r$\nIt is recommended that you close all other applications before starting, including any previous version of ScriptureLive AI. This will make it possible to update relevant files without having to reboot your computer.$\r$\n$\r$\nClick Next to continue."
 !macroend
 
 ; v0.7.139 — Operator request: at the end of install, make it explicit
@@ -175,11 +234,18 @@
 ;     they change their mind. ✓
 ;   • Silent (/S) → no MessageBox, no Finish page, app handled by
 ;     auto-updater IPC. ✓
+; v0.7.249 — Finish page matches OBS / Wirecast / Pro Presenter:
+; "Completed Setup" title, single confirmation paragraph, run-checkbox
+; CHECKED by default (the mid-flow customInstall MessageBox was
+; removed in v0.7.249 to restore the OBS-style 5-page linear flow
+; — Welcome → License → Install Location → Installing → Completed —
+; so the Finish-page checkbox is now the ONLY launch affordance and
+; SHOULD be ticked by default). Operators who want to install-only
+; can simply untick before clicking Finish.
 !macro customFinishPage
-  !define MUI_FINISHPAGE_TITLE "Installation Complete"
-  !define MUI_FINISHPAGE_TEXT "ScriptureLive AI v${VERSION} has been successfully installed on your computer.$\r$\n$\r$\nClick Finish to close this installer.$\r$\n$\r$\nIf the app is not already open, tick the box below and click Finish to launch ScriptureLive AI now — or open it later from your desktop or the Start menu."
-  !define MUI_FINISHPAGE_RUN_TEXT "Open ScriptureLive AI now"
-  !define MUI_FINISHPAGE_RUN_NOTCHECKED
+  !define MUI_FINISHPAGE_TITLE "Completed Setup"
+  !define MUI_FINISHPAGE_TEXT "ScriptureLive AI v${VERSION} has been installed on your computer.$\r$\n$\r$\nClick Finish to close Setup."
+  !define MUI_FINISHPAGE_RUN_TEXT "Launch ScriptureLive AI v${VERSION}"
 !macroend
 
 ; v0.7.142 — Operator follow-up (screenshot https://imgur.com/a/iB0bQ2K):
@@ -219,10 +285,22 @@
 ;   • Quote the path because `Program Files\…` always contains spaces.
 ;   • ClearErrors at the end so a "user said No" doesn't poison the
 ;     installer exit code.
-!macro customInstall
-  IfSilent skipLaunchPrompt
-  MessageBox MB_YESNO|MB_ICONINFORMATION "ScriptureLive AI v${VERSION} has been successfully installed on your computer.$\r$\n$\r$\nWould you like to open ScriptureLive AI now?$\r$\n$\r$\n(You can also open it later from your desktop or Start menu.)" /SD IDYES IDNO skipLaunchPrompt
-  Exec '"$INSTDIR\ScriptureLive AI.exe"'
-  skipLaunchPrompt:
-  ClearErrors
-!macroend
+; v0.7.249 — customInstall MessageBox REMOVED.
+;
+; v0.7.142 added a mid-flow MessageBox that fired between file-copy and
+; the Finish page asking "Installed! Open now? Yes/No". It worked, but
+; it broke the linear OBS-style 5-page flow operators have learned from
+; every other broadcast tool they use (OBS, Wirecast, vMix, Pro
+; Presenter, EasyWorship) — Welcome → License → Install Location →
+; Installing → Completed. The interrupt-modal felt amateurish next to
+; that lineage and confused operators who clicked through it expecting
+; the Finish page (operator screenshot escalation: "the popup before
+; the finish screen feels like an installer glitch").
+;
+; The Finish page already provides an unmissable launch affordance via
+; MUI's run-checkbox (now CHECKED by default in customFinishPage), so
+; the MessageBox was redundant. Silent / auto-updater installs were
+; already handled by IfSilent skipPrompt — no behavioural change there.
+;
+; The customInit / customUnInit killRunningApp hooks are unaffected;
+; this only removes the post-install MessageBox.

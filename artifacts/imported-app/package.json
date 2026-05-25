@@ -1,7 +1,13 @@
 {
   "name": "@workspace/imported-app",
-  "version": "0.7.220",
+  "version": "0.7.250",
   "private": true,
+  "productName": "ScriptureLive AI",
+  "description": "ScriptureLive AI \u2014 AI-Powered Bible & Worship Platform",
+  "author": {
+    "name": "ScriptureLive AI",
+    "email": "support@scripturelive.ai"
+  },
   "main": "dist-electron/main.js",
   "repository": {
     "type": "git",
