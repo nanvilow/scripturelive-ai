@@ -496,22 +496,51 @@ export function SlideThumb({
         {settings.customBackground && (
           <>
             {isVideoBackground(settings.customBackground) ? (
+              // v0.7.221 — Operator $1600 escalation: "the background
+              // video keeps playing anywhere". SlideThumb is rendered
+              // in the schedule strip, the chapter navigator, and
+              // every other in-app thumbnail — none of which are real
+              // broadcast surfaces. Freeze on first frame so the
+              // operator sees a static poster everywhere except the
+              // three real broadcast targets (Main Console LIVE
+              // DISPLAY, Secondary Screen popup, NDI offscreen
+              // FrameCapture). Same freeze pattern as the Custom
+              // Background thumbnail in settings.tsx and the
+              // IS_FROZEN_BG branch in /api/output/congregation
+              // route.ts. The opacity:0.4 visual style is preserved.
               <video
-                src={settings.customBackground}
-                autoPlay
-                loop
+                src={`${settings.customBackground}#t=0.1`}
                 muted
                 playsInline
-                className="absolute inset-0 w-full h-full object-cover opacity-40"
+                preload="metadata"
+                ref={(el) => {
+                  if (!el) return
+                  try { el.pause() } catch { /* ignore */ }
+                }}
+                onLoadedData={(e) => {
+                  try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
+                }}
+                onPlay={(e) => {
+                  try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
+                }}
+                className="absolute inset-0 w-full h-full object-cover opacity-60"
               />
             ) : (
               <img
                 src={settings.customBackground}
                 alt=""
-                className="absolute inset-0 w-full h-full object-cover opacity-40"
+                className="absolute inset-0 w-full h-full object-cover opacity-60"
               />
             )}
-            <div className="absolute inset-0 bg-black/40" />
+            {/* v0.7.221 — Scrim alpha dropped from /40 → /20 to keep
+                in lockstep with route.ts `.bg-overlay` rgba(0,0,0,.2).
+                Bg-stack `opacity` and overlay alpha MUST move as a pair
+                so SlideThumb (operator's preview/library tile) shows
+                the SAME effective brightness as the live broadcast
+                surface — operator was previously seeing a darker
+                thumbnail than the actual projector output and
+                under-judging the scene visibility. */}
+            <div className="absolute inset-0 bg-black/20" />
           </>
         )}
       </div>

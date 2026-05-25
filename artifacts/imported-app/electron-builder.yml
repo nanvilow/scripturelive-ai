@@ -149,6 +149,21 @@ win:
   # and gets a 404 — so auto-update silently fails. Hardcoding a
   # slug-safe name keeps both names identical.
   artifactName: "ScriptureLive-AI-${version}-Setup-${arch}.${ext}"
+  # v0.7.241 — `signAndEditExecutable: false` REMOVED. The v0.7.226 comment
+  # claimed the GH Actions Windows runner "ignores this flag" but that was
+  # wrong: electron-builder applies the YAML config on every platform, and
+  # when this flag is false it skips BOTH signing AND PE resource editing
+  # (which is what rcedit uses to stamp the custom icon into the EXE's
+  # PE .rsrc section). Result: every NSIS build from v0.7.226 → v0.7.240
+  # shipped an EXE whose embedded icon was still the default Electron atom,
+  # so Windows displayed the atom on the Desktop shortcut even though
+  # build-resources/icon.ico contains the round ScriptureLive AI logo at
+  # all 7 sizes (16/32/48/64/96/128/256). The workaround was for the
+  # local Replit sandbox `pnpm package` path which can't run rcedit-ia32.exe
+  # (no wine i386 ABI) — but that sandbox path is already a one-way trapdoor
+  # per replit.md (strip:workspace-symlinks), so we don't need the YAML
+  # escape hatch any more. GH Actions Windows runner has native rcedit + a
+  # signtool that work fine with the default `signAndEditExecutable: true`.
   # Authenticode code signing.
   # electron-builder reads the certificate from these standard env vars:
   #   CSC_LINK            path to .pfx, base64-encoded .pfx contents, or https URL
