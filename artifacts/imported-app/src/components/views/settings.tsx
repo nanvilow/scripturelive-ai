@@ -1478,12 +1478,32 @@ export function SettingsView() {
                   it behaves like a confirmation chip rather than a banner. */}
               <div className="relative rounded-lg overflow-hidden border border-border aspect-video bg-muted max-w-[240px]">
                 {isVideoBackground(settings.customBackground) ? (
+                  // v0.7.221 — Operator $1600 escalation: bg video was
+                  // animating in this Custom Background thumbnail
+                  // alongside 4 other previews on the same screen,
+                  // distracting from the LIVE pane. Freeze on first
+                  // frame: no autoPlay/loop, preload only metadata,
+                  // and append `#t=0.1` to the src so the browser
+                  // paints the frame at 0.1s as a static poster
+                  // instead of the codec's all-black first frame.
+                  // ref-based pause guards against the rare browser
+                  // that ignores autoPlay=false after a previous
+                  // session left the element in a playing state.
                   <video
-                    src={settings.customBackground}
-                    autoPlay
-                    loop
+                    src={`${settings.customBackground}#t=0.1`}
                     muted
                     playsInline
+                    preload="metadata"
+                    ref={(el) => {
+                      if (!el) return
+                      try { el.pause() } catch { /* ignore */ }
+                    }}
+                    onLoadedData={(e) => {
+                      try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
+                    }}
+                    onPlay={(e) => {
+                      try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
+                    }}
                     className="w-full h-full object-cover"
                   />
                 ) : (
@@ -1507,6 +1527,62 @@ export function SettingsView() {
                   {isVideoBackground(settings.customBackground) ? 'Video · Active' : 'Active'}
                 </Badge>
                 <span className="text-xs text-muted-foreground truncate">{settings.customBackground}</span>
+              </div>
+              {/* v0.7.227 — Operator brightness slider. Drives bg opacity
+                  AND dark scrim alpha on every output surface (full-screen
+                  verse bg, persistent #bgLayer, lower-third .lt-bg) via
+                  CSS variables in /api/output/congregation. Both members
+                  of the v0.7.226 pair-invariant move in lockstep from a
+                  single source value (scrim derived as (1-op)*0.333), so
+                  the WCAG-AA contrast contract holds across the full
+                  0-100% range. Default 85 reproduces the v0.7.226 pick
+                  exactly. Range capped 10-100 because 0 hides the bg
+                  entirely (use the Delete button for that) and very low
+                  values produce confusingly-dim output operators report
+                  as "broken". */}
+              <div className="space-y-2 pt-2 border-t border-border/40">
+                <Label className="text-sm font-medium flex items-center justify-between">
+                  <span>Background Brightness</span>
+                  <span className="text-[11px] font-mono text-primary">
+                    {settings.bgBrightness ?? 85}%
+                  </span>
+                </Label>
+                <input
+                  type="range"
+                  min={10}
+                  max={100}
+                  step={1}
+                  value={settings.bgBrightness ?? 85}
+                  onChange={(e) => updateSettings({ bgBrightness: parseInt(e.target.value, 10) })}
+                  className="w-full h-2 rounded-full bg-muted accent-primary cursor-pointer"
+                  aria-label="Background brightness"
+                />
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                  <button
+                    onClick={() => updateSettings({ bgBrightness: 40 })}
+                    className="hover:text-foreground transition-colors"
+                    type="button"
+                  >
+                    Dim
+                  </button>
+                  <button
+                    onClick={() => updateSettings({ bgBrightness: 85 })}
+                    className="hover:text-foreground transition-colors"
+                    type="button"
+                  >
+                    Default (85%)
+                  </button>
+                  <button
+                    onClick={() => updateSettings({ bgBrightness: 100 })}
+                    className="hover:text-foreground transition-colors"
+                    type="button"
+                  >
+                    Brightest
+                  </button>
+                </div>
+                <p className="text-[10px] text-muted-foreground leading-relaxed">
+                  Controls how bright your image/video background appears on the projector, secondary screen, and NDI feed. Lower values darken the background so white verse text reads clearly on bright photos; higher values let the photo show through more. Applies to both full-screen and lower-third modes.
+                </p>
               </div>
             </div>
           ) : (
