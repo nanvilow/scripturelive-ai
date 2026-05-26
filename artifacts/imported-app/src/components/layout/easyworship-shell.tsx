@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import Image from 'next/image'
 import { useAppStore, type LibraryTab, type ScheduleItem } from '@/lib/store'
+import { buildOutputPayload } from '@/lib/output-payload'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -51,7 +52,7 @@ import {
   WorshipLyricsCompact,
   MediaLibraryCompact,
 } from '@/components/layout/library-compact'
-import { useNdi } from '@/lib/use-electron'
+import { useDesktop, useNdi } from '@/lib/use-electron'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { MonitorPlay } from 'lucide-react'
 // v0.5.44 — Activate / Trial / Active pill, rendered inline next to
@@ -101,11 +102,24 @@ type DesktopApi = {
   output?: {
     openWindow?: (opts?: { displayId?: number }) => Promise<{ ok: boolean; error?: string }>
     listDisplays?: () => Promise<DesktopDisplay[]>
+    // v0.7.247 — see use-electron.ts + preload.ts for full wiring docs.
+    onCongregationOpenChanged?: (cb: (open: boolean) => void) => () => void
+    getCongregationOpen?: () => Promise<boolean>
   }
 }
 
 // Browser-only screen list returned by the experimental Window Management API.
 type BrowserScreen = { id: string; label: string; primary: boolean; width: number; height: number; left: number; top: number }
+
+// v0.7.247 — Module-scope singleton ref for the browser-popup
+// `w.closed` poll started by openOnScreen. Lives outside the
+// component so re-renders of openOnScreen's useCallback don't lose
+// track of the active interval, but inside the same module so a
+// genuine page reload (which re-evaluates this module) gets a
+// fresh slot. Two writers: openOnScreen success branch (clears any
+// prior interval, sets the new id) and the unmount cleanup effect
+// in EasyWorshipShell (clears + nulls on shell teardown).
+const popupPollRef: { id: number | null } = { id: null }
 
 // ──────────────────────────────────────────────────────────────────────
 // Global master volume control
@@ -229,19 +243,28 @@ function NdiToggleButton() {
         // 'mirror' layout regardless of the operator's transparent
         // toggle. We read live store state at click time.
         //
-        // v0.6.8 — `transparent` is always true here too (NDI is
-        // always alpha-keyed), and `lowerThird.enabled` follows
-        // `ndiDisplayMode` so the header toggle respects the
-        // operator's pick of Full Screen vs Lower-Third. Without
-        // these two changes the header path would broadcast opaque
-        // black AND ignore the displayMode picker — the very two
-        // operator complaints v0.6.8 fixes.
+        // v0.6.8 — `lowerThird.enabled` follows `ndiDisplayMode` so the
+        // header toggle respects the operator's pick of Full Screen vs
+        // Lower-Third.
+        // v0.7.223 — `transparent` MUST follow `ndiDisplayMode` instead
+        // of hardcoded `true`. Pre-fix this entry path always declared
+        // transparent=true (alpha matte) which made the offscreen
+        // BrowserWindow transparent + the renderer page strip its
+        // background + the NDI sender pick BGRA FourCC — receivers
+        // (vMix/OBS/Wirecast) then showed video backgrounds as
+        // see-through in their program composite, AND paid the
+        // alpha-blend cost per pixel even when no transparency was
+        // intentional. Architect found this on v0.7.223 code review
+        // as a missed call site that violated the new explicit-opt-in
+        // contract enforced in main.ts. Lower-third workflow still
+        // gets transparency (operator explicitly picked the overlay
+        // displayMode); fullscreen workflow stays opaque as EW does.
         const settings = useAppStore.getState().settings
         const r = await desktop.ndi.start({
           name: 'ScriptureLive AI',
           width: 1920, height: 1080, fps: 30,
           layout: 'ndi',
-          transparent: true,
+          transparent: settings.ndiDisplayMode === 'lower-third',
           lowerThird: {
             enabled: settings.ndiDisplayMode === 'lower-third',
             // The projector's lowerThirdPosition is shared with NDI;
@@ -534,28 +557,36 @@ export function TopToolbar({
 
   const pushCurrentSlide = useCallback(async () => {
     if (!outputActive) toggleOutput()
+    // v0.7.247 — outputEnabled gate must be ON for the broadcast to
+    // carry an actual slide. The ON-AIR panic button (top-right of the
+    // toolbar) and any other "kill output" affordance set
+    // outputEnabled=false; without re-enabling here, buildOutputPayload
+    // produces {type:'clear', slide:null} (output-payload.ts L223+) and
+    // the secondary screen / NDI / OBS all paint BLANK regardless of
+    // what's loaded in liveSlide. This is the root cause of the
+    // "operator plays video, opens output, second screen is blank"
+    // report after panic-stop / re-arm cycles. Re-enable BEFORE we
+    // compose the payload so the very first POST already carries the
+    // video.
+    if (!useAppStore.getState().outputEnabled) {
+      useAppStore.getState().setOutputEnabled(true)
+    }
     try {
-      const s = useAppStore.getState()
-      const cur = s.liveSlideIndex >= 0 ? s.slides[s.liveSlideIndex] : null
+      // v0.7.246 — use buildOutputPayload (single source of truth)
+      // instead of reading slides[liveSlideIndex] directly. The old
+      // hand-rolled payload ignored s.liveSlide entirely, which meant
+      // openOnScreen would broadcast `slide:null` when a video was
+      // playing via the liveSlide direct-ref (auto-fire / pinned
+      // media-video) and liveSlideIndex was -1 — re-introducing the
+      // exact second-screen swap the v0.7.245 openOnScreen branch was
+      // meant to prevent. buildOutputPayload honours the liveSlide-
+      // first precedence (output-payload.ts L28-30) so the broadcast
+      // payload matches what the in-app Live Display pane is showing.
+      const payload = buildOutputPayload(useAppStore.getState())
       await fetch('/api/output', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'slide',
-          slide: cur,
-          isLive: s.isLive,
-          displayMode: s.settings.displayMode,
-          settings: {
-            fontSize: s.settings.fontSize,
-            fontFamily: s.settings.fontFamily,
-            textShadow: s.settings.textShadow,
-            showReferenceOnOutput: s.settings.showReferenceOnOutput,
-            lowerThirdHeight: s.settings.lowerThirdHeight,
-            lowerThirdPosition: s.settings.lowerThirdPosition,
-            customBackground: s.settings.customBackground,
-            congregationScreenTheme: s.settings.congregationScreenTheme,
-          },
-        }),
+        body: JSON.stringify(payload),
       })
     } catch {
       /* SSE in the popup will pick up the next state change anyway */
@@ -568,7 +599,16 @@ export function TopToolbar({
     // If nothing is live yet, auto-promote the current preview slide so the
     // output screen immediately shows real content instead of staying blank.
     const before = useAppStore.getState()
-    if (before.liveSlideIndex < 0 && before.slides.length > 0) {
+    // v0.7.245 — If a `liveSlide` direct-ref is already driving the output
+    // (AI-pushed verse, manually-fired media video, etc.) DO NOT touch
+    // slides[] state. `setLiveSlideIndex` clears `liveSlide` (store.ts
+    // L1376), and that would silently swap the second-screen broadcast
+    // from the playing video to slides[previewIdx] (a verse) the instant
+    // the operator picks an output display. Promote `isLive` only if
+    // it isn't already on; leave the direct ref untouched.
+    if (before.liveSlide) {
+      if (!before.isLive) before.setIsLive(true)
+    } else if (before.liveSlideIndex < 0 && before.slides.length > 0) {
       const idx = Math.max(0, before.previewSlideIndex)
       before.setLiveSlideIndex(idx)
       before.setIsLive(true)
@@ -605,10 +645,81 @@ export function TopToolbar({
       } else {
         toast.success('Output opened — drag it to your second display, then press F11')
       }
+      // v0.7.247 — browser-popup mirror of the Electron lifecycle
+      // broadcast. The opened Window has no IPC channel back to us,
+      // so we poll `w.closed` at 1 Hz and flip the store flag in
+      // either direction. Sub-second mute response when the operator
+      // closes the popup; minimal CPU; auto-clears the interval the
+      // first time the popup is gone. Mute fires immediately on
+      // success (no wait for the first poll tick).
+      //
+      // ALWAYS clear any prior poll before starting a new one — the
+      // operator can re-trigger openOnScreen while the same named
+      // popup is still open (Window Management API picker → cancel
+      // → re-pick is one common path), and without this guard each
+      // re-trigger stacks another interval. Singleton ref lives in
+      // module scope (popupPollRef below) so it survives re-renders
+      // of openOnScreen's useCallback.
+      useAppStore.getState().setOutputWindowOpen(true)
+      if (popupPollRef.id !== null) window.clearInterval(popupPollRef.id)
+      popupPollRef.id = window.setInterval(() => {
+        if (w.closed) {
+          useAppStore.getState().setOutputWindowOpen(false)
+          if (popupPollRef.id !== null) window.clearInterval(popupPollRef.id)
+          popupPollRef.id = null
+        }
+      }, 1000)
     } else {
       toast.error('Pop-up blocked. Allow pop-ups for ScriptureLive in your browser.')
     }
   }, [pushCurrentSlide, desktop])
+
+  // v0.7.247 — Electron-path mirror of the lifecycle broadcast.
+  // Subscribes once at shell mount; the main process re-emits the
+  // current congregation-window-open state on every kiosk open AND
+  // close, so a single subscription keeps the store flag exactly in
+  // sync. Browser path falls through this effect (no `desktop`
+  // bridge) and relies on the openOnScreen popup poll above.
+  //
+  // ALSO performs a one-shot handshake (`getCongregationOpen()`) on
+  // mount to restore the flag if the shell remounts while a kiosk
+  // is already open. Without the handshake, the unmount cleanup
+  // below would strand `outputWindowOpen=false` until the NEXT
+  // kiosk lifecycle event arrived — meaning the in-app Live <video>
+  // would unmute and double-feed audio across the remount window.
+  useEffect(() => {
+    const sub = desktop?.output?.onCongregationOpenChanged
+    if (!sub) return
+    let cancelled = false
+    const unsub = sub((open) => {
+      useAppStore.getState().setOutputWindowOpen(open)
+    })
+    // Handshake — restore current open-state immediately. Cancelled
+    // guard protects against late-arriving promise after unmount.
+    desktop?.output?.getCongregationOpen?.().then((open) => {
+      if (cancelled) return
+      useAppStore.getState().setOutputWindowOpen(!!open)
+    }).catch(() => { /* ignore — subscription will catch the next event */ })
+    return () => {
+      cancelled = true
+      try { unsub() } catch { /* listener already removed */ }
+      // Reset on unmount so a hot-reload doesn't strand the flag at true.
+      useAppStore.getState().setOutputWindowOpen(false)
+    }
+  }, [desktop])
+
+  // v0.7.247 — clear the browser-popup poll on shell unmount so a
+  // hot-reload doesn't leak a 1 Hz interval into the disposed React
+  // tree. Paired with the singleton ref below the openOnScreen
+  // success branch.
+  useEffect(() => {
+    return () => {
+      if (popupPollRef.id !== null) {
+        window.clearInterval(popupPollRef.id)
+        popupPollRef.id = null
+      }
+    }
+  }, [])
 
   return (
     <header className="flex h-12 items-center justify-between border-b border-border bg-background px-3 shrink-0">
@@ -1593,15 +1704,48 @@ export function EasyWorshipShell() {
     // {liveSlide, isLive:true, hasShownContent:true} and the renderer
     // reads liveSlide first (output-payload L19) so the video is on air
     // immediately.
+    // v0.7.221 — Parity with logos-shell goLive (L4138-4191). EW shell
+    // pinned path was a bare `setLiveAuto(pinned); return` with NO
+    // preview→live transport handoff. Now: capture preview <video>
+    // currentTime so live resumes seamlessly, unpause live media, pause
+    // preview, then promote. (The v0.7.221 setLiveAuto store contract
+    // now also atomically clears liveMediaPaused + liveMediaCurrentTime
+    // for new-URL promotions as a defence-in-depth — these explicit
+    // calls remain so the currentTime carry-over works.)
     const pinned = useAppStore.getState().pinnedPreviewSlide
     if (pinned) {
+      // v0.7.224 — Parity with logos-shell goLive: setLiveAuto's
+      // atomic transport reset (store L1233-1236) would clobber the
+      // captured preview time if we set it BEFORE setLiveAuto. Capture
+      // first, then setLiveAuto, then re-apply the captured time so
+      // live resumes from where preview was watching. See full
+      // rationale at logos-shell.tsx goLive pinned path.
+      let resumeFrom = 0
+      if (typeof document !== 'undefined') {
+        const pv = document.querySelector<HTMLVideoElement>('video[data-surface="preview"]')
+        if (pv && Number.isFinite(pv.currentTime) && pv.currentTime > 0) {
+          resumeFrom = pv.currentTime
+        }
+      }
+      useAppStore.getState().setPreviewMediaPaused(true)
       useAppStore.getState().setLiveAuto(pinned)
+      if (resumeFrom > 0) {
+        useAppStore.getState().setLiveMediaCurrentTime(resumeFrom)
+      }
       return
     }
     if (!slides.length) {
       toast.info('Add something to the schedule first')
       return
     }
+    if (typeof document !== 'undefined') {
+      const pv = document.querySelector<HTMLVideoElement>('video[data-surface="preview"]')
+      if (pv && Number.isFinite(pv.currentTime)) {
+        try { useAppStore.getState().setLiveMediaCurrentTime(pv.currentTime) } catch { /* ignore */ }
+      }
+    }
+    useAppStore.getState().setLiveMediaPaused(false)
+    useAppStore.getState().setPreviewMediaPaused(true)
     setLiveSlideIndex(previewSlideIndex)
     setIsLive(true)
     if (previewSlideIndex < slides.length - 1) setPreviewSlideIndex(previewSlideIndex + 1)

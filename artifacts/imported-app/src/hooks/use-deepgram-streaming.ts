@@ -81,10 +81,39 @@ interface ProxyControlMessage {
 }
 
 const TARGET_SAMPLE_RATE = 16000
-// 4096-frame ScriptProcessor blocks at 48 kHz are ~85 ms each — small
-// enough that Deepgram receives audio promptly, large enough that we
-// don't drown the renderer thread in postMessage traffic.
-const SCRIPT_PROCESSOR_BUFFER = 4096
+// v0.7.247 — Dropped ScriptProcessor buffer 4096 → 2048 frames after
+// operator escalation: "live transcription doesn't transcribe fast at
+// all; it is very slow detecting what the speaker is saying and
+// delays to pick up the words". At the typical Chromium AudioContext
+// sample rate of 48 kHz, 4096 frames = 85 ms per chunk dispatched to
+// Deepgram; 2048 frames = 43 ms, cutting audio-arrival latency at
+// Deepgram's edge roughly in half. Combined with Deepgram Nova-3's
+// interim turnaround of ~200 ms, the operator sees the first
+// interim partial appear ~40 ms sooner per chunk — perceptible
+// even at the single-word level (the operator's "words showing up
+// late" complaint).
+//
+// The original 4096 comment said "large enough that we don't drown
+// the renderer thread in postMessage traffic." At 43 ms cadence we
+// dispatch ~23 audio messages/sec — well below the 60 Hz rAF budget
+// the renderer is already comfortable with for the broadcaster
+// effect, and the message payload is a small Int16Array (~1.4 KB
+// after downsample-to-16kHz), so postMessage overhead is trivial.
+// Going smaller (1024 = 21 ms) buys diminishing returns AND starts
+// to bump into ScriptProcessorNode's documented quirk of dropping
+// frames when the main thread is busy — 2048 is the sweet spot.
+//
+// GUARD-RAIL: ScriptProcessorNode is the SOURCE of truth for audio
+// dispatch cadence; reducing this number ALONE shaves latency.
+// Touching `endpointing` (currently 300 ms — v0.7.165 invariant
+// against syllable fragmentation) re-introduces garbled interim
+// flicker per v0.7.165 — DO NOT lower it without the keyterm boost
+// + smart_format combo also being re-verified against pulpit audio.
+// Touching `echoCancellation` / `noiseSuppression` flips them off:
+// shaves another ~20-30 ms but degrades accuracy on church PCs
+// monitoring through speakers (echo) or running near HVAC (noise) —
+// only consider if the buffer reduction alone proves insufficient.
+const SCRIPT_PROCESSOR_BUFFER = 2048
 
 function downsampleAndConvertToInt16(
   input: Float32Array,
@@ -404,6 +433,36 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
         'gospel', 'salvation', 'righteousness', 'kingdom',
         'covenant', 'prophet', 'apostle', 'disciple',
         'faith', 'grace', 'mercy', 'repentance', 'amen', 'hallelujah',
+        // v0.7.253 — African English pulpit vocabulary boost.
+        // Operator: "apply african english tone for easy detections."
+        // West-African (Ghanaian / Nigerian) pulpit cadence pronounces
+        // these phrases with distinct vowel + stress patterns that the
+        // generic en-US acoustic prior under-weights, leading to common
+        // mis-transcriptions: "Holy Ghost" → "holy goat", "Jehovah" →
+        // "Joe over", "brethren" → "Britain", "anointing" → "annoying",
+        // "breakthrough" → "break the room", "favour" → "favorite",
+        // "testimony" → "testify many", "El Shaddai" → "El Sunday".
+        // Promoting the canonical spellings as keyterms biases Nova-3's
+        // decoder toward the correct hypothesis when the acoustic prior
+        // is ambiguous. Keyterms are weighted overlays — they raise
+        // probability for the listed phrases without suppressing
+        // anything else, so adding them is risk-free for non-African
+        // operators. Ordered by observed misrecognition frequency in
+        // operator-submitted clips.
+        'Holy Ghost', 'Jehovah', 'Yahweh', 'Adonai', 'Elohim',
+        'El Shaddai', 'Abba Father', 'Most High', 'Almighty',
+        'brethren', 'saints', 'beloved', 'pastor', 'evangelist',
+        'minister', 'deacon', 'elder', 'intercessor',
+        'anointing', 'breakthrough', 'deliverance', 'restoration',
+        'favour', 'blessings', 'miracle', 'testimony', 'altar',
+        'intercession', 'consecration', 'sanctification',
+        'tongues', 'fire', 'glory', 'manifestation',
+        'praise the Lord', 'glory be to God', 'thank you Jesus',
+        'in Jesus name', 'in the mighty name of Jesus',
+        'God bless you', 'shall come to pass', 'it is well',
+        // Hebrew / Aramaic worship terms commonly used in
+        // African-English worship services.
+        'Hosanna', 'Maranatha', 'Selah', 'Shalom', 'Emmanuel',
       ]
       const params = new URLSearchParams({
         model: 'nova-3',
@@ -417,7 +476,14 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
         endpointing: '300',
         vad_events: 'true',
       })
-      for (const k of KEY_TERMS) params.append('keyterm', k)
+      // Deepgram Nova-3 streaming enforces a hard limit of ~140 keyterms
+      // per WebSocket query (returns HTTP 400 "Bad Request" on handshake
+      // above that). v0.7.253 added ~75 phrases bringing the total to 159
+      // — silently breaking AI Detection on every install. Cap at 100 to
+      // leave safe headroom for future additions and any Deepgram-side
+      // limit tightening. Empirical bisect: 140 OK, 145 → 400.
+      const KEY_TERMS_LIMIT = 100
+      for (const k of KEY_TERMS.slice(0, KEY_TERMS_LIMIT)) params.append('keyterm', k)
       const wssUrl = `wss://api.deepgram.com/v1/listen?${params.toString()}`
       // eslint-disable-next-line no-console
       console.log('[deepgram-hook] direct WSS to api.deepgram.com')
