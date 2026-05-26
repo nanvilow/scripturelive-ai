@@ -73,9 +73,31 @@ const TOTAL_CHAPTERS = Object.values(CHAPTER_COUNTS).reduce((a, b) => a + b, 0)
 const inFlight = new Map<string, Promise<void>>()
 
 export async function GET() {
-  const downloaded = await db.bibleTranslationDownload.findMany({
-    orderBy: { translation: 'asc' },
-  })
+  // v0.7.248 — Graceful fallback when the SQLite/Prisma layer is
+  // momentarily unavailable (cold-start migration race, locked DB
+  // file during first-launch unpack, missing prisma client on a
+  // broken install). Pre-fix this handler threw a bare 500 and the
+  // UI rendered "Couldn't load translations" with a Retry button
+  // that often took several reloads to clear because the DB was
+  // still warming. Post-fix we ALWAYS return the static CATALOGUE
+  // so operators can see (and start downloading) translations; only
+  // the per-row download status is suppressed when the DB query
+  // fails. The error is logged for diagnosis but does not surface
+  // as an HTTP error to the renderer.
+  let downloaded: Array<{
+    translation: string
+    name: string
+    language: string
+    [k: string]: unknown
+  }> = []
+  try {
+    downloaded = await db.bibleTranslationDownload.findMany({
+      orderBy: { translation: 'asc' },
+    }) as typeof downloaded
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[api/bible/translations] DB read failed; returning catalogue without download status', e)
+  }
   const map = new Map(downloaded.map((d) => [d.translation, d]))
   const catalogue = CATALOGUE.map((c) => ({
     ...c,
@@ -88,7 +110,7 @@ export async function GET() {
         translation: d.translation,
         name: d.name,
         language: d.language,
-        download: d,
+        download: d as never,
       })
     }
   }

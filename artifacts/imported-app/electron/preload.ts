@@ -20,6 +20,9 @@ export type NdiStartOptions = {
   fps: number
   layout?: NdiLayout
   transparent?: boolean
+  // v0.7.230 — OBS Studio compatibility: force BGRA FourCC even in
+  // opaque mode. See store.ts ndiForceBgraForObs for the rationale.
+  forceBgraForObs?: boolean
   lowerThird?: NdiLowerThirdConfig
 }
 
@@ -198,6 +201,25 @@ const api = {
       opts?: { displayId?: number },
     ): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('output:open-stage', opts),
+    // v0.7.247 — Subscribe to kiosk-window lifecycle so the operator
+    // shell can mute the in-app Live <video> while an external
+    // congregation display is the broadcast surface. Returns an
+    // unsubscribe fn the caller MUST invoke on unmount, otherwise a
+    // hot-reload or re-mount leaves a stale listener writing into a
+    // disposed React tree.
+    onCongregationOpenChanged: (cb: (open: boolean) => void) => {
+      const handler = (_e: unknown, open: boolean) => cb(open)
+      ipcRenderer.on('output:congregation-open', handler)
+      return () => ipcRenderer.removeListener('output:congregation-open', handler)
+    },
+    // v0.7.247 — Renderer handshake to restore the flag after a
+    // shell hot-reload / remount while a congregation kiosk is
+    // still open. Without it, the unmount cleanup that sets
+    // `outputWindowOpen=false` would strand the flag false and the
+    // in-app Live <video> would double-feed audio until the NEXT
+    // kiosk lifecycle event.
+    getCongregationOpen: (): Promise<boolean> =>
+      ipcRenderer.invoke('output:get-congregation-open'),
   },
 }
 

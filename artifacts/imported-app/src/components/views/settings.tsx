@@ -402,7 +402,7 @@ export function SettingsView() {
       lowerThirdHeight: 'md',
       autoAdvanceSlides: false,
       slideTransitionDuration: 500,
-      slideTransitionStyle: 'fade',
+      slideTransitionStyle: 'cut',
       fontFamily: 'sans',
       fontSize: 'lg',
       textShadow: true,
@@ -647,6 +647,9 @@ export function SettingsView() {
         </CardContent>
       </Card>
 
+      {/* Help & Updates */}
+      <HelpAndUpdatesCard />
+
       {/* Bible Settings */}
       <Card className="bg-card border-border">
         <CardHeader className="pb-3">
@@ -751,6 +754,12 @@ export function SettingsView() {
           </div>
         </CardContent>
       </Card>
+
+      {/* v0.5.52 — Voice Control & Speaker-Follow */}
+      <VoiceControlCard />
+
+      {/* v0.5.52 — Theme Designer */}
+      <ThemeDesignerCard updateSettings={updateSettings} settings={settings} />
 
       {/* Display Settings */}
       <Card className="bg-card border-border">
@@ -899,10 +908,11 @@ export function SettingsView() {
             <Label className="text-sm font-medium flex items-center justify-between">
               <span>Bible Line-Height</span>
               <span className="text-[11px] font-mono text-primary">
-                {/* v0.7.97 — Fallback now mirrors the new install
-                    default (0.95) so the slider reads correctly on
-                    a fresh install before the store hydrates. */}
-                {(settings.bibleLineHeight ?? 0.95).toFixed(2)}
+                {/* v0.7.253 — Fallback mirrors the new install default
+                    (1.20, was 0.95 in v0.7.97) so the slider reads
+                    correctly on a fresh install before the store
+                    hydrates. Keep in lockstep with store.ts default. */}
+                {(settings.bibleLineHeight ?? 1.2).toFixed(2)}
               </span>
             </Label>
             <input
@@ -910,7 +920,7 @@ export function SettingsView() {
               min={0.9}
               max={2.5}
               step={0.05}
-              value={settings.bibleLineHeight ?? 0.95}
+              value={settings.bibleLineHeight ?? 1.2}
               onChange={(e) => updateSettings({ bibleLineHeight: parseFloat(e.target.value) })}
               className="w-full h-2 rounded-full bg-muted accent-primary cursor-pointer"
             />
@@ -964,163 +974,6 @@ export function SettingsView() {
           </div>{/* end grid-cols-[1fr_360px] */}
         </CardContent>
       </Card>
-
-      {/* ───────────────────────────────────────────────────────────────
-          v0.7.172 — Dedicated, ALWAYS-VISIBLE "Lower Third Settings" card.
-
-          Operator pain v0.7.171 fixed: pre-v0.7.172 the LT controls
-          (Position, Height, 7-field Typography) were nested inside the
-          "Display & Output" card AND gated on
-          `displayMode.startsWith('lower-third')`. On a fresh install
-          (Full Screen mode), the operator literally could not see ANY
-          Lower Third settings at all — the gate hid them completely.
-          Operator could not "find them on the app".
-
-          Fix: dedicated card here, no displayMode gate. Operator can
-          design their lower-third look while still on Full Screen, then
-          flip the display mode and the design is already in place.
-
-          Wiring (verified end-to-end with curl): every control writes
-          to `lowerThird*` keys → `buildOutputPayload()` → consumed by
-          `/api/output/congregation` whenever
-          `USE_LT_OVERRIDES = !IS_NDI && dm.indexOf('lower-third')===0`.
-      {/* v0.7.184 — Lower Third Settings card DELETED. The entire card
-          (~330 lines: Position / Height / Typography / Bible color /
-          Line height / Text scale + LIVE PREVIEW) lived here. Operator:
-          "remove the lower third from the app, leaving only the lower
-          third that can be operated in NDI settings only." All LT
-          controls now live exclusively on the NDI Output panel. The
-          persisted `lowerThird*` keys remain on disk untouched (no
-          destructive migration) — they're just no longer surfaced in
-          this UI. The route.ts LT branch is retained but driven
-          exclusively by `IS_NDI && st.ndiDisplayMode === 'lower-third'`. */}
-
-      {/* v0.5.52 — Voice Control & Speaker-Follow */}
-      <VoiceControlCard />
-
-      {/* v0.5.52 — Theme Designer */}
-      <ThemeDesignerCard updateSettings={updateSettings} settings={settings} />
-
-      {/* Native NDI (desktop app) */}
-      <NdiOutputPanel />
-
-      {/* Setup guide intentionally removed — NDI is one-click via the
-          panel above. No external NDI Tools install or browser
-          screen-capture step is needed in the desktop app. */}
-      {false && (
-      <Card className="bg-card border-border hidden">
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-2">
-            <MonitorSpeaker className="h-5 w-5 text-primary" />
-            <div>
-              <CardTitle className="text-base">NDI / vMix / Wirecast Output Guide</CardTitle>
-              <CardDescription>How to send live output to your production software</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-3">
-            <div className="flex gap-3">
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/15 text-primary text-xs font-bold flex items-center justify-center">1</div>
-              <div>
-                <p className="text-sm font-medium">Start the Output Service</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Go to <strong>Live Presenter</strong> and click the <strong>Output</strong> button. Or set the Output Destination to &quot;NDI / Wireless&quot; or &quot;Both&quot; above.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex gap-3">
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/15 text-primary text-xs font-bold flex items-center justify-center">2</div>
-              <div className="flex-1">
-                <p className="text-sm font-medium">Open the Congregation Display</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Open this URL in a browser (it receives live updates via SSE, no extra service needed):
-                </p>
-                <div className="flex items-center gap-2 mt-2">
-                  <code className="flex-1 px-2 py-1.5 rounded bg-muted text-[10px] font-mono truncate block">
-                    {congregationOutputUrl}
-                  </code>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-[10px] gap-1 shrink-0"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(congregationOutputUrl)
-                        toast.success('URL copied!')
-                      } catch {
-                        toast.error('Failed to copy')
-                      }
-                    }}
-                  >
-                    <Copy className="h-3 w-3" /> Copy
-                  </Button>
-                </div>
-                <p className="text-[10px] text-muted-foreground mt-1">
-                  Make this browser window fullscreen (F11). This is what will be captured as NDI.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex gap-3">
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/15 text-primary text-xs font-bold flex items-center justify-center">3</div>
-              <div>
-                <p className="text-sm font-medium">Install NDI Tools (Free)</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Download and install <strong>NDI Tools</strong> from{' '}
-                  <a href="https://ndi.video/tools/" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                    ndi.video/tools
-                  </a>. This includes &quot;NDI Screen Capture&quot; which captures any window as an NDI source.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex gap-3">
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/15 text-primary text-xs font-bold flex items-center justify-center">4</div>
-              <div>
-                <p className="text-sm font-medium">Capture the Browser Window as NDI</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Open <strong>NDI Screen Capture</strong>, select the congregation browser window from the list. It will appear as an NDI source named &quot;Screen Capture&quot; or similar.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex gap-3">
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-400 text-xs font-bold flex items-center justify-center">5</div>
-              <div>
-                <p className="text-sm font-medium">Add NDI Source in vMix / Wirecast</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  In <strong>vMix</strong>: Add Input → NDI → select &quot;Screen Capture&quot; from the list.<br />
-                  In <strong>Wirecast</strong>: Add Source → NDI → select the screen capture source.<br />
-                  The live slides will now appear in your production!
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <Separator />
-
-          <Card className="bg-blue-500/5 border-blue-500/20">
-            <CardContent className="p-3 flex items-start gap-2">
-              <Eye className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
-              <p className="text-xs text-blue-300/80 leading-relaxed">
-                <strong>Troubleshooting:</strong> If the NDI source doesn&apos;t appear, make sure the congregation browser window is visible and fullscreen. NDI Screen Capture captures visible displays/windows. The output uses Server-Sent Events (SSE), so no separate WebSocket service or extra port is needed.
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-amber-500/5 border-amber-500/20">
-            <CardContent className="p-3 flex items-start gap-2">
-              <Wifi className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-              <p className="text-xs text-amber-300/80 leading-relaxed">
-                <strong>Wireless display:</strong> Open the congregation URL on any browser that can reach this app, then capture that screen with NDI Tools, AirPlay, or Chromecast. For a private local network install, use your machine&apos;s local IP plus <code className="bg-amber-500/20 px-1 rounded">/api/output/congregation</code>.
-              </p>
-            </CardContent>
-          </Card>
-        </CardContent>
-      </Card>
-      )}
 
       {/* Appearance Settings — controls on the left, live typography
           preview on the right (per the spec: the preview lives next to
@@ -1457,6 +1310,157 @@ export function SettingsView() {
         </CardContent>
       </Card>
 
+      {/* ───────────────────────────────────────────────────────────────
+          v0.7.172 — Dedicated, ALWAYS-VISIBLE "Lower Third Settings" card.
+
+          Operator pain v0.7.171 fixed: pre-v0.7.172 the LT controls
+          (Position, Height, 7-field Typography) were nested inside the
+          "Display & Output" card AND gated on
+          `displayMode.startsWith('lower-third')`. On a fresh install
+          (Full Screen mode), the operator literally could not see ANY
+          Lower Third settings at all — the gate hid them completely.
+          Operator could not "find them on the app".
+
+          Fix: dedicated card here, no displayMode gate. Operator can
+          design their lower-third look while still on Full Screen, then
+          flip the display mode and the design is already in place.
+
+          Wiring (verified end-to-end with curl): every control writes
+          to `lowerThird*` keys → `buildOutputPayload()` → consumed by
+          `/api/output/congregation` whenever
+          `USE_LT_OVERRIDES = !IS_NDI && dm.indexOf('lower-third')===0`.
+      {/* v0.7.184 — Lower Third Settings card DELETED. The entire card
+          (~330 lines: Position / Height / Typography / Bible color /
+          Line height / Text scale + LIVE PREVIEW) lived here. Operator:
+          "remove the lower third from the app, leaving only the lower
+          third that can be operated in NDI settings only." All LT
+          controls now live exclusively on the NDI Output panel. The
+          persisted `lowerThird*` keys remain on disk untouched (no
+          destructive migration) — they're just no longer surfaced in
+          this UI. The route.ts LT branch is retained but driven
+          exclusively by `IS_NDI && st.ndiDisplayMode === 'lower-third'`. */}
+
+      {/* Native NDI (desktop app) */}
+      <NdiOutputPanel />
+
+      {/* Setup guide intentionally removed — NDI is one-click via the
+          panel above. No external NDI Tools install or browser
+          screen-capture step is needed in the desktop app. */}
+      {false && (
+      <Card className="bg-card border-border hidden">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <MonitorSpeaker className="h-5 w-5 text-primary" />
+            <div>
+              <CardTitle className="text-base">NDI / vMix / Wirecast Output Guide</CardTitle>
+              <CardDescription>How to send live output to your production software</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-3">
+            <div className="flex gap-3">
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/15 text-primary text-xs font-bold flex items-center justify-center">1</div>
+              <div>
+                <p className="text-sm font-medium">Start the Output Service</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Go to <strong>Live Presenter</strong> and click the <strong>Output</strong> button. Or set the Output Destination to &quot;NDI / Wireless&quot; or &quot;Both&quot; above.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/15 text-primary text-xs font-bold flex items-center justify-center">2</div>
+              <div className="flex-1">
+                <p className="text-sm font-medium">Open the Congregation Display</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Open this URL in a browser (it receives live updates via SSE, no extra service needed):
+                </p>
+                <div className="flex items-center gap-2 mt-2">
+                  <code className="flex-1 px-2 py-1.5 rounded bg-muted text-[10px] font-mono truncate block">
+                    {congregationOutputUrl}
+                  </code>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-[10px] gap-1 shrink-0"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(congregationOutputUrl)
+                        toast.success('URL copied!')
+                      } catch {
+                        toast.error('Failed to copy')
+                      }
+                    }}
+                  >
+                    <Copy className="h-3 w-3" /> Copy
+                  </Button>
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Make this browser window fullscreen (F11). This is what will be captured as NDI.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/15 text-primary text-xs font-bold flex items-center justify-center">3</div>
+              <div>
+                <p className="text-sm font-medium">Install NDI Tools (Free)</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Download and install <strong>NDI Tools</strong> from{' '}
+                  <a href="https://ndi.video/tools/" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                    ndi.video/tools
+                  </a>. This includes &quot;NDI Screen Capture&quot; which captures any window as an NDI source.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/15 text-primary text-xs font-bold flex items-center justify-center">4</div>
+              <div>
+                <p className="text-sm font-medium">Capture the Browser Window as NDI</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Open <strong>NDI Screen Capture</strong>, select the congregation browser window from the list. It will appear as an NDI source named &quot;Screen Capture&quot; or similar.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-400 text-xs font-bold flex items-center justify-center">5</div>
+              <div>
+                <p className="text-sm font-medium">Add NDI Source in vMix / Wirecast</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  In <strong>vMix</strong>: Add Input → NDI → select &quot;Screen Capture&quot; from the list.<br />
+                  In <strong>Wirecast</strong>: Add Source → NDI → select the screen capture source.<br />
+                  The live slides will now appear in your production!
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <Separator />
+
+          <Card className="bg-blue-500/5 border-blue-500/20">
+            <CardContent className="p-3 flex items-start gap-2">
+              <Eye className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-blue-300/80 leading-relaxed">
+                <strong>Troubleshooting:</strong> If the NDI source doesn&apos;t appear, make sure the congregation browser window is visible and fullscreen. NDI Screen Capture captures visible displays/windows. The output uses Server-Sent Events (SSE), so no separate WebSocket service or extra port is needed.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-amber-500/5 border-amber-500/20">
+            <CardContent className="p-3 flex items-start gap-2">
+              <Wifi className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-300/80 leading-relaxed">
+                <strong>Wireless display:</strong> Open the congregation URL on any browser that can reach this app, then capture that screen with NDI Tools, AirPlay, or Chromecast. For a private local network install, use your machine&apos;s local IP plus <code className="bg-amber-500/20 px-1 rounded">/api/output/congregation</code>.
+              </p>
+            </CardContent>
+          </Card>
+        </CardContent>
+      </Card>
+      )}
+
       {/* Background Upload */}
       <Card className="bg-card border-border">
         <CardHeader className="pb-3">
@@ -1478,12 +1482,32 @@ export function SettingsView() {
                   it behaves like a confirmation chip rather than a banner. */}
               <div className="relative rounded-lg overflow-hidden border border-border aspect-video bg-muted max-w-[240px]">
                 {isVideoBackground(settings.customBackground) ? (
+                  // v0.7.221 — Operator $1600 escalation: bg video was
+                  // animating in this Custom Background thumbnail
+                  // alongside 4 other previews on the same screen,
+                  // distracting from the LIVE pane. Freeze on first
+                  // frame: no autoPlay/loop, preload only metadata,
+                  // and append `#t=0.1` to the src so the browser
+                  // paints the frame at 0.1s as a static poster
+                  // instead of the codec's all-black first frame.
+                  // ref-based pause guards against the rare browser
+                  // that ignores autoPlay=false after a previous
+                  // session left the element in a playing state.
                   <video
-                    src={settings.customBackground}
-                    autoPlay
-                    loop
+                    src={`${settings.customBackground}#t=0.1`}
                     muted
                     playsInline
+                    preload="metadata"
+                    ref={(el) => {
+                      if (!el) return
+                      try { el.pause() } catch { /* ignore */ }
+                    }}
+                    onLoadedData={(e) => {
+                      try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
+                    }}
+                    onPlay={(e) => {
+                      try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
+                    }}
                     className="w-full h-full object-cover"
                   />
                 ) : (
@@ -1507,6 +1531,62 @@ export function SettingsView() {
                   {isVideoBackground(settings.customBackground) ? 'Video · Active' : 'Active'}
                 </Badge>
                 <span className="text-xs text-muted-foreground truncate">{settings.customBackground}</span>
+              </div>
+              {/* v0.7.227 — Operator brightness slider. Drives bg opacity
+                  AND dark scrim alpha on every output surface (full-screen
+                  verse bg, persistent #bgLayer, lower-third .lt-bg) via
+                  CSS variables in /api/output/congregation. Both members
+                  of the v0.7.226 pair-invariant move in lockstep from a
+                  single source value (scrim derived as (1-op)*0.333), so
+                  the WCAG-AA contrast contract holds across the full
+                  0-100% range. Default 85 reproduces the v0.7.226 pick
+                  exactly. Range capped 10-100 because 0 hides the bg
+                  entirely (use the Delete button for that) and very low
+                  values produce confusingly-dim output operators report
+                  as "broken". */}
+              <div className="space-y-2 pt-2 border-t border-border/40">
+                <Label className="text-sm font-medium flex items-center justify-between">
+                  <span>Background Brightness</span>
+                  <span className="text-[11px] font-mono text-primary">
+                    {settings.bgBrightness ?? 85}%
+                  </span>
+                </Label>
+                <input
+                  type="range"
+                  min={10}
+                  max={100}
+                  step={1}
+                  value={settings.bgBrightness ?? 85}
+                  onChange={(e) => updateSettings({ bgBrightness: parseInt(e.target.value, 10) })}
+                  className="w-full h-2 rounded-full bg-muted accent-primary cursor-pointer"
+                  aria-label="Background brightness"
+                />
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                  <button
+                    onClick={() => updateSettings({ bgBrightness: 40 })}
+                    className="hover:text-foreground transition-colors"
+                    type="button"
+                  >
+                    Dim
+                  </button>
+                  <button
+                    onClick={() => updateSettings({ bgBrightness: 85 })}
+                    className="hover:text-foreground transition-colors"
+                    type="button"
+                  >
+                    Default (85%)
+                  </button>
+                  <button
+                    onClick={() => updateSettings({ bgBrightness: 100 })}
+                    className="hover:text-foreground transition-colors"
+                    type="button"
+                  >
+                    Brightest
+                  </button>
+                </div>
+                <p className="text-[10px] text-muted-foreground leading-relaxed">
+                  Controls how bright your image/video background appears on the projector, secondary screen, and NDI feed. Lower values darken the background so white verse text reads clearly on bright photos; higher values let the photo show through more. Applies to both full-screen and lower-third modes.
+                </p>
               </div>
             </div>
           ) : (
@@ -1586,9 +1666,6 @@ export function SettingsView() {
         </CardContent>
       </Card>
 
-      {/* Help & Updates */}
-      <HelpAndUpdatesCard />
-
       {/* Startup (launch-at-login) — only meaningful in the desktop
           build; the card renders a disabled-with-explanation state in
           the browser preview rather than disappearing entirely so the
@@ -1620,7 +1697,7 @@ export function SettingsView() {
                   onClick={() => updateSettings({ slideTransitionStyle: opt.v })}
                   className={cn(
                     'rounded-md border px-3 py-2 text-left transition-colors',
-                    (settings.slideTransitionStyle || 'fade') === opt.v
+                    (settings.slideTransitionStyle || 'cut') === opt.v
                       ? 'border-primary bg-primary/10'
                       : 'border-border hover:bg-muted/50'
                   )}
@@ -1635,7 +1712,7 @@ export function SettingsView() {
             </p>
           </div>
 
-          <div className={cn('space-y-2', (settings.slideTransitionStyle || 'fade') === 'cut' && 'opacity-50 pointer-events-none')}>
+          <div className={cn('space-y-2', (settings.slideTransitionStyle || 'cut') === 'cut' && 'opacity-50 pointer-events-none')}>
             <Label className="text-sm font-medium">Fade Duration: {settings.slideTransitionDuration}ms</Label>
             <Input
               type="range"
