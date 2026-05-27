@@ -27,7 +27,7 @@ import { getCloudAdminCode } from '@/lib/baked-credentials'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const DEFAULT_CLOUD_BASE = 'https://scripturelive.replit.app'
+const DEFAULT_CLOUD_BASE = 'https://cloud.scriptureliveai.com'
 
 function cloudBaseUrl(): string | null {
   const raw = process.env.SCRIPTURELIVE_CLOUD_BASE
@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       stage: 'connected',
-      detail: 'This IS the cloud install. Phone admin panels that point at https://scripturelive.replit.app already read this same data directly — no sync needed.',
+      detail: 'This IS the cloud install. Phone admin panels that point at https://cloud.scriptureliveai.com already read this same data directly — no sync needed.',
       cloudBase: 'self',
     })
   }
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: false,
       stage: 'disabled',
-      detail: 'No cloud admin code is configured on this device and no value was baked into the build. Open https://scripturelive.replit.app/?admin in a browser, copy the masterCode under "Master code", and paste it into the Cloud Sync field below — then press Test connection again.',
+      detail: 'No cloud admin code is configured on this device and no value was baked into the build. Open https://cloud.scriptureliveai.com/?admin in a browser, copy the masterCode under "Master code", and paste it into the Cloud Sync field below — then press Test connection again.',
       cloudBase: base,
     })
   }
@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         ok: false,
         stage: 'unauthorized',
-        detail: `The cloud at ${base} is reachable but rejected the configured cloud admin code. Open https://scripturelive.replit.app/?admin in a browser, copy the EXACT masterCode shown there, and paste it into the Cloud Sync field below — capitalisation matters.`,
+        detail: `The cloud at ${base} is reachable but rejected the configured cloud admin code. Open https://cloud.scriptureliveai.com/?admin in a browser, copy the EXACT masterCode shown there, and paste it into the Cloud Sync field below — capitalisation matters.`,
         cloudBase: base,
       })
     }
