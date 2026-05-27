@@ -18,7 +18,7 @@ export default function Privacy() {
         <h1 className="text-4xl font-bold mb-2">Privacy Policy</h1>
         <p className="text-sm text-muted-foreground mb-10">Last updated: May 27, 2026</p>
 
-        <div className="prose prose-invert max-w-none space-y-8 text-foreground/90 leading-relaxed">
+        <div className="max-w-none space-y-8 text-foreground/90 leading-relaxed">
           <section>
             <h2 className="text-2xl font-semibold mb-3">1. Who we are</h2>
             <p>
@@ -32,11 +32,10 @@ export default function Privacy() {
           <section>
             <h2 className="text-2xl font-semibold mb-3">2. What we collect on this website</h2>
             <p>
-              This marketing website (<code>scriptureliveai.com</code>) is a static site. We do not
-              run cookies, analytics scripts, advertising trackers, or third-party fingerprinting.
-              The only data your browser sends is what is required to deliver the page (IP address,
-              browser type, referrer) — these are processed by our hosting provider (Cloudflare
-              Pages) and are not retained by us.
+              This marketing website is a static site. We do not run cookies, analytics scripts,
+              advertising trackers, or third-party fingerprinting. The only data your browser sends
+              is what is required to deliver the page (IP address, browser type, referrer) — these
+              are processed by our hosting provider and are not retained by us.
             </p>
           </section>
 
@@ -44,20 +43,20 @@ export default function Privacy() {
             <h2 className="text-2xl font-semibold mb-3">3. What the desktop app collects</h2>
             <p>The installed Windows application processes the following data locally on your computer:</p>
             <ul className="list-disc pl-6 space-y-2 mt-3">
-              <li><strong>Microphone audio</strong> — captured in real time and sent to our speech-recognition providers (OpenAI and Deepgram) for transcription. Audio is processed in transit only and is not stored on our servers.</li>
-              <li><strong>Bible translations and slide media</strong> — stored locally in your installation folder. Nothing is uploaded.</li>
-              <li><strong>License key</strong> — sent to our license server (<code>cloud.scriptureliveai.com</code>) only to validate activation. We store the key, your activation date, and the machine identifier.</li>
-              <li><strong>Anonymous telemetry</strong> — version number, crash reports, and feature usage counts. No audio, no transcripts, no church names. You can disable telemetry in Settings.</li>
+              <li><span className="font-semibold">Microphone audio</span> — captured in real time and sent to our speech-recognition providers for transcription. Audio is processed in transit only and is not stored on our servers.</li>
+              <li><span className="font-semibold">Bible translations and slide media</span> — stored locally in your installation folder. Nothing is uploaded.</li>
+              <li><span className="font-semibold">License key</span> — sent to our license server only to validate activation. We store the key, your activation date, and the machine identifier.</li>
+              <li><span className="font-semibold">Anonymous telemetry</span> — version number, crash reports, and feature usage counts. No audio, no transcripts, no church names. You can disable telemetry in Settings.</li>
             </ul>
           </section>
 
           <section>
             <h2 className="text-2xl font-semibold mb-3">4. Third-party services</h2>
             <ul className="list-disc pl-6 space-y-2">
-              <li><strong>OpenAI</strong> — speech-to-text transcription. Subject to OpenAI's API data policy (audio not used for training).</li>
-              <li><strong>Deepgram</strong> — alternative speech-to-text engine. Subject to Deepgram's data processing terms.</li>
-              <li><strong>Cloudflare Pages</strong> — hosts this website.</li>
-              <li><strong>Hetzner Cloud (Germany)</strong> — hosts our license + telemetry server.</li>
+              <li><span className="font-semibold">OpenAI</span> — speech-to-text transcription. Subject to OpenAI's API data policy (audio not used for training).</li>
+              <li><span className="font-semibold">Deepgram</span> — alternative speech-to-text engine. Subject to Deepgram's data processing terms.</li>
+              <li><span className="font-semibold">Cloudflare Pages</span> — hosts this website.</li>
+              <li><span className="font-semibold">Hetzner Cloud (Germany)</span> — hosts our license and telemetry server.</li>
             </ul>
           </section>
 
@@ -80,8 +79,7 @@ export default function Privacy() {
           <section>
             <h2 className="text-2xl font-semibold mb-3">7. Contact</h2>
             <p>
-              Questions about privacy? Reach us through the Support section on our{" "}
-              <Link href="/" className="text-primary hover:underline">home page</Link>.
+              Questions about privacy? Reach us through the Support section on our home page.
             </p>
           </section>
         </div>

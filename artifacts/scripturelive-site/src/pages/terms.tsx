@@ -18,7 +18,7 @@ export default function Terms() {
         <h1 className="text-4xl font-bold mb-2">Terms of Service</h1>
         <p className="text-sm text-muted-foreground mb-10">Last updated: May 27, 2026</p>
 
-        <div className="prose prose-invert max-w-none space-y-8 text-foreground/90 leading-relaxed">
+        <div className="max-w-none space-y-8 text-foreground/90 leading-relaxed">
           <section>
             <h2 className="text-2xl font-semibold mb-3">1. Acceptance</h2>
             <p>
@@ -109,8 +109,7 @@ export default function Terms() {
           <section>
             <h2 className="text-2xl font-semibold mb-3">11. Contact</h2>
             <p>
-              Questions about these terms? Reach us through the Support section on our{" "}
-              <Link href="/" className="text-primary hover:underline">home page</Link>.
+              Questions about these terms? Reach us through the Support section on our home page.
             </p>
           </section>
         </div>
