@@ -1,0 +1,95 @@
+name: Deploy cloud companion to Hetzner
+
+# Auto-deploy the Next.js cloud companion (cloud.scriptureliveai.com) when
+# files that actually run on the server change. Pure .exe-only fixes (slides,
+# detection, NDI, UI, etc.) DO NOT trigger this workflow — see paths filter.
+#
+# Manual override: dispatch from the Actions tab to redeploy on demand.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'artifacts/imported-app/src/app/api/license/cloud/**'
+      - 'artifacts/imported-app/src/app/api/license/admin/**'
+      - 'artifacts/imported-app/src/app/api/transcribe/**'
+      - 'artifacts/imported-app/src/app/api/telemetry/**'
+      - 'artifacts/imported-app/src/app/admin/**'
+      - 'artifacts/imported-app/src/components/admin/**'
+      - 'artifacts/imported-app/scripts/inject-keys.mjs'
+      - 'artifacts/imported-app/next.config.mjs'
+      - 'artifacts/imported-app/package.json'
+      - '.github/workflows/deploy-hetzner.yml'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Why are you triggering a manual deploy?'
+        required: false
+        default: 'manual'
+
+concurrency:
+  group: deploy-hetzner
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: SSH redeploy on cloud.scriptureliveai.com
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: SSH into Hetzner and redeploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: 178.105.190.33
+          username: scripturelive
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          port: 22
+          timeout: 60s
+          command_timeout: 12m
+          script_stop: true
+          script: |
+            set -eo pipefail
+
+            REPO_DIR=/home/scripturelive/scripturelive-ai
+            APP_DIR=$REPO_DIR/artifacts/imported-app
+
+            echo "==> [1/6] Pulling latest main"
+            cd "$REPO_DIR"
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "==> [2/6] Injecting baked credentials from .env.production"
+            cd "$APP_DIR"
+            if [ ! -f .env.production ]; then
+              echo "FATAL: $APP_DIR/.env.production missing — cannot inject keys"
+              exit 1
+            fi
+            set -a
+            . ./.env.production
+            set +a
+            node scripts/inject-keys.mjs
+
+            echo "==> [3/6] Installing dependencies (frozen lockfile)"
+            cd "$REPO_DIR"
+            pnpm install --frozen-lockfile
+
+            echo "==> [4/6] Building Next.js"
+            cd "$APP_DIR"
+            pnpm build
+
+            echo "==> [5/6] Restarting systemd service"
+            sudo systemctl restart scripturelive.service
+
+            echo "==> [6/6] Health check (waiting up to 30s for service to come up)"
+            for i in $(seq 1 15); do
+              if curl -fsS -o /dev/null https://cloud.scriptureliveai.com/api/healthz 2>/dev/null \
+                 || curl -fsS -o /dev/null http://127.0.0.1:3000/api/healthz 2>/dev/null \
+                 || curl -fsS -o /dev/null http://127.0.0.1:3000 2>/dev/null; then
+                echo "OK — service is responding"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "WARN: service did not respond to health check within 30s"
+            sudo systemctl status scripturelive.service --no-pager | tail -30
+            exit 1
