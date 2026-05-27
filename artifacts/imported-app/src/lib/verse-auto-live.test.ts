@@ -729,6 +729,74 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     expect(r.nextStability.frozenExplicitId).toBe(null)
   })
 
+  it('v0.7.257 SEMANTIC-OWNS-LIVE FREEZE RELEASE on FRESH RE-UTTERANCE of the same AVM verse: when AVM column shows the SAME explicit verse id BUT with a detectedAt timestamp NEWER than the semantic fire that armed the latch, the latch releases (fresh utterance, not audio-buffer lag)', () => {
+    // Operator screenshot 2026-05-27: pastor said "Ephesians 6:11"
+    // out loud, AVM caught it @ 1.00, but the projector stayed on
+    // the previously-preempting BRQ verse because the v0.7.152
+    // latch only released on a DIFFERENT id. Audio-buffer-lag re-
+    // runs must still be suppressed, so the release clause keys on
+    // `detectedAt > gate.lastFireAtMs` — lag re-runs carry the
+    // original timestamp; a fresh new utterance carries a newer one.
+    let g = fresh()
+    // Frame 1: AVM Gen.1.1 fires @ t=1000.
+    let r = shouldFireAutoLiveStable(
+      [{ ...v('Gen.1.1', 1.0, 1000, 'explicit'), reference: 'Genesis 1:1' }],
+      null,
+      g,
+      { nowMs: 1000 },
+    )
+    g = r.nextStability
+    // Frame 2: BRQ Psa.118.9 preempts @ t=3000 → latch armed,
+    // frozenExplicitId=Gen.1.1, lastFireAtMs=3000.
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Gen.1.1',   1.0,  1000, 'explicit'), reference: 'Genesis 1:1' },
+        { ...v('Psa.118.9', 0.85, 3000, 'semantic'), reference: 'Psalm 118:9' },
+      ],
+      'Gen.1.1',
+      g,
+      { nowMs: 3000 },
+    )
+    g = r.nextStability
+    expect(g.semanticOwnsLive).toBe(true)
+    expect(g.frozenExplicitId).toBe('Gen.1.1')
+    expect(g.lastFireAtMs).toBe(3000)
+    // Frame 3a: STALE AVM re-detection of Gen.1.1 with the
+    // ORIGINAL t=1000 timestamp (audio-buffer lag). Latch must
+    // stay armed — explicit fire must NOT happen.
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Gen.1.1',   1.0,  1000, 'explicit'), reference: 'Genesis 1:1' },
+        { ...v('Psa.118.9', 0.85, 3000, 'semantic'), reference: 'Psalm 118:9' },
+      ],
+      'Psa.118.9',
+      g,
+      { nowMs: 4000 },
+    )
+    expect(r.fire).toBe(false)
+    expect(r.nextStability.semanticOwnsLive).toBe(true)
+    expect(r.nextStability.frozenExplicitId).toBe('Gen.1.1')
+    // Frame 3b: FRESH AVM re-utterance of Gen.1.1 with a NEW
+    // timestamp t=8000 (post-latch-arm at 3000). Latch RELEASES —
+    // the fresh detection fires live.
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Gen.1.1',   1.0,  8000, 'explicit'), reference: 'Genesis 1:1' },
+        { ...v('Psa.118.9', 0.85, 3000, 'semantic'), reference: 'Psalm 118:9' },
+      ],
+      'Psa.118.9',
+      g,
+      { nowMs: 8000 },
+    )
+    expect(r.fire).toBe(true)
+    if (r.fire) {
+      expect(r.verse.id).toBe('Gen.1.1')
+      expect(r.source).toBe('explicit')
+    }
+    expect(r.nextStability.semanticOwnsLive).toBe(false)
+    expect(r.nextStability.frozenExplicitId).toBe(null)
+  })
+
   it('v0.7.152 SEMANTIC-OWNS-LIVE FREEZE RELEASE on STOP LIVE: clearing the projector (currentLiveId=null) releases the latch and the next explicit detection auto-fires again', () => {
     let g = fresh()
     // Frame 1: AVM Gen.1.1 fires.

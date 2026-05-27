@@ -127,6 +127,21 @@ export class FrameCapture {
     let __frameIdx = 0
     let __nonBlackFrames = 0
     let __lastLogAt = Date.now()
+    // v0.7.221 — Per-frame inter-frame delta jitter telemetry. Operator
+    // escalation: "What makes EasyWorship NDI output play smoothly?
+    // Implement that here." Pre-fix telemetry only reported avg fps
+    // over 60-frame windows (~2s) — too coarse to see the sub-frame
+    // jitter that causes receiver-side stutter even when the average
+    // rate looks correct. EW-class smoothness requires the wire-side
+    // inter-frame interval to stay tight (target = 33.33ms @ 30fps,
+    // p95 should be < 40ms). We now record min / max / p95 delta in
+    // each 60-frame window so the next launch.log immediately shows
+    // whether jitter originates at the producer (CPU readback /
+    // beginFrameSubscription) or the wire (ndi-service async send).
+    // Cost: one Date.now() + one push to a 60-entry array per frame =
+    // negligible on the hot path.
+    let __lastFrameAt = 0
+    let __frameDeltas: number[] = []
     const __isAllBlack = (buf: Buffer, w: number, h: number): boolean => {
       // Sample 8 pixels: 4 corners + 4 mid-edges. If ANY sample shows
       // non-trivial brightness (R+G+B > 24 = roughly hex #080808), the
@@ -157,21 +172,35 @@ export class FrameCapture {
         if (bitmap.length !== size.width * size.height * 4) return
         __frameIdx++
         if (!__isAllBlack(bitmap, size.width, size.height)) __nonBlackFrames++
+        // v0.7.221 — Record inter-frame delta for jitter telemetry.
+        const __now = Date.now()
+        if (__lastFrameAt > 0) __frameDeltas.push(__now - __lastFrameAt)
+        __lastFrameAt = __now
         // Once per 60 frames (~2s @ 30fps), summarize: total frames,
-        // non-black ratio, and effective fps since last log line. This
-        // produces a single greppable line per ~2s in launch.log so
-        // operator + future agent can immediately see the truth.
+        // non-black ratio, effective fps since last log, AND
+        // min/max/p95 inter-frame delta (jitter). This produces a
+        // single greppable line per ~2s in launch.log so operator +
+        // future agent can immediately see WHERE smoothness is lost.
         if (__frameIdx % 60 === 0) {
-          const now = Date.now()
-          const dtSec = Math.max(0.001, (now - __lastLogAt) / 1000)
+          const dtSec = Math.max(0.001, (__now - __lastLogAt) / 1000)
           const fps = (60 / dtSec).toFixed(1)
           const blackPct = __frameIdx > 0
             ? (100 * (1 - __nonBlackFrames / __frameIdx)).toFixed(1)
             : '0.0'
+          let jitter = 'jitter=n/a'
+          if (__frameDeltas.length >= 5) {
+            const sorted = __frameDeltas.slice().sort((a, b) => a - b)
+            const p95Idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))
+            const min = sorted[0]
+            const max = sorted[sorted.length - 1]
+            const p95 = sorted[p95Idx]
+            jitter = `dt_min=${min}ms dt_p95=${p95}ms dt_max=${max}ms`
+          }
           console.log(
-            `[frame-capture] frames=${__frameIdx} fps=${fps} black=${blackPct}% size=${size.width}x${size.height}`,
+            `[frame-capture] frames=${__frameIdx} fps=${fps} black=${blackPct}% ${jitter} size=${size.width}x${size.height}`,
           )
-          __lastLogAt = now
+          __lastLogAt = __now
+          __frameDeltas = []
         }
         this.deps.onFrame(bitmap, size.width, size.height)
       } catch (err) {
