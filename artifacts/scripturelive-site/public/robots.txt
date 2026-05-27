@@ -1,6 +1,28 @@
+# https://www.robotstxt.org/robotstxt.html
 User-agent: *
 Allow: /
 Disallow: /admin
 Disallow: /admin/
+Disallow: /oauth/
+Disallow: /uploads/
+
+# Major AI crawlers
+User-agent: GPTBot
+Allow: /
+Disallow: /admin/
+Disallow: /oauth/
+
+User-agent: Google-Extended
+Allow: /
+Disallow: /admin/
+Disallow: /oauth/
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+Disallow: /admin/
+Disallow: /oauth/
 
 Sitemap: https://scriptureliveai.com/sitemap.xml

@@ -3,7 +3,7 @@
         xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
   <url>
     <loc>https://scriptureliveai.com/</loc>
-    <lastmod>2026-05-07</lastmod>
+    <lastmod>2026-05-27</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
     <image:image>
@@ -11,5 +11,17 @@
       <image:title>ScriptureLive AI — Real-Time Bible Verse Display for Churches</image:title>
       <image:caption>Real-time AI Bible verse detection software for churches, with NDI, OBS, vMix and live stream support.</image:caption>
     </image:image>
+  </url>
+  <url>
+    <loc>https://scriptureliveai.com/privacy</loc>
+    <lastmod>2026-05-27</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>https://scriptureliveai.com/terms</loc>
+    <lastmod>2026-05-27</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
   </url>
 </urlset>

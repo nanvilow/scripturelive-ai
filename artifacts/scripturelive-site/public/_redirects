@@ -1,0 +1,4 @@
+# Cloudflare Pages SPA fallback — ensures direct visits to /privacy, /terms,
+# /admin/, and any future Wouter routes serve index.html instead of 404.
+# Functions in /functions (e.g. /oauth/*) take precedence and are NOT rewritten.
+/*    /index.html   200

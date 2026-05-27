@@ -1,0 +1,14 @@
+{
+  "name": "ScriptureLive AI",
+  "short_name": "ScriptureLive",
+  "description": "Instant AI Bible verse display for live preaching.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b1220",
+  "theme_color": "#0b1220",
+  "icons": [
+    { "src": "/favicon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
