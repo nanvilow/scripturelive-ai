@@ -1045,7 +1045,9 @@ function HowItWorks() {
 
 function WhyChooseUs() {
   const { data: content } = useListPageContent();
-  const whyCopy = content?.find((c) => c.key === "why_section_copy")?.value;
+  const whyCopy =
+    content?.find((c) => c.key === "why_description")?.value ||
+    content?.find((c) => c.key === "why_section_copy")?.value;
 
   return (
     <section className="py-24 lg:py-32 bg-card/40 border-y border-border/30 relative overflow-hidden">
