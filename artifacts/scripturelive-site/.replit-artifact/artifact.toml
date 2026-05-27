@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/scripturelive-site/"
+title = "ScriptureLive AI — Marketing Site"
+version = "1.0.0"
+id = "artifacts/scripturelive-site"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/scripturelive-site/" ]
+localPort = 20155
+
+[services.development]
+run = "pnpm --filter @workspace/scripturelive-site run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/scripturelive-site", "run", "build" ]
+publicDir = "artifacts/scripturelive-site/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20155"
+BASE_PATH = "/scripturelive-site/"
