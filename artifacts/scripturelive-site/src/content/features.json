@@ -1,0 +1,13 @@
+{
+  "items": [
+    { "id": 7, "title": "AI Verse Detection", "description": "Detects scripture while preaching, automatically matches and displays the correct Bible verse with high accuracy — in real time.", "icon": "brain", "sortOrder": 1 },
+    { "id": 8, "title": "NDI Output Integration", "description": "Send output directly to OBS Studio, vMix, and Wirecast. One-click broadcasting to your entire production workflow.", "icon": "video", "sortOrder": 2 },
+    { "id": 9, "title": "Dual Screen Display", "description": "Preview and Live Output simultaneously. Lower Third or Full Screen modes — perfect for projectors and LED walls.", "icon": "monitor", "sortOrder": 3 },
+    { "id": 10, "title": "Typography & Custom Styling", "description": "Customize fonts, colors, and layout to match your church brand. Designed for clarity in any sanctuary environment.", "icon": "palette", "sortOrder": 4 },
+    { "id": 11, "title": "Smart Chapter Navigator", "description": "Instantly jump between verses with a single click. Preview or send to Live. Keep your sermon flow smooth and uninterrupted.", "icon": "book-open", "sortOrder": 5 },
+    { "id": 12, "title": "Live Transcription Engine", "description": "Converts speech to text in real-time and feeds the AI detection system — the engine behind every automatic verse match.", "icon": "mic", "sortOrder": 6 },
+    { "id": 13, "title": "Speaker-Follow Mode", "description": "Locks onto the preacher's microphone and intelligently ignores congregation noise, singing, and background chatter.", "icon": "shield-check", "sortOrder": 7 },
+    { "id": 14, "title": "Live Translation Sync", "description": "Switch from KJV to MSG instantly. The verse on screen updates immediately without having to take it off air.", "icon": "refresh-cw", "sortOrder": 8 },
+    { "id": 15, "title": "Voice Commands", "description": "Say 'next verse', 'go back', 'show John 3:16', or 'clear screen'. The app listens and executes immediately.", "icon": "message-square", "sortOrder": 9 }
+  ]
+}

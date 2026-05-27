@@ -1,0 +1,5 @@
+{
+  "items": [
+    { "id": 1, "label": "ScriptureLive AI for Windows", "url": "#download", "version": "1.0.0", "platform": "Windows", "isActive": true }
+  ]
+}

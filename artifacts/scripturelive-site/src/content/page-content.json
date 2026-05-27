@@ -1,0 +1,10 @@
+{
+  "items": [
+    { "id": 1, "key": "hero_headline", "value": "Instant Scripture Display During Live Preaching . Powered by AI" },
+    { "id": 2, "key": "hero_subtext", "value": "ScriptureLive AI listens to the pastor, detects every Bible verse in real time, and automatically pushes them to your output screens. NDI outputs for OBS, vMix, Wirecast, etc. No more typing, no more searching for the verse of scripture paraphrases on Google anymore." },
+    { "id": 3, "key": "why_description", "value": "Designed for churches that want speed, accuracy, and modern presentation — without the stress of manual operation." },
+    { "id": 4, "key": "support_whatsapp", "value": "0246798526" },
+    { "id": 5, "key": "support_email", "value": "support@scriptureliveai.com" },
+    { "id": 6, "key": "demo_url", "value": "https://www.youtube.com/watch?v=BF6BLkDvI44" }
+  ]
+}

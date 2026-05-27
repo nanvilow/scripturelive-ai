@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "id": 1, "name": "Starter", "price": "Free", "period": "forever",
+      "description": "Perfect for small churches just getting started with smart scripture display.",
+      "features": ["AI Verse Detection (Free Trial)", "Dual Screen Display", "Up to 2 screens"],
+      "isPopular": false, "sortOrder": 1
+    },
+    {
+      "id": 2, "name": "Pro", "price": "GHS 200", "period": "per month",
+      "description": "The full ScriptureLive experience for growing congregations.",
+      "features": ["NDI Output Integration", "Full Typography & Styling", "Priority Support", "AI Verse Detection (OpenAI Mode)"],
+      "isPopular": true, "sortOrder": 2
+    },
+    {
+      "id": 3, "name": "Church License", "price": "GHS 1,800", "period": "Year",
+      "description": "A long-term license for established ministries: pay once and own it for a year without interruptions.",
+      "features": ["Everything in Pro", "Dedicated WhatsApp support", "AI Verse Detection (OpenAI Mode)", "Unlimited Screens", "All future updates", "Full Typography & Styling"],
+      "isPopular": false, "sortOrder": 3
+    }
+  ]
+}

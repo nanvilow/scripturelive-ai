@@ -1,0 +1,15 @@
+{
+  "items": [
+    { "id": 2, "name": "Elder Ruth Owusu", "church": "New Life Church, Kumasi", "quote": "We used to have a dedicated person typing verses manually. Now it's all automatic. The accuracy is incredible — it never misses a verse.", "photoUrl": null, "sortOrder": 0 },
+    { "id": 3, "name": "Minister David Asante", "church": "Restoration Chapel, Takoradi", "quote": "The NDI integration with OBS is seamless. Our live stream quality went from amateur to professional overnight. Worth every penny.", "photoUrl": null, "sortOrder": 0 },
+    { "id": 4, "name": "Pastor James Mensah", "church": "Grace Assembly, Accra", "quote": "ScriptureLive AI has completely transformed how we do Sunday service. Verses appear before I even finish the reference. Our congregation is more engaged than ever.", "photoUrl": null, "sortOrder": 0 },
+    { "id": 6, "name": "Daniel Mensah", "church": "Restoration Chapel, Takoradi", "quote": "ScriptureLive AI has completely transformed how we handle live services. The instant Bible verse detection keeps our congregation engaged and aligned with the message.", "photoUrl": null, "sortOrder": 0 },
+    { "id": 8, "name": "Grace Mensah", "church": "Christ Victory Chapel", "quote": "I used to struggle finding scriptures quickly during worship, but now it's instant. It feels like the app already knows what's coming next. Honestly, it's a blessing for every church.", "photoUrl": null, "sortOrder": 0 },
+    { "id": 9, "name": "Kwabena Asare", "church": "New Covenant Assembly", "quote": "This is not just an app; it's a ministry tool. ScriptureLive AI helps us stay focused on God instead of technical problems. That alone is priceless.", "photoUrl": null, "sortOrder": 0 },
+    { "id": 10, "name": "Pastor Michael Boateng", "church": "Dominion Faith Church", "quote": "Preaching with ScriptureLive AI feels powerful. The verse suggestions during sermons? That's next-level. It's like having an assistant led by the Holy Spirit.", "photoUrl": null, "sortOrder": 0 },
+    { "id": 11, "name": "Anita Kyei", "church": "House of Praise International", "quote": "Our projection team used to make mistakes under pressure. Now everything is smooth and accurate. ScriptureLive AI has taken away the stress completely.", "photoUrl": null, "sortOrder": 0 },
+    { "id": 12, "name": "Deacon Samuel Tetteh", "church": "Redeemed Life Chapel", "quote": "I've used many church presentation tools, but this one is different. It's fast, intelligent, and designed for real ministry situations, not just theory.", "photoUrl": null, "sortOrder": 0 },
+    { "id": 13, "name": "Josephine Adu", "church": "Glory Impact Center", "quote": "This app understands the flow of worship. From scriptures to transitions, everything feels guided. It's like technology finally caught up with church needs.", "photoUrl": null, "sortOrder": 0 },
+    { "id": 14, "name": "Apostle Richard Nyarko", "church": "Kingdom Expansion Church", "quote": "The AI sermon support is powerful. It helps connect scriptures in a way that strengthens the message. This is the future of preaching tools.", "photoUrl": null, "sortOrder": 0 }
+  ]
+}
