@@ -48,6 +48,14 @@ export type CommandKind =
   | 'change_translation'
   | 'delete_previous_verse'
   | 'show_verse_n'
+  // v0.7.235 — Jump to chapter N within the current book. Mirror of
+  // show_verse_n but at chapter granularity. Operator says
+  // "chapter 5" / "go to chapter 5" / "chapter five" and the
+  // dispatcher loads <currentBook> 5:1 in the active translation.
+  // Also paired with the ASR mishearing "vest" → "verse" (Deepgram/
+  // Whisper consistently mishear "verse" as "vest" — both routes
+  // through detectShowVerseCommand).
+  | 'show_chapter_n'
   // v0.7.23 — AI Verse Search. Operator describes a verse in their
   // own words ("find the verse about loving your enemies") and the
   // dispatcher calls the existing /api/scripture/semantic-match
@@ -69,6 +77,8 @@ export interface VoiceCommand {
   translation?: string
   /** Verse number (1-indexed) if kind === 'show_verse_n'. */
   verseNumber?: number
+  /** Chapter number (1-indexed) if kind === 'show_chapter_n'. v0.7.235 */
+  chapterNumber?: number
   /**
    * v0.7.23 — Free-form quote / topic the operator is asking the
    * semantic matcher to find when kind === 'find_by_quote'.
@@ -905,16 +915,120 @@ function detectShowVerseCommand(
   //   • "skip to verse 5" / "skip down to verse 5"
   //   • "turn to verse 5"
   //   • "verse 5" alone (post wake-word)
-  const re = /^(?:(?:let(?:'?s)?\s+go\s+to|take\s+me\s+to|scroll\s+(?:down|up)\s+to|go\s+(?:down|up)\s+to|move(?:\s+(?:down|up))?\s+to|skip(?:\s+(?:down|up))?\s+to|turn\s+to|show|display|go\s+to|jump\s+to|open|read)\s+)?verse\s+(\d{1,3})\s*$/i
+  //
+  // v0.7.235 — Accept "vest" as an ASR mishearing of "verse".
+  // Deepgram + Whisper consistently transcribe "verse N" as "vest N"
+  // when the operator speaks quickly or has a non-American accent;
+  // operators in Ghana hit this on every service. Listed as a regex
+  // alternation (not a separate alias map) so the existing prefix
+  // grammar ("go to vest 5", "let's go to vest 5") works without
+  // duplicating the whole pattern. Also accept "verses" (transcript
+  // pluralisation) and "vs" (occasional shorthand the engine emits).
+  // v0.7.238 — Capture either digits OR an English word-number
+  // ("verse five", "verse twenty", "verse one hundred and twenty").
+  // Deepgram / gpt-4o-mini-transcribe consistently emit word-form
+  // numbers when the operator speaks slowly, when chunk confidence
+  // is low, or when the speaker has a non-American accent — and
+  // the pre-238 strict `\d{1,3}` capture silently rejected all of
+  // them, producing the operator-reported "verse N not triggering"
+  // bug even though the regex prefix grammar matched. Word capture
+  // is permissive (`[a-z][a-z\s-]{1,40}`) so the parser, not the
+  // regex, owns vocabulary validation.
+  const re = /^(?:(?:let(?:'?s)?\s+go\s+to|take\s+me\s+to|scroll\s+(?:down|up)\s+to|go\s+(?:down|up)\s+to|move(?:\s+(?:down|up))?\s+to|skip(?:\s+(?:down|up))?\s+to|turn\s+to|show|display|go\s+to|jump\s+to|open|read)\s+)?(?:verse|verses|vest|vs)\s+(\d{1,3}|[a-z][a-z\s-]{1,40})\s*$/i
   const m = lower.match(re)
   if (!m) return null
-  const n = parseInt(m[1]!, 10)
-  if (!isFinite(n) || n < 1 || n > 200) return null
+  const raw = m[1]!.trim()
+  const n = /^\d+$/.test(raw) ? parseInt(raw, 10) : parseEnglishNumber(raw)
+  if (n === null || !isFinite(n) || n < 1 || n > 200) return null
   return {
     kind: 'show_verse_n',
     confidence: wokeByWakeWord ? 95 : 88,
     label: `Verse ${n}`,
     verseNumber: n,
+    wakeWord: wokeByWakeWord,
+  }
+}
+
+// v0.7.238 — English word-number parser used by both
+// detectShowVerseCommand and detectShowChapterCommand. Returns
+// null for unrecognised input. Supports 1..199 which comfortably
+// covers every chapter (max 150 in Psalms) and verse (max 176 in
+// Psalm 119). Accepts hyphenated ("twenty-one"), space-separated
+// ("twenty one"), and "and"-joined ("one hundred and twenty")
+// forms because ASR engines emit all three depending on dialect
+// and chunk-boundary timing.
+function parseEnglishNumber(s: string): number | null {
+  const SMALL: Record<string, number> = {
+    one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+    ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
+    sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+  }
+  const TENS: Record<string, number> = {
+    twenty: 20, thirty: 30, forty: 40, fourty: 40 /* common ASR mis-spelling */,
+    fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+  }
+  const norm = s.toLowerCase().replace(/-/g, ' ').replace(/\band\b/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!norm) return null
+  if (norm in SMALL) return SMALL[norm]!
+  if (norm in TENS) return TENS[norm]!
+  const tokens = norm.split(' ')
+  // "twenty one" / "thirty five"
+  if (tokens.length === 2 && tokens[0]! in TENS && tokens[1]! in SMALL) {
+    return TENS[tokens[0]!]! + SMALL[tokens[1]!]!
+  }
+  // "one hundred" / "two hundred"
+  if (tokens.length === 2 && tokens[0]! in SMALL && tokens[1] === 'hundred') {
+    const h = SMALL[tokens[0]!]!
+    if (h < 2) return 100 // Bibles only go up to 176 verses; 200+ is out of range anyway
+    return h * 100
+  }
+  if (tokens.length === 1 && tokens[0] === 'hundred') return 100
+  // "one hundred twenty" / "one hundred and twenty" (and normalised above)
+  if (tokens.length === 3 && tokens[0]! in SMALL && tokens[1] === 'hundred' && tokens[2]! in TENS) {
+    return SMALL[tokens[0]!]! * 100 + TENS[tokens[2]!]!
+  }
+  if (tokens.length === 3 && tokens[0]! in SMALL && tokens[1] === 'hundred' && tokens[2]! in SMALL) {
+    return SMALL[tokens[0]!]! * 100 + SMALL[tokens[2]!]!
+  }
+  // "one hundred twenty five" / "one hundred and twenty five"
+  if (tokens.length === 4 && tokens[0]! in SMALL && tokens[1] === 'hundred' && tokens[2]! in TENS && tokens[3]! in SMALL) {
+    return SMALL[tokens[0]!]! * 100 + TENS[tokens[2]!]! + SMALL[tokens[3]!]!
+  }
+  // "hundred and twenty" / "hundred twenty" (rarer ASR output)
+  if (tokens.length === 2 && tokens[0] === 'hundred' && tokens[1]! in TENS) {
+    return 100 + TENS[tokens[1]!]!
+  }
+  if (tokens.length === 2 && tokens[0] === 'hundred' && tokens[1]! in SMALL) {
+    return 100 + SMALL[tokens[1]!]!
+  }
+  return null
+}
+
+// v0.7.235 — "chapter N" / "go to chapter N" / (after wake word) bare
+// "chapter N". Mirrors detectShowVerseCommand at chapter granularity.
+// N must be 1..150 — longest book is Psalms with 150 chapters. The
+// dispatcher resolves <currentBook> from the live slide and fetches
+// chapter N verse 1. No ASR alias needed — "chapter" doesn't have a
+// systematic mishearing the way "verse" does.
+function detectShowChapterCommand(
+  body: string,
+  wokeByWakeWord: boolean,
+): VoiceCommand | null {
+  const lower = body.toLowerCase().trim()
+  // v0.7.238 — Same word-number capture widening as
+  // detectShowVerseCommand. "chapter five" / "chapter twenty three"
+  // now route through parseEnglishNumber.
+  const re = /^(?:(?:let(?:'?s)?\s+go\s+to|take\s+me\s+to|scroll\s+(?:down|up)\s+to|go\s+(?:down|up)\s+to|move(?:\s+(?:down|up))?\s+to|skip(?:\s+(?:down|up))?\s+to|turn\s+to|show|display|go\s+to|jump\s+to|open|read)\s+)?chapter\s+(\d{1,3}|[a-z][a-z\s-]{1,40})\s*$/i
+  const m = lower.match(re)
+  if (!m) return null
+  const raw = m[1]!.trim()
+  const n = /^\d+$/.test(raw) ? parseInt(raw, 10) : parseEnglishNumber(raw)
+  if (n === null || !isFinite(n) || n < 1 || n > 150) return null
+  return {
+    kind: 'show_chapter_n',
+    confidence: wokeByWakeWord ? 95 : 88,
+    label: `Chapter ${n}`,
+    chapterNumber: n,
     wakeWord: wokeByWakeWord,
   }
 }
@@ -983,6 +1097,11 @@ export function detectCommand(utterance: string): VoiceCommand | null {
   if (findCmd) return findCmd
   const verseCmd = detectShowVerseCommand(cleaned, woke)
   if (verseCmd) return verseCmd
+  // v0.7.235 — chapter-N navigation, after verse-N so a hypothetical
+  // future "verse chapter 5" collision (none today) would never
+  // misroute. Each is mutually exclusive at the regex level.
+  const chapterCmd = detectShowChapterCommand(cleaned, woke)
+  if (chapterCmd) return chapterCmd
 
   for (const pat of PATTERNS) {
     for (const trig of pat.triggers) {

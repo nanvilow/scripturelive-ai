@@ -629,7 +629,20 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
     semanticOwnsLive &&
     frozenExplicitId != null &&
     explicitTop != null &&
-    explicitTop.id !== frozenExplicitId
+    // v0.7.257 — Latch releases when AVM shows a different verse
+    // (original v0.7.152 rule) OR when the SAME verse's detection
+    // timestamp is newer than the semantic fire that armed the
+    // latch (i.e. a genuinely fresh new utterance, not audio-buffer
+    // lag re-runs of the just-preempted address). Without the
+    // timestamp clause, operators who voice-repeat the SAME address
+    // they had pre-loaded (or pre-loaded again via Chapter Navigator
+    // lookup which tags 'explicit' @ 1.00) saw AVM auto-fire stay
+    // frozen until they happened to mention a different reference.
+    // The lag-suppression intent is preserved because audio-buffer
+    // re-runs inherit the original detectedAt; only fresh detections
+    // observed AFTER lastFireAtMs clear the gate.
+    (explicitTop.id !== frozenExplicitId ||
+      detectedAtMs(explicitTop) > gate.lastFireAtMs)
   ) {
     semanticOwnsLive = false
     frozenExplicitId = null
