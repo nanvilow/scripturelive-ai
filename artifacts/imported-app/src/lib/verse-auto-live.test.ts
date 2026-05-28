@@ -729,6 +729,147 @@ describe('shouldFireAutoLiveStable (v0.7.107 — continuous, per-column)', () =>
     expect(r.nextStability.frozenExplicitId).toBe(null)
   })
 
+  it('v0.7.257 SEMANTIC-OWNS-LIVE FREEZE RELEASE on FRESH RE-UTTERANCE of the same AVM verse: when AVM column shows the SAME explicit verse id BUT with a detectedAt timestamp NEWER than the semantic fire that armed the latch, the latch releases (fresh utterance, not audio-buffer lag)', () => {
+    // Operator screenshot 2026-05-27: pastor said "Ephesians 6:11"
+    // out loud, AVM caught it @ 1.00, but the projector stayed on
+    // the previously-preempting BRQ verse because the v0.7.152
+    // latch only released on a DIFFERENT id. Audio-buffer-lag re-
+    // runs must still be suppressed, so the release clause keys on
+    // `detectedAt > gate.lastFireAtMs` — lag re-runs carry the
+    // original timestamp; a fresh new utterance carries a newer one.
+    let g = fresh()
+    // Frame 1: AVM Gen.1.1 fires @ t=1000.
+    let r = shouldFireAutoLiveStable(
+      [{ ...v('Gen.1.1', 1.0, 1000, 'explicit'), reference: 'Genesis 1:1' }],
+      null,
+      g,
+      { nowMs: 1000 },
+    )
+    g = r.nextStability
+    // Frame 2: BRQ Psa.118.9 preempts @ t=3000 → latch armed,
+    // frozenExplicitId=Gen.1.1, lastFireAtMs=3000.
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Gen.1.1',   1.0,  1000, 'explicit'), reference: 'Genesis 1:1' },
+        { ...v('Psa.118.9', 0.85, 3000, 'semantic'), reference: 'Psalm 118:9' },
+      ],
+      'Gen.1.1',
+      g,
+      { nowMs: 3000 },
+    )
+    g = r.nextStability
+    expect(g.semanticOwnsLive).toBe(true)
+    expect(g.frozenExplicitId).toBe('Gen.1.1')
+    expect(g.lastFireAtMs).toBe(3000)
+    // Frame 3a: STALE AVM re-detection of Gen.1.1 with the
+    // ORIGINAL t=1000 timestamp (audio-buffer lag). Latch must
+    // stay armed — explicit fire must NOT happen.
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Gen.1.1',   1.0,  1000, 'explicit'), reference: 'Genesis 1:1' },
+        { ...v('Psa.118.9', 0.85, 3000, 'semantic'), reference: 'Psalm 118:9' },
+      ],
+      'Psa.118.9',
+      g,
+      { nowMs: 4000 },
+    )
+    expect(r.fire).toBe(false)
+    expect(r.nextStability.semanticOwnsLive).toBe(true)
+    expect(r.nextStability.frozenExplicitId).toBe('Gen.1.1')
+    // Frame 3b: FRESH AVM re-utterance of Gen.1.1 with a NEW
+    // timestamp t=8000 (post-latch-arm at 3000). Latch RELEASES —
+    // the fresh detection fires live.
+    r = shouldFireAutoLiveStable(
+      [
+        { ...v('Gen.1.1',   1.0,  8000, 'explicit'), reference: 'Genesis 1:1' },
+        { ...v('Psa.118.9', 0.85, 3000, 'semantic'), reference: 'Psalm 118:9' },
+      ],
+      'Psa.118.9',
+      g,
+      { nowMs: 8000 },
+    )
+    expect(r.fire).toBe(true)
+    if (r.fire) {
+      expect(r.verse.id).toBe('Gen.1.1')
+      expect(r.source).toBe('explicit')
+    }
+    expect(r.nextStability.semanticOwnsLive).toBe(false)
+    expect(r.nextStability.frozenExplicitId).toBe(null)
+  })
+
+  it('v0.7.259 FRESH EXPLICIT UTTERANCE preempts SEMANTIC re-fire on same-frame tiebreak: when both columns fire same frame AND the explicit candidate detectedAt is strictly newer than the semantic candidate detectedAt, explicit wins (operator just spoke a new address — must not be hijacked by a re-promoted older semantic match)', () => {
+    // Operator screenshot 2026-05-28: speaker said "let's go to
+    // Genesis 2:1" but Live stayed on Matthew 14:25 because the
+    // semantic phrase pipeline kept re-promoting Matthew 14:25
+    // (via store.ts v0.7.187.2 re-mention) and the v0.7.152
+    // tiebreak handed it the projector every frame, even though
+    // Genesis 2:1 was a genuinely fresher explicit utterance.
+    // Latch release fired correctly but explicit still lost on
+    // the tiebreak — this test guards the new fresh-vs-fresh
+    // escape hatch.
+    const g = fresh()
+    // currentLiveId is the older semantic verse (Matt.14.25 @ t=3000).
+    // Same frame: explicit Gen.2.1 arrives @ t=9000 (operator just
+    // said it). Semantic Matt.14.25 also re-promoted @ t=8000 (still
+    // older than the explicit). Explicit must win the tiebreak.
+    const r = shouldFireAutoLiveStable(
+      [
+        { ...v('Gen.2.1',   1.0, 9000, 'explicit'), reference: 'Genesis 2:1' },
+        { ...v('Matt.14.25', 1.0, 8000, 'semantic'), reference: 'Matthew 14:25' },
+      ],
+      'Matt.14.25',
+      g,
+      { nowMs: 9000 },
+    )
+    expect(r.fire).toBe(true)
+    if (r.fire) {
+      expect(r.verse.id).toBe('Gen.2.1')
+      expect(r.source).toBe('explicit')
+    }
+    expect(r.nextStability.semanticOwnsLive).toBe(false)
+    expect(r.nextStability.frozenExplicitId).toBe(null)
+  })
+
+  it('v0.7.259 STALE EXPLICIT does NOT preempt SEMANTIC re-fire: the v0.7.152 stale-AVM protection still holds — when the explicit candidate is OLDER than the semantic candidate, semantic still wins (preserves the original anti-stale-AVM intent)', () => {
+    // Inverse of the v0.7.259 fresh-explicit test: explicit Gen.2.1
+    // is from earlier in the sermon (t=1000), semantic Matt.14.25
+    // is the newer signal (t=9000). The new escape hatch must NOT
+    // fire — semantic still wins per v0.7.152 spec.
+    const g = fresh()
+    const r = shouldFireAutoLiveStable(
+      [
+        { ...v('Gen.2.1',    1.0, 1000, 'explicit'), reference: 'Genesis 2:1' },
+        { ...v('Matt.14.25', 1.0, 9000, 'semantic'), reference: 'Matthew 14:25' },
+      ],
+      null,
+      g,
+      { nowMs: 9000 },
+    )
+    expect(r.fire).toBe(true)
+    if (r.fire) {
+      expect(r.verse.id).toBe('Matt.14.25')
+      expect(r.source).toBe('semantic')
+    }
+  })
+
+  it('v0.7.259 SAME-TIMESTAMP TIE goes to SEMANTIC per v0.7.152 (strict `>` comparator contract): when both candidates carry identical detectedAt the new escape hatch must NOT fire — guards future refactors from accidentally lowering `>` to `>=`', () => {
+    const g = fresh()
+    const r = shouldFireAutoLiveStable(
+      [
+        { ...v('Gen.2.1',    1.0, 9000, 'explicit'), reference: 'Genesis 2:1' },
+        { ...v('Matt.14.25', 1.0, 9000, 'semantic'), reference: 'Matthew 14:25' },
+      ],
+      null,
+      g,
+      { nowMs: 9000 },
+    )
+    expect(r.fire).toBe(true)
+    if (r.fire) {
+      expect(r.verse.id).toBe('Matt.14.25')
+      expect(r.source).toBe('semantic')
+    }
+  })
+
   it('v0.7.152 SEMANTIC-OWNS-LIVE FREEZE RELEASE on STOP LIVE: clearing the projector (currentLiveId=null) releases the latch and the next explicit detection auto-fires again', () => {
     let g = fresh()
     // Frame 1: AVM Gen.1.1 fires.

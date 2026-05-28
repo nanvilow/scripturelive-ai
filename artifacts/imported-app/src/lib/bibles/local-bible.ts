@@ -101,7 +101,22 @@ function fsFallback(t: BibleTranslation): TranslationMap | null {
   return null
 }
 
-function loadTranslation(t: BibleTranslation): TranslationMap | null {
+function loadTranslation(tRaw: BibleTranslation): TranslationMap | null {
+  // v0.7.261 — CRITICAL: normalize translation key to lowercase.
+  // The store stores defaultTranslation as 'KJV' (uppercase) but the
+  // switch below and the bundled JSON filenames are all lowercase
+  // ('kjv.json'). Without this normalization, every lookupVerse /
+  // lookupRange / lookupChapter call from the renderer with an
+  // uppercase translation hits `default: mod = null` and falls through
+  // to the online fetch — which in offline-Electron returns nothing,
+  // and in the AUTO LIVE / sendDetected paths silently falls back to
+  // `best.text` (the trigger paraphrase for SEMANTIC detections), so
+  // the projector showed paraphrases instead of canonical verses.
+  // This was the root cause of v0.7.253 and v0.7.260 "shipping a fix
+  // that did nothing" — the lookup never returned a hit, the fallback
+  // always fired. Normalizing here covers every call site in one
+  // shot (speech-provider, logos-shell, live-translation-sync).
+  const t = String(tRaw).trim().toLowerCase() as BibleTranslation
   if (t in cache) return cache[t] ?? null
   try {
     // Webpack/Turbopack pull these into the client bundle. Stubs are
