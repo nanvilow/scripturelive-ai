@@ -23,7 +23,7 @@ import { app } from 'electron'
 
 const DEFAULT_TELEMETRY_URL =
   process.env.SCRIPTURELIVE_TELEMETRY_URL?.trim() ||
-  'https://scripturelive.replit.app/api/telemetry'
+  'https://cloud.scriptureliveai.com/api/telemetry'
 
 const TIMEOUT_MS = 4_000
 

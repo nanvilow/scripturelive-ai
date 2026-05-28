@@ -48,6 +48,13 @@ function MediaSlideContent({
   const mediaPaused = useAppStore((s) =>
     isLive ? s.liveMediaPaused : s.previewMediaPaused,
   )
+  // v0.7.253 — Per-surface Loop flag, mirrored into the <video loop=…>
+  // JSX prop below. Pre-253 this slide-renderer hard-coded `loop` so
+  // clips played forever on operator surfaces (Preview + Live) even
+  // when the operator's Loop button was OFF. See the JSX comment at
+  // L224 for the full root-cause writeup.
+  const previewMediaLoop = useAppStore((s) => s.previewMediaLoop)
+  const liveMediaLoop = useAppStore((s) => s.liveMediaLoop)
   // When something is on air the Preview surface stops playing — the
   // operator's preview must never compete for audio or distract from
   // the Live Display. The Live surface is unaffected by this gate.
@@ -218,7 +225,19 @@ function MediaSlideContent({
         data-surface={isLive ? 'live' : 'preview'}
         src={resolveMediaUrl(slide.mediaUrl)}
         autoPlay={!shouldBePaused}
-        loop
+        // v0.7.253 — Gate `loop` on the per-surface store flag instead
+        // of hard-coding `true`. Operator complaint: "Video kept loop
+        // playing even when users doesn't clicks on the loops" — the
+        // Loop button toggled previewMediaLoop/liveMediaLoop in the
+        // store and logos-shell's useEffect (L401) mirrored it onto
+        // ITS element, but THIS <video> (rendered inside the same
+        // surface but via slide-renderer instead of the direct logos-
+        // shell <video>) ignored the flag entirely because the JSX
+        // prop was the literal boolean `true`. Default false in store
+        // means clips now play once and stop, matching ProPresenter /
+        // EasyWorship default behaviour. Operator toggles Loop ON to
+        // get the looping bg-roll behaviour back.
+        loop={isLive ? liveMediaLoop : previewMediaLoop}
         // Audibility is now driven entirely by the useEffect above
         // (v.muted = globalMuted || !audible). With the operator-
         // facing audio toggles defaulting to ON, dropped media plays
@@ -496,22 +515,51 @@ export function SlideThumb({
         {settings.customBackground && (
           <>
             {isVideoBackground(settings.customBackground) ? (
+              // v0.7.221 — Operator $1600 escalation: "the background
+              // video keeps playing anywhere". SlideThumb is rendered
+              // in the schedule strip, the chapter navigator, and
+              // every other in-app thumbnail — none of which are real
+              // broadcast surfaces. Freeze on first frame so the
+              // operator sees a static poster everywhere except the
+              // three real broadcast targets (Main Console LIVE
+              // DISPLAY, Secondary Screen popup, NDI offscreen
+              // FrameCapture). Same freeze pattern as the Custom
+              // Background thumbnail in settings.tsx and the
+              // IS_FROZEN_BG branch in /api/output/congregation
+              // route.ts. The opacity:0.4 visual style is preserved.
               <video
-                src={settings.customBackground}
-                autoPlay
-                loop
+                src={`${settings.customBackground}#t=0.1`}
                 muted
                 playsInline
-                className="absolute inset-0 w-full h-full object-cover opacity-40"
+                preload="metadata"
+                ref={(el) => {
+                  if (!el) return
+                  try { el.pause() } catch { /* ignore */ }
+                }}
+                onLoadedData={(e) => {
+                  try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
+                }}
+                onPlay={(e) => {
+                  try { (e.currentTarget as HTMLVideoElement).pause() } catch { /* ignore */ }
+                }}
+                className="absolute inset-0 w-full h-full object-cover opacity-60"
               />
             ) : (
               <img
                 src={settings.customBackground}
                 alt=""
-                className="absolute inset-0 w-full h-full object-cover opacity-40"
+                className="absolute inset-0 w-full h-full object-cover opacity-60"
               />
             )}
-            <div className="absolute inset-0 bg-black/40" />
+            {/* v0.7.221 — Scrim alpha dropped from /40 → /20 to keep
+                in lockstep with route.ts `.bg-overlay` rgba(0,0,0,.2).
+                Bg-stack `opacity` and overlay alpha MUST move as a pair
+                so SlideThumb (operator's preview/library tile) shows
+                the SAME effective brightness as the live broadcast
+                surface — operator was previously seeing a darker
+                thumbnail than the actual projector output and
+                under-judging the scene visibility. */}
+            <div className="absolute inset-0 bg-black/20" />
           </>
         )}
       </div>
