@@ -629,7 +629,20 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
     semanticOwnsLive &&
     frozenExplicitId != null &&
     explicitTop != null &&
-    explicitTop.id !== frozenExplicitId
+    // v0.7.257 — Latch releases when AVM shows a different verse
+    // (original v0.7.152 rule) OR when the SAME verse's detection
+    // timestamp is newer than the semantic fire that armed the
+    // latch (i.e. a genuinely fresh new utterance, not audio-buffer
+    // lag re-runs of the just-preempted address). Without the
+    // timestamp clause, operators who voice-repeat the SAME address
+    // they had pre-loaded (or pre-loaded again via Chapter Navigator
+    // lookup which tags 'explicit' @ 1.00) saw AVM auto-fire stay
+    // frozen until they happened to mention a different reference.
+    // The lag-suppression intent is preserved because audio-buffer
+    // re-runs inherit the original detectedAt; only fresh detections
+    // observed AFTER lastFireAtMs clear the gate.
+    (explicitTop.id !== frozenExplicitId ||
+      detectedAtMs(explicitTop) > gate.lastFireAtMs)
   ) {
     semanticOwnsLive = false
     frozenExplicitId = null
@@ -754,6 +767,41 @@ export function shouldFireAutoLiveStable<T extends RankedVerse & { reference?: s
     explicitFire = null
   }
 
+  // v0.7.259 — Fresh-explicit-utterance preempts semantic re-fire.
+  // The v0.7.152 "semantic always wins tiebreak" + v0.7.187.2
+  // re-mention promotion (store.ts) combined into a regression: when
+  // a semantic phrase keeps re-firing (every re-detection promotes
+  // the same verse with a new id + new detectedAt) it ALWAYS beats a
+  // newly-uttered explicit address on the tiebreak — operator says
+  // "let's go to Genesis 2:1" but Live stays pinned on the older
+  // Matthew 14:25 semantic match because Matthew 14:25 also has a
+  // fresh-promoted id this frame.
+  //
+  // Guard: when BOTH columns have a candidate AND the explicit
+  // candidate's detectedAt is STRICTLY newer than the semantic
+  // candidate's, the explicit wins this frame. This preserves the
+  // v0.7.152 stale-AVM protection (stale explicit entries from
+  // earlier in the sermon still lose to a fresh semantic) and the
+  // v0.7.257 latch release (which has already happened above) — it
+  // only changes the case where the operator's most recent spoken
+  // address is the freshest signal in the system.
+  if (
+    explicitFire &&
+    semanticFire &&
+    detectedAtMs(explicitFire) > detectedAtMs(semanticFire)
+  ) {
+    return {
+      fire: true,
+      verse: explicitFire,
+      source: 'explicit',
+      nextStability: {
+        ...nextGate,
+        lastFireAtMs: now,
+        semanticOwnsLive: false,
+        frozenExplicitId: null,
+      },
+    }
+  }
   // v0.7.152 — Tiebreak inverted from v0.7.151: SEMANTIC wins when
   // both fire same frame. Operator spec: "always display Bible
   // Reference Quoted [semantic] column detected over Auto Verse

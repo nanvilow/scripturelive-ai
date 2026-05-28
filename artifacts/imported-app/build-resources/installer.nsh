@@ -1,3 +1,15 @@
+; v0.7.253 — Explicit StdUtils.nsh include (architect nit).
+;
+; customFinishPage's StartApp Function uses ${StdUtils.ExecShellAsUser}
+; to launch the app as the non-elevated user from a potentially-elevated
+; installer process. electron-builder's templates currently include
+; StdUtils.nsh transitively via multiUser.nsh, so the plugin is
+; available — but a future template refactor (e.g. dropping multiUser
+; for portable-only flows) could silently break the build. The include
+; below is idempotent (NSIS guards against duplicate includes via the
+; header file's own !ifndef sentinel) and makes our dependency explicit.
+!include StdUtils.nsh
+
 ; v0.7.88 — Hardened oneClick / auto-update install over a running app.
 ;
 ; History:
@@ -90,11 +102,197 @@
   !insertmacro killRunningApp
 !macroend
 
+; v0.7.253 — Suppress the "Choose Installation Options" (per-user / all-users)
+; page so the wizard matches the contracted 5-page OBS-parity flow.
+;
+; Operator escalation after v0.7.252 install: between License and Choose
+; Install Location, the installer showed a "Choose Installation Options:
+; Who should this application be installed for? Anyone who uses this
+; computer / Only for me" page. That page is NOT in the OBS-parity mockup
+; — operators learn the install flow from OBS / Wirecast / vMix / Pro
+; Presenter, none of which surface this choice.
+;
+; Root cause: electron-builder's assistedInstaller.nsh template (L18-20)
+; inserts PAGE_INSTALL_MODE whenever perMachine is not "true":
+;
+;   !ifndef INSTALL_MODE_PER_ALL_USERS
+;     !insertmacro PAGE_INSTALL_MODE
+;   !endif
+;
+; Our config (electron-builder.yml) is `perMachine: false` (we want a
+; clean per-user install with NO UAC prompt), so INSTALL_MODE_PER_ALL_USERS
+; is not defined → the page is inserted. Defining INSTALL_MODE_PER_ALL_USERS
+; ourselves would skip the page but FORCE all-users mode (requires UAC,
+; breaks the no-elevation contract).
+;
+; Fix: electron-builder exposes an official `customInstallMode` hook
+; macro inside the install-mode-page PRE function (see
+; node_modules/app-builder-lib/templates/nsis/multiUserUi.nsh L41-65):
+;
+;   StrCpy $isForceMachineInstall "0"
+;   StrCpy $isForceCurrentInstall "0"
+;   !ifmacrodef customInstallMode
+;     !insertmacro customInstallMode    ; ← our hook fires here
+;   !endif
+;   ...
+;   ${if} $isForceCurrentInstall == "1"
+;     !insertmacro setInstallModePerUser
+;     Abort                              ; ← skips the rest of the page
+;   ${endif}
+;
+; By setting $isForceCurrentInstall to "1" inside customInstallMode, the
+; template's own PRE function calls setInstallModePerUser (matches our
+; per-user contract) AND then calls Abort, which tells MUI2 to skip the
+; rest of the page → the dialog never renders, the wizard goes straight
+; from License to Choose Install Location.
+;
+; Why this is the right hook:
+;   • It is electron-builder's officially documented escape hatch for
+;     exactly this situation (forced install mode without UI choice).
+;   • It runs INSIDE the PRE function before any UI is created, so we
+;     avoid the cosmetic "page flash" that a post-render Abort would
+;     produce.
+;   • setInstallModePerUser matches our perMachine: false config, so the
+;     install location, registry keys, and shortcut targets all land in
+;     the same per-user paths they always have. Zero behavioural drift
+;     from v0.7.252 — only the page is gone.
+;   • The Abort here is the MUI page-skip Abort (NOT the installer-quit
+;     Abort) because it's called from inside a PRE callback.
+;
+; GUARD-RAIL (perMachine + customInstallMode lockstep):
+; If electron-builder.yml's `nsis.perMachine` is ever changed from `false`
+; to `true` or `"freeChoice"`, this macro MUST be REMOVED — otherwise it
+; will force per-user install regardless of the YAML config and operators
+; who explicitly want a per-machine install (e.g. multi-user sanctuary
+; PCs) will silently get a per-user install. Canonical pre-ship check:
+;   rg -n "perMachine|customInstallMode" \
+;     artifacts/imported-app/electron-builder.yml \
+;     artifacts/imported-app/build-resources/installer.nsh
+; If perMachine is `false`, customInstallMode SHOULD be present. If
+; perMachine is anything else, customInstallMode MUST be absent.
+!macro customInstallMode
+  StrCpy $isForceCurrentInstall "1"
+!macroend
+
 !macro customUnInit
   ; The silent uninstall that the assisted installer runs as part of
   ; an upgrade also needs the running process gone — otherwise the
   ; uninstall step fails halfway through and the upgrade aborts.
   !insertmacro killRunningApp
+!macroend
+
+; v0.7.251 — Register AUMID DisplayName + IconUri + IconBackgroundColor
+; in HKCU\Software\Classes\AppUserModelId\<aumid>. Without this, Win11
+; Task Manager / taskbar / Start group every process spawned by
+; "ScriptureLive AI.exe" under "Electron (N)" with the generic Electron
+; atom icon — EVEN AFTER rcedit successfully stamps FileDescription +
+; ProductName + icon on the .exe PE resource section. That is because
+; Windows 11 Shell prefers the AUMID's registered DisplayName / IconUri
+; over the EXE's PE FileDescription / icon when the running process has
+; called `app.setAppUserModelId()` at startup (which Electron does — see
+; artifacts/imported-app/electron/main.ts L183).
+;
+; Without an explicit registration, the AUMID `ai.scripturelive.desktop`
+; is "live" but anonymous: Windows finds no DisplayName for it and
+; renders the AUMID group with the framework defaults baked into Electron
+; — literal label "Electron" + the atom icon Chromium embeds as a
+; fallback in the v8 snapshot. This is a documented Win10+ Shell
+; behaviour, not an Electron bug.
+;
+; Fix: NSIS writes three values under HKCU on install, deletes them on
+; uninstall. The AUMID string MUST match THREE places in lockstep:
+;   1. electron/main.ts L183 `app.setAppUserModelId('ai.scripturelive.desktop')`
+;   2. electron-builder.yml `appId: ai.scripturelive.desktop`
+;   3. The HKCU key path in this macro
+; Drifting any one of the three silently re-introduces the "Electron (N)"
+; group label.
+;
+; Per-user scope (HKCU) is intentional — the installer is per-user
+; (perMachine: false in electron-builder.yml), so HKLM writes would
+; require UAC elevation we deliberately avoid. Each Windows user account
+; that installs the app gets their own AUMID registration; uninstall
+; cleans up only the current user's keys.
+;
+; IconUri format: "<absolute path to exe>,<icon resource index>". Index 0
+; points at the primary icon group rcedit embedded into the .exe in the
+; afterPack hook. Using the EXE itself as the icon source (rather than
+; a separate .ico shipped in the install dir) means Windows always shows
+; the same icon in Task Manager + taskbar + Start as the .exe file icon
+; in Explorer — no risk of those four surfaces ever drifting apart.
+;
+; IconBackgroundColor is the AARRGGBB hex Windows uses behind the icon
+; in tile/jump-list contexts. "00000000" = fully transparent so the icon
+; renders against whatever theme background the operator has set. (Some
+; vendors use a brand colour here; our icon already has a solid bg
+; pixel-baked into the .ico, so transparent is correct.)
+!macro customInstall
+  WriteRegStr HKCU "Software\Classes\AppUserModelId\ai.scripturelive.desktop" "DisplayName" "ScriptureLive AI"
+  WriteRegStr HKCU "Software\Classes\AppUserModelId\ai.scripturelive.desktop" "IconUri" "$INSTDIR\ScriptureLive AI.exe,0"
+  WriteRegStr HKCU "Software\Classes\AppUserModelId\ai.scripturelive.desktop" "IconBackgroundColor" "00000000"
+!macroend
+
+; v0.7.236 — Operator-initiated clean uninstall (EasyWorship / Wirecast parity).
+;
+; Operator escalation: "when users uninstall the app delete everything
+; that include the app just like other apps do (EasyWorship, Wirecast,
+; etc.)". Previously NSIS only removed the program files — Electron's
+; user-data folder (`%APPDATA%\ScriptureLive AI\`) and any persisted
+; LocalAppData survived uninstall, so a fresh reinstall on the same PC
+; loaded the OLD persisted Zustand store / electron-store / SQLite
+; back into the new build. Operators saw "most of the fixes didn't
+; apply on this PC" because a v0.7.235 binary was running on top of
+; v0.7.220-era state objects that lacked fields the new code reads
+; (mediaKind, bgBrightness, throttle envelope, etc.).
+;
+; Fix: customUnInstall macro that prompts the operator on uninstall
+; and (default YES) recursively deletes the four canonical user-data
+; locations Electron / Next / our SQLite layer write to. The prompt
+; matches the language operators already see in EasyWorship's uninstall
+; wizard so the affordance is familiar.
+;
+; CRITICAL: silent uninstall (the /S flag electron-updater sets when
+; the auto-updater installs an upgrade) MUST skip the wipe. Otherwise
+; EVERY in-app update would erase the operator's saved library, weekly
+; schedule, NDI settings, and recent-files list — catastrophic data
+; loss on a Sunday morning. `IfSilent skipDataWipe` BEFORE the prompt
+; is the load-bearing guard; do not remove it.
+;
+; Default action when the dialog is shown is YES (wipe). That matches
+; the operator's intent — they're uninstalling because they don't want
+; the app on this PC anymore. Operators who are about to reinstall a
+; different build can click No to keep their state for the next run.
+;
+; Paths wiped:
+;   • $APPDATA\ScriptureLive AI    — Electron userData (electron-store,
+;                                    Zustand persist, IndexedDB, Local
+;                                    Storage, Service Worker caches,
+;                                    Network cookies, GPUCache).
+;   • $LOCALAPPDATA\ScriptureLive AI — Code cache, partition data,
+;                                      crash dumps, log files written
+;                                      by the bundled Next server.
+;   • $APPDATA\@workspace\imported-app — pre-v0.7.x namespace; some
+;                                        long-time operators still have
+;                                        state here from the migration
+;                                        window. Cheap to clean.
+;   • $LOCALAPPDATA\@workspace\imported-app — same, LocalAppData side.
+;
+; ClearErrors at the end so a "folder did not exist" error code from
+; RMDir on a clean machine doesn't poison the installer exit code and
+; trigger Windows' "Uninstall failed" toast.
+!macro customUnInstall
+  IfSilent skipDataWipe
+  MessageBox MB_YESNO|MB_ICONQUESTION "Do you also want to delete your ScriptureLive AI settings, library, saved schedules, and cached data?$\r$\n$\r$\nClick Yes for a complete clean uninstall (recommended if you are not planning to reinstall).$\r$\n$\r$\nClick No to keep your data on this PC for a future reinstall." /SD IDYES IDNO skipDataWipe
+    RMDir /r "$APPDATA\ScriptureLive AI"
+    RMDir /r "$LOCALAPPDATA\ScriptureLive AI"
+    RMDir /r "$APPDATA\@workspace\imported-app"
+    RMDir /r "$LOCALAPPDATA\@workspace\imported-app"
+  skipDataWipe:
+  ; v0.7.251 — Mirror the customInstall AUMID registration: delete the
+  ; HKCU\Software\Classes\AppUserModelId\<aumid> key on uninstall so the
+  ; orphan registration doesn't outlive the .exe it points to. Safe to
+  ; run unconditionally — DeleteRegKey on a missing key is a no-op.
+  DeleteRegKey HKCU "Software\Classes\AppUserModelId\ai.scripturelive.desktop"
+  ClearErrors
 !macroend
 
 ; v0.7.126 — Branded MUI2 wizard customisations.
@@ -118,18 +316,96 @@
 ;     casing (we want "Launch ScriptureLive AI"). electron-builder
 ;     auto-checks the box for us.
 
+; v0.7.251 — customHeader REWRITTEN to fix broken OBS-parity page headers.
+;
+; Operator escalation after v0.7.250 install: "this is not implementated
+; well, as i said step by step" with the OBS reference screenshots
+; re-attached. Root cause: the v0.7.126 customHeader macro defined
+; MUI_PAGE_HEADER_TEXT + MUI_PAGE_HEADER_SUBTEXT *globally* with the
+; intent of "Window title on every page". Those macros are NOT the
+; window caption — they are the per-page banner text rendered in the
+; header strip ABOVE each page body. By defining them globally and
+; never !undef'ing between pages, every MUI2 page (License Information,
+; Choose Install Location, Installing) had its default header
+; clobbered to "ScriptureLive AI" / "AI-Powered Worship Presentation".
+; Operators saw three IDENTICAL-looking page headers — nothing like
+; OBS's "License Information" / "Choose Install Location" / "Installing"
+; per-page contextual headers.
+;
+; Fix: stop overriding those macros entirely. MUI2's built-in defaults
+; ARE the OBS-parity strings — License page defaults to
+; "License Information" / "Please review the license terms before
+; installing $(^Name)", Directory page defaults to
+; "Choose Install Location" / "Choose the folder in which to install
+; $(^Name) ${VERSION}", InstFiles page defaults to "Installing" /
+; "Please wait while $(^Name) is being installed". $(^Name) resolves
+; to "ScriptureLive AI" via productName, so the language matches OBS
+; verbatim with the brand name swapped in. Zero string customisation
+; needed — the default MUI2 catalogue IS what OBS uses.
+;
+; What this macro DOES still own:
+;   • Caption — the actual window title bar shown in the Windows
+;     taskbar. OBS reads "OBS Studio 32.1.2 Setup"; ours now reads
+;     "ScriptureLive AI v${VERSION} Setup". Without this directive
+;     electron-builder defaults to "$(^Name) Setup" (no version),
+;     which makes it harder for operators to confirm at a glance
+;     which build they double-clicked.
+;
+; What customWelcomePage + customFinishPage own (unchanged from v0.7.249):
+;   • Welcome page title + body + checkbox label.
+;   • Finish page title + body + checkbox label.
+;   Those macros use MUI_WELCOMEPAGE_* / MUI_FINISHPAGE_* — NOT
+;   MUI_PAGE_HEADER_* — so they don't leak across pages.
+;
+; GUARD-RAIL: do NOT add !define MUI_PAGE_HEADER_TEXT or
+; MUI_PAGE_HEADER_SUBTEXT to this macro (or anywhere else outside an
+; explicit MUI_PAGE_* per-page customisation block). Doing so flattens
+; the per-page contextual headers and re-introduces the v0.7.126
+; identical-looking-pages bug. If you genuinely need to retitle ONE
+; specific page header, define the macro IMMEDIATELY before that
+; specific MUI_PAGE_* insertion AND !undef it immediately after.
 !macro customHeader
-  ; Window title on every page. Wirecast / vMix do exactly this so
-  ; the wizard chrome reinforces the brand rather than just saying
-  ; "Setup". $(^Name) resolves to "ScriptureLive AI" from
-  ; productName, ${VERSION} is injected by electron-builder.
-  !define MUI_PAGE_HEADER_TEXT "ScriptureLive AI"
-  !define MUI_PAGE_HEADER_SUBTEXT "AI-Powered Worship Presentation"
+  Caption "ScriptureLive AI v${VERSION} Setup"
+  UninstallCaption "ScriptureLive AI v${VERSION} Uninstall"
 !macroend
 
+; v0.7.253 — customWelcomePage REWRITTEN to actually insert the Welcome page.
+;
+; Operator escalation after v0.7.252 install: Win11 installer screenshot
+; sequence shows the wizard jumping STRAIGHT from double-click to the
+; License page — the OBS-parity Welcome page (sidebar bitmap left,
+; "Welcome to ScriptureLive AI" heading right) was MISSING.
+;
+; Root cause: electron-builder's assistedInstaller.nsh template (see
+; node_modules/app-builder-lib/templates/nsis/assistedInstaller.nsh L9-11)
+; treats customWelcomePage as a REPLACEMENT for the default welcome page
+; insertion, not a "configure-and-still-render" hook:
+;
+;   !ifmacrodef customWelcomePage
+;     !insertmacro customWelcomePage
+;   !endif
+;   ; ← NOTHING ELSE inserts MUI_PAGE_WELCOME
+;
+; The pre-v0.7.253 macro only !define'd MUI_WELCOMEPAGE_TITLE +
+; MUI_WELCOMEPAGE_TEXT but NEVER called !insertmacro MUI_PAGE_WELCOME,
+; so the page was silently swallowed. The !define's configured a page
+; that was never created. Every release from v0.7.249 → v0.7.252 shipped
+; without a real Welcome page for this reason.
+;
+; Fix: keep the title/text overrides AND add the missing
+; !insertmacro MUI_PAGE_WELCOME at the end of the macro so the page
+; actually renders.
+;
+; GUARD-RAIL (mandatory !insertmacro MUI_PAGE_WELCOME in customWelcomePage):
+; if customWelcomePage is defined for ANY reason, it MUST end with
+; !insertmacro MUI_PAGE_WELCOME — otherwise the welcome page disappears.
+; Same pattern applies to customFinishPage below. Canonical pre-ship grep:
+;   rg -n "!insertmacro MUI_PAGE_(WELCOME|FINISH)" artifacts/imported-app/build-resources/installer.nsh
+; must return ≥ 2 matches.
 !macro customWelcomePage
-  !define MUI_WELCOMEPAGE_TITLE "Welcome to ScriptureLive AI"
-  !define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of ScriptureLive AI v${VERSION}.$\r$\n$\r$\nReal-time scripture detection, AI-powered slide generation, and broadcast-quality NDI output for live worship.$\r$\n$\r$\nClick Next to continue."
+  !define MUI_WELCOMEPAGE_TITLE "Welcome to ScriptureLive AI v${VERSION} Setup"
+  !define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of ScriptureLive AI.$\r$\n$\r$\nIt is recommended that you close all other applications before starting, including any previous version of ScriptureLive AI. This will make it possible to update relevant files without having to reboot your computer.$\r$\n$\r$\nClick Next to continue."
+  !insertmacro MUI_PAGE_WELCOME
 !macroend
 
 ; v0.7.139 — Operator request: at the end of install, make it explicit
@@ -175,11 +451,83 @@
 ;     they change their mind. ✓
 ;   • Silent (/S) → no MessageBox, no Finish page, app handled by
 ;     auto-updater IPC. ✓
+; v0.7.249 — Finish page matches OBS / Wirecast / Pro Presenter:
+; "Completed Setup" title, single confirmation paragraph, run-checkbox
+; CHECKED by default (the mid-flow customInstall MessageBox was
+; removed in v0.7.249 to restore the OBS-style 5-page linear flow
+; — Welcome → License → Install Location → Installing → Completed —
+; so the Finish-page checkbox is now the ONLY launch affordance and
+; SHOULD be ticked by default). Operators who want to install-only
+; can simply untick before clicking Finish.
+; v0.7.253 — customFinishPage REWRITTEN to actually insert the Finish page
+; AND wire up the launch checkbox.
+;
+; Operator escalation (same v0.7.252 install screenshot sequence): the
+; last page shown was a stripped-down "Installation Complete" with only
+; a Close button — NO sidebar bitmap, NO "Launch ScriptureLive AI"
+; checkbox, NO Finish button. That's not the MUI Finish page at all —
+; it's the InstFiles page sitting on screen after the progress bar
+; hits 100% because the Finish page was never inserted.
+;
+; Root cause: same as customWelcomePage. The electron-builder
+; assistedInstaller.nsh template (L47-64) treats customFinishPage as a
+; full REPLACEMENT for the default finish page block:
+;
+;   !ifmacrodef customFinishPage
+;     !insertmacro customFinishPage
+;   !else
+;     ...defines StartApp Function...
+;     !define MUI_FINISHPAGE_RUN
+;     !define MUI_FINISHPAGE_RUN_FUNCTION "StartApp"
+;     !insertmacro MUI_PAGE_FINISH
+;   !endif
+;
+; When customFinishPage is defined, the !else branch is SKIPPED — so we
+; don't get StartApp, we don't get the run-checkbox define, and we don't
+; get the MUI_PAGE_FINISH insertion. The pre-v0.7.253 macro only set
+; title/text/run-text strings and assumed the template would do the
+; insertion — but it doesn't.
+;
+; Fix: reproduce the template's !else branch INSIDE this macro, plus our
+; custom title/text strings:
+;   • StartApp Function (verbatim from the template's !else branch — same
+;     ${if} ${isUpdated} / StdUtils.ExecShellAsUser as the default)
+;   • MUI_FINISHPAGE_RUN + MUI_FINISHPAGE_RUN_FUNCTION (wires the run
+;     checkbox to StartApp)
+;   • Our branded title/text/run-text overrides
+;   • !insertmacro MUI_PAGE_FINISH at the end — the missing line
+;
+; The checkbox starts CHECKED by default (no MUI_FINISHPAGE_RUN_NOTCHECKED)
+; — matches the v0.7.249 contract: with the mid-flow customInstall
+; MessageBox removed, the Finish-page checkbox is the ONLY launch
+; affordance and SHOULD be ticked by default. Operators who want to
+; install-only can untick before clicking Finish.
+;
+; GUARD-RAIL (mandatory !insertmacro MUI_PAGE_FINISH + StartApp in customFinishPage):
+; if customFinishPage is defined, the macro MUST contain BOTH the StartApp
+; Function AND !insertmacro MUI_PAGE_FINISH — otherwise the launch checkbox
+; either doesn't render OR renders without a working launch handler.
+; StdUtils.ExecShellAsUser is the only correct way to launch the app as
+; the non-elevated user from a potentially-elevated installer process;
+; do not replace with Exec/ExecWait/ExecShell — those would re-launch
+; the app with the installer's elevated token and break NDI capture
+; (which requires the operator's non-elevated session token).
 !macro customFinishPage
-  !define MUI_FINISHPAGE_TITLE "Installation Complete"
-  !define MUI_FINISHPAGE_TEXT "ScriptureLive AI v${VERSION} has been successfully installed on your computer.$\r$\n$\r$\nClick Finish to close this installer.$\r$\n$\r$\nIf the app is not already open, tick the box below and click Finish to launch ScriptureLive AI now — or open it later from your desktop or the Start menu."
-  !define MUI_FINISHPAGE_RUN_TEXT "Open ScriptureLive AI now"
-  !define MUI_FINISHPAGE_RUN_NOTCHECKED
+  Function StartApp
+    ${if} ${isUpdated}
+      StrCpy $1 "--updated"
+    ${else}
+      StrCpy $1 ""
+    ${endif}
+    ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$1"
+  FunctionEnd
+
+  !define MUI_FINISHPAGE_TITLE "Completed Setup"
+  !define MUI_FINISHPAGE_TEXT "ScriptureLive AI v${VERSION} has been installed on your computer.$\r$\n$\r$\nClick Finish to close Setup."
+  !define MUI_FINISHPAGE_RUN
+  !define MUI_FINISHPAGE_RUN_FUNCTION "StartApp"
+  !define MUI_FINISHPAGE_RUN_TEXT "Launch ScriptureLive AI v${VERSION}"
+  !insertmacro MUI_PAGE_FINISH
 !macroend
 
 ; v0.7.142 — Operator follow-up (screenshot https://imgur.com/a/iB0bQ2K):
@@ -219,10 +567,22 @@
 ;   • Quote the path because `Program Files\…` always contains spaces.
 ;   • ClearErrors at the end so a "user said No" doesn't poison the
 ;     installer exit code.
-!macro customInstall
-  IfSilent skipLaunchPrompt
-  MessageBox MB_YESNO|MB_ICONINFORMATION "ScriptureLive AI v${VERSION} has been successfully installed on your computer.$\r$\n$\r$\nWould you like to open ScriptureLive AI now?$\r$\n$\r$\n(You can also open it later from your desktop or Start menu.)" /SD IDYES IDNO skipLaunchPrompt
-  Exec '"$INSTDIR\ScriptureLive AI.exe"'
-  skipLaunchPrompt:
-  ClearErrors
-!macroend
+; v0.7.249 — customInstall MessageBox REMOVED.
+;
+; v0.7.142 added a mid-flow MessageBox that fired between file-copy and
+; the Finish page asking "Installed! Open now? Yes/No". It worked, but
+; it broke the linear OBS-style 5-page flow operators have learned from
+; every other broadcast tool they use (OBS, Wirecast, vMix, Pro
+; Presenter, EasyWorship) — Welcome → License → Install Location →
+; Installing → Completed. The interrupt-modal felt amateurish next to
+; that lineage and confused operators who clicked through it expecting
+; the Finish page (operator screenshot escalation: "the popup before
+; the finish screen feels like an installer glitch").
+;
+; The Finish page already provides an unmissable launch affordance via
+; MUI's run-checkbox (now CHECKED by default in customFinishPage), so
+; the MessageBox was redundant. Silent / auto-updater installs were
+; already handled by IfSilent skipPrompt — no behavioural change there.
+;
+; The customInit / customUnInit killRunningApp hooks are unaffected;
+; this only removes the post-install MessageBox.
