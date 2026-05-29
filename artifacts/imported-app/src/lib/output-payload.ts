@@ -36,6 +36,17 @@ export function buildOutputPayload(s: StoreState) {
         ...baseCur,
         mediaPaused: isMediaVideo ? !!s.liveMediaPaused : undefined,
         mediaCurrentTime: isMediaVideo ? s.liveMediaCurrentTime : undefined,
+        // v0.7.253 — Loop button state must reach the secondary screen,
+        // NDI, OBS Browser Source and Wirecast receiver. Pre-253, only
+        // logos-shell's own <video> element honoured liveMediaLoop (via
+        // a local useEffect) — the SSE payload never carried the flag
+        // and the server-rendered foreground <video> tag in
+        // src/app/api/output/congregation/route.ts L2087 hard-coded the
+        // `loop` attribute. Operator-visible bug: toggling Loop OFF on
+        // a clip kept replaying it on every output surface until the
+        // operator advanced to a new slide. Fix here threads the flag
+        // into the payload; the renderer + reconcile sites consume it.
+        mediaLoop: isMediaVideo ? !!s.liveMediaLoop : undefined,
       }
     : null
   const next =
@@ -52,6 +63,11 @@ export function buildOutputPayload(s: StoreState) {
     lowerThirdHeight: settings.lowerThirdHeight,
     lowerThirdPosition: settings.lowerThirdPosition,
     customBackground: settings.customBackground,
+    // v0.7.227 — Operator-controlled background brightness (0-100). The
+    // congregation renderer derives bg opacity + scrim alpha from this
+    // value so both members of the v0.7.226 pair-invariant move in
+    // lockstep across all three surfaces (.bg-image, #bgLayer, .lt-bg).
+    bgBrightness: settings.bgBrightness,
     congregationScreenTheme: settings.congregationScreenTheme,
     displayRatio: settings.displayRatio,
     textScale: settings.textScale,
@@ -97,7 +113,7 @@ export function buildOutputPayload(s: StoreState) {
     referenceTextScale: settings.referenceTextScale,
     referenceTextAlign: settings.referenceTextAlign,
     bibleLineHeight: sExt.bibleLineHeight,
-    slideTransitionStyle: settings.slideTransitionStyle || 'fade',
+    slideTransitionStyle: settings.slideTransitionStyle || 'cut',
     slideTransitionDuration: settings.slideTransitionDuration ?? 500,
   }
   const blanked = !!s.outputBlanked
@@ -106,6 +122,30 @@ export function buildOutputPayload(s: StoreState) {
     volume: typeof s.globalVolume === 'number' ? s.globalVolume : 1,
     muted: !!s.globalMuted,
   }
+  // v0.7.228 — Output / NDI startup-delay fix (the deferred half of the
+  // v0.7.227 operator escalation). Surface the pinned-preview video URL
+  // to the output renderer (congregation/route.ts) so it can mount a
+  // hidden <video preload="auto"> using the v0.7.225 freezeBg pattern
+  // and have HTTP bytes + container demux + first-frame decode all done
+  // BEFORE the operator clicks Go Live. Without this the secondary
+  // screen + NDI offscreen capture each take 1-3s to paint the first
+  // frame because the <video> mount on the live URL change does cold
+  // network fetch + decoder allocation AFTER the click. We only emit
+  // it when the pinned preview is (a) a media-video, (b) different
+  // from whatever's already live (no point preheating the live URL —
+  // it's already decoded), and (c) not equal to whatever was preheated
+  // last tick (renderer dedups by URL too, but cheaper to filter here).
+  // Bandwidth cost: ~1 MOOV-atom + ~1 GOP per preview pin, not per
+  // single-click — capped at one preheat in flight at a time.
+  const pinned = s.pinnedPreviewSlide
+  const preheatMediaUrl =
+    pinned &&
+    pinned.type === 'media' &&
+    pinned.mediaKind === 'video' &&
+    !!pinned.mediaUrl &&
+    pinned.mediaUrl !== (cur && cur.type === 'media' ? cur.mediaUrl : null)
+      ? pinned.mediaUrl
+      : null
   const showStartupLogo = !s.hasShownContent
   return s.outputEnabled
     ? {
@@ -122,6 +162,7 @@ export function buildOutputPayload(s: StoreState) {
         settings: settingsBlock,
         blanked,
         audio,
+        preheatMediaUrl,
       }
     : {
         type: 'clear' as const,
@@ -135,6 +176,7 @@ export function buildOutputPayload(s: StoreState) {
         settings: settingsBlock,
         blanked,
         audio,
+        preheatMediaUrl,
       }
 }
 

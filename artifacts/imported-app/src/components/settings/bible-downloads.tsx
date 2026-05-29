@@ -40,14 +40,29 @@ export function BibleOfflineDownloads() {
   const confirm = useConfirm()
   const [items, setItems] = useState<CatalogueEntry[]>([])
   const [loading, setLoading] = useState(true)
+  // v0.7.239 — surface fetch failures instead of silently rendering a
+  // blank gap. Operator escalation: opening Settings → Offline Bible
+  // Translations showed only the header + footer text with no list and
+  // no spinner, because a transient internal-fetch error (DB lock
+  // during a background download, packaged-server boot race, etc.)
+  // dropped the catalogue payload and the silent `catch` swallowed it.
+  // Tracking the error here drives an explicit "Failed to load" row
+  // with a Retry button below.
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
       const res = await fetch('/api/bible/translations', { cache: 'no-store' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       setItems(data.catalogue || [])
-    } catch {
-      // Network blip — keep showing the previous list.
+      setLoadError(null)
+    } catch (e) {
+      // Don't blow away a previously-loaded list, but surface the
+      // error so the operator sees Something Is Wrong instead of an
+      // empty card. If we never had a list, the empty-state block
+      // below renders a Retry CTA.
+      setLoadError(e instanceof Error ? e.message : 'Failed to load translations')
     } finally {
       setLoading(false)
     }
@@ -109,6 +124,26 @@ export function BibleOfflineDownloads() {
       <CardContent className="space-y-2">
         {loading && items.length === 0 && (
           <div className="text-xs text-muted-foreground py-4 text-center">Loading translations…</div>
+        )}
+        {!loading && items.length === 0 && (
+          <div className="flex flex-col items-center gap-3 py-6 text-center">
+            <AlertCircle className="h-6 w-6 text-amber-400" />
+            <div className="text-sm font-medium text-foreground">Couldn't load translations</div>
+            <p className="text-xs text-muted-foreground max-w-sm leading-relaxed">
+              {loadError
+                ? `The bundled server didn't return the translation list (${loadError}). This usually clears with a retry — if it doesn't, restart the app.`
+                : 'No translations in the catalogue. This usually means the bundled server is still starting up.'}
+            </p>
+            <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => { setLoading(true); refresh() }}>
+              <Loader2 className={loading ? 'h-3 w-3 animate-spin' : 'h-3 w-3'} /> Retry
+            </Button>
+          </div>
+        )}
+        {!loading && items.length > 0 && loadError && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200/90 flex items-start gap-2">
+            <AlertCircle className="h-3.5 w-3.5 mt-px shrink-0" />
+            <span>Translation list may be out of date — last refresh failed ({loadError}). Click any Download or Retry button to refresh.</span>
+          </div>
         )}
         {items.map((entry) => {
           const dl = entry.download

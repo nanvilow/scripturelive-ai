@@ -145,7 +145,7 @@ export function LiveTranslationSync() {
     // which Next.js dead-code-eliminates at build time.
     if (process.env.NODE_ENV !== 'production' && typeof window !== 'undefined') {
       (window as unknown as { __SL_DEV_BRIDGE?: unknown }).__SL_DEV_BRIDGE = {
-        setLiveAuto: (slide: Parameters<typeof useAppStore.getState>[0] extends infer _ ? Parameters<ReturnType<typeof useAppStore.getState>['setLiveAuto']>[0] : never) =>
+        setLiveAuto: (slide: Parameters<ReturnType<typeof useAppStore.getState>['setLiveAuto']>[0]) =>
           useAppStore.getState().setLiveAuto(slide),
         pinPreviewSlide: (slide: Parameters<ReturnType<typeof useAppStore.getState>['pinPreviewSlide']>[0]) =>
           useAppStore.getState().pinPreviewSlide(slide),

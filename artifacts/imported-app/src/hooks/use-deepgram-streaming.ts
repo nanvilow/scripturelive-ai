@@ -55,7 +55,19 @@ interface UseDeepgramStreamingReturn {
    * when Deepgram doesn't report a confidence score so we never
    * suppress a transcript chunk by accident.
    */
-  startListening: (onResult?: (text: string, confidence: number) => void) => void
+  /**
+   * v0.7.263 — `onResult` now fires on BOTH interim and final
+   * transcripts. The third `isFinal` arg tells the consumer which it
+   * is so the verse detector can run a cheap explicit-reference pass on
+   * every interim (sub-second detection during fast / continuous
+   * speech) while reserving the expensive command / semantic / text-
+   * search pipeline for finals only. The arg is optional so the Whisper
+   * engine (finals-only) keeps the identical structural signature
+   * without change — an omitted value is treated as `true`.
+   */
+  startListening: (
+    onResult?: (text: string, confidence: number, isFinal?: boolean) => void,
+  ) => void
   stopListening: () => void
   resetTranscript: () => void
 }
@@ -81,10 +93,39 @@ interface ProxyControlMessage {
 }
 
 const TARGET_SAMPLE_RATE = 16000
-// 4096-frame ScriptProcessor blocks at 48 kHz are ~85 ms each — small
-// enough that Deepgram receives audio promptly, large enough that we
-// don't drown the renderer thread in postMessage traffic.
-const SCRIPT_PROCESSOR_BUFFER = 4096
+// v0.7.247 — Dropped ScriptProcessor buffer 4096 → 2048 frames after
+// operator escalation: "live transcription doesn't transcribe fast at
+// all; it is very slow detecting what the speaker is saying and
+// delays to pick up the words". At the typical Chromium AudioContext
+// sample rate of 48 kHz, 4096 frames = 85 ms per chunk dispatched to
+// Deepgram; 2048 frames = 43 ms, cutting audio-arrival latency at
+// Deepgram's edge roughly in half. Combined with Deepgram Nova-3's
+// interim turnaround of ~200 ms, the operator sees the first
+// interim partial appear ~40 ms sooner per chunk — perceptible
+// even at the single-word level (the operator's "words showing up
+// late" complaint).
+//
+// The original 4096 comment said "large enough that we don't drown
+// the renderer thread in postMessage traffic." At 43 ms cadence we
+// dispatch ~23 audio messages/sec — well below the 60 Hz rAF budget
+// the renderer is already comfortable with for the broadcaster
+// effect, and the message payload is a small Int16Array (~1.4 KB
+// after downsample-to-16kHz), so postMessage overhead is trivial.
+// Going smaller (1024 = 21 ms) buys diminishing returns AND starts
+// to bump into ScriptProcessorNode's documented quirk of dropping
+// frames when the main thread is busy — 2048 is the sweet spot.
+//
+// GUARD-RAIL: ScriptProcessorNode is the SOURCE of truth for audio
+// dispatch cadence; reducing this number ALONE shaves latency.
+// Touching `endpointing` (currently 300 ms — v0.7.165 invariant
+// against syllable fragmentation) re-introduces garbled interim
+// flicker per v0.7.165 — DO NOT lower it without the keyterm boost
+// + smart_format combo also being re-verified against pulpit audio.
+// Touching `echoCancellation` / `noiseSuppression` flips them off:
+// shaves another ~20-30 ms but degrades accuracy on church PCs
+// monitoring through speakers (echo) or running near HVAC (noise) —
+// only consider if the buffer reduction alone proves insufficient.
+const SCRIPT_PROCESSOR_BUFFER = 2048
 
 function downsampleAndConvertToInt16(
   input: Float32Array,
@@ -123,7 +164,9 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
   const [interimTranscript, setInterimTranscript] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  const onResultRef = useRef<((text: string, confidence: number) => void) | undefined>(undefined)
+  const onResultRef = useRef<
+    ((text: string, confidence: number, isFinal?: boolean) => void) | undefined
+  >(undefined)
   const transcriptRef = useRef('')
   const sessionRef = useRef(0)
   const stopRequestedRef = useRef(false)
@@ -131,6 +174,27 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
   const wsRef = useRef<WebSocket | null>(null)
   const wsReadyRef = useRef(false)
   const audioBacklogRef = useRef<ArrayBuffer[]>([])
+
+  // v0.7.263 — slow-internet resilience. A flaky / low-bandwidth
+  // connection drops the Deepgram WS mid-service (code 1006 / 1011).
+  // Pre-v0.7.263 that tore the whole engine down and surfaced a hard
+  // "check your internet" error, ending the operator's session until
+  // they manually pressed Detect again. We now silently auto-reconnect
+  // (keeping the mic + audio graph alive and buffering audio into
+  // audioBacklogRef) before giving up. Audio captured during the gap is
+  // flushed on the new socket's onopen, so a brief blip loses at most a
+  // word or two instead of the whole session.
+  const keepAliveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const reconnectAttemptsRef = useRef(0)
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Set in startListening so the reconnect path can rebuild the socket
+  // for the SAME session without re-running mic capture.
+  const reconnectRef = useRef<(() => void) | null>(null)
+  // KeepAlive cadence (Deepgram closes an idle socket after ~10 s of no
+  // audio with NET-0001; 7 s keeps us comfortably under that even when
+  // the operator is silent or the uplink is briefly starved).
+  const KEEPALIVE_MS = 7_000
+  const MAX_RECONNECT_ATTEMPTS = 6
 
   const streamRef = useRef<MediaStream | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -188,8 +252,22 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
     stopRequestedRef.current = true
     sessionRef.current += 1
     onResultRef.current = undefined
+    reconnectRef.current = null
+    reconnectAttemptsRef.current = 0
     setIsListening(false)
     setInterimTranscript('')
+
+    // v0.7.263 — stop the KeepAlive ping + any pending reconnect so a
+    // torn-down session doesn't keep poking a dead socket or resurrect
+    // itself after the operator pressed Stop.
+    if (keepAliveTimerRef.current) {
+      clearInterval(keepAliveTimerRef.current)
+      keepAliveTimerRef.current = null
+    }
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
 
     // 1. Disconnect the audio graph FIRST so no more audio is queued.
     const proc = processorRef.current
@@ -305,11 +383,25 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
           const conf = typeof alt?.confidence === 'number'
             ? Math.max(0, Math.min(1, alt!.confidence!))
             : 1
-          cb(cleaned, conf)
+          cb(cleaned, conf, true)
         }
       } else {
-        // Interim — only update the live preview field.
+        // Interim — update the live preview field AND fire the detector
+        // with isFinal=false. v0.7.263: during fast / continuous speech
+        // Deepgram cuts finals infrequently (it only finalises at
+        // ~300 ms silence boundaries), so a reference spoken mid-stream
+        // would sit undetected until the speaker paused. Firing on the
+        // interim lets the consumer run a cheap explicit-reference pass
+        // immediately; it throttles + dedupes its own work so this is
+        // safe to call on every partial.
         setInterimTranscript(cleaned)
+        const cb = onResultRef.current
+        if (cb) {
+          const conf = typeof alt?.confidence === 'number'
+            ? Math.max(0, Math.min(1, alt!.confidence!))
+            : 1
+          cb(cleaned, conf, false)
+        }
       }
     },
     [],
@@ -404,6 +496,36 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
         'gospel', 'salvation', 'righteousness', 'kingdom',
         'covenant', 'prophet', 'apostle', 'disciple',
         'faith', 'grace', 'mercy', 'repentance', 'amen', 'hallelujah',
+        // v0.7.253 — African English pulpit vocabulary boost.
+        // Operator: "apply african english tone for easy detections."
+        // West-African (Ghanaian / Nigerian) pulpit cadence pronounces
+        // these phrases with distinct vowel + stress patterns that the
+        // generic en-US acoustic prior under-weights, leading to common
+        // mis-transcriptions: "Holy Ghost" → "holy goat", "Jehovah" →
+        // "Joe over", "brethren" → "Britain", "anointing" → "annoying",
+        // "breakthrough" → "break the room", "favour" → "favorite",
+        // "testimony" → "testify many", "El Shaddai" → "El Sunday".
+        // Promoting the canonical spellings as keyterms biases Nova-3's
+        // decoder toward the correct hypothesis when the acoustic prior
+        // is ambiguous. Keyterms are weighted overlays — they raise
+        // probability for the listed phrases without suppressing
+        // anything else, so adding them is risk-free for non-African
+        // operators. Ordered by observed misrecognition frequency in
+        // operator-submitted clips.
+        'Holy Ghost', 'Jehovah', 'Yahweh', 'Adonai', 'Elohim',
+        'El Shaddai', 'Abba Father', 'Most High', 'Almighty',
+        'brethren', 'saints', 'beloved', 'pastor', 'evangelist',
+        'minister', 'deacon', 'elder', 'intercessor',
+        'anointing', 'breakthrough', 'deliverance', 'restoration',
+        'favour', 'blessings', 'miracle', 'testimony', 'altar',
+        'intercession', 'consecration', 'sanctification',
+        'tongues', 'fire', 'glory', 'manifestation',
+        'praise the Lord', 'glory be to God', 'thank you Jesus',
+        'in Jesus name', 'in the mighty name of Jesus',
+        'God bless you', 'shall come to pass', 'it is well',
+        // Hebrew / Aramaic worship terms commonly used in
+        // African-English worship services.
+        'Hosanna', 'Maranatha', 'Selah', 'Shalom', 'Emmanuel',
       ]
       const params = new URLSearchParams({
         model: 'nova-3',
@@ -417,7 +539,14 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
         endpointing: '300',
         vad_events: 'true',
       })
-      for (const k of KEY_TERMS) params.append('keyterm', k)
+      // Deepgram Nova-3 streaming enforces a hard limit of ~140 keyterms
+      // per WebSocket query (returns HTTP 400 "Bad Request" on handshake
+      // above that). v0.7.253 added ~75 phrases bringing the total to 159
+      // — silently breaking AI Detection on every install. Cap at 100 to
+      // leave safe headroom for future additions and any Deepgram-side
+      // limit tightening. Empirical bisect: 140 OK, 145 → 400.
+      const KEY_TERMS_LIMIT = 100
+      for (const k of KEY_TERMS.slice(0, KEY_TERMS_LIMIT)) params.append('keyterm', k)
       const wssUrl = `wss://api.deepgram.com/v1/listen?${params.toString()}`
       // eslint-disable-next-line no-console
       console.log('[deepgram-hook] direct WSS to api.deepgram.com')
@@ -435,7 +564,14 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
           return
         }
         wsReadyRef.current = true
-        // Flush any audio captured while the socket was connecting.
+        // A clean open means the link is healthy again — reset the
+        // reconnect attempt counter so a LATER blip gets the full retry
+        // budget, and clear any operator-facing reconnect error.
+        reconnectAttemptsRef.current = 0
+        setError(null)
+        // Flush any audio captured while the socket was connecting OR
+        // buffered during a reconnect gap. This is what makes a brief
+        // slow-internet drop lose at most a word instead of the session.
         const backlog = audioBacklogRef.current
         audioBacklogRef.current = []
         for (const buf of backlog) {
@@ -445,6 +581,18 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
           // eslint-disable-next-line no-console
           console.log('[deepgram-hook] flushed', backlog.length, 'backlog audio frames')
         }
+        // v0.7.263 — KeepAlive ping. Deepgram closes an idle socket
+        // (~10 s without audio) with NET-0001; on a starved uplink the
+        // audio frames can stall long enough to trip that. A periodic
+        // KeepAlive control message holds the socket open through the
+        // gap so we reconnect far less often in the first place.
+        if (keepAliveTimerRef.current) clearInterval(keepAliveTimerRef.current)
+        keepAliveTimerRef.current = setInterval(() => {
+          if (sessionRef.current !== sessionAtStart) return
+          if (ws.readyState === WebSocket.OPEN) {
+            try { ws.send(JSON.stringify({ type: 'KeepAlive' })) } catch { /* ignore */ }
+          }
+        }, KEEPALIVE_MS)
       }
       ws.onmessage = (ev) => {
         if (typeof ev.data === 'string') {
@@ -460,13 +608,49 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
       ws.onclose = (ev) => {
         if (sessionRef.current !== sessionAtStart) return
         wsReadyRef.current = false
+        // Stop pinging a closed socket.
+        if (keepAliveTimerRef.current) {
+          clearInterval(keepAliveTimerRef.current)
+          keepAliveTimerRef.current = null
+        }
         // v0.5.36 — if the operator did NOT request stop, this is an
         // unexpected close (proxy crashed, network blip, Deepgram
-        // sent us 1011, etc.). Surface the error and tear the audio
-        // graph down so the OS mic indicator goes off and the UI
-        // doesn't keep claiming we're "listening" to a dead socket.
+        // sent us 1011, etc.).
         if (!stopRequestedRef.current) {
           const code = ev.code || 0
+          // v0.7.263 — SLOW-INTERNET AUTO-RECONNECT. Rather than tear
+          // the whole engine down on the first blip, transparently
+          // rebuild the socket for the SAME session while keeping the
+          // mic + audio graph alive. onaudioprocess keeps buffering PCM
+          // into audioBacklogRef (capped at 2 MB) during the gap, and
+          // the new socket's onopen flushes it. Only after the retry
+          // budget is exhausted do we surface a hard error + teardown.
+          // A normal 1000/1001 close that we didn't request (e.g. the
+          // server cycled) is still worth one reconnect attempt.
+          const reconnect = reconnectRef.current
+          if (reconnect && reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+            const attempt = ++reconnectAttemptsRef.current
+            // Exponential backoff capped at 4 s: 0.4, 0.8, 1.6, 3.2, 4, 4.
+            const delay = Math.min(4_000, 400 * 2 ** (attempt - 1))
+            // eslint-disable-next-line no-console
+            console.log(
+              `[deepgram-hook] WS closed (${code}); reconnect attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS} in ${delay}ms`,
+            )
+            // Soft, non-alarming status while we retry — the operator
+            // sees "Reconnecting…" rather than a crash-looking error.
+            setError(`Reconnecting… (network was interrupted)`)
+            if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+            reconnectTimerRef.current = setTimeout(() => {
+              reconnectTimerRef.current = null
+              if (sessionRef.current !== sessionAtStart) return
+              if (stopRequestedRef.current) return
+              reconnect()
+            }, delay)
+            return
+          }
+          // Retry budget exhausted — surface the error + tear down so
+          // the OS mic indicator goes off and the UI doesn't keep
+          // claiming we're "listening" to a dead socket.
           // 1006 is the browser's "abnormal closure" code — emitted
           // when the WebSocket handshake itself failed or the remote
           // host vanished without sending a close frame. The most
@@ -503,7 +687,7 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
   )
 
   const startListening = useCallback(
-    (onResult?: (text: string, confidence: number) => void) => {
+    (onResult?: (text: string, confidence: number, isFinal?: boolean) => void) => {
       // eslint-disable-next-line no-console
       console.log('[deepgram-hook] startListening() called. isSupported =', isSupported)
       if (!isSupported) {
@@ -531,7 +715,43 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
       const sessionAtStart = sessionRef.current
       onResultRef.current = onResult
       stopRequestedRef.current = false
+      reconnectAttemptsRef.current = 0
       setError(null)
+
+      // v0.7.263 — reconnect closure for the slow-internet path. The
+      // onclose handler calls this (after a backoff) to rebuild ONLY the
+      // socket, reusing the live mic + audio graph for this same
+      // session. Audio captured during the gap is already queued in
+      // audioBacklogRef and gets flushed by the new socket's onopen.
+      reconnectRef.current = () => {
+        if (sessionRef.current !== sessionAtStart || stopRequestedRef.current) return
+        openWebSocket(sessionAtStart)
+          .then((ws) => {
+            if (!ws) return
+            if (sessionRef.current !== sessionAtStart || stopRequestedRef.current) {
+              try { ws.close(1000, 'session stale') } catch { /* ignore */ }
+              return
+            }
+            wsRef.current = ws
+          })
+          .catch(() => {
+            // Rebuild failed (key fetch / handshake). Schedule another
+            // attempt within budget, else surface the hard error.
+            if (sessionRef.current !== sessionAtStart || stopRequestedRef.current) return
+            if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+              const attempt = ++reconnectAttemptsRef.current
+              const delay = Math.min(4_000, 400 * 2 ** (attempt - 1))
+              if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+              reconnectTimerRef.current = setTimeout(() => {
+                reconnectTimerRef.current = null
+                reconnectRef.current?.()
+              }, delay)
+            } else {
+              setError('Live transcription disconnected. Please try Detect again.')
+              teardown()
+            }
+          })
+      }
 
       const win = window as unknown as { __selectedMicrophoneId?: string | null }
       const deviceId = win.__selectedMicrophoneId || undefined

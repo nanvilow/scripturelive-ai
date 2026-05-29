@@ -119,7 +119,9 @@ interface UseWhisperSpeechRecognitionReturn {
    * confidence, so we always pass 1.0 (live tier) — the tier-based
    * suppression is a no-op for Whisper users, matching prior behaviour.
    */
-  startListening: (onResult?: (text: string, confidence: number) => void) => void
+  startListening: (
+    onResult?: (text: string, confidence: number, isFinal?: boolean) => void,
+  ) => void
   stopListening: () => void
   resetTranscript: () => void
 }
@@ -147,7 +149,9 @@ export function useWhisperSpeechRecognition(): UseWhisperSpeechRecognitionReturn
   const [transcript, setTranscript] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  const onResultRef = useRef<((text: string, confidence: number) => void) | undefined>(undefined)
+  const onResultRef = useRef<
+    ((text: string, confidence: number, isFinal?: boolean) => void) | undefined
+  >(undefined)
   const transcriptRef = useRef('')
   const streamRef = useRef<MediaStream | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)

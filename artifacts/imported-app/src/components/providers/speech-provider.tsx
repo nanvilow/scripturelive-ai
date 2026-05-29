@@ -4,6 +4,13 @@ import { useEffect, useCallback, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { bootstrapRuntimeKeys } from '@/lib/runtime-keys'
 import { detectBestReference, parseExplicitReference } from '@/lib/bibles/reference-engine'
+import {
+  pushWords,
+  bufferText,
+  detectionText,
+  type RollingWord,
+} from '@/lib/transcript-rolling-buffer'
+import { decideReferenceFire } from '@/lib/reference-fire-policy'
 import { lookupRange, lookupVerse, isTranslationBundled } from '@/lib/bibles/local-bible'
 // v0.7.65 — Curated preacher-phrase dictionary (~190 unaddressed
 // quotations like "the heavens declare the glory of God" or
@@ -13,6 +20,16 @@ import { detectBestPreacherPhrase } from '@/lib/bibles/preacher-phrases'
 // voice commands. Same JSON the reference engine uses for validation.
 import bibleStructure from '@/data/bible-structure.json'
 import { detectCommand, detectCommandChain, type VoiceCommand } from '@/lib/voice/commands'
+// v0.7.241 — Local sub-millisecond n-gram paraphrase matcher. Wired
+// here so a 2-4 word distinctive paraphrase ("king couldn't sleep",
+// "let there be light", "valley of the shadow") fires INSTANTLY,
+// without the /api/bible keyword search or the OpenAI embedding
+// roundtrip the cosine matcher needs. Shipped as a library in
+// v0.7.239 + a standalone API route, but never invoked from the
+// live voice pipeline — operator escalation "search should be fast
+// even when speaker say any 4 words should know the verse fast" was
+// the visible symptom of that gap.
+import { matchTranscript as matchPhraseIndex, warmPhraseIndex } from '@/lib/ai/phrase-index'
 // v0.7.29 — LLM-classifier command-likeness gate (Phase 2 of v0.8.0).
 // Used as a CHEAP local pre-check before we POST to /api/voice/classify
 // so most non-command transcripts skip the OpenAI roundtrip entirely.
@@ -217,8 +234,8 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   const pendingStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scheduleEngineStart = (
     target: EngineName,
-    handle: { startListening: (cb?: (t: string, confidence: number) => void) => void },
-    cb: ((text: string, confidence: number) => void) | null,
+    handle: { startListening: (cb?: (t: string, confidence: number, isFinal?: boolean) => void) => void },
+    cb: ((text: string, confidence: number, isFinal?: boolean) => void) | null,
     label: string,
   ) => {
     const gen = ++engineSwitchGenRef.current
@@ -280,6 +297,15 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // this effect shuts the door on any in-flight audio capture
   // that started before the lock fired.
   const licenseLocked = useAppStore((s) => s.licenseLocked)
+
+  // v0.7.241 — Warm the local n-gram phrase index ONCE on mount so
+  // the ~30-50 ms cold-build cost (tokenise + n-gram all ~1300
+  // catalogue entries) lands BEFORE the operator's first spoken
+  // phrase, not in the critical path of the first transcript chunk.
+  // Subsequent matchPhraseIndex() calls are sub-millisecond.
+  useEffect(() => {
+    try { warmPhraseIndex() } catch { /* defensive */ }
+  }, [])
 
   // ── Sync hook state → store (so any view can read it) ──────────────
   useEffect(() => {
@@ -492,12 +518,33 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   const REF_DEDUPE_TTL_MS = 30_000
 
   // Use a ref-based callback so the hook always calls the latest version
-  const processCallbackRef = useRef<(text: string, confidence: number) => Promise<void>>(async () => {})
+  const processCallbackRef = useRef<(text: string, confidence: number, isFinal?: boolean) => Promise<void>>(async () => {})
+
+  // v0.7.263 — Rolling window of recent FINAL transcript words. Bridges
+  // Bible references split across Deepgram segment boundaries — both the
+  // "John" <pause> "3:7" two-finals case and a reference buried mid-
+  // monologue whose book name + chapter:verse straddle a cut. Pure logic
+  // lives in transcript-rolling-buffer.ts (unit-tested); this ref just
+  // holds the persisted window.
+  const recentWordsRef = useRef<RollingWord[]>([])
+  // Throttle for the interim (non-final) explicit-only detection path so
+  // a fast talker's continuous interim stream doesn't run the detector
+  // every few ms. 150 ms is responsive (sub-quarter-second) yet cheap.
+  const lastInterimDetectAtRef = useRef<number>(0)
+  const INTERIM_DETECT_THROTTLE_MS = 150
 
   // Track the spoken-text searches we've already attempted so we don't spam
   // the search API every couple of words as the transcript grows.
   const lastTextSearchAtRef = useRef<number>(0)
   const processedTextHitsRef = useRef<Set<string>>(new Set())
+  // v0.7.241 — Sub-ms local phrase-index throttle. Set to 200 ms (not
+  // 800/1000 like the network paths) because phrase-index is pure
+  // in-memory Map lookup — no API quota to protect, no latency to
+  // amortize. The only purpose of this throttle is to avoid hammering
+  // the index on rapid-fire interim chunks; processedTextHitsRef
+  // dedupes per-reference, so a second chunk that returns the same
+  // hit is a no-op anyway.
+  const lastPhraseAtRef = useRef<number>(0)
 
   // v0.7.60 — Live AI semantic-match throttle + dedupe. The semantic
   // matcher costs one OpenAI embedding per call (~80–150 ms); we
@@ -1208,6 +1255,58 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         useAppStore.getState().setLiveActiveVerseIndex(0)
         break
       }
+      // ── v0.7.235 — Show chapter N within current book ─────────────
+      // Operator says "chapter 5" / "go to chapter 5" / "take me to
+      // chapter 5". Resolve the current book from the live slide and
+      // load <currentBook> N:1 in the active translation. Mirror of
+      // show_verse_n Case B but at chapter granularity. If we can't
+      // recover any book context (no live verse currently), surface a
+      // toast — the operator probably meant to wake-prefix this with
+      // a book reference first.
+      case 'show_chapter_n': {
+        if (!cmd.chapterNumber) break
+        const n = cmd.chapterNumber
+        const slide = s.liveSlide ?? (liveIdx >= 0 ? slides[liveIdx] : null)
+        if (!slide || slide.type !== 'verse' || !slide.title) {
+          toast.error(`No live passage — say "<book> chapter ${n}" first`, { duration: 2200, position: 'bottom-right' })
+          break
+        }
+        const refFromSlide = parseExplicitReference(slide.title)
+        if (!refFromSlide) {
+          toast.error(`Cannot parse current passage: ${slide.title}`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const struct = (bibleStructure as unknown as Record<string, number[]>)[refFromSlide.book]
+        const chapterCount = struct?.length ?? 0
+        if (chapterCount && (n < 1 || n > chapterCount)) {
+          toast.error(`${refFromSlide.book} only has ${chapterCount} chapters`, { duration: 2200, position: 'bottom-right' })
+          break
+        }
+        const tx = s.selectedTranslation
+        const refKey = `${refFromSlide.book} ${n}:1`
+        let textOut: string | null = lookupVerse(refFromSlide.book, n, 1, tx)
+        if (!textOut && !isTranslationBundled(tx)) {
+          try {
+            const v = await fetchBibleVerse(refKey, tx)
+            if (v) textOut = v.text
+          } catch { /* fall through */ }
+        }
+        if (!textOut) {
+          toast.error(`Could not load ${refKey}`, { duration: 2000, position: 'bottom-right' })
+          break
+        }
+        const slideNew = {
+          id: `slide-${Date.now()}`,
+          type: 'verse' as const,
+          title: refKey,
+          subtitle: tx,
+          content: textOut.split('\n').filter(Boolean),
+          background: s.settings.congregationScreenTheme,
+        }
+        useAppStore.getState().setLiveAuto(slideNew)
+        useAppStore.getState().setLiveActiveVerseIndex(0)
+        break
+      }
     }
   }, [])
 
@@ -1290,10 +1389,174 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
     return Math.min(1, hit / verseWords.length)
   }
 
+  // ── v0.7.263 — Explicit (Reference Engine v2) detection, extracted ──
+  // Pulled out of the monolithic processCallbackRef so the SAME high-
+  // precision, structurally-unambiguous address detector can run from
+  // three call sites with identical semantics:
+  //   1. FINAL full pipeline — on the bridged rolling-buffer span.
+  //   2. INTERIM fast path   — explicit-only, throttled, on buffer +
+  //      live interim hypothesis (sub-second fire mid-utterance).
+  //   3. LOW-ACOUSTIC-CONF   — fast/loud speech that drops below the
+  //      live tier still gets its explicit address detected; only the
+  //      heavier semantic / text-search / preacher pipeline stays gated.
+  // Returns true when it fired (or deliberately suppressed a re-mention)
+  // so the caller knows to stop the rest of the pipeline; false means
+  // "no explicit address here, carry on".
+  const runExplicitV2Detection = useCallback(async (span: string, allowRemention = true): Promise<boolean> => {
+    const v2Tail = span.trim().split(/\s+/).slice(-30).join(' ')
+    const v2 = detectBestReference(v2Tail)
+    if (!v2 || v2.confidence < 80) return false
+    const state = useAppStore.getState()
+    const refKey = `${v2.book} ${v2.chapter}:${v2.verseStart}${
+      v2.verseEnd && v2.verseEnd !== v2.verseStart ? `-${v2.verseEnd}` : ''
+    }`
+    const dedupKey = `v2:${refKey}`
+    const now = Date.now()
+    const lastAt = processedRefsRef.current.get(dedupKey) ?? 0
+    // v0.7.263 — Reference-fire policy (reference-fire-policy.ts, unit-
+    // tested). Collapses the two spam vectors the interim accelerator
+    // introduced: (1) interim self-spam — the same ref re-detected every
+    // ~150 ms during one utterance; (2) the final echoing the interim
+    // that just fired ~1 s later (would double-fire auto-live). A 2.5 s
+    // per-ref promotion cooldown suppresses both while still letting a
+    // deliberate re-mention seconds later promote.
+    let decision = decideReferenceFire(lastAt, now, {
+      dedupeTtlMs: REF_DEDUPE_TTL_MS,
+    })
+    // The INTERIM path is an explicit-detection ACCELERATOR only — it
+    // must never drive re-mention promotion (interim hypotheses are
+    // unstable and re-promotion has projector-visible side effects).
+    // Genuine re-mentions are handled on the final path.
+    if (decision === 'rementtion' && !allowRemention) decision = 'suppress'
+    // Suppressed: already handled recently (interim spam / final echo).
+    // Stop the rest of the pipeline but make NO store changes and do NOT
+    // re-stamp the timestamp, so the cooldown is measured from the
+    // ORIGINAL fire and a true later re-mention can still cross it.
+    if (decision === 'suppress') return true
+    // Re-mention within the dedupe window, past the cooldown: re-route
+    // the navigator + re-fire auto-live via the store's promotion path,
+    // but never duplicate the column entry. (Full rationale preserved in
+    // CHANGELOG v0.7.184.2 / v0.7.247.)
+    if (decision === 'rementtion') {
+      try { useAppStore.getState().requestNavigatorRef(refKey) } catch { /* defensive */ }
+      const existing = useAppStore
+        .getState()
+        .detectedVerses.find((d) => d.reference === refKey)
+      const reAdd: DetectedVerse = existing
+        ? { ...existing }
+        : {
+            id: `det-rementioned-${Date.now()}-${Math.random()
+              .toString(36)
+              .slice(2, 8)}`,
+            reference: refKey,
+            text: '',
+            translation: state.selectedTranslation,
+            detectedAt: new Date(),
+            confidence: v2.confidence / 100,
+            source: 'explicit' as const,
+          }
+      if (existing) {
+        useAppStore.getState().addDetectedVerse(reAdd)
+        useAppStore.getState().setDetectionStatus('detected')
+      }
+      processedRefsRef.current.set(dedupKey, now)
+      return true
+    }
+    // decision === 'new' — fresh detection (never fired, or dedupe
+    // window expired). Run the full lookup + column-insert path.
+    {
+      for (const [k, ts] of processedRefsRef.current) {
+        if (now - ts >= REF_DEDUPE_TTL_MS) processedRefsRef.current.delete(k)
+      }
+      // NOTE: do NOT stamp the dedupe timestamp here. We stamp ONLY after
+      // a verse text actually resolves + fires (inside `if (textOut)`
+      // below). Stamping up-front would let an interim that detected the
+      // ref but FAILED to resolve text (transient fetch miss / unbundled
+      // translation) block the FINAL of the same utterance via the
+      // cooldown — yielding zero fire for that utterance.
+      const tx = state.selectedTranslation
+      const vEnd = v2.verseEnd ?? v2.verseStart
+      // Bundled JSON first (instant); fall back to network only when the
+      // operator's translation isn't bundled.
+      let textOut: string | null = null
+      if (vEnd > v2.verseStart) {
+        const r = lookupRange(v2.book, v2.chapter, v2.verseStart, vEnd, tx)
+        if (r) textOut = r.text
+      } else {
+        const r = lookupVerse(v2.book, v2.chapter, v2.verseStart, tx)
+        if (r) textOut = r
+      }
+      if (!textOut && !isTranslationBundled(tx)) {
+        try {
+          const v = await fetchBibleVerse(refKey, tx)
+          if (v) textOut = v.text
+        } catch { /* fall through */ }
+      }
+      if (textOut) {
+        const detected: DetectedVerse = {
+          id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          reference: refKey,
+          text: textOut,
+          translation: tx,
+          detectedAt: new Date(),
+          confidence: v2.confidence / 100,
+          source: 'explicit',
+        }
+        const tBefore = useAppStore.getState().liveTranscript
+        useAppStore.getState().pushTranscriptBreak(tBefore.length)
+        useAppStore.getState().addDetectedVerse(detected)
+        useAppStore.getState().addToVerseHistory({
+          reference: refKey,
+          text: textOut,
+          translation: tx,
+          book: v2.book,
+          chapter: v2.chapter,
+          verseStart: v2.verseStart,
+          verseEnd: v2.verseEnd ?? undefined,
+        })
+        state.setDetectionStatus('detected')
+        useAppStore.getState().setLiveActiveVerseIndex(0)
+        // Stamp the dedupe timestamp ONLY now that a real fire happened,
+        // so the cooldown/dedupe window is anchored to an actual fire (not
+        // a detection that failed to resolve text). See the NOTE above.
+        processedRefsRef.current.set(dedupKey, now)
+        // Centralized auto-fire effect in logos-shell.tsx is the SOLE
+        // authority for pushing to the projector (0.85 floor + stability).
+        return true
+      }
+    }
+    return false
+  }, [])
+
   // Update the ref in an effect (not during render) to satisfy ESLint react-hooks/refs
   useEffect(() => {
-    processCallbackRef.current = async (text: string, confidence: number) => {
+    processCallbackRef.current = async (text: string, confidence: number, isFinal = true) => {
       if (!text.trim()) return
+
+      // ── v0.7.263 — INTERIM EXPLICIT-ONLY FAST PATH ───────────────────
+      // Deepgram emits interim hypotheses continuously between finals.
+      // During fast/continuous speech the finals are large + infrequent,
+      // so detection used to go idle until the speaker paused. We now run
+      // the explicit (structurally-unambiguous) detector on the bridged
+      // buffer + live interim, throttled, so an address fires the instant
+      // its chapter:verse appears — without waiting for the next final.
+      // Interim text is NEVER persisted to the rolling buffer (it's a
+      // moving hypothesis); only finals are persisted below.
+      if (!isFinal) {
+        const nowI = Date.now()
+        if (nowI - lastInterimDetectAtRef.current < INTERIM_DETECT_THROTTLE_MS) return
+        lastInterimDetectAtRef.current = nowI
+        const span = detectionText(recentWordsRef.current, text)
+        // allowRemention=false — interim is a first-detection accelerator
+        // only; re-mention promotion is reserved for the final path.
+        await runExplicitV2Detection(span, false)
+        return
+      }
+
+      // FINAL — persist words to the rolling window so a reference split
+      // across segment boundaries ("John" <pause> "3:7", or one buried
+      // mid-monologue) co-occurs in a single detection span.
+      recentWordsRef.current = pushWords(recentWordsRef.current, text, Date.now())
 
       const state = useAppStore.getState()
       // v0.7.4 — Confidence-tier gate. Three bands:
@@ -1340,10 +1603,17 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
         }
       }
       if (lowConfidence) {
-        // Below the live tier — verse detection / semantic match
-        // pipeline is suppressed but the command pre-pass above
-        // already ran. Visible in transcript for operator diagnostics.
+        // Below the live tier — the heavy semantic / text-search /
+        // preacher pipeline stays suppressed (those guess at meaning and
+        // need clean audio). BUT a structurally-unambiguous explicit
+        // address ("John 3:16") is safe to fire even from low-acoustic-
+        // confidence audio: the detector's own ≥80 confidence gate
+        // protects against garble. v0.7.263 — fast/loud preaching that
+        // dragged chunk confidence under liveT used to silently drop
+        // explicit references; now they still fire off the bridged
+        // rolling buffer. Command pre-pass above already ran.
         void dropT
+        if (await runExplicitV2Detection(bufferText(recentWordsRef.current))) return
         state.setDetectionStatus('idle')
         return
       }
@@ -1492,13 +1762,24 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
               liveSlide && liveSlide.type === 'verse' && typeof liveSlide.title === 'string'
                 ? liveSlide.title
                 : undefined
-            // v0.7.93 — Outer fetch timeout dropped 2000 → 1000 ms so a
-            // hung classifier round-trip never blocks the next utterance
-            // by more than a second. classifyIntent itself now caps at
-            // 800 ms (was 1500 ms), so 1000 ms here gives the network
-            // 200 ms headroom and still fails fast.
+            // v0.7.241 — Outer fetch timeout MUST stay > classifier's
+            // internal DEFAULT_TIMEOUT_MS (currently 1200 ms; see
+            // llm-classifier.ts). Pre-v0.7.241 the outer was 1000 ms
+            // and the inner was 1200 ms — the outer AbortController
+            // fired BEFORE the inner could return, the catch silently
+            // swallowed the result, and EVERY slow-network LLM call
+            // looked to the operator like "the AI didn't hear me."
+            // This is the v0.7.169 timeout regression repeating: that
+            // release raised inner 800 → 1200, but the stale comment
+            // here ("classifyIntent caps at 800 ms") meant the outer
+            // wrapper was never lifted in lockstep. 1500 ms keeps
+            // 300 ms of network headroom above the inner cap while
+            // still bounding total wall time per utterance.
+            // GUARD-RAIL: any future change to DEFAULT_TIMEOUT_MS in
+            // llm-classifier.ts MUST be paired with a matching bump
+            // here (outer = inner + ≥200 ms). Drift = silent regression.
             const ac = new AbortController()
-            const timer = setTimeout(() => ac.abort(), 1000)
+            const timer = setTimeout(() => ac.abort(), 1500)
             let resp: Response
             try {
               resp = await fetch('/api/voice/classify', {
@@ -1571,99 +1852,10 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       // local-bible.ts JSON for instant lookup. Falls back to the
       // legacy path only when the new engine returns no high-conf
       // match, so spoken phrases the legacy detector already handles
-      // (text-search of recent quotations) still work.
-      const v2Tail = text.trim().split(/\s+/).slice(-30).join(' ')
-      const v2 = detectBestReference(v2Tail)
-      if (v2 && v2.confidence >= 80) {
-        const refKey = `${v2.book} ${v2.chapter}:${v2.verseStart}${
-          v2.verseEnd && v2.verseEnd !== v2.verseStart ? `-${v2.verseEnd}` : ''
-        }`
-        const dedupKey = `v2:${refKey}`
-        const now = Date.now()
-        const lastAt = processedRefsRef.current.get(dedupKey) ?? 0
-        // v0.7.184.2 — RE-MENTION NAVIGATOR FIRE. When the same explicit
-        // reference is spoken again WITHIN the 30s dedupe window, the
-        // big block below correctly suppresses the duplicate column
-        // entry, BUT pre-v0.7.184.2 it also silently dropped the
-        // navigator update because addDetectedVerse was never reached.
-        // Operator bug: "speaker says Amos 1:3, then John 3:4, then
-        // Amos 1:3 again — third one doesn't auto-send because it's
-        // already in the column." Fix: fire requestNavigatorRef on
-        // the suppress path so the Chapter Navigator re-routes to the
-        // re-mentioned verse, while the column stays clean (no dup).
-        // Only fires when lastAt > 0 (= we actually have a prior hit;
-        // guards against firing on the very-first-ever mention which
-        // also lands in the `now - lastAt >= TTL` branch below).
-        if (lastAt > 0 && now - lastAt < REF_DEDUPE_TTL_MS) {
-          try { useAppStore.getState().requestNavigatorRef(refKey) } catch { /* defensive */ }
-        }
-        if (now - lastAt >= REF_DEDUPE_TTL_MS) {
-          // Prune stale entries opportunistically so the map doesn't grow
-          // unbounded across a long service.
-          for (const [k, ts] of processedRefsRef.current) {
-            if (now - ts >= REF_DEDUPE_TTL_MS) processedRefsRef.current.delete(k)
-          }
-          processedRefsRef.current.set(dedupKey, now)
-          const tx = state.selectedTranslation
-          const vEnd = v2.verseEnd ?? v2.verseStart
-          // Try the bundled JSON first (instant). If the operator's
-          // selected translation isn't bundled, we fall through to
-          // fetchBibleVerse (which routes to bolls.life / bible-api).
-          let textOut: string | null = null
-          if (vEnd > v2.verseStart) {
-            const r = lookupRange(v2.book, v2.chapter, v2.verseStart, vEnd, tx)
-            if (r) textOut = r.text
-          } else {
-            const r = lookupVerse(v2.book, v2.chapter, v2.verseStart, tx)
-            if (r) textOut = r
-          }
-          if (!textOut && !isTranslationBundled(tx)) {
-            try {
-              const v = await fetchBibleVerse(refKey, tx)
-              if (v) textOut = v.text
-            } catch { /* fall through */ }
-          }
-          if (textOut) {
-            // v0.7.104 — Reference Engine v2 produces deterministic
-            // address-based hits ("Amos 1:3"); these belong in the
-            // Auto Verse Match (column 1) explicit pipeline.
-            const detected: DetectedVerse = {
-              id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              reference: refKey,
-              text: textOut,
-              translation: tx,
-              detectedAt: new Date(),
-              confidence: v2.confidence / 100,
-              source: 'explicit',
-            }
-            const tBefore = useAppStore.getState().liveTranscript
-            useAppStore.getState().pushTranscriptBreak(tBefore.length)
-            useAppStore.getState().addDetectedVerse(detected)
-            useAppStore.getState().addToVerseHistory({
-              reference: refKey,
-              text: textOut,
-              translation: tx,
-              book: v2.book,
-              chapter: v2.chapter,
-              verseStart: v2.verseStart,
-              verseEnd: v2.verseEnd ?? undefined,
-            })
-            state.setDetectionStatus('detected')
-            // Reset speaker-follow / auto-scroll cursor on new passage.
-            useAppStore.getState().setLiveActiveVerseIndex(0)
-            // v0.7.105 — REMOVED inline auto-go-live block.
-            // Per pastebin spec t5B6FGSD all auto-live decisions
-            // must clear the new 0.85 floor + 3-frame stability gate.
-            // The centralized auto-fire effect in logos-shell.tsx
-            // (shouldFireAutoLiveStable + PerSourceStabilityState) is
-            // now the SOLE authority for pushing verses to the
-            // projector. The pre-v0.7.105 inline path here fired at
-            // v2.confidence ≥ 40 with no stability tracking, which
-            // bypassed both rules.
-            return
-          }
-        }
-      }
+      // (text-search of recent quotations) still work. v0.7.263 — runs
+      // on the bridged rolling-buffer span (see runExplicitV2Detection)
+      // so a reference split across Deepgram finals still co-occurs.
+      if (await runExplicitV2Detection(bufferText(recentWordsRef.current))) return
 
       // ── v0.7.65 — Preacher Phrase Engine ───────────────────────────
       // Catches the un-addressed quotations the explicit-reference
@@ -1808,7 +2000,78 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       // tighter so the match lands during the same breath.
       const minKeywords = hasAttribution ? 2 : 3
       const minWords = hasAttribution ? 3 : 4
-      const throttle = hasAttribution ? 500 : 800
+      const throttle = hasAttribution ? 350 : 550
+
+      // ── v0.7.241 — FAST local n-gram phrase matcher ───────────────
+      // Sub-millisecond, zero network, no API key required. Runs
+      // BEFORE the keyword search + semantic embedding paths so a
+      // 2-4 word distinctive paraphrase fires INSTANTLY without
+      // waiting on the slower remote calls. Covers exactly the
+      // operator-asked case "any 4 words should know the verse fast":
+      //   "king couldn't sleep"        → Esther 6:1
+      //   "let there be light"         → Genesis 1:3
+      //   "valley of the shadow"       → Psalm 23:4
+      //   "be still and know"          → Psalm 46:10
+      //   "ask and it shall be given"  → Matthew 7:7
+      // The local matcher requires only 2+ words (vs minWords=4 on
+      // the network paths) because n-gram lookup is precise — a
+      // 2-3 token hit on the curated paraphrase catalogue is
+      // intrinsically high-signal, no quota cost to spending probes
+      // on shorter tails. Throttle is 200 ms vs 800 ms on the network
+      // paths because phrase-index lookups are free.
+      // Score 0.65 floor = 3-token n-gram (lengthBase 0.75) OR
+      // 2-token + meaningful rarity bonus. Below 0.65 we let the
+      // slower network paths arbitrate. GUARD-RAIL: do NOT lower
+      // this below 0.55 — 2-token n-grams with no rarity bonus
+      // (i.e. tokens that appear in many verses) would flood the
+      // detected-verse column with false positives.
+      if (allWords.length >= 2 && now - lastPhraseAtRef.current > 120) {
+        lastPhraseAtRef.current = now
+        try {
+          const phraseRes = matchPhraseIndex(recentText, { topK: 3, minN: 2 })
+          const topPhrase = phraseRes.matches[0]
+          if (
+            topPhrase &&
+            topPhrase.score >= 0.65 &&
+            !processedTextHitsRef.current.has(topPhrase.reference) &&
+            !processedRefsRef.current.has(topPhrase.reference) &&
+            !references.includes(topPhrase.reference)
+          ) {
+            processedTextHitsRef.current = new Set(processedTextHitsRef.current).add(
+              topPhrase.reference,
+            )
+            const detected: DetectedVerse = {
+              id: `det-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              reference: topPhrase.reference,
+              text: topPhrase.text,
+              translation: state.selectedTranslation,
+              detectedAt: new Date(),
+              confidence: topPhrase.score,
+              // 'semantic' source routes to the paraphrase column
+              // (column 2 in v0.7.104 UI architecture) — identical
+              // tagging to the cosine path below so the existing
+              // auto-go-live + stability-gate logic in logos-shell
+              // applies without special-casing.
+              source: topPhrase.score < 0.5 ? 'suggestion' : 'semantic',
+            }
+            const tBefore = useAppStore.getState().liveTranscript
+            useAppStore.getState().pushTranscriptBreak(tBefore.length)
+            useAppStore.getState().addDetectedVerse(detected)
+            useAppStore.getState().addToVerseHistory({
+              reference: topPhrase.reference,
+              text: topPhrase.text,
+              translation: state.selectedTranslation,
+              book: topPhrase.book,
+              chapter: topPhrase.chapter,
+              verseStart: topPhrase.verseStart,
+            })
+            state.setDetectionStatus('detected')
+          }
+        } catch {
+          /* defensive — index build failure must not break the rest of the pipeline */
+        }
+      }
+
       if (
         allWords.length >= minWords &&
         keywords.length >= minKeywords &&
@@ -1936,7 +2199,15 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
       // Quoted" column. 1000 ms still rate-limits the OpenAI semantic
       // endpoint (~1 req/sec/seat is comfortable headroom under the
       // gpt-4o-mini ceiling) while doubling responsiveness perception.
-      const SEMANTIC_THROTTLE_MS = 1000
+      // v0.7.253 — Lowered 1000 → 600 ms. Operator: "make the LLM and
+      // AI search faster and smoother; AI Detector should listen sharp
+      // and fast detection with no delays." 600 ms still rate-limits
+      // the semantic-match endpoint (~1.6 req/s/seat — well under the
+      // gpt-4o-mini ceiling) while cutting paraphrase-detection
+      // dead-air ~40%. Phrase-index throttle was lowered to 120 ms
+      // (free in-memory n-gram lookup) and the text-search throttle
+      // was lowered to 350/550 ms in the same release.
+      const SEMANTIC_THROTTLE_MS = 600
       if (
         allWords.length >= minWords &&
         keywords.length >= minKeywords &&
@@ -2162,8 +2433,8 @@ export function SpeechProvider({ children }: { children: React.ReactNode }) {
   // Stable wrapper that delegates to the latest processCallbackRef
   // v0.7.4 — now forwards the per-chunk confidence (0..1) so the
   // tier gate inside processCallbackRef can run.
-  const stableProcessCallback = useCallback((text: string, confidence: number) => {
-    processCallbackRef.current(text, confidence)
+  const stableProcessCallback = useCallback((text: string, confidence: number, isFinal?: boolean) => {
+    processCallbackRef.current(text, confidence, isFinal)
   }, [])
 
   // Keep the global mic-id mirror in sync so the Deepgram engine can

@@ -1155,6 +1155,7 @@ interface MediaItem {
   name: string
   dataUrl: string
   kind: 'image' | 'video'
+  posterUrl?: string
 }
 
 const MEDIA_KEY = 'scripturelive.media.v1'
@@ -1199,42 +1200,155 @@ export function MediaLibraryCompact() {
     })
   }
 
+  // v0.7.233 — Upload-time first-frame extraction. The v0.7.231 freezeBg
+  // pattern on the video tile (preload="auto" + play().then(pause) on
+  // loadeddata) relies on the browser actually firing loadeddata and
+  // honouring play() promptly — for freshly-uploaded data: URLs the
+  // demux + GOP-fetch can take seconds, and on some Chromium builds the
+  // muted-autoplay-style play() call silently fails before any frame is
+  // committed to the compositor. Operators reported they could not
+  // visually identify uploaded clips with similar filenames. Fix: decode
+  // frame 0 to a 320px-wide canvas at upload time and persist a small
+  // JPEG dataURL as `posterUrl`. The video tile then renders with the
+  // poster attribute so a thumbnail appears INSTANTLY on mount with no
+  // play()/pause() gymnastics and no HW decoder probe. The freezeBg
+  // pattern is preserved as a secondary path for legacy media items
+  // (uploaded before v0.7.233) that lack a posterUrl.
+  //
+  // Bounded cost: 5s timeout, 320px canvas (~15-30KB JPEG @ q=0.7),
+  // single extraction per upload (NOT per tile mount), released
+  // immediately. Uses createObjectURL for the source so we don't have
+  // to wait for the FileReader-produced 200MB base64 dataURL to be
+  // re-parsed by the video element.
+  const extractFirstFrameJpeg = (file: File): Promise<string | null> => new Promise((resolve) => {
+    let settled = false
+    const settle = (val: string | null) => { if (!settled) { settled = true; resolve(val) } }
+    try {
+      const objUrl = URL.createObjectURL(file)
+      const v = document.createElement('video')
+      v.muted = true
+      v.playsInline = true
+      v.preload = 'auto'
+      v.crossOrigin = 'anonymous'
+      v.src = objUrl
+      const cleanup = () => { try { URL.revokeObjectURL(objUrl) } catch { /* noop */ } }
+      const timer = setTimeout(() => { cleanup(); settle(null) }, 5000)
+      const grab = () => {
+        try {
+          const vw = v.videoWidth || 320
+          const vh = v.videoHeight || 180
+          const w = Math.min(vw, 320)
+          const h = Math.max(1, Math.round(w * (vh / vw)))
+          const c = document.createElement('canvas')
+          c.width = w; c.height = h
+          const ctx = c.getContext('2d')
+          if (!ctx) { clearTimeout(timer); cleanup(); settle(null); return }
+          ctx.drawImage(v, 0, 0, w, h)
+          const data = c.toDataURL('image/jpeg', 0.7)
+          clearTimeout(timer); cleanup(); settle(data || null)
+        } catch {
+          clearTimeout(timer); cleanup(); settle(null)
+        }
+      }
+      // Some codecs need a play()→pause() kick before drawImage will
+      // pull a real frame (paused-from-cold returns transparent black).
+      // Race loadeddata + the play kick; whichever produces a non-zero
+      // canvas wins via the settled guard.
+      v.addEventListener('loadeddata', () => {
+        const pp = v.play()
+        if (pp && pp.then) {
+          pp.then(() => { try { v.pause() } catch { /* noop */ } grab() })
+            .catch(() => grab())
+        } else { grab() }
+      }, { once: true })
+      v.addEventListener('error', () => { clearTimeout(timer); cleanup(); settle(null) }, { once: true })
+    } catch {
+      settle(null)
+    }
+  })
+
   const handleFiles = (files: FileList | null) => {
     if (!files || !files.length) return
-    Array.from(files).forEach((file) => {
-      const isImage = file.type.startsWith('image/')
-      const isVideo = file.type.startsWith('video/')
-      if (!isImage && !isVideo) {
-        toast.error(`Unsupported file type: ${file.name}`)
-        return
-      }
-      // Generous in-memory cap. Browsers comfortably handle this for
-      // a single live-production session; very large clips simply
-      // won't survive a page reload but they DO appear immediately
-      // in Preview / Live Display, which is what operators expect.
-      const MAX = 200 * 1024 * 1024 // 200 MB
-      if (file.size > MAX) {
-        toast.error(`${file.name} is over 200 MB — too large to load`)
-        return
-      }
-      const reader = new FileReader()
-      reader.onload = () => {
-        const dataUrl = reader.result as string
-        if (!dataUrl) {
-          toast.error(`Empty file: ${file.name}`)
-          return
+    // v0.7.233 — Bulk uploads are SERIALISED, not parallelised. Each
+    // extractFirstFrameJpeg() mounts a real <video preload="auto"> and
+    // kicks play() to force first-frame paint; running N of those in
+    // parallel for a bulk upload of (say) 15 worship-loop clips would
+    // saturate finite HW decoder slots and CONTEND with the foreground
+    // Preview / Live <video> surfaces operators are actively driving on
+    // a live service. That is exactly the class of regression guarded
+    // by v0.7.216 (HW-decoder budget protection on the autoplay gate)
+    // and v0.7.222 (5-condition STANDBY gate; finite decoder count
+    // invariant). Pre-v0.7.233 the original handleFiles also looked
+    // parallel (forEach over a FileReader), but FileReader.readAsDataURL
+    // does NOT hold a decoder slot — it's pure byte→base64 work on a
+    // worker pool. Poster extraction DOES hold a slot, so the same
+    // shape is no longer safe.
+    //
+    // Serialised via an explicit for-of loop with `await` rather than
+    // forEach(async ...) firehose. Each file's extraction completes
+    // (decoder released) before the next one starts. The user-perceived
+    // cost: a 10-file bulk upload takes 10 * ~1s = ~10s for thumbnails
+    // to all appear instead of all-at-once (but more reliably, since
+    // the parallel firehose was failing extraction on most files past
+    // the decoder slot count anyway). Image-only and oversized branches
+    // are cheap and unaffected by ordering.
+    const queue = Array.from(files)
+    void (async () => {
+      for (const file of queue) {
+        const isImage = file.type.startsWith('image/')
+        const isVideo = file.type.startsWith('video/')
+        if (!isImage && !isVideo) {
+          toast.error(`Unsupported file type: ${file.name}`)
+          continue
         }
-        addMediaItem({
-          id: `media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          name: file.name,
-          dataUrl,
-          kind: isImage ? 'image' : 'video',
+        // Generous in-memory cap. Browsers comfortably handle this for
+        // a single live-production session; very large clips simply
+        // won't survive a page reload but they DO appear immediately
+        // in Preview / Live Display, which is what operators expect.
+        const MAX = 200 * 1024 * 1024 // 200 MB
+        if (file.size > MAX) {
+          toast.error(`${file.name} is over 200 MB — too large to load`)
+          continue
+        }
+        // v0.7.233 — extract first-frame poster BEFORE the heavy base64
+        // serialisation so the canvas reads from the cheap object URL
+        // and not from a re-parsed 200MB string. Failure (timeout / no
+        // decoder / unsupported codec) returns null and we fall back to
+        // the v0.7.231 freezeBg pattern on the tile itself — no UX
+        // regression vs pre-v0.7.233. AWAITed inside the for-of loop
+        // so only ONE decoder slot is in use at any time across the
+        // whole bulk upload (see decoder-pressure comment above).
+        const posterUrl = isVideo ? (await extractFirstFrameJpeg(file)) ?? undefined : undefined
+        // FileReader wrapped in a Promise so the for-of loop awaits its
+        // completion too — keeps the per-file ordering deterministic
+        // (toast / addMediaItem fire in upload order, not race order)
+        // AND prevents two parallel FileReaders from spiking memory on
+        // bulk uploads of large clips (each readAsDataURL allocates a
+        // base64 string roughly 1.33x the file size).
+        await new Promise<void>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = () => {
+            const dataUrl = reader.result as string
+            if (!dataUrl) {
+              toast.error(`Empty file: ${file.name}`)
+              resolve()
+              return
+            }
+            addMediaItem({
+              id: `media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              name: file.name,
+              dataUrl,
+              kind: isImage ? 'image' : 'video',
+              posterUrl,
+            })
+            toast.success(`${file.name} added`)
+            resolve()
+          }
+          reader.onerror = () => { toast.error(`Could not read ${file.name}`); resolve() }
+          reader.readAsDataURL(file)
         })
-        toast.success(`${file.name} added`)
       }
-      reader.onerror = () => toast.error(`Could not read ${file.name}`)
-      reader.readAsDataURL(file)
-    })
+    })()
   }
 
   const removeItem = (id: string) => {
@@ -1299,6 +1413,19 @@ export function MediaLibraryCompact() {
   // Same-media case is unchanged — it already short-circuits at the
   // PreviewCard "ON AIR" placard (v0.7.193-hotfix.2) and never mounts
   // a 2nd <video>.
+  // v0.7.229 — Mirror the v0.7.222 Fix #8 URL-tail fallback used by the
+  // render-side `liveIsMediaVideo` predicate (logos-shell.tsx L1197).
+  // Legacy persisted live slides have `mediaUrl` but no `mediaKind`, so
+  // without this fallback the click handler's gate misses → the
+  // `setPreviewMediaPaused(true)` flip never fires → the v0.7.227
+  // standby poster gate (logos-shell.tsx L1204) doesn't engage when
+  // the operator single-clicks a video tile while a legacy live video
+  // is playing. Result before v0.7.229: full MediaVideoSurface mounts
+  // in Preview, autoplay competes with live decoder, operator sees
+  // either a stuck poster or a stalled live feed. Same regex shape
+  // used by L1197 — keep them in lockstep.
+  const isVideoUrl = (u?: string | null) =>
+    !!u && /\.(mp4|webm|mov|m4v|mkv|ogv)(\?|#|$)/i.test(u)
   const sendMediaToPreview = (m: MediaItem) => {
     const slide = buildMediaSlide(m)
     const st = useAppStore.getState()
@@ -1306,8 +1433,8 @@ export function MediaLibraryCompact() {
     const liveIsPlayingDifferentMediaVideo = !!(
       liveSlide &&
       liveSlide.type === 'media' &&
-      liveSlide.mediaKind === 'video' &&
       liveSlide.mediaUrl &&
+      (liveSlide.mediaKind === 'video' || isVideoUrl(liveSlide.mediaUrl)) &&
       m.kind === 'video' &&
       slide.mediaUrl &&
       liveSlide.mediaUrl !== slide.mediaUrl
@@ -1365,13 +1492,33 @@ export function MediaLibraryCompact() {
         {settings.customBackground && (
           <div className="flex items-center gap-1.5 rounded border border-border bg-card/40 p-1">
             {isVideoBackground(settings.customBackground) ? (
+              /* v0.7.222 Fix #7 (architect final review) — SUPERSEDES v0.7.221.
+                 v0.7.221 used preload="metadata" + onLoadedMetadata pause for
+                 a frozen-poster thumbnail. Architect final review flagged
+                 that this STILL triggers HTTP range fetch + container demux +
+                 transient HW decoder-capability probe on mount, re-opening
+                 the same finite-decoder-slot contention the entire v0.7.222
+                 release is fighting (the chip can render during the LIVE
+                 media-video contention window because the operator opens the
+                 Library popout while live is on a clip). preload="none" is
+                 the only value that guarantees ZERO network + ZERO demux +
+                 ZERO decoder probe; the trade-off is the chip renders as a
+                 black 32x20 box instead of a poster frame, which is fine —
+                 the chip's job is to confirm "a background is set" via the
+                 "Video background" label + remove (X) button, not to render
+                 the frame. Operator already sees the asset in the grid above
+                 if they need a visual reference. onLoadedMetadata is removed
+                 because it never fires under preload="none". Same root
+                 invariant as MediaVideoSurface preload="none" gate (v0.7.222
+                 Fix #1) and the thumbnail gates (Fix #5). */
               <video
                 src={settings.customBackground}
-                autoPlay
-                loop
                 muted
                 playsInline
-                className="rounded object-cover"
+                preload="none"
+                disablePictureInPicture
+                disableRemotePlayback
+                className="rounded object-cover bg-black"
                 style={{ width: 32, height: 20 }}
               />
             ) : (
@@ -1419,7 +1566,49 @@ export function MediaLibraryCompact() {
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={m.dataUrl} alt={m.name} className="w-full aspect-video object-cover" />
                 ) : (
-                  <video src={m.dataUrl} className="w-full aspect-video object-cover" muted />
+                  /* v0.7.231 — Library tile now PAINTS the first frame
+                     of the video as a thumbnail so operators can
+                     visually identify uploaded clips (the v0.7.222
+                     "operator identifies clips via filename" rationale
+                     turned out to be wrong — operators upload several
+                     clips with similar names like "Holyfire Template-
+                     1_2.mp4" / "OCT AMI.mp4" and can't tell them apart
+                     from text alone). Re-uses the v0.7.225 freezeBg
+                     pattern: preload="auto" + play().then(pause) on
+                     loadeddata to force a single decoded frame onto the
+                     compositor then release the HW decoder slot
+                     immediately. Cost is bounded — N tile-mounts on
+                     initial render allocate N brief decoder probes,
+                     released within a few ms each, then ZERO steady-
+                     state decoder cost (no autoplay, no loop). The
+                     v0.7.222 contention concern is now satisfied by
+                     the release-after-first-frame discipline, not by
+                     refusing to ever paint. setTimeout(pause, 0) on
+                     `play` mirrors v0.7.225 / v0.7.227 / v0.7.230 lock-
+                     step — synchronous pause inside the play listener
+                     races the loadeddata kick and spams AbortError. */
+                  <video
+                    src={m.dataUrl}
+                    poster={m.posterUrl}
+                    className="w-full aspect-video object-cover bg-black"
+                    muted
+                    playsInline
+                    preload={m.posterUrl ? 'none' : 'auto'}
+                    disablePictureInPicture
+                    disableRemotePlayback
+                    onLoadedData={(e) => {
+                      // v0.7.233 — poster attribute paints instantly; we
+                      // only need the freezeBg play→pause kick for legacy
+                      // items (uploaded pre-v0.7.233) that lack posterUrl.
+                      if (m.posterUrl) return
+                      const v = e.currentTarget
+                      v.play().then(() => v.pause()).catch(() => { try { v.pause() } catch (_e) { /* swallow */ } })
+                    }}
+                    onPlay={(e) => {
+                      const v = e.currentTarget
+                      setTimeout(() => { try { v.pause() } catch (_e) { /* swallow */ } }, 0)
+                    }}
+                  />
                 )}
                 <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-1">
                   <div className="flex justify-end">
