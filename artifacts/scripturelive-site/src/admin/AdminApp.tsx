@@ -36,7 +36,11 @@ export default function AdminApp() {
   const [demo, setDemo] = useState<boolean>(
     () => new URLSearchParams(window.location.search).get("demo") === "1",
   );
-  const [activeKey, setActiveKey] = useState<string>(COLLECTIONS[0].key);
+  const [activeKey, setActiveKey] = useState<string>(() => {
+    const s = new URLSearchParams(window.location.search).get("section");
+    if (s && COLLECTIONS.some((c) => c.key === s)) return s;
+    return COLLECTIONS[0].key;
+  });
   const dirtyRef = useRef(false);
 
   const handleDirtyChange = useCallback((d: boolean) => {
