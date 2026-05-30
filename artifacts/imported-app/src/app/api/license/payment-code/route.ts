@@ -1,7 +1,7 @@
 // POST /api/license/payment-code
 //
 // Body: { planCode: '1M' | '2M' | ... | '1Y', email: string, whatsapp: string }
-// Resp: { ref, planCode, amountGhs, expiresAt, momoRecipient }
+// Resp: { ref, planCode, amountGhs, expiresAt, momoRecipient, supportWhatsapp }
 //
 // Step 1 of the customer flow: customer picks a plan in the
 // subscription modal, the front-end calls this endpoint, we mint a
@@ -88,7 +88,13 @@ export async function POST(req: NextRequest) {
   // immediately. Notifications are deferred to setImmediate below.
   const momoRecipient = getEffectiveMoMo()
   const adminPhone = getEffectiveAdminPhone()
-  const adminEmail = getEffectiveNotificationTargets().email
+  const notify = getEffectiveNotificationTargets()
+  const adminEmail = notify.email
+  // v0.7.266 — customer-facing SUPPORT / escalation WhatsApp line shown
+  // in the modal NOTE block ("contact support" + "send a screenshot for
+  // payment proof"). Deliberately the support channel (0246798526), NOT
+  // momoRecipient.number (the wallet customers send money INTO).
+  const supportWhatsapp = notify.whatsapp
 
   // ── Customer SMS (T507) ───────────────────────────────────────────
   // Tells the buyer how to actually pay. mNotify costs ~1 GHp per
@@ -155,6 +161,7 @@ export async function POST(req: NextRequest) {
     createdAt: rec.createdAt,
     expiresAt: rec.expiresAt,
     momoRecipient,
+    supportWhatsapp,
   })
 }
 

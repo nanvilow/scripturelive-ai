@@ -1,3 +1,30 @@
+## v0.7.266 — Split the MoMo wallet number from the WhatsApp support/proof line
+
+Operator clarified (in-chat, confirmed via a choice prompt) that the customer-facing payment modal conflates TWO distinct phone-number roles that must be separated:
+
+- The **"Send MoMo to" recipient row** is the WALLET customers actually send money INTO → switched to **0530686367**.
+- The **"contact support on WhatsApp"** line AND the **"SEND A SCREENSHOT … for payment proof"** line are the SUPPORT / escalation / proof channel → STAY on **0246798526**.
+
+Previously all three surfaces rendered the single `payment.momoRecipient.number`, so moving the wallet would have dragged the support/proof lines along with it.
+
+### Changes
+
+- `src/lib/licensing/plans.ts`: `MOMO_RECIPIENT.number` stays 0530686367 (money destination); `NOTIFICATION_WHATSAPP` reverted to 0246798526 and re-documented as the customer-facing support/escalation/proof channel (also the post-purchase receipt "contact us" link).
+- `src/app/api/license/payment-code/route.ts`: response now carries `supportWhatsapp = getEffectiveNotificationTargets().whatsapp` alongside `momoRecipient`.
+- `src/components/license/subscription-modal.tsx`: the recipient row + copy button keep `payment.momoRecipient.number` (wallet); the NOTE block's support line + screenshot-proof line now read `payment.supportWhatsapp` (fallback `'0246798526'`). `PaymentResp` gains optional `supportWhatsapp`.
+- `src/lib/licensing/storage.ts` `migrateStaleConfigNumbers`: the two roles migrate in OPPOSITE directions — `momoNumber` stale 0246798526 → 0530686367 (wallet forward), `whatsappNumber` stale 0530686367 → 0246798526 (support pinned back), `adminPhone` pinned 0246798526. Custom operator numbers untouched.
+- `src/components/license/admin-modal.tsx`: added the missing `deepgramUsageMs?: number` to the `AdminActivation` client type (a pre-existing v0.7.265 oversight that broke `tsc`).
+
+### Verification
+
+- `momo-number-migration.test.ts` rewritten to the split contract — 7/7 green.
+- Full licensing vitest suite 43/43 green; `tsc --noEmit` exit 0.
+- Architect review PASS (money-critical): no remaining customer-facing path sends money to the support number or shows the wallet for support text.
+
+### GUARD-RAIL (wallet ≠ support — never re-unify)
+
+The payment flow now has TWO customer-facing numbers with distinct roles. **Money destination** = `MOMO_RECIPIENT.number` / `momoNumber` config / API `momoRecipient`. **Support + proof + escalation** = `NOTIFICATION_WHATSAPP` / `whatsappNumber` config / API `supportWhatsapp`. **Internal operator SMS** = `ADMIN_NOTIFICATION_PHONE` / `adminPhone`. NEVER read `momoRecipient.number` for a support string or `NOTIFICATION_WHATSAPP` for a money destination. The subscription modal CANNOT import `plans.ts` (node:fs in storage breaks the client bundle) — the support number is plumbed via the API `supportWhatsapp` field with a literal in-modal fallback. When the operator swaps a number again, change ONLY the matching role's constant + its migration branch + the migration-test contract.
+
 ## v0.7.265 — Per-code Deepgram AI-detection usage + estimated-cost tracking in admin
 
 New durable per-activation-code accounting so the operator can see how much audio each user (activation code) streamed to Deepgram and the estimated USD cost — surfaced in the admin panel with an admin-configurable $/min rate.

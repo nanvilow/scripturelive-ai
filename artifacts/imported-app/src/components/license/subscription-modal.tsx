@@ -69,6 +69,11 @@ interface PaymentResp {
   createdAt: string
   expiresAt: string
   momoRecipient: { name: string; number: string }
+  // v0.7.266 — customer support / escalation WhatsApp line (0246798526).
+  // SEPARATE from momoRecipient.number (0530686367, the wallet money is
+  // sent INTO): used only for the "contact support" + screenshot-proof
+  // lines in the NOTE block below.
+  supportWhatsapp?: string
 }
 
 interface ActivateResp {
@@ -548,18 +553,20 @@ export function SubscriptionModal() {
                       explicit instruction to send a payment-proof
                       screenshot for verification.
                       v0.6.5 — NOTE re-themed RED (was emerald) for higher
-                      visual urgency. The two embedded WhatsApp numbers
-                      switched from hard-coded "0246798526" to
-                      {payment.momoRecipient.number} so admin edits to
-                      the MoMo number propagate to ALL three places
-                      (display, escalation, screenshot proof) instead of
-                      just the display row. */}
+                      visual urgency.
+                      v0.7.266 — the two embedded WhatsApp numbers (contact
+                      support + screenshot proof) source payment.supportWhatsapp
+                      (0246798526, the support/proof channel), DELIBERATELY
+                      separate from the recipient row above which shows
+                      payment.momoRecipient.number (0530686367, the wallet
+                      customers send money INTO). Only the money-destination
+                      row moved wallets; support stays put. */}
                   <div className="rounded-md border border-red-500/40 bg-red-950/30 px-3 py-2 text-[11px] text-red-100 leading-relaxed">
                     <span className="font-semibold uppercase tracking-wider text-[10px] text-red-300">NOTE:</span>{' '}
                     Make sure the recipient name shows as <span className="font-semibold">{payment.momoRecipient.name}</span> before
                     you confirm the MoMo transaction. If the name is different, STOP and contact support on
-                    {' '}<span className="font-semibold">WhatsApp ({payment.momoRecipient.number})</span> — your funds may be sent to the wrong account.{' '}
-                    <span className="font-semibold uppercase tracking-wider text-[10px] text-red-300">SEND A SCREENSHOT TO &quot;{payment.momoRecipient.number}&quot; on WhatsApp for payment proof.</span>
+                    {' '}<span className="font-semibold">WhatsApp ({payment.supportWhatsapp || '0246798526'})</span> — your funds may be sent to the wrong account.{' '}
+                    <span className="font-semibold uppercase tracking-wider text-[10px] text-red-300">SEND A SCREENSHOT TO &quot;{payment.supportWhatsapp || '0246798526'}&quot; on WhatsApp for payment proof.</span>
                   </div>
                 </div>
 

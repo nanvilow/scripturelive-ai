@@ -744,9 +744,11 @@ export function TopToolbar({
         {/* v0.7.16 — Always-on "Report an Issue" button. Operators
             and customers can use this from any view to send a
             free-text report to the admin Records dashboard via
-            /api/license/report-issue. Compact (icon-only) so it
-            doesn't crowd the TopToolbar. */}
-        <ReportIssueButton context="topbar" compact />
+            /api/license/report-issue. v0.7.266 — shown with its
+            "Report Issue" label (compact={false}) so the affordance
+            is discoverable in the TopToolbar instead of a bare flag
+            icon users overlook. */}
+        <ReportIssueButton context="topbar" compact={false} />
       </div>
 
       <div className="flex items-center gap-2">
