@@ -690,7 +690,7 @@ function Hero() {
       ></div>
 
       <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 relative z-10">
-        <div className="flex flex-col lg:flex-row items-center gap-12 lg:gap-16">
+        <div className="flex flex-col lg:flex-row items-center lg:items-start gap-12 lg:gap-16">
           <div className="flex-1 text-center lg:text-left">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/30 text-primary text-xs sm:text-sm font-medium mb-6">
               <Zap size={14} />
@@ -743,7 +743,7 @@ function Hero() {
             </div>
           </div>
 
-          <div className="flex-1 w-full max-w-2xl">
+          <div className="flex-1 w-full max-w-2xl lg:mt-10">
             {heroImage?.url ? (
               <div className="relative">
                 <div className="absolute -inset-6 bg-gradient-to-tr from-primary/30 via-primary/10 to-transparent blur-3xl rounded-3xl"></div>
