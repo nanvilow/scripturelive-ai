@@ -386,12 +386,13 @@ export function SectionEditor({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {collection.allowAdd && !demo && (
+          {collection.allowAdd && (
             <Button
               variant="outline"
               className="rounded-xl"
               onClick={openAdd}
-              disabled={loading || !!error}
+              disabled={loading || !!error || demo}
+              title={demo ? "Sign in to add items" : undefined}
               data-testid="button-add-item"
             >
               <Plus className="mr-1.5 h-4 w-4" /> Add
