@@ -49,6 +49,11 @@ export async function onRequest(context) {
 
   const payload = JSON.stringify({ token: data.access_token, provider: "github" });
 
+  // Only ever hand the token to the exact origin that served this callback
+  // (the admin opener is always same-origin). Never post to "*" — doing so
+  // lets a malicious opener exfiltrate the OAuth token.
+  const allowedOrigin = env.OAUTH_ALLOWED_ORIGIN || url.origin;
+
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Authenticating…</title></head>
 <body style="background:#0a0a0a;color:#fafafa;font-family:system-ui;padding:2rem;">
@@ -56,18 +61,21 @@ export async function onRequest(context) {
 <script>
 (function() {
   if (!window.opener) {
-    document.body.innerHTML = '<p>Error: opener window not found. Close this tab and try again from /admin/.</p>';
+    document.body.innerHTML = '<p>Error: opener window not found. Close this tab and try again from /admin.</p>';
     return;
   }
+  var allowedOrigin = ${JSON.stringify(allowedOrigin)};
+  var payload = ${JSON.stringify(payload)};
   function receiveMessage(e) {
+    if (e.origin !== allowedOrigin) return;
     window.opener.postMessage(
-      'authorization:github:success:' + ${JSON.stringify(payload)},
-      e.origin
+      'authorization:github:success:' + payload,
+      allowedOrigin
     );
     window.removeEventListener("message", receiveMessage, false);
   }
   window.addEventListener("message", receiveMessage, false);
-  window.opener.postMessage("authorizing:github", "*");
+  window.opener.postMessage("authorizing:github", allowedOrigin);
 })();
 </script>
 </body></html>`;
