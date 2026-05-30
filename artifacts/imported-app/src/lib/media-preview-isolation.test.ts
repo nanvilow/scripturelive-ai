@@ -45,7 +45,7 @@ const verse = (id: string, ref: string, text: string): Slide => ({
   type: 'verse',
   title: ref,
   subtitle: 'KJV',
-  content: text,
+  content: [text],
 })
 
 const mediaSlide = (id: string, name: string): Slide => ({
@@ -53,7 +53,7 @@ const mediaSlide = (id: string, name: string): Slide => ({
   type: 'media',
   title: name,
   subtitle: '',
-  content: '',
+  content: [],
   mediaUrl: 'data:video/mp4;base64,AAAAFGZ0eXBpc29tAAAC',
   mediaKind: 'video',
 })
@@ -416,7 +416,7 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
     expect(block, 'Clear Preview MUST NOT touch slides[]').not.toMatch(/setSlides\(/)
   })
 
-  it('(q) v0.7.216 BEHAVIOURAL — clicking a DIFFERENT media tile while LIVE plays a media-video MUST pin preview AND set previewMediaPaused=true (no 2nd HW decoder) while leaving LIVE completely untouched', () => {
+  it('(q) v0.7.241 BEHAVIOURAL — clicking a DIFFERENT media tile while LIVE plays a media-video MUST pin preview AND auto-play it (previewMediaPaused=false) while leaving LIVE completely untouched', () => {
     const liveVid = mediaSlide('vid-live', 'live-clip.mp4')
     const previewVid: Slide = {
       ...mediaSlide('vid-new', 'new-clip.mp4'),
@@ -457,12 +457,14 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
     st.pinPreviewSlide(previewVid)
 
     const after = useAppStore.getState()
-    // Preview MUST be pinned AND paused at t=0 — guarantees the
-    // <video autoPlay={surface==='preview' && !mediaPaused}> at
-    // logos-shell L434 mounts WITHOUT autoplay, so no 2nd HW
-    // decoder spins up.
+    // v0.7.241 — pinPreviewSlide now AUTO-PLAYS the pinned clip in
+    // Preview (operator chose UX feedback over the v0.7.222 HW-decoder-
+    // eviction protection). The store atomically resets
+    // previewMediaPaused=false + previewMediaCurrentTime=0, so even
+    // though the caller armed previewMediaPaused=true above, the pin
+    // clears it. Preview is pinned and auto-playing from t=0.
     expect(after.pinnedPreviewSlide?.id).toBe('vid-new')
-    expect(after.previewMediaPaused).toBe(true)
+    expect(after.previewMediaPaused).toBe(false)
     expect(after.previewMediaCurrentTime).toBe(0)
     // LIVE MUST be totally untouched — same deck, same index,
     // same isLive flag. broadcaster's buildOutputPayload still
@@ -616,8 +618,17 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
     expect(body, 'MUST register a one-shot canplay listener that retries play()').toMatch(
       /addEventListener\(\s*'canplay'\s*,\s*onCanPlay\s*,\s*\{\s*once:\s*true\s*\}\s*\)/,
     )
-    expect(body, 'onCanPlay MUST call v.play()').toMatch(
-      /const onCanPlay = \(\) => \{ v\.play\(\)\.catch\(\(\) => \{\}\) \}/,
+    // v0.7.224 — onCanPlay expanded from a one-liner to a multi-line
+    // block that also re-applies the pending seek before play (see
+    // test (jj) for the full v0.7.224 invariants). The v0.7.216
+    // invariant this test enforces is unchanged: the handler MUST
+    // exist and MUST call v.play() — we just relax the regex to
+    // accept the expanded body shape.
+    expect(body, 'onCanPlay MUST be defined as a const arrow function').toMatch(
+      /const\s+onCanPlay\s*=\s*\(\)\s*=>\s*\{[\s\S]*?\}/,
+    )
+    expect(body, 'onCanPlay MUST call v.play().catch(() => {}) so the canplay retry actually resumes playback').toMatch(
+      /const\s+onCanPlay\s*=\s*\(\)\s*=>\s*\{[\s\S]*?v\.play\(\)\.catch\(\(\)\s*=>\s*\{\}\)[\s\S]*?\}/,
     )
     // Cleanup MUST remove the listener so a rapid second src-swap doesn't leak.
     expect(body, 'cleanup MUST remove the canplay listener').toMatch(
@@ -643,11 +654,21 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
     expect(src, 'autoPlay gate from v0.7.216 MUST remain').toMatch(
       /autoPlay=\{surface === 'preview' && !mediaPaused\}/,
     )
-    // The new preload gate MUST use the same condition shape so the
-    // two attributes stay in sync. Either-or branches must read
-    // `metadata` (no HW decoder) and `auto` (normal).
-    expect(src, 'preload MUST be gated on (surface === preview && mediaPaused) → metadata, else auto').toMatch(
-      /preload=\{surface === 'preview' && mediaPaused \? 'metadata' : 'auto'\}/,
+    // v0.7.222 update — operator escalation showed "metadata" STILL
+    // contended with the live decoder (HTTP range request + container
+    // demux + decoder capability probe). v0.7.222 tightens the gate
+    // to "none" (no fetch, no demux, no decoder probe). The shape of
+    // the condition is unchanged; only the truthy branch value moved
+    // from 'metadata' → 'none'. Test (bb) in the v0.7.222 describe()
+    // block carries the canonical assertion; this test keeps the
+    // condition-shape guard here so the v0.7.218 invariant ("preload
+    // is gated on surface===preview && mediaPaused, not bare auto")
+    // remains pinned.
+    expect(
+      src,
+      'preload MUST be gated on (surface === preview && mediaPaused) → none, else auto (v0.7.222 tightened "metadata" → "none" — see test (bb) for rationale)',
+    ).toMatch(
+      /preload=\{surface === 'preview' && mediaPaused \? 'none' : 'auto'\}/,
     )
     // The positive match above already pins the exact gate; an extra
     // "no bare preload" grep would false-positive on documentation
@@ -718,7 +739,7 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
     )
   })
 
-  it('(w) v0.7.216 follow-up #4 GUARD — MediaVideoSurface live writeback threshold MUST be 0.50s (5x reduction from pre-fix 0.10s) so SSE broadcast rate stays at 2Hz during steady playback', () => {
+  it('(w) v0.7.244 GUARD — MediaVideoSurface live writeback threshold MUST be 0.05s (Path A sync: dropped 0.20s → 0.05s + 60Hz rAF loop so the broadcast tracks the live <video> within ~1 frame)', () => {
     const src = readFileSync(
       join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
       'utf8',
@@ -733,7 +754,7 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
     expect(m, 'MediaVideoSurface writeback effect (with transport listeners) not found').toBeTruthy()
     const liveThreshold = parseFloat(m![1])
     const previewThreshold = parseFloat(m![2])
-    expect(liveThreshold, 'LIVE writeback threshold MUST be 0.50s — broadcast rate cap for SSE+NDI smoothness').toBe(0.50)
+    expect(liveThreshold, 'LIVE writeback threshold MUST be 0.05s — v0.7.244 Path A sync (0.20s → 0.05s + 60Hz rAF loop) so the SSE broadcast tracks the live <video> within ~1 frame').toBe(0.05)
     expect(previewThreshold, 'PREVIEW writeback threshold MUST stay 0.25s — local UI only, no SSE cost').toBe(0.25)
     const body = m![0]
     // Transport-event listeners MUST be registered so transport transitions
@@ -750,21 +771,26 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
     expect(body, 'loadedmetadata cleanup MUST remove listener').toMatch(/removeEventListener\('loadedmetadata', onTransport\)/)
   })
 
-  it('(x) v0.7.216 follow-up #4 GUARD — congregation receiver drift tolerance MUST be 1.5s (raised from 0.20s) so SSE jitter on secondary display does NOT force keyframe-flush seeks during steady playback', () => {
+  it('(x) v0.7.234/235 GUARD — congregation receiver routine-drift tolerance MUST be 0.5s (tightened from 1.5s; transport events hard-snap every surface) so OBS/secondary stays in sync without keyframe-flush thrash', () => {
     const src = readFileSync(
       join(process.cwd(), 'src/app/api/output/congregation/route.ts'),
       'utf8',
     )
-    // Anchor on the drift-correction block. MUST be NDI-exempt
-    // (`!IS_NDI&&`) AND MUST compare against the new 1.5 threshold.
+    // v0.7.234/235 — Routine-drift correction was rewritten. The
+    // tolerance tightened 1.5s → 0.5s (operators saw OBS trailing the
+    // app by ~1s on sermon clips), and transport events (pause/scrub/
+    // jump) now hard-snap on EVERY surface, while routine forward drift
+    // > 0.5s on the secondary still hard-seeks behind the !IS_NDI gate.
     const m = src.match(
-      /if\(!IS_NDI&&typeof slide\.mediaCurrentTime==='number'&&slide\.mediaCurrentTime>0\)\{[\s\S]*?var drift=Math\.abs\(\(existingVid\.currentTime\|\|0\)-slide\.mediaCurrentTime\);\s*if\(drift>([\d.]+)\)/,
+      /\}else if\(__absDrift>([\d.]+)&&!IS_NDI\)\{/,
     )
-    expect(m, 'congregation receiver drift-correction block not found').toBeTruthy()
+    expect(m, 'congregation receiver routine-drift branch not found').toBeTruthy()
     const tolerance = parseFloat(m![1])
-    expect(tolerance, 'receiver drift tolerance MUST be 1.5s — well above writeback latency (0.50s) so routine SSE jitter never triggers a force-seek').toBe(1.5)
-    // NDI surface MUST still be exempted (v0.7.194-hotfix.2 invariant).
-    expect(m![0], 'NDI capture surface MUST stay exempt from drift correction (writes via seedSeek on initial mount only)').toMatch(/!IS_NDI/)
+    expect(tolerance, 'receiver routine-drift tolerance MUST be 0.5s — v0.7.234 floor; pairs with the 0.05s live writeback so only true transport events exceed it').toBe(0.5)
+    // NDI surface MUST still be exempt from the routine forward-drift
+    // seek (preserves the v0.7.194-hotfix.2 freeze guard). Transport
+    // events DO hard-snap NDI — that is the v0.7.235 change.
+    expect(m![0], 'NDI capture surface MUST stay exempt from the routine drift seek').toMatch(/!IS_NDI/)
   })
 
   it('(v) v0.7.216 GUARD — Radix portal-based UI primitives (Select/DropdownMenu/Popover/Tooltip/Dialog/etc) MUST render ABOVE the Settings overlay so dropdowns are visible when a media-video is playing on Live', () => {
@@ -908,5 +934,578 @@ describe('v0.7.212 — GO LIVE button promotes pinnedPreviewSlide (not just slid
       gracefulStop![0],
       'gracefulStop fade-to-black loop MUST await setTimeout(frameMs) between sends',
     ).toMatch(/setTimeout\(resolve,\s*frameMs\)/)
+  })
+})
+
+// ──────────────────────────────────────────────────────────────────────
+// v0.7.222 — Single-click on another media tile while LIVE plays a
+// media-video MUST NOT stall the live <video>. Operator $1600-customer
+// escalation: v0.7.221 (LIVE `key={liveSlide.mediaUrl}` remount) did
+// NOT close this bug because the LIVE URL does not change on a
+// preview-pin — the key stays stable and React doesn't remount the
+// live <video>. The bug survived because mounting any <video> in the
+// PREVIEW pane (even with `preload="metadata"`) triggers a transient
+// decoder-capability probe that contends with the live decoder on
+// low-end Windows GPUs (2-4 HW slots, 1 used by Live + 1 by NDI
+// offscreen capture = no headroom for any probe).
+//
+// v0.7.222 closes this with defense-in-depth:
+//   (bb) attribute layer — MediaVideoSurface <video> preload MUST be
+//        `"none"` (NOT `"metadata"`) when surface=preview and paused
+//   (cc) render layer — PreviewCard MUST render a STANDBY placard
+//        (no <video> element AT ALL) when LIVE plays a DIFFERENT
+//        media-video AND previewMediaPaused; pressing the placard's
+//        "Play preview" button flips previewMediaPaused→false which
+//        releases the gate and mounts the real MediaVideoSurface
+//   (dd) the STANDBY gate predicate MUST require all 5 conditions:
+//        preview is media-video, live is media-video, URLs differ,
+//        previewMediaPaused — removing ANY condition re-opens a
+//        regression class (e.g. dropping the URL-differ check would
+//        clobber the v0.7.216 ON-AIR placard for same-media)
+// ──────────────────────────────────────────────────────────────────────
+describe('v0.7.222 — single-click another media tile MUST NOT stall live video', () => {
+  it('(bb) v0.7.222 GUARD — MediaVideoSurface <video> preload attr MUST be "none" when preview is paused (NOT "metadata"); v0.7.218 was insufficient', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+    const m = src.match(/<video\s+ref=\{videoRef\}[\s\S]*?preload=\{([^}]+)\}/)
+    expect(m, 'MediaVideoSurface <video> preload attr not found').toBeTruthy()
+    const expr = m![1]
+    expect(
+      expr,
+      'preload MUST be "none" when preview is paused — "metadata" still triggers an HTTP range + container demux + decoder capability probe that contends with the live decoder',
+    ).toMatch(/'none'/)
+    expect(
+      expr,
+      'preload MUST stay gated on surface===preview && mediaPaused (only the paused-preview path gets "none"; live surface and playing preview keep "auto")',
+    ).toMatch(/surface\s*===\s*'preview'\s*&&\s*mediaPaused/)
+    expect(
+      expr,
+      'preload MUST NOT remain at the v0.7.218 "metadata" value (regression marker)',
+    ).not.toMatch(/'metadata'/)
+  })
+
+  it('(cc) v0.7.227 GUARD — PreviewCard MUST compute previewStandbyForLive predicate AND render a freezeBg poster <video> (paints one frame then pauses — NOT a continuous MediaVideoSurface decode)', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+    // The standby predicate MUST exist and combine all 5 conditions.
+    const pred = src.match(
+      /const previewStandbyForLive = !!\(([\s\S]*?)\n\s{2}\)/,
+    )
+    expect(pred, 'previewStandbyForLive predicate not found in PreviewCard').toBeTruthy()
+    const body = pred![1]
+    expect(body, '(dd-1) predicate MUST require previewSlide is media-video').toMatch(
+      /previewSlide\?\.type\s*===\s*'media'/,
+    )
+    expect(body, '(dd-2) predicate MUST require previewSlide.mediaKind === video').toMatch(
+      /previewSlide\.mediaKind\s*===\s*'video'/,
+    )
+    expect(body, '(dd-3) predicate MUST require liveIsMediaVideo (live is also media-video)').toMatch(
+      /liveIsMediaVideo/,
+    )
+    expect(
+      body,
+      '(dd-4) predicate MUST require URLs differ — same-media is handled by previewMediaIsLive ON-AIR placard, removing this condition would clobber that placard',
+    ).toMatch(/liveSlide\?\.mediaUrl\s*!==\s*previewSlide\.mediaUrl/)
+    expect(
+      body,
+      '(dd-5) predicate MUST require previewMediaPaused — once operator presses Play in the transport bar, the gate releases and the real MediaVideoSurface mounts',
+    ).toMatch(/previewMediaPaused/)
+
+    // The render branch MUST exist and MUST NOT mount any <video>
+    // before the gate releases. Search for the standby placard JSX
+    // and confirm there is no MediaVideoSurface inside it.
+    const branchMatch = src.match(
+      /previewStandbyForLive \? \(([\s\S]*?)\) : \(\s*<MediaVideoSurface/,
+    )
+    expect(
+      branchMatch,
+      'previewStandbyForLive ternary branch (placard) → MediaVideoSurface fallback not found in PreviewCard render',
+    ).toBeTruthy()
+    const placard = branchMatch![1]
+    // v0.7.227 — The standby branch now PAINTS the first frame via a
+    // freezeBg <video preload="auto"> (operators perceived the old
+    // zero-<video> text placard as "single-click is broken"). The
+    // decoder slot is held only for the brief play().then(pause) kick
+    // (in onLoadedData) then released — no continuous decode runs
+    // alongside Live, so the v0.7.222 $1600-customer protection holds.
+    // Strip comments first so prose mentioning "autoPlay"/"<video>"
+    // doesn't trip the attribute asserts.
+    const placardCode = placard
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .map((l) => l.replace(/\/\/.*$/, ''))
+      .join('\n')
+    const videoTag = placardCode.match(/<video\b[\s\S]*?>/)
+    expect(
+      videoTag,
+      'v0.7.227 STANDBY placard MUST paint a freezeBg <video> so the operator sees the clip they single-clicked',
+    ).toBeTruthy()
+    const vtag = videoTag![0]
+    expect(vtag, 'freezeBg <video> MUST stay muted (no audio decode competing with Live)').toMatch(/\bmuted\b/)
+    expect(vtag, 'freezeBg <video> MUST NOT autoPlay — it paints ONE frame then pauses, never a continuous decode').not.toMatch(/\bautoPlay\b/)
+    expect(vtag, 'freezeBg <video> MUST NOT loop').not.toMatch(/\bloop\b/)
+    expect(
+      placardCode,
+      'freezeBg <video> MUST release the decoder via the play().then(pause) kick in onLoadedData (single-frame poster, slot freed)',
+    ).toMatch(/onLoadedData=/)
+    expect(
+      placardCode,
+      'STANDBY placard MUST NOT mount the continuous-decode MediaVideoSurface (would defeat the freeze)',
+    ).not.toMatch(/<MediaVideoSurface\b/)
+  })
+
+  it('(ee) v0.7.241 BEHAVIOURAL — with LIVE playing clip A and operator single-clicking clip B, pinPreviewSlide auto-plays B (previewMediaPaused=false) so the previewStandbyForLive predicate is FALSE and PreviewCard mounts the real MediaVideoSurface (operator chose UX over decoder protection)', () => {
+    // Reproduce the operator scenario at the store level.
+    const live = mediaSlide('vid-A', 'Clip A on live')
+    live.mediaUrl = 'https://cdn.example/A.mp4'
+    const preview = mediaSlide('vid-B', 'Clip B pinned')
+    preview.mediaUrl = 'https://cdn.example/B.mp4'
+
+    // LIVE already playing A via the v0.7.208 direct ref.
+    useAppStore.setState({
+      liveSlide: live,
+      isLive: true,
+      liveSlideIndex: -1,
+      pinnedPreviewSlide: null,
+      previewMediaPaused: false,
+    } as Partial<ReturnType<typeof useAppStore.getState>>)
+
+    // Operator single-clicks B in the Media library — reproduce the
+    // EXACT 3-call sequence sendMediaToPreview runs when
+    // liveIsPlayingDifferentMediaVideo is detected (library-compact
+    // L~1302; v0.7.216 invariant).
+    useAppStore.getState().setPreviewMediaPaused(true)
+    useAppStore.getState().setPreviewMediaCurrentTime(0)
+    useAppStore.getState().pinPreviewSlide(preview)
+
+    const s = useAppStore.getState()
+    // Live must be untouched — same direct ref, still on air.
+    expect(s.liveSlide?.id, 'LIVE direct ref MUST remain clip A after preview pin').toBe('vid-A')
+    expect(s.isLive, 'isLive MUST remain true').toBe(true)
+    // Preview must be pinned to B AND paused — the precondition for
+    // the STANDBY placard.
+    expect(s.pinnedPreviewSlide?.id, 'pinnedPreviewSlide MUST be clip B').toBe('vid-B')
+    expect(s.previewMediaPaused, 'v0.7.241 — pinPreviewSlide auto-plays the pin, resetting previewMediaPaused to false even though the caller armed true above (operator chose UX feedback over decoder protection)').toBe(false)
+    expect(s.previewMediaCurrentTime, 'previewMediaCurrentTime MUST be reset to 0').toBe(0)
+
+    // The 5-condition predicate from logos-shell L~1165 evaluated in
+    // isolation here — proves that with this store state the
+    // PreviewCard render path will pick the STANDBY branch (zero
+    // <video> = zero contention with LIVE's decoder).
+    const previewSlide = s.pinnedPreviewSlide
+    const liveSlide = s.liveSlide
+    const liveIsMediaVideo =
+      liveSlide?.type === 'media' &&
+      (liveSlide as Slide & { mediaKind?: string }).mediaKind === 'video' &&
+      !!(liveSlide as Slide & { mediaUrl?: string }).mediaUrl
+    const previewStandbyForLive =
+      previewSlide?.type === 'media' &&
+      (previewSlide as Slide & { mediaKind?: string }).mediaKind === 'video' &&
+      !!(previewSlide as Slide & { mediaUrl?: string }).mediaUrl &&
+      liveIsMediaVideo &&
+      (liveSlide as Slide & { mediaUrl?: string }).mediaUrl !==
+        (previewSlide as Slide & { mediaUrl?: string }).mediaUrl &&
+      s.previewMediaPaused
+    expect(
+      previewStandbyForLive,
+      'v0.7.241 — with auto-play pins previewMediaPaused is false, so the STANDBY predicate is FALSE: PreviewCard mounts the real auto-playing MediaVideoSurface, not the freezeBg poster',
+    ).toBe(false)
+  })
+
+  it('(gg) v0.7.222 GUARD — in-shell MediaCard.onItemClick first-click path MUST use pinPreviewSlide (NOT setSlides+setLiveSlideIndex(-1)+setIsLive(false)) so single-clicking a media tile via the in-shell Media card does NOT wipe live (architect code-review surfaced this as a second live-stop path the initial v0.7.222 attempt missed; sibling library-compact.sendMediaToPreview was already migrated in v0.7.210/216)', () => {
+    const src = readFileSync(
+      join(__dirname, '../components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+
+    // Locate the onItemClick handler body (inside MediaCard).
+    // Anchor on the `if (stagedItemId !== item.id)` first-click branch.
+    const handlerMatch = src.match(
+      /if \(stagedItemId !== item\.id\) \{([\s\S]*?)\} else \{([\s\S]*?)\}\s*\},\s*\[\s*stagedItemId,\s*makeSlide,/,
+    )
+    expect(
+      handlerMatch,
+      'MediaCard onItemClick first-click + second-click branches not found — pattern moved?',
+    ).toBeTruthy()
+    // Strip // line comments so the historical "MUST NOT call X"
+    // documentation doesn't trip the negative assertions below.
+    const stripComments = (s: string) =>
+      s
+        .split('\n')
+        .map((line) => line.replace(/\/\/.*$/, ''))
+        .join('\n')
+    const firstClick = stripComments(handlerMatch![1])
+    const secondClick = stripComments(handlerMatch![2])
+
+    // First-click MUST use pinPreviewSlide.
+    expect(
+      firstClick,
+      '(gg-1) MediaCard first-click MUST call pinPreviewSlide (v0.7.201/v0.7.210/v0.7.222 invariant — direct-ref pin, never setSlides)',
+    ).toMatch(/\bpinPreviewSlide\(/)
+    // First-click MUST NOT wipe live state.
+    expect(
+      firstClick,
+      '(gg-2) MediaCard first-click MUST NOT call setLiveSlideIndex(-1) — that is the v0.7.222 root-cause regression class (deliberate live wipe on preview pin)',
+    ).not.toMatch(/setLiveSlideIndex\(-1\)/)
+    expect(
+      firstClick,
+      '(gg-3) MediaCard first-click MUST NOT call setIsLive(false) — same root cause as (gg-2)',
+    ).not.toMatch(/setIsLive\(false\)/)
+    // First-click MUST NOT replace the deck.
+    expect(
+      firstClick,
+      '(gg-4) MediaCard first-click MUST NOT call setSlides([...]) — that wipes the v0.7.208 AI liveSlide direct ref (v0.7.213 regression class) AND clobbers any preview deck the operator was navigating',
+    ).not.toMatch(/setSlides\(/)
+    // First-click MUST apply the pause-before-pin sequence when live
+    // plays a different media video.
+    // v0.7.241 — The v0.7.222 pause-before-pin "STANDBY placard"
+    // sequence was REMOVED. Single-click now ALWAYS auto-plays the
+    // pinned clip in Preview (operator chose UX feedback over the HW-
+    // decoder-eviction protection). pinPreviewSlide (store.ts) now
+    // atomically resets previewMediaPaused=false + currentTime=0, so
+    // the first-click handler MUST NOT arm previewMediaPaused=true and
+    // MUST NOT hand-roll a separate previewMediaCurrentTime reset.
+    expect(
+      firstClick,
+      '(gg-5) v0.7.241 — MediaCard first-click MUST NOT arm previewMediaPaused=true (auto-play always; the standby gate is gone)',
+    ).not.toMatch(/setPreviewMediaPaused\(true\)/)
+    expect(
+      firstClick,
+      '(gg-6) v0.7.241 — MediaCard first-click MUST rely on pinPreviewSlide for the atomic previewMediaCurrentTime reset, not a separate setPreviewMediaCurrentTime(...) standby-arming call',
+    ).not.toMatch(/setPreviewMediaCurrentTime\(/)
+
+    // Second-click MUST use setLiveAuto (the v0.7.203 direct-ref
+    // promote primitive), NEVER legacy index-based setLiveSlideIndex(0)
+    // (the legacy path only worked because the old first-click had
+    // stuffed the slide into slides[0]; now that first-click pins
+    // instead, slides[] may not contain the staged item at all and
+    // the index promote would promote the wrong slide).
+    expect(
+      secondClick,
+      '(gg-8) MediaCard second-click MUST call setLiveAuto(slide) — v0.7.203/v0.7.210/v0.7.214/v0.7.222 uniform promote primitive',
+    ).toMatch(/setLiveAuto\(/)
+    expect(
+      secondClick,
+      '(gg-9) MediaCard second-click MUST NOT call setLiveSlideIndex(0) — the legacy index promote would promote slides[0] which is no longer guaranteed to be the staged item now that first-click uses pinPreviewSlide',
+    ).not.toMatch(/setLiveSlideIndex\(0\)/)
+  })
+
+  it('(hh) v0.7.222 GUARD — every media-library video THUMBNAIL <video> mount in operator-facing surfaces MUST use preload="none" + disablePictureInPicture + disableRemotePlayback (NEVER preload="metadata" or bare). Architect Fix #5: the thumbnail probe path compounded LIVE-pane contention with N more transient HW decoder-slot probes per Media-card render', () => {
+    const sites: { file: string; min: number }[] = [
+      // logos-shell.tsx: grid-mode thumbnail (~L3137) + tiles-mode thumbnail (~L3220).
+      { file: '../components/layout/logos-shell.tsx', min: 2 },
+      // library-compact.tsx: popout grid thumbnail (~L1445).
+      { file: '../components/layout/library-compact.tsx', min: 1 },
+    ]
+    for (const { file, min } of sites) {
+      const src = readFileSync(join(__dirname, file), 'utf8')
+      // Strip // line comments and /* */ block comments so historical
+      // documentation that mentions preload="metadata" doesn't trip
+      // the negative assertion.
+      const noBlockComments = src.replace(/\/\*[\s\S]*?\*\//g, '')
+      const noComments = noBlockComments
+        .split('\n')
+        .map((l) => l.replace(/\/\/.*$/, ''))
+        .join('\n')
+      // Count <video ...> opening tags in the non-comment source.
+      const videoTags = noComments.match(/<video\b[^>]*>/g) ?? []
+      // Anything that is NOT the MediaVideoSurface fenced inside an
+      // ALREADY-gated structure: every <video> in operator surfaces
+      // MUST have preload="none" OR be the MediaVideoSurface internal
+      // (which has its own gate via the v0.7.222 attribute).
+      const externalVideos = videoTags.filter(
+        (t) => !t.includes('ref={videoRef}'), // MediaVideoSurface uses videoRef
+      )
+      const offenders = externalVideos.filter(
+        (t) =>
+          !/preload="none"/.test(t) &&
+          // The customBackground "Current background" chip in
+          // library-compact intentionally uses preload="metadata" +
+          // onLoadedMetadata={...pause()} (the freezeBg=1 single-
+          // frame pattern, mirrored in congregation/route.ts setBgVid).
+          // It needs the metadata fetch to render the first frame for
+          // the chip thumbnail, then immediately pauses. Exempt any
+          // <video> tag that explicitly self-gates via onLoadedMetadata.
+          !/onLoadedMetadata=/.test(t) &&
+          // v0.7.227/239 — the PreviewCard freezeBg poster <video> uses
+          // preload="auto" + onLoadedData={play().then(pause)} to paint
+          // ONE frame then release the decoder slot. It is a self-gating
+          // single-frame poster (NOT a continuous decode), so exempt any
+          // <video> that self-gates via onLoadedData too.
+          !/onLoadedData=/.test(t),
+      )
+      expect(
+        offenders,
+        `${file}: every operator-facing thumbnail <video> tag MUST have preload="none"; offenders: ${JSON.stringify(offenders)}`,
+      ).toEqual([])
+      // Sanity: confirm at least `min` thumbnail mounts exist (catches
+      // accidental deletion that would silently pass the negative check).
+      expect(
+        externalVideos.length,
+        `${file}: expected at least ${min} thumbnail <video> mount(s); found ${externalVideos.length}`,
+      ).toBeGreaterThanOrEqual(min)
+    }
+  })
+
+  it('(ii) v0.7.222 BEHAVIOURAL — operator adjusting Fit on a media item that is LIVE via the v0.7.208 setLiveAuto direct-ref path (isLive=true, liveSlideIndex=-1, liveSlide populated) MUST NOT wipe live. Architect Fix #6: pre-fix `wasLive = liveSlideIndex >= 0` was false in this configuration so the post-setSlides re-engage block was skipped, silently knocking the on-air clip off-air the moment the operator nudged Fit', () => {
+    const live = mediaSlide('vid-A', 'Clip A on live via setLiveAuto')
+    live.mediaUrl = 'https://cdn.example/A.mp4'
+    ;(live as Slide).mediaFit = 'fit'
+    // Simulate AI / library-compact-double-click promotion: setLiveAuto
+    // direct ref ONLY, no setLiveSlideIndex.
+    useAppStore.setState({
+      slides: [],
+      liveSlide: live,
+      isLive: true,
+      liveSlideIndex: -1,
+      pinnedPreviewSlide: live,
+      previewMediaPaused: false,
+    } as Partial<ReturnType<typeof useAppStore.getState>>)
+
+    // Mirror updateFit's new direct-ref-first detection + re-engage.
+    // This is the EXACT shape of the Fix #6 block in logos-shell L~3789.
+    const refreshed: Slide = { ...live, mediaFit: 'fill', id: 'slide-media-refreshed' }
+    const st = useAppStore.getState()
+    const wasLive = !!(st.isLive && (st.liveSlide || st.liveSlideIndex >= 0))
+    expect(
+      wasLive,
+      '(ii-1) direct-ref-first detection MUST flag live-active even when liveSlideIndex === -1 (setLiveAuto path); pre-fix `liveSlideIndex >= 0` returned false here = the bug',
+    ).toBe(true)
+    st.pinPreviewSlide(refreshed)
+    if (wasLive) {
+      st.setLiveAuto(refreshed)
+    }
+    const after = useAppStore.getState()
+    expect(
+      after.isLive,
+      '(ii-2) post-Fit live MUST stay on air',
+    ).toBe(true)
+    expect(
+      after.liveSlide?.id,
+      '(ii-3) post-Fit liveSlide direct ref MUST be the refreshed clip with new Fit (not null, not the stale one)',
+    ).toBe('slide-media-refreshed')
+    expect(
+      after.liveSlide?.mediaFit,
+      '(ii-4) refreshed live slide MUST carry the new Fit value',
+    ).toBe('fill')
+    expect(
+      after.pinnedPreviewSlide?.id,
+      '(ii-5) preview pin MUST also advance to the refreshed clip so PreviewCard symmetry holds',
+    ).toBe('slide-media-refreshed')
+  })
+
+  it('(jj) v0.7.224 SOURCE-GREP — GO LIVE while preview plays video MUST resume on live: pinned-path call order (setLiveAuto BEFORE setLiveMediaCurrentTime) + MediaVideoSurface canplay handler re-applies pending seek via direct store read', () => {
+    const stripComments = (src: string): string =>
+      src.split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n')
+
+    // ── logos-shell.tsx goLive pinned path ───────────────────────────
+    const logosRaw = readFileSync(
+      join(process.cwd(), 'src/components/layout/logos-shell.tsx'),
+      'utf8',
+    )
+    const logos = stripComments(logosRaw)
+
+    // Locate the goLive callback body so the ordering check is scoped
+    // (the file has many setLiveAuto / setLiveMediaCurrentTime callers
+    // outside goLive — e.g. AI auto-fire, Fit handler — which DO NOT
+    // share the pinned-path ordering invariant).
+    const goLiveStart = logos.indexOf('const goLive = useCallback(() => {')
+    expect(
+      goLiveStart,
+      '(jj-1) logos-shell.tsx MUST declare `const goLive = useCallback(() => {` — the operator GO LIVE button handler',
+    ).toBeGreaterThan(-1)
+    const clearLiveStart = logos.indexOf('const clearLive = useCallback', goLiveStart)
+    const goLiveBody = logos.slice(goLiveStart, clearLiveStart)
+
+    // resumeFrom is read from the preview <video> data-surface attr.
+    expect(
+      /resumeFrom\s*=\s*pv\.currentTime/.test(goLiveBody),
+      '(jj-2) logos-shell goLive pinned path MUST capture preview currentTime into `resumeFrom = pv.currentTime` so live can resume seamlessly',
+    ).toBe(true)
+    expect(
+      /video\[data-surface="preview"\]/.test(goLiveBody),
+      '(jj-3) logos-shell goLive pinned path MUST query the preview <video> by data-surface="preview" to capture its currentTime',
+    ).toBe(true)
+
+    // Ordering invariant: setLiveAuto MUST come BEFORE the resume-time
+    // re-application (otherwise setLiveAuto's atomic reset clobbers
+    // the captured time). Compare string indices within goLive body.
+    const setLiveAutoIdx = goLiveBody.indexOf('setLiveAuto(pinned)')
+    const setLiveTimeIdx = goLiveBody.indexOf('setLiveMediaCurrentTime(resumeFrom)')
+    expect(
+      setLiveAutoIdx,
+      '(jj-4) logos-shell goLive pinned path MUST call `setLiveAuto(pinned)` (promotion primitive)',
+    ).toBeGreaterThan(-1)
+    expect(
+      setLiveTimeIdx,
+      '(jj-5) logos-shell goLive pinned path MUST call `setLiveMediaCurrentTime(resumeFrom)` AFTER setLiveAuto to override the atomic transport reset with the captured preview time',
+    ).toBeGreaterThan(-1)
+    expect(
+      setLiveAutoIdx < setLiveTimeIdx,
+      '(jj-6) logos-shell goLive pinned path: setLiveAuto MUST come BEFORE setLiveMediaCurrentTime(resumeFrom). Inverting the order re-opens the v0.7.224 regression (atomic reset in store L1233-1236 clobbers the captured time).',
+    ).toBe(true)
+
+    // ── easyworship-shell.tsx goLive pinned path ─────────────────────
+    const ewRaw = readFileSync(
+      join(process.cwd(), 'src/components/layout/easyworship-shell.tsx'),
+      'utf8',
+    )
+    const ew = stripComments(ewRaw)
+    const ewGoLiveStart = ew.indexOf('const goLive = useCallback(() => {')
+    expect(
+      ewGoLiveStart,
+      '(jj-7) easyworship-shell.tsx MUST declare `const goLive = useCallback(() => {` — parity with logos-shell',
+    ).toBeGreaterThan(-1)
+    const ewClearLiveStart = ew.indexOf('const clearLive = useCallback', ewGoLiveStart)
+    const ewGoLiveBody = ew.slice(ewGoLiveStart, ewClearLiveStart)
+    const ewSetLiveAutoIdx = ewGoLiveBody.indexOf('setLiveAuto(pinned)')
+    const ewSetLiveTimeIdx = ewGoLiveBody.indexOf('setLiveMediaCurrentTime(resumeFrom)')
+    expect(
+      ewSetLiveAutoIdx,
+      '(jj-8) easyworship-shell goLive pinned path MUST call `setLiveAuto(pinned)`',
+    ).toBeGreaterThan(-1)
+    expect(
+      ewSetLiveTimeIdx,
+      '(jj-9) easyworship-shell goLive pinned path MUST call `setLiveMediaCurrentTime(resumeFrom)` after setLiveAuto',
+    ).toBeGreaterThan(-1)
+    expect(
+      ewSetLiveAutoIdx < ewSetLiveTimeIdx,
+      '(jj-10) easyworship-shell goLive pinned path: setLiveAuto MUST come BEFORE setLiveMediaCurrentTime(resumeFrom). Same atomic-reset clobber rationale as logos-shell.',
+    ).toBe(true)
+
+    // ── MediaVideoSurface canplay handler ────────────────────────────
+    // Body of the onCanPlay handler in the live-play effect MUST:
+    //   (a) read liveMediaCurrentTime / previewMediaCurrentTime
+    //       directly from the store (NOT the closed-over hook value)
+    //   (b) seek v.currentTime to the target before play() is called
+    //   (c) close the seek inside an if-guard so a 0 target doesn't
+    //       cause a redundant seek
+    expect(
+      /const\s+onCanPlay\s*=\s*\(\)\s*=>\s*\{[\s\S]*?useAppStore\.getState\(\)\.liveMediaCurrentTime[\s\S]*?v\.currentTime\s*=\s*targetTime[\s\S]*?v\.play\(\)/.test(logos),
+      '(jj-11) MediaVideoSurface onCanPlay handler MUST read liveMediaCurrentTime via useAppStore.getState() (direct store read closes the race with goLive\'s setLiveMediaCurrentTime resolving after effect setup), apply v.currentTime = targetTime, then call v.play() — all in that order',
+    ).toBe(true)
+    expect(
+      /const\s+onCanPlay\s*=\s*\(\)\s*=>\s*\{[\s\S]*?useAppStore\.getState\(\)\.previewMediaCurrentTime/.test(logos),
+      '(jj-12) MediaVideoSurface onCanPlay handler MUST also handle the preview surface via useAppStore.getState().previewMediaCurrentTime (symmetry — same direct-read pattern applies to both surfaces)',
+    ).toBe(true)
+    expect(
+      /targetTime\s*>\s*0\s*&&[\s\S]*?Math\.abs\(v\.currentTime\s*-\s*targetTime\)\s*>\s*0\.5/.test(logos),
+      '(jj-13) MediaVideoSurface onCanPlay seek MUST be guarded by `targetTime > 0` AND a 0.5s tolerance so a zero or near-current target doesn\'t cause a redundant seek that breaks playback smoothness',
+    ).toBe(true)
+  })
+
+  it('(hh) v0.7.223 SOURCE-GREP — NDI transparent mode MUST be explicit opt-in across every layer + BGRX FourCC MUST be advertised for opaque sends + alpha MUST be forced opaque in opaque mode + start() short-circuit MUST include transparent (architect findings on v0.7.223 code review enforced as a literal guard)', () => {
+    const stripComments = (src: string): string =>
+      src.split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n')
+
+    // ── ndi-service.ts invariants ────────────────────────────────────
+    const ndiSvcRaw = readFileSync(
+      join(process.cwd(), 'electron/ndi-service.ts'),
+      'utf8',
+    )
+    const ndiSvc = stripComments(ndiSvcRaw)
+    expect(
+      /FOURCC_BGRX\s*=\s*0x58524742/.test(ndiSvc),
+      '(hh-1) ndi-service.ts MUST declare FOURCC_BGRX = 0x58524742 (BGRX little-endian) so opaque NDI sends skip per-pixel alpha composite on receivers (EW-class smoothness)',
+    ).toBe(true)
+    expect(
+      /FourCC:\s*\(this\.senderTransparent\s*\|\|\s*this\.forceBgraForObs\)\s*\?\s*FOURCC_BGRA\s*:\s*FOURCC_BGRX/.test(ndiSvc),
+      '(hh-2) v0.7.230 — nativeSendFrame MUST select FourCC via `(this.senderTransparent || this.forceBgraForObs) ? FOURCC_BGRA : FOURCC_BGRX`. senderTransparent stays the primary selector (transparent overlay workflow); forceBgraForObs is the operator opt-in for OBS, which refuses BGRX sources. Swapping the branches re-introduces receiver-side stutter or breaks the transparent overlay.',
+    ).toBe(true)
+    expect(
+      /private\s+senderTransparent\s*=\s*false/.test(ndiSvc),
+      '(hh-3) ndi-service.ts MUST hold private senderTransparent field, defaulted false (opaque)',
+    ).toBe(true)
+    expect(
+      /this\.senderTransparent\s*=\s*opts\.transparent\s*===\s*true/.test(ndiSvc),
+      '(hh-4) start() MUST set this.senderTransparent = opts.transparent === true (explicit opt-in, not !== false)',
+    ).toBe(true)
+    expect(
+      /this\.senderTransparent\s*===\s*wantedTransparent/.test(ndiSvc),
+      '(hh-5) start() same-format short-circuit MUST include senderTransparent equality so toggling transparent ON↔OFF (without resolution/fps change) rebuilds the sender — architect found this as a stale-state bug on v0.7.223 review',
+    ).toBe(true)
+    expect(
+      /const\s+wantedTransparent\s*=\s*opts\.transparent\s*===\s*true/.test(ndiSvc),
+      '(hh-6) start() MUST compute wantedTransparent via `opts.transparent === true` (explicit opt-in, mirrors main.ts contract)',
+    ).toBe(true)
+    expect(
+      /u32\[i\]\s*\|=\s*0xff000000/.test(ndiSvc),
+      '(hh-7) v0.7.233 — sendFrame MUST force opaque alpha when !senderTransparent via the Uint32Array hot-path OR (`u32[i] |= 0xff000000`, little-endian high byte = alpha). Belt-and-suspenders for older NDI 4 receivers that fall back to BGRA interpretation. The pre-v0.7.233 per-byte loop (`slot[i] = 0xff`) was replaced for SIMD-vectorised throughput; reverting re-introduces the ~0.3ms/frame cost.',
+    ).toBe(true)
+    expect(
+      /if\s*\(\s*!this\.senderTransparent\s*\)\s*\{[\s\S]*?u32\[i\]\s*\|=\s*0xff000000/.test(ndiSvc),
+      '(hh-8) the opaque-alpha-force MUST be gated by `if (!this.senderTransparent)` — running it in transparent mode would silently wipe the alpha matte operators depend on for lower-third overlays',
+    ).toBe(true)
+    expect(
+      /this\.senderTransparent\s*=\s*false/.test(ndiSvc.split('async stop()')[1] ?? ''),
+      '(hh-9) stop() MUST reset this.senderTransparent = false so a subsequent start() cannot inherit a stale transparent flag from the prior session',
+    ).toBe(true)
+
+    // ── main.ts invariants ───────────────────────────────────────────
+    const mainRaw = readFileSync(
+      join(process.cwd(), 'electron/main.ts'),
+      'utf8',
+    )
+    const mainSrc = stripComments(mainRaw)
+    expect(
+      /wantTransparent\s*=\s*wantLayout\s*===\s*'ndi'\s*&&\s*opts\.transparent\s*===\s*true/.test(mainSrc),
+      '(hh-10) main.ts wantTransparent MUST be `opts.transparent === true` (explicit opt-in). Reverting to `!== false` re-opens the see-through video background regression',
+    ).toBe(true)
+    expect(
+      /transparent\s*=\s*opts\.transparent\s*===\s*true/.test(mainSrc),
+      '(hh-11) main.ts URL-param transparent branch MUST also be `opts.transparent === true` — the BrowserWindow attribute and the renderer page CSS background MUST stay in lockstep, mismatch produces partial-transparency artefacts',
+    ).toBe(true)
+    expect(
+      /await\s+ndi\.start\(\s*\{\s*\.\.\.opts,\s*transparent:\s*wantTransparent\s*\}\s*\)/.test(mainSrc),
+      '(hh-12) main.ts MUST pass `transparent: wantTransparent` through to ndi.start() so the FourCC selection in ndi-service is driven by the resolved gate, not by whatever the renderer happened to send',
+    ).toBe(true)
+    expect(
+      /opts\.transparent\s*!==\s*false/.test(mainSrc),
+      '(hh-13) main.ts MUST NOT contain `opts.transparent !== false` anywhere — that was the pre-v0.7.223 default-ON pattern that caused the operator transparency complaint',
+    ).toBe(false)
+
+    // ── renderer call sites MUST not hardcode transparent: true ──────
+    const ewShellRaw = readFileSync(
+      join(process.cwd(), 'src/components/layout/easyworship-shell.tsx'),
+      'utf8',
+    )
+    const ewShell = stripComments(ewShellRaw)
+    expect(
+      /transparent:\s*true\b/.test(ewShell),
+      '(hh-14) easyworship-shell.tsx MUST NOT hardcode `transparent: true` in any desktop.ndi.start call — architect found this as a missed call site that bypassed the explicit-opt-in contract. Must derive from store state (e.g. ndiDisplayMode === "lower-third")',
+    ).toBe(false)
+  })
+
+  it('(ff) v0.7.222 BEHAVIOURAL — operator pressing the placard "Play preview" button (setPreviewMediaPaused(false)) MUST release the gate so the real MediaVideoSurface mounts on next render', () => {
+    const live = mediaSlide('vid-A', 'Clip A on live')
+    live.mediaUrl = 'https://cdn.example/A.mp4'
+    const preview = mediaSlide('vid-B', 'Clip B pinned')
+    preview.mediaUrl = 'https://cdn.example/B.mp4'
+    useAppStore.setState({
+      liveSlide: live,
+      isLive: true,
+      liveSlideIndex: -1,
+      pinnedPreviewSlide: preview,
+      previewMediaPaused: true,
+      previewMediaCurrentTime: 0,
+    } as Partial<ReturnType<typeof useAppStore.getState>>)
+
+    // Operator clicks "Play preview" inside the placard.
+    useAppStore.getState().setPreviewMediaPaused(false)
+
+    const s = useAppStore.getState()
+    // Live still untouched.
+    expect(s.liveSlide?.id).toBe('vid-A')
+    expect(s.isLive).toBe(true)
+    // Predicate now evaluates false — placard goes away, real
+    // <video> mounts.
+    expect(
+      s.previewMediaPaused,
+      'after Play, previewMediaPaused MUST be false so the STANDBY gate releases',
+    ).toBe(false)
   })
 })

@@ -365,6 +365,16 @@ const LOOKUP_PATTERNS = [
   new RegExp(`^(${BOOK_ABBR_PATTERN})\\s+(\\d{1,3})(?:(?:\\s*:\\s*|\\s+)(\\d{1,3})(?:\\s*[-\\u2013]\\s*(\\d{1,3}))?)?\\s*$`, 'i'),
 ]
 
+// Perf: precompute non-global clones of VERSE_PATTERNS once at module
+// load. parseVerseReference runs on every transcript frame during live
+// detection; rebuilding these RegExp objects per call was pure CPU
+// churn. Stripping the 'g' flag is required so String.match() returns
+// capture groups — the clones are behaviour-identical to the per-call
+// construction they replace.
+const VERSE_PATTERNS_NONGLOBAL = VERSE_PATTERNS.map(
+  (p) => new RegExp(p.source, p.flags.replace('g', '')),
+)
+
 export function parseVerseReference(input: string): {
   reference: string
   book: string
@@ -376,10 +386,7 @@ export function parseVerseReference(input: string): {
   // Try the strict speech-detection patterns first — they handle the
   // full conversational forms ("turn to John 3:16", "Romans chapter
   // 8 verse 28") that operators occasionally paste in.
-  for (const pattern of VERSE_PATTERNS) {
-    // Remove 'g' flag for match() so capture groups work correctly
-    const flags = pattern.flags.replace('g', '')
-    const nonGlobalPattern = new RegExp(pattern.source, flags)
+  for (const nonGlobalPattern of VERSE_PATTERNS_NONGLOBAL) {
     const match = cleaned.match(nonGlobalPattern)
     if (match) {
       const bookRaw = match[1]

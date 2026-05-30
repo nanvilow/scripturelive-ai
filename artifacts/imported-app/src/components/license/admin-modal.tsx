@@ -2962,6 +2962,11 @@ export function AdminModal() {
                     onClick={() => {
                       setCodesShowBin(binTarget)
                       setCodesFilter(filterTarget as 'all' | AdminCodeStatus)
+                      // v0.7.264 — Clear selection on view switch so a
+                      // stale active-view selection can never become a
+                      // permanent-delete target in the bin (and vice
+                      // versa). Mirrors the Bin toolbar toggle.
+                      setCodesSelected(new Set())
                     }}
                     aria-pressed={active}
                     title={`Show ${label.toLowerCase()} codes`}
@@ -3004,7 +3009,7 @@ export function AdminModal() {
               </select>
               <Button
                 size="sm" variant="outline"
-                onClick={() => setCodesShowBin((v) => !v)}
+                onClick={() => { setCodesShowBin((v) => !v); setCodesSelected(new Set()) }}
                 className={cn(
                   'border-border text-foreground h-8',
                   codesShowBin && 'bg-rose-500/10 border-rose-500/40 text-rose-200',
@@ -3041,8 +3046,9 @@ export function AdminModal() {
                 only when at least one row is ticked. Edit (single) opens
                 the existing renew dialog so the operator doesn't have
                 to scroll back to the row; Delete (N) bulk-soft-deletes
-                into the bin via the new endpoint. */}
-            {codesSelectMode && codesSelected.size > 0 && (
+                into the bin via the new endpoint. Hidden while viewing
+                the bin — the bin has its own permanent-delete bar. */}
+            {!codesShowBin && codesSelectMode && codesSelected.size > 0 && (
               <section className="flex items-center gap-2 rounded border border-primary/40 bg-primary/5 px-3 py-2 text-[11px]">
                 <span className="font-semibold">{codesSelected.size} code{codesSelected.size === 1 ? '' : 's'} selected</span>
                 <div className="flex-1" />
@@ -3299,12 +3305,51 @@ export function AdminModal() {
                   <span>Bin · auto-purges 90 days after delete (recoverable until then)</span>
                   <span className="text-muted-foreground normal-case">{codesData.bin.length} item(s)</span>
                 </div>
+                {/* v0.7.264 — Bin bulk-action bar. Operator request:
+                    "Select all + Delete" for the bin. Permanent (hard)
+                    delete because bin rows are already soft-deleted. */}
+                {codesSelectMode && codesSelected.size > 0 && (
+                  <div className="flex items-center gap-2 px-3 py-2 border-b border-rose-500/30 bg-rose-500/5 text-[11px]">
+                    <span className="font-semibold text-rose-200">{codesSelected.size} selected</span>
+                    <div className="flex-1" />
+                    <Button
+                      size="sm" className="h-7 text-[10px] bg-rose-600 hover:bg-rose-500"
+                      onClick={() => askConfirm({
+                        title: `Permanently delete ${codesSelected.size} code${codesSelected.size === 1 ? '' : 's'}?`,
+                        description: 'This cannot be undone. The activation rows will be wiped from the audit log forever.',
+                        confirmLabel: `Delete ${codesSelected.size} forever`,
+                        destructive: true,
+                        // Defensive: scope to codes that actually exist
+                        // in the bin so a stale selection cannot purge an
+                        // active-view code even if a future code path
+                        // forgets to clear the selection on view switch.
+                        onConfirm: () => bulkDelete(
+                          'activation',
+                          codesData.bin.map((r) => r.code).filter((c) => codesSelected.has(c)),
+                          { permanent: true },
+                        ),
+                      })}
+                    ><Trash className="h-3 w-3 mr-1" />Delete forever ({codesSelected.size})</Button>
+                  </div>
+                )}
                 {codesData.bin.length === 0 ? (
                   <div className="py-8 text-center text-muted-foreground text-xs">Bin is empty.</div>
                 ) : (
                   <table className="w-full text-[11px]">
                     <thead className="text-[9px] uppercase tracking-wider text-muted-foreground bg-background/30">
                       <tr>
+                        {codesSelectMode && (
+                          <th className="px-2 py-1.5 w-8 text-center">
+                            <Checkbox
+                              checked={codesData.bin.length > 0 && codesData.bin.every((r) => codesSelected.has(r.code))}
+                              onCheckedChange={(c) => {
+                                if (c) setCodesSelected(new Set(codesData.bin.map((r) => r.code)))
+                                else setCodesSelected(new Set())
+                              }}
+                              aria-label="Select all binned codes"
+                            />
+                          </th>
+                        )}
                         <th className="text-left px-2 py-1.5">Code</th>
                         <th className="text-left px-2 py-1.5">Plan</th>
                         <th className="text-left px-2 py-1.5">Buyer</th>
@@ -3320,7 +3365,16 @@ export function AdminModal() {
                           ? Math.max(0, Math.ceil(r.binMsRemaining / 86400000))
                           : null
                         return (
-                          <tr key={r.code}>
+                          <tr key={r.code} className={cn(codesSelectMode && codesSelected.has(r.code) && 'bg-rose-500/5')}>
+                            {codesSelectMode && (
+                              <td className="px-2 py-1.5 text-center align-top">
+                                <Checkbox
+                                  checked={codesSelected.has(r.code)}
+                                  onCheckedChange={() => setCodesSelected((s) => toggleSet(s, r.code))}
+                                  aria-label={`Select code ${r.code}`}
+                                />
+                              </td>
+                            )}
                             <td className="px-2 py-1.5 font-mono text-[10px] break-all">{r.code}</td>
                             <td className="px-2 py-1.5 text-[10px]">{r.planCode} · {r.days}d</td>
                             <td className="px-2 py-1.5 text-[10px]">

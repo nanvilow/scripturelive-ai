@@ -92,7 +92,7 @@ function asClient(mock: MockOpenAILike): never {
 describe('LLM_INTENT_KINDS — sync with CommandKind', () => {
   it('every entry assigns to CommandKind', () => {
     const kinds: readonly CommandKind[] = LLM_INTENT_KINDS
-    expect(kinds.length).toBe(17)
+    expect(kinds.length).toBe(18)
   })
 
   it('contains every documented intent (smoke list)', () => {
@@ -113,6 +113,7 @@ describe('LLM_INTENT_KINDS — sync with CommandKind', () => {
       'change_translation',
       'delete_previous_verse',
       'show_verse_n',
+      'show_chapter_n',
       'find_by_quote',
     ]
     for (const k of expected) {
