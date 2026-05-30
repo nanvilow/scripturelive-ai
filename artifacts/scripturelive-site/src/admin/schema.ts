@@ -164,7 +164,8 @@ export const COLLECTIONS: CollectionDef[] = [
   {
     key: "hero-buttons",
     label: "Hero Buttons",
-    description: "Secondary buttons shown next to “DOWNLOAD NOW”.",
+    description:
+      "Buttons shown next to “DOWNLOAD NOW” in the hero. Click Add to create a new button, drag the arrows to reorder, and Publish to push it live.",
     fileName: "hero-buttons.json",
     idField: "id",
     hasSortOrder: true,
