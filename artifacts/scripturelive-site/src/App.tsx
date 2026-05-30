@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, lazy, Suspense } from "react";
 import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -7,6 +7,8 @@ import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 import Privacy from "@/pages/privacy";
 import Terms from "@/pages/terms";
+
+const AdminApp = lazy(() => import("@/admin/AdminApp"));
 
 const queryClient = new QueryClient();
 
@@ -81,6 +83,17 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/privacy" component={Privacy} />
       <Route path="/terms" component={Terms} />
+      <Route path="/admin">
+        <Suspense
+          fallback={
+            <div className="min-h-screen flex items-center justify-center bg-background text-muted-foreground">
+              Loading…
+            </div>
+          }
+        >
+          <AdminApp />
+        </Suspense>
+      </Route>
       <Route component={NotFound} />
     </Switch>
   );
