@@ -44,6 +44,9 @@ interface AdminActivation {
   code: string; planCode: string; days: number; generatedAt: string; isUsed: boolean;
   usedAt?: string; subscriptionExpiresAt?: string; isMaster?: boolean
   generatedFor?: { email?: string; whatsapp?: string; paymentRef?: string; note?: string }
+  // v0.7.265 — per-code Deepgram AI-detection usage (ms), surfaced in
+  // the Recent Activations table as minutes + estimated USD cost.
+  deepgramUsageMs?: number
 }
 interface AdminNotification {
   id: string; ts: string; channel: 'email' | 'whatsapp'; to: string; subject: string;

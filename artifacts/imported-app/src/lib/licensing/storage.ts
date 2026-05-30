@@ -466,46 +466,63 @@ function ensureDir() {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
 }
 
-// v0.7.11 — One-shot upgrade migration for stale MoMo wallet numbers.
-// The MoMo recipient was migrated from the old 0530686367 wallet to
-// the current 0246798526 wallet a couple of releases back; the
-// compiled-in default in plans.ts already points at the new number,
-// but operators who customised the recipient via the in-app Admin
-// Settings screen still have the OLD value persisted in their
-// license.json (config.momoNumber === '0530686367') — and the
-// payment modal renders that persisted value, so customers were
-// being asked to send MoMo to a wallet the church no longer owns.
+// v0.7.11 / v0.7.266 — One-shot upgrade migration for stale MoMo/contact
+// numbers. The v0.7.11 version forced the customer-facing wallet from
+// 0530686367 onto 0246798526; v0.7.266 splits the two roles apart: the
+// operator switched only the RECEIVING wallet (where customers send
+// money) to 0530686367, while the WhatsApp support / payment-proof
+// line stays on the 0246798526 support channel.
 //
-// This migration silently rewrites every persisted '0530686367' to
-// '0246798526' on load, then persist() flushes the corrected file
-// back to disk on the next mutation. We touch all three phone-
-// number fields (momoNumber, whatsappNumber, adminPhone) so any
-// surface that still pointed at the dead wallet — payment modal,
-// WhatsApp escalation footer, admin SMS alerts — switches over in
-// one go on first launch of v0.7.11. No-op for installs that never
-// customised these fields (compiled defaults already correct) and
-// no-op for installs that already moved off 0530686367.
-const STALE_MOMO_NUMBER = '0530686367'
-const NEW_MOMO_NUMBER = '0246798526'
+// The compiled-in defaults in plans.ts already encode this split
+// (MOMO_RECIPIENT.number = 0530686367, NOTIFICATION_WHATSAPP =
+// 0246798526), but operators who customised these via the in-app Admin
+// Settings screen still have older values persisted in license.json —
+// and the payment modal renders those persisted values, so without
+// this they'd keep asking customers to send MoMo to the wrong wallet
+// (or show the wrong support number).
+//
+// Field-by-field intent:
+//   • momoNumber → CUSTOMER MONEY DESTINATION (the "Send MoMo to" row):
+//     rewrite a persisted 0246798526 to 0530686367 so customers pay the
+//     live wallet.
+//   • whatsappNumber → CUSTOMER-FACING SUPPORT / escalation line (the
+//     modal's "contact support on WhatsApp" + screenshot-proof line and
+//     the receipt "contact us" link): pinned to 0246798526, so a stale
+//     persisted 0530686367 here is corrected the OTHER way.
+//   • adminPhone → INTERNAL (operator's personal SMS-alert line, never
+//     shown to customers): pinned to 0246798526, so a persisted
+//     0530686367 here is corrected the OTHER way.
+//
+// No-op for installs that never customised these fields (compiled
+// defaults already correct).
+const CUSTOMER_OLD_NUMBER = '0246798526'
+const CUSTOMER_NEW_NUMBER = '0530686367'
+const SUPPORT_PINNED_NUMBER = '0246798526'
+const ADMIN_ALERT_NUMBER = '0246798526'
 function migrateStaleConfigNumbers(config: RuntimeConfig | undefined): RuntimeConfig | undefined {
   if (!config) return config
   let changed = false
   const next: RuntimeConfig = { ...config }
-  if (next.momoNumber?.replace(/\D/g, '') === STALE_MOMO_NUMBER) {
-    next.momoNumber = NEW_MOMO_NUMBER
+  // Money destination: old wallet → new wallet.
+  if (next.momoNumber?.replace(/\D/g, '') === CUSTOMER_OLD_NUMBER) {
+    next.momoNumber = CUSTOMER_NEW_NUMBER
     changed = true
   }
-  if (next.whatsappNumber?.replace(/\D/g, '') === STALE_MOMO_NUMBER) {
-    next.whatsappNumber = NEW_MOMO_NUMBER
+  // Support / escalation line — pin to the 0246798526 support channel,
+  // correcting a stale 0530686367 the OTHER way (it is NOT the wallet).
+  if (next.whatsappNumber?.replace(/\D/g, '') === CUSTOMER_NEW_NUMBER) {
+    next.whatsappNumber = SUPPORT_PINNED_NUMBER
     changed = true
   }
-  if (next.adminPhone?.replace(/\D/g, '') === STALE_MOMO_NUMBER) {
-    next.adminPhone = NEW_MOMO_NUMBER
+  // adminPhone is the operator's internal alert line — keep it pinned
+  // to the 0246798526 number, correcting any stale 0530686367 value.
+  if (next.adminPhone?.replace(/\D/g, '') === CUSTOMER_NEW_NUMBER) {
+    next.adminPhone = ADMIN_ALERT_NUMBER
     changed = true
   }
   if (changed) {
     // eslint-disable-next-line no-console
-    console.log('[licensing] migrated stale MoMo wallet number from', STALE_MOMO_NUMBER, '→', NEW_MOMO_NUMBER)
+    console.log('[licensing] migrated stale MoMo/WhatsApp config numbers (wallet→new, support→pinned)')
   }
   return next
 }
@@ -1766,8 +1783,39 @@ export function appendNotification(rec: Omit<NotificationRecord, 'id' | 'ts'>): 
   return note
 }
 
+// ─── Cache lifecycle ─────────────────────────────────────────────────
+//
+// Every reader in this module — `getConfig()`, `getFile()`, the
+// licensing/admin routes, and the `getEffective*` helpers in plans.ts —
+// goes through the SINGLE module-level `cache`. It is populated lazily
+// by `load()` on the first read and kept in lockstep with disk by
+// `persist()` on every write. While a single process owns
+// license.json, the cache and the on-disk file never disagree, so
+// reads are just an in-memory lookup.
+//
+// The ONE case the cache can't see on its own is an OUT-OF-BAND change
+// to license.json: another process rewrites the file, or a test drops
+// a fixture straight onto disk. `reloadFromDisk()` is the single,
+// supported way to pick that up — it clears the in-memory cache so the
+// very next read re-hydrates from disk through `load()`.
+//
+// Use this instead of the old foot-guns for reading fresh config:
+//   • `vi.resetModules()` + re-`import` — rebuilds the whole
+//     route → plans → storage graph just to get a null cache.
+//   • `__testReset()` — also DELETES the file, so it can't be used to
+//     read a fixture you just wrote.
+// `reloadFromDisk()` keeps the file intact and only invalidates the
+// cache, so a process (or test) can write license.json and then read
+// the fresh values back through the normal accessors.
+export function reloadFromDisk(): void {
+  cache = null
+}
+
 // ─── Owner runtime config (v0.5.48) ──────────────────────────────────
-/** Returns the owner-saved config, or `undefined` if never saved. */
+/** Returns the owner-saved config, or `undefined` if never saved.
+ *  This is the SINGLE supported read path for operator runtime config;
+ *  routes and plans.ts helpers all funnel through here. To pick up an
+ *  out-of-band edit to license.json, call `reloadFromDisk()` first. */
 export function getConfig(): RuntimeConfig | undefined {
   return load().config
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { cleanTranscriptText } from '@/lib/transcript-cleaner'
 import { useAppStore } from '@/lib/store'
 import { bootstrapRuntimeKeys, getDeepgramKey } from '@/lib/runtime-keys'
+import { shouldForceFinalize } from '@/lib/voice/force-finalize'
 
 /**
  * Cloud-only Deepgram streaming speech recognition for the desktop
@@ -215,6 +216,26 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
   const KEEPALIVE_MS = 7_000
   const MAX_RECONNECT_ATTEMPTS = 6
 
+  // v0.7.267 — FORCE-FINALIZE during sustained continuous speech.
+  // Deepgram only emits is_final at ~endpointing (300 ms) silence
+  // boundaries. A preacher speaking fast with no pauses produces a
+  // single ever-growing interim and NO finals, so the persistent
+  // transcript stalls AND the heavy AI-detection pipeline (semantic /
+  // preacher-phrase / paraphrase recovery) — which is gated on final in
+  // speech-provider — never runs ("AI detects nothing when he speaks
+  // fast"). We track the gap since the last final; when interims keep
+  // arriving past FORCE_FINALIZE_MS with no final, we send Deepgram's
+  // `Finalize` control message to flush the current segment into a real
+  // final. That final flows through the normal pipeline (display + FULL
+  // detection) and seeds the rolling buffer, so a verse buried
+  // mid-monologue is detected without waiting for the speaker to pause.
+  // lastFinalizeReqAtRef rate-limits the request so interims (which
+  // arrive every ~100-300 ms) can't spam Finalize before the resulting
+  // final returns.
+  const FORCE_FINALIZE_MS = 2_500
+  const lastFinalAtRef = useRef(0)
+  const lastFinalizeReqAtRef = useRef(0)
+
   // v0.7.265 — Per-user Deepgram usage metering. Wall-clock time the
   // socket stays OPEN (audio flowing) is accumulated and reported to the
   // local /api/telemetry/deepgram-usage forwarder. We flush periodically
@@ -420,6 +441,10 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
         // Metadata / other — ignore.
         return
       }
+      // v0.7.267 — any final (including an empty one or a from_finalize
+      // flush) resets the force-finalize clock so we only intervene
+      // during a genuinely unbroken interim run.
+      if (dg.is_final) lastFinalAtRef.current = Date.now()
       const alt = dg.channel?.alternatives?.[0]
       const text = (alt?.transcript || '').trim()
       if (!text) {
@@ -466,6 +491,37 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
             ? Math.max(0, Math.min(1, alt!.confidence!))
             : 1
           cb(cleaned, conf, false)
+        }
+        // v0.7.267 — if this interim has been growing past
+        // FORCE_FINALIZE_MS with no final (continuous fast speech, no
+        // 300 ms pauses), ask Deepgram to finalize the current segment.
+        // The resulting from_finalize final flows through the is_final
+        // branch above → persists to the transcript + runs the full AI
+        // detection pipeline, instead of the segment sitting undetected
+        // until the speaker happens to pause.
+        const nowF = Date.now()
+        if (
+          shouldForceFinalize(
+            nowF,
+            lastFinalAtRef.current,
+            lastFinalizeReqAtRef.current,
+            FORCE_FINALIZE_MS,
+          )
+        ) {
+          const ws = wsRef.current
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            try {
+              ws.send(JSON.stringify({ type: 'Finalize' }))
+              // v0.7.267 — arm the rate-limit ONLY after a successful send
+              // so a transient send failure retries on the next interim
+              // instead of going quiet for the whole FORCE_FINALIZE_MS
+              // window (architect nit).
+              lastFinalizeReqAtRef.current = nowF
+            } catch {
+              /* send failed — leave the rate-limit unarmed so the next
+                 interim retries immediately. */
+            }
+          }
         }
       }
     },
@@ -629,6 +685,11 @@ export function useDeepgramStreaming(): UseDeepgramStreamingReturn {
           return
         }
         wsReadyRef.current = true
+        // v0.7.267 — seed the force-finalize clock so the first interim
+        // measures its gap from connection time, not epoch 0 (which would
+        // fire Finalize immediately and uselessly on the very first word).
+        lastFinalAtRef.current = Date.now()
+        lastFinalizeReqAtRef.current = 0
         // v0.7.265 — mark the audio-flowing window open + (re)start the
         // periodic usage flush. Reconnects re-enter here and restart the
         // mark, so time during a disconnect gap is never billed.

@@ -1,3 +1,52 @@
+## v0.7.267 — Force-finalize during sustained continuous speech (fast-talker transcription + AI-detection fix)
+
+Operator report: when the speaker talks fast with no pauses, live transcription "stops" and only resumes when they slow down, and the AI detection picks up nothing; a Bible reference buried inside one long continuous phrase is also missed.
+
+### Root cause
+
+The desktop renderer streams DIRECTLY to Deepgram (`src/hooks/use-deepgram-streaming.ts`) with `interim_results=true`, `endpointing=300`. Deepgram only emits an `is_final` transcript at ~300 ms silence boundaries. In `src/components/providers/speech-provider.tsx` the heavy AI verse-detection pipeline (semantic / preacher-phrase / paraphrase recovery) AND the persistent transcript append are gated on `is_final`; only a cheap explicit-reference detector runs on interim. A preacher speaking continuously produces a single ever-growing interim and NO finals → the transcript stalls and the full detection pipeline never runs until they pause.
+
+### Fix
+
+`use-deepgram-streaming.ts` now tracks the gap since the last final (seeded at `ws.onopen`). When an interim keeps arriving past `FORCE_FINALIZE_MS` (2500 ms) with no final, it sends Deepgram's `{"type":"Finalize"}` control message (the same control channel as the existing KeepAlive). Deepgram flushes the segment as a `from_finalize` final, which flows through the EXISTING `is_final` branch → persists the transcript + runs the full detection pipeline + seeds the rolling buffer, so a reference buried mid-monologue is detected without waiting for a pause. The request is rate-limited (`lastFinalizeReqAtRef`) and armed only AFTER a successful `ws.send`, so a transient send failure retries on the next interim instead of going quiet for 2.5 s. `endpointing` stays 300 ms (v0.7.165 invariant) — Finalize is additive and only fires during sustained no-final runs, so normal sentence cadence is untouched. The rolling-buffer bridge (60 words / 12 s) still spans forced-finalize boundaries. The decision predicate is extracted to a pure, unit-tested module `src/lib/voice/force-finalize.ts` (`shouldForceFinalize`).
+
+### Not changed — installer
+
+The "ScriptureLive-AI-Setup won't install on click" report is Windows SmartScreen blocking the UNSIGNED installer (no code-signing certificate set). Operator chose (via choice prompt) to skip signing for now and leave the branded 5-page wizard as-is, so no installer changes ship here. Removing the SmartScreen block requires an OV/EV code-signing certificate supplied through the `signtoolOptions` env vars in `electron-builder.yml`.
+
+### Verification
+
+- `src/lib/voice/force-finalize.test.ts` — 6/6 (strict-greater-than threshold, no-spam rate-limit, re-arm, socket-open seed).
+- `tsc -p tsconfig.json --noEmit` — exit 0.
+- Architect review — PASS (Finalize is the correct Deepgram mechanism; 2500 ms threshold sane; no race with reconnect/KeepAlive/usage-metering; rolling-buffer bridging preserved).
+
+## v0.7.266 — Split the MoMo wallet number from the WhatsApp support/proof line
+
+Operator clarified (in-chat, confirmed via a choice prompt) that the customer-facing payment modal conflates TWO distinct phone-number roles that must be separated:
+
+- The **"Send MoMo to" recipient row** is the WALLET customers actually send money INTO → switched to **0530686367**.
+- The **"contact support on WhatsApp"** line AND the **"SEND A SCREENSHOT … for payment proof"** line are the SUPPORT / escalation / proof channel → STAY on **0246798526**.
+
+Previously all three surfaces rendered the single `payment.momoRecipient.number`, so moving the wallet would have dragged the support/proof lines along with it.
+
+### Changes
+
+- `src/lib/licensing/plans.ts`: `MOMO_RECIPIENT.number` stays 0530686367 (money destination); `NOTIFICATION_WHATSAPP` reverted to 0246798526 and re-documented as the customer-facing support/escalation/proof channel (also the post-purchase receipt "contact us" link).
+- `src/app/api/license/payment-code/route.ts`: response now carries `supportWhatsapp = getEffectiveNotificationTargets().whatsapp` alongside `momoRecipient`.
+- `src/components/license/subscription-modal.tsx`: the recipient row + copy button keep `payment.momoRecipient.number` (wallet); the NOTE block's support line + screenshot-proof line now read `payment.supportWhatsapp` (fallback `'0246798526'`). `PaymentResp` gains optional `supportWhatsapp`.
+- `src/lib/licensing/storage.ts` `migrateStaleConfigNumbers`: the two roles migrate in OPPOSITE directions — `momoNumber` stale 0246798526 → 0530686367 (wallet forward), `whatsappNumber` stale 0530686367 → 0246798526 (support pinned back), `adminPhone` pinned 0246798526. Custom operator numbers untouched.
+- `src/components/license/admin-modal.tsx`: added the missing `deepgramUsageMs?: number` to the `AdminActivation` client type (a pre-existing v0.7.265 oversight that broke `tsc`).
+
+### Verification
+
+- `momo-number-migration.test.ts` rewritten to the split contract — 7/7 green.
+- Full licensing vitest suite 43/43 green; `tsc --noEmit` exit 0.
+- Architect review PASS (money-critical): no remaining customer-facing path sends money to the support number or shows the wallet for support text.
+
+### GUARD-RAIL (wallet ≠ support — never re-unify)
+
+The payment flow now has TWO customer-facing numbers with distinct roles. **Money destination** = `MOMO_RECIPIENT.number` / `momoNumber` config / API `momoRecipient`. **Support + proof + escalation** = `NOTIFICATION_WHATSAPP` / `whatsappNumber` config / API `supportWhatsapp`. **Internal operator SMS** = `ADMIN_NOTIFICATION_PHONE` / `adminPhone`. NEVER read `momoRecipient.number` for a support string or `NOTIFICATION_WHATSAPP` for a money destination. The subscription modal CANNOT import `plans.ts` (node:fs in storage breaks the client bundle) — the support number is plumbed via the API `supportWhatsapp` field with a literal in-modal fallback. When the operator swaps a number again, change ONLY the matching role's constant + its migration branch + the migration-test contract.
+
 ## v0.7.265 — Per-code Deepgram AI-detection usage + estimated-cost tracking in admin
 
 New durable per-activation-code accounting so the operator can see how much audio each user (activation code) streamed to Deepgram and the estimated USD cost — surfaced in the admin panel with an admin-configurable $/min rate.

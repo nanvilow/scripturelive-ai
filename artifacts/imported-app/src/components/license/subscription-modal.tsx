@@ -61,7 +61,7 @@ const FALLBACK_PLANS: Plan[] = getPurchasablePlans().map((p) => ({
   discountLabel: p.discountLabel,
 }))
 
-interface PaymentResp {
+export interface PaymentResp {
   ref: string
   planCode: string
   planLabel: string
@@ -69,12 +69,26 @@ interface PaymentResp {
   createdAt: string
   expiresAt: string
   momoRecipient: { name: string; number: string }
+  // v0.7.266 — customer support / escalation WhatsApp line (0246798526).
+  // SEPARATE from momoRecipient.number (0530686367, the wallet money is
+  // sent INTO): used only for the "contact support" + screenshot-proof
+  // lines in the NOTE block below.
+  supportWhatsapp?: string
 }
 
-interface ActivateResp {
+export interface ActivateResp {
   status: { state: string; daysLeft: number; isMaster: boolean }
   activated: { code: string; planLabel: string; days: number; subscriptionExpiresAt?: string; usedAt?: string }
-  receipt: { text: string; whatsappLink: string | null }
+  receipt: {
+    text: string
+    whatsappLink: string | null
+    // v0.7.268 — customer support / escalation WhatsApp line shown on the
+    // post-purchase receipt ("need help? contact support"). SEPARATE from
+    // any MoMo wallet number — the receipt must never point "contact us"
+    // at the money wallet. Sourced from getEffectiveNotificationTargets()
+    // (NOTIFICATION_WHATSAPP 0246798526) with a literal fallback below.
+    supportWhatsapp?: string
+  }
 }
 
 function copy(text: string) {
@@ -91,6 +105,111 @@ function fmtCountdown(msLeft: number): string {
   const m = Math.floor(total / 60)
   const s = total % 60
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+
+// v0.7.267 — Money-critical recipient row + payment-proof NOTE block,
+// extracted verbatim from PHASE 2 so the number-split contract can be
+// pinned by a render test (payment-number-split.test.tsx). The wiring
+// here is the SINGLE source of truth for the v0.7.266 split:
+//   • recipient row ("Send MoMo to" name + number + copy button) reads
+//     ONLY `payment.momoRecipient.number` — the wallet customers send
+//     money INTO (0530686367).
+//   • the NOTE block's "contact support on WhatsApp" line AND its
+//     "SEND A SCREENSHOT … for payment proof" line read ONLY
+//     `payment.supportWhatsapp` (0246798526), with a literal fallback
+//     when the field is absent.
+// GUARD-RAIL (see replit.md / momo-support-number-split memory): NEVER
+// read momoRecipient.number for a support string, and NEVER read
+// supportWhatsapp for the money destination. A swap sends customer
+// MoMo to the wrong wallet with no compile-time error.
+export function MoMoRecipientPanel({
+  payment,
+  onCopy = copy,
+}: {
+  payment: Pick<PaymentResp, 'momoRecipient' | 'supportWhatsapp'>
+  onCopy?: (text: string) => void
+}) {
+  return (
+    <div className="space-y-1.5 text-[12px] text-foreground">
+      <div className="flex items-center gap-2"><Phone className="h-3.5 w-3.5 text-emerald-300" /> <span className="text-muted-foreground">Send MoMo to</span></div>
+      <div className="rounded-md bg-background border border-border px-3 py-2 flex items-center justify-between">
+        <div>
+          <div className="font-semibold">{payment.momoRecipient.name}</div>
+          <div className="font-mono text-foreground">{payment.momoRecipient.number}</div>
+        </div>
+        <Button size="sm" variant="ghost" onClick={() => onCopy(payment.momoRecipient.number)}><Copy className="h-3.5 w-3.5" /></Button>
+      </div>
+      {/* v0.6.0 — Operator updated the NOTE wording: now
+          includes a WhatsApp escalation channel and an
+          explicit instruction to send a payment-proof
+          screenshot for verification.
+          v0.6.5 — NOTE re-themed RED (was emerald) for higher
+          visual urgency.
+          v0.7.266 — the two embedded WhatsApp numbers (contact
+          support + screenshot proof) source payment.supportWhatsapp
+          (0246798526, the support/proof channel), DELIBERATELY
+          separate from the recipient row above which shows
+          payment.momoRecipient.number (0530686367, the wallet
+          customers send money INTO). Only the money-destination
+          row moved wallets; support stays put. */}
+      <div className="rounded-md border border-red-500/40 bg-red-950/30 px-3 py-2 text-[11px] text-red-100 leading-relaxed">
+        <span className="font-semibold uppercase tracking-wider text-[10px] text-red-300">NOTE:</span>{' '}
+        Make sure the recipient name shows as <span className="font-semibold">{payment.momoRecipient.name}</span> before
+        you confirm the MoMo transaction. If the name is different, STOP and contact support on
+        {' '}<span className="font-semibold">WhatsApp ({payment.supportWhatsapp || '0246798526'})</span> — your funds may be sent to the wrong account.{' '}
+        <span className="font-semibold uppercase tracking-wider text-[10px] text-red-300">SEND A SCREENSHOT TO &quot;{payment.supportWhatsapp || '0246798526'}&quot; on WhatsApp for payment proof.</span>
+      </div>
+    </div>
+  )
+}
+
+// v0.7.268 — Post-purchase receipt body (PHASE 4), extracted verbatim so
+// the "contact us" support-number contract can be pinned by a render test
+// (payment-number-split.test.tsx, PART 3). This is the THIRD documented
+// surface of the v0.7.266 wallet-vs-support split: the receipt's "need
+// help? contact support on WhatsApp" link reads ONLY
+// `receipt.supportWhatsapp` (0246798526, the support / escalation
+// channel) with a literal fallback. It MUST NEVER show a MoMo wallet
+// number — telling a paying customer to "contact us" on the wallet they
+// just sent money INTO is the exact failure this guard prevents. There is
+// no compile-time error if the two roles are crossed, hence the test.
+// GUARD-RAIL (see replit.md / momo-support-number-split memory): NEVER
+// read momoRecipient.number for this contact link.
+export function ActivationReceiptPanel({
+  receipt,
+  onCopy = copy,
+}: {
+  receipt: ActivateResp['receipt'] & { activatedLabel?: string }
+  onCopy?: (text: string) => void
+}) {
+  const support = receipt.supportWhatsapp || '0246798526'
+  return (
+    <>
+      <div className="rounded-lg border border-emerald-500/40 bg-emerald-950/20 p-3 text-left text-[11px] font-mono text-emerald-200 whitespace-pre-line">{receipt.text}</div>
+      <div className="flex flex-wrap gap-2 justify-center">
+        <Button size="sm" variant="outline" onClick={() => onCopy(receipt.text)} className="border-border text-foreground"><Copy className="h-3 w-3 mr-1.5" /> Copy receipt</Button>
+        {receipt.whatsappLink && (
+          <a href={receipt.whatsappLink} target="_blank" rel="noreferrer">
+            <Button size="sm" variant="outline" className="border-border text-foreground"><Phone className="h-3 w-3 mr-1.5" /> Send via WhatsApp</Button>
+          </a>
+        )}
+      </div>
+      {/* v0.7.268 — "need help? contact support" line: SUPPORT channel
+          (receipt.supportWhatsapp / 0246798526), NEVER a MoMo wallet
+          number. */}
+      <p className="text-[11px] text-muted-foreground">
+        Need help? Contact support on{' '}
+        <a
+          href={`https://wa.me/${support.replace(/\D/g, '')}`}
+          target="_blank"
+          rel="noreferrer"
+          className="font-semibold text-emerald-300 underline-offset-2 hover:underline"
+        >
+          WhatsApp ({support})
+        </a>
+      </p>
+    </>
+  )
 }
 
 export function SubscriptionModal() {
@@ -534,34 +653,12 @@ export function SubscriptionModal() {
                   <div className="text-[10px] text-muted-foreground mt-2">{payment.planLabel} · GHS {payment.amountGhs.toLocaleString()}</div>
                 </div>
 
-                <div className="space-y-1.5 text-[12px] text-foreground">
-                  <div className="flex items-center gap-2"><Phone className="h-3.5 w-3.5 text-emerald-300" /> <span className="text-muted-foreground">Send MoMo to</span></div>
-                  <div className="rounded-md bg-background border border-border px-3 py-2 flex items-center justify-between">
-                    <div>
-                      <div className="font-semibold">{payment.momoRecipient.name}</div>
-                      <div className="font-mono text-foreground">{payment.momoRecipient.number}</div>
-                    </div>
-                    <Button size="sm" variant="ghost" onClick={() => copy(payment.momoRecipient.number)}><Copy className="h-3.5 w-3.5" /></Button>
-                  </div>
-                  {/* v0.6.0 — Operator updated the NOTE wording: now
-                      includes a WhatsApp escalation channel and an
-                      explicit instruction to send a payment-proof
-                      screenshot for verification.
-                      v0.6.5 — NOTE re-themed RED (was emerald) for higher
-                      visual urgency. The two embedded WhatsApp numbers
-                      switched from hard-coded "0246798526" to
-                      {payment.momoRecipient.number} so admin edits to
-                      the MoMo number propagate to ALL three places
-                      (display, escalation, screenshot proof) instead of
-                      just the display row. */}
-                  <div className="rounded-md border border-red-500/40 bg-red-950/30 px-3 py-2 text-[11px] text-red-100 leading-relaxed">
-                    <span className="font-semibold uppercase tracking-wider text-[10px] text-red-300">NOTE:</span>{' '}
-                    Make sure the recipient name shows as <span className="font-semibold">{payment.momoRecipient.name}</span> before
-                    you confirm the MoMo transaction. If the name is different, STOP and contact support on
-                    {' '}<span className="font-semibold">WhatsApp ({payment.momoRecipient.number})</span> — your funds may be sent to the wrong account.{' '}
-                    <span className="font-semibold uppercase tracking-wider text-[10px] text-red-300">SEND A SCREENSHOT TO &quot;{payment.momoRecipient.number}&quot; on WhatsApp for payment proof.</span>
-                  </div>
-                </div>
+                {/* v0.7.267 — recipient row + payment-proof NOTE block
+                    extracted to <MoMoRecipientPanel> (above) so the
+                    number-split contract is render-testable. Wiring is
+                    unchanged: recipient row = momoRecipient.number wallet,
+                    NOTE lines = supportWhatsapp. */}
+                <MoMoRecipientPanel payment={payment} />
 
                 {/* v0.6.5 — Failure-to-use warning was a tiny amber line
                     that got lost in the modal. Promoted to a red ring
@@ -607,15 +704,10 @@ export function SubscriptionModal() {
               <h3 className="text-lg font-semibold">AI Detection Active</h3>
               <p className="text-[12px] text-muted-foreground mt-0.5">{receipt.activated.planLabel} · {receipt.activated.days} days</p>
             </div>
-            <div className="rounded-lg border border-emerald-500/40 bg-emerald-950/20 p-3 text-left text-[11px] font-mono text-emerald-200 whitespace-pre-line">{receipt.receipt.text}</div>
-            <div className="flex flex-wrap gap-2 justify-center">
-              <Button size="sm" variant="outline" onClick={() => copy(receipt.receipt.text)} className="border-border text-foreground"><Copy className="h-3 w-3 mr-1.5" /> Copy receipt</Button>
-              {receipt.receipt.whatsappLink && (
-                <a href={receipt.receipt.whatsappLink} target="_blank" rel="noreferrer">
-                  <Button size="sm" variant="outline" className="border-border text-foreground"><Phone className="h-3 w-3 mr-1.5" /> Send via WhatsApp</Button>
-                </a>
-              )}
-            </div>
+            {/* v0.7.268 — receipt body + support "contact us" link
+                extracted to <ActivationReceiptPanel> so the
+                support-number contract is render-testable. */}
+            <ActivationReceiptPanel receipt={receipt.receipt} />
             <Button className="bg-emerald-600 hover:bg-emerald-500" onClick={() => {
               // v0.7.101 — This 'active' phase is now defensive dead
               // code on the success path: submitActivation hard-reloads

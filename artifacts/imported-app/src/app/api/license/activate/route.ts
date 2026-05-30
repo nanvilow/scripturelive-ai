@@ -21,7 +21,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { activateCode, peekActivationSource, mergeActivationFromCloud, getFile } from '@/lib/licensing/storage'
-import { findPlan } from '@/lib/licensing/plans'
+import { findPlan, getEffectiveNotificationTargets } from '@/lib/licensing/plans'
 import { isMasterCode } from '@/lib/licensing/codes'
 import { notifyEmail, whatsappLink } from '@/lib/licensing/notifications'
 import { captureGeoFromRequest } from '@/lib/licensing/geoip'
@@ -178,6 +178,14 @@ async function activateImpl(req: NextRequest) {
   // inline — no network call.
   const waLink = receiptWhats ? whatsappLink(receiptWhats, receiptLines) : null
 
+  // v0.7.268 — customer-facing SUPPORT / escalation WhatsApp line shown
+  // on the post-purchase receipt ("need help? contact support"). This is
+  // the SAME support channel the payment modal NOTE block uses
+  // (getEffectiveNotificationTargets().whatsapp → NOTIFICATION_WHATSAPP
+  // 0246798526), DELIBERATELY separate from any MoMo wallet number — the
+  // receipt must never tell customers to "contact us" on the wallet.
+  const supportWhatsapp = getEffectiveNotificationTargets().whatsapp
+
   // ── Fire-and-forget receipt emails ───────────────────────────────
   setImmediate(() => {
     if (receiptEmail) {
@@ -218,6 +226,10 @@ async function activateImpl(req: NextRequest) {
       // surfaces a per-delivery id. The audit log records the result.
       customerEmailNote: null,
       whatsappLink: waLink,
+      // v0.7.268 — support / escalation line for the receipt's "need
+      // help? contact support" link. SUPPORT channel only — NEVER a
+      // MoMo wallet number.
+      supportWhatsapp,
     },
   })
 }
