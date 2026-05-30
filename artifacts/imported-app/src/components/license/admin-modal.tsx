@@ -91,6 +91,8 @@ interface AdminConfigResp {
      *  install's masterCode). Per-PC; shown back to the operator so
      *  they can confirm what's saved without re-pasting. */
     cloudAdminCode?: string
+    /** v0.7.265 — Owner-set Deepgram price per minute (USD). */
+    deepgramPricePerMinute?: number
     updatedAt?: string
   }
   defaults: {
@@ -100,6 +102,7 @@ interface AdminConfigResp {
     notifyEmail: string
     whatsappNumber: string
     planPrices: Record<string, number>
+    deepgramPricePerMinute: number
   }
 }
 
@@ -107,6 +110,20 @@ function copy(t: string) {
   if (typeof navigator !== 'undefined' && navigator.clipboard) {
     navigator.clipboard.writeText(t).then(() => toast.success('Copied'), () => toast.error('Copy failed'))
   }
+}
+
+// v0.7.265 — Per-user Deepgram usage display helpers. usageMs is the
+// cumulative audio streamed for a code; cost = minutes × owner price.
+function usageMinutes(ms?: number): number {
+  return (ms ?? 0) / 60_000
+}
+function fmtUsageMinutes(ms?: number): string {
+  const m = usageMinutes(ms)
+  return m < 10 ? m.toFixed(1) : Math.round(m).toLocaleString()
+}
+function fmtUsageCost(ms: number | undefined, pricePerMinute: number): string {
+  const c = usageMinutes(ms) * pricePerMinute
+  return `$${c < 1 ? c.toFixed(3) : c.toFixed(2)}`
 }
 
 type AdminTab = 'overview' | 'codes' | 'settings'
@@ -347,6 +364,8 @@ export function AdminModal() {
   // it's already visible on the cloud's own admin panel and the
   // operator needs to be able to verify what's saved.
   const [fCloudAdminCode, setFCloudAdminCode] = useState('')
+  // v0.7.265 — Deepgram price/min (USD) override. Empty ⇒ use default.
+  const [fDeepgramPrice, setFDeepgramPrice] = useState('')
   const [cloudSyncTesting, setCloudSyncTesting] = useState(false)
   const [cloudSyncResult, setCloudSyncResult] = useState<{
     ok: boolean
@@ -1011,6 +1030,7 @@ export function AdminModal() {
       // v0.7.157 — Round-trip the saved cloud admin code on load so
       // the operator can SEE whether it's set without re-entering.
       setFCloudAdminCode(j.config.cloudAdminCode ?? '')
+      setFDeepgramPrice(j.config.deepgramPricePerMinute != null ? String(j.config.deepgramPricePerMinute) : '')
       setCloudSyncResult(null)
       // v0.7.29 — Hydrate LLM classifier opt-in fields. Both default
       // to the "off / no override" state if the config never set them.
@@ -1032,8 +1052,11 @@ export function AdminModal() {
     } finally { setCfgLoading(false) }
   }, [])
 
+  // v0.7.265 — Load config as soon as the modal opens (not only on the
+  // Settings tab) so the Overview per-user AI-cost columns have the
+  // owner's price/min available without a tab switch.
   useEffect(() => {
-    if (open && authed && tab === 'settings' && !cfg && !cfgLoading) loadCfg()
+    if (open && authed && !cfg && !cfgLoading) loadCfg()
   }, [open, authed, tab, cfg, cfgLoading, loadCfg])
 
   const saveCfg = async () => {
@@ -1058,6 +1081,7 @@ export function AdminModal() {
         whatsappNumber: fWhatsapp.trim() === '' ? null : fWhatsapp.trim(),
         notifyEmail: fNotifyEmail.trim() === '' ? null : fNotifyEmail.trim(),
         planPriceOverrides: priceOverrides,
+        deepgramPricePerMinute: fDeepgramPrice.trim() === '' ? null : Number(fDeepgramPrice),
       }
       // v0.5.52 — Only send key overrides when the operator typed
       // something (a non-empty paste sets the override, the literal
@@ -1110,6 +1134,7 @@ export function AdminModal() {
       setFDeepgramKey('')
       // v0.7.157 — Reflect canonical persisted cloud admin code.
       setFCloudAdminCode(j.config.cloudAdminCode ?? '')
+      setFDeepgramPrice(j.config.deepgramPricePerMinute != null ? String(j.config.deepgramPricePerMinute) : '')
       // v0.7.29 — Refresh from canonical server response so the
       // checkbox + floor reflect what's actually persisted (e.g. the
       // server may have clamped the floor to 1..100).
@@ -2156,6 +2181,19 @@ export function AdminModal() {
             <section>
               <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
                 <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Recent Activations ({data.activationCodes.length})</div>
+                {(() => {
+                  const price = cfg?.config.deepgramPricePerMinute ?? cfg?.defaults.deepgramPricePerMinute ?? 0.0077
+                  const totalMs = data.activationCodes.reduce((s, a) => s + (a.deepgramUsageMs ?? 0), 0)
+                  if (totalMs <= 0) return null
+                  return (
+                    <span
+                      className="text-[10px] font-mono text-muted-foreground"
+                      title="Total estimated Deepgram AI-detection cost across all codes"
+                    >
+                      AI ≈ {fmtUsageCost(totalMs, price)} · {fmtUsageMinutes(totalMs)} min
+                    </span>
+                  )
+                })()}
                 <Button
                   size="sm" variant="ghost"
                   className={cn('h-7 text-[10px]', actSelectMode && 'bg-primary/10 text-primary')}
@@ -2216,6 +2254,8 @@ export function AdminModal() {
                         <th className="text-left px-2 py-1.5">Days</th>
                         <th className="text-left px-2 py-1.5">For</th>
                         <th className="text-left px-2 py-1.5">Used?</th>
+                        <th className="text-left px-2 py-1.5">AI usage</th>
+                        <th className="text-left px-2 py-1.5">Est. cost</th>
                         <th className="text-left px-2 py-1.5">Generated</th>
                         <th className="text-left px-2 py-1.5">Expires</th>
                         <th className="text-right px-2 py-1.5">Action</th>
@@ -2231,6 +2271,7 @@ export function AdminModal() {
                             ?? a.generatedFor?.email
                             ?? a.generatedFor?.whatsapp
                             ?? (a.generatedFor?.paymentRef ? `ref ${a.generatedFor.paymentRef}` : '—')
+                        const dgPrice = cfg?.config.deepgramPricePerMinute ?? cfg?.defaults.deepgramPricePerMinute ?? 0.0077
                         return (
                           <tr key={a.code} className={cn('border-t border-border hover:bg-card/40', actSelectMode && actSelected.has(a.code) && 'bg-primary/5')}>
                             {actSelectMode && (
@@ -2247,6 +2288,9 @@ export function AdminModal() {
                             <td className="px-2 py-1.5">{a.days}</td>
                             <td className="px-2 py-1.5 max-w-[200px]"><div className="truncate" title={forLabel}>{forLabel}</div></td>
                             <td className="px-2 py-1.5">{a.isUsed ? <span className="text-emerald-400">Yes</span> : <span className="text-amber-400">No</span>}</td>
+                            {/* v0.7.265 — per-user Deepgram AI-detection usage + estimated cost. */}
+                            <td className="px-2 py-1.5 font-mono text-[10px] text-muted-foreground whitespace-nowrap">{a.deepgramUsageMs ? `${fmtUsageMinutes(a.deepgramUsageMs)} min` : '—'}</td>
+                            <td className="px-2 py-1.5 font-mono text-[10px] whitespace-nowrap" title="Estimated Deepgram cost for this user">{a.deepgramUsageMs ? fmtUsageCost(a.deepgramUsageMs, dgPrice) : '—'}</td>
                             {/* v0.7.190-hotfix.1 — operator request: date + time column for audit/record-keeping. */}
                             <td className="px-2 py-1.5 font-mono text-[10px] text-muted-foreground whitespace-nowrap" title={a.generatedAt}>{a.generatedAt ? new Date(a.generatedAt).toLocaleString() : '—'}</td>
                             <td className="px-2 py-1.5 font-mono text-[10px] text-muted-foreground">{a.subscriptionExpiresAt ? new Date(a.subscriptionExpiresAt).toLocaleDateString() : '—'}</td>
@@ -2531,6 +2575,22 @@ export function AdminModal() {
                         className="bg-background border-border text-foreground font-mono"
                       />
                       <p className="text-[10px] text-muted-foreground">Default {cfg.defaults.trialMinutes} min. Range 1–1440. Applies to new installs; existing trial windows keep their original end-time.</p>
+                    </div>
+                    {/* v0.7.265 — Deepgram price/min used to estimate per-user
+                        AI-detection cost in the Records list. */}
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Deepgram price / min (USD)</label>
+                      <Input
+                        type="number"
+                        step="0.0001"
+                        min={0}
+                        max={10}
+                        placeholder={String(cfg.defaults.deepgramPricePerMinute)}
+                        value={fDeepgramPrice}
+                        onChange={(e) => setFDeepgramPrice(e.target.value)}
+                        className="bg-background border-border text-foreground font-mono"
+                      />
+                      <p className="text-[10px] text-muted-foreground">Estimates each user&rsquo;s AI-detection cost in the Records list (usage × rate). Default ${cfg.defaults.deepgramPricePerMinute}/min (Deepgram Nova-3 streaming). Syncs across admin devices.</p>
                     </div>
                   </div>
                 </section>
@@ -2962,6 +3022,11 @@ export function AdminModal() {
                     onClick={() => {
                       setCodesShowBin(binTarget)
                       setCodesFilter(filterTarget as 'all' | AdminCodeStatus)
+                      // v0.7.264 — Clear selection on view switch so a
+                      // stale active-view selection can never become a
+                      // permanent-delete target in the bin (and vice
+                      // versa). Mirrors the Bin toolbar toggle.
+                      setCodesSelected(new Set())
                     }}
                     aria-pressed={active}
                     title={`Show ${label.toLowerCase()} codes`}
@@ -3004,7 +3069,7 @@ export function AdminModal() {
               </select>
               <Button
                 size="sm" variant="outline"
-                onClick={() => setCodesShowBin((v) => !v)}
+                onClick={() => { setCodesShowBin((v) => !v); setCodesSelected(new Set()) }}
                 className={cn(
                   'border-border text-foreground h-8',
                   codesShowBin && 'bg-rose-500/10 border-rose-500/40 text-rose-200',
@@ -3041,8 +3106,9 @@ export function AdminModal() {
                 only when at least one row is ticked. Edit (single) opens
                 the existing renew dialog so the operator doesn't have
                 to scroll back to the row; Delete (N) bulk-soft-deletes
-                into the bin via the new endpoint. */}
-            {codesSelectMode && codesSelected.size > 0 && (
+                into the bin via the new endpoint. Hidden while viewing
+                the bin — the bin has its own permanent-delete bar. */}
+            {!codesShowBin && codesSelectMode && codesSelected.size > 0 && (
               <section className="flex items-center gap-2 rounded border border-primary/40 bg-primary/5 px-3 py-2 text-[11px]">
                 <span className="font-semibold">{codesSelected.size} code{codesSelected.size === 1 ? '' : 's'} selected</span>
                 <div className="flex-1" />
@@ -3299,12 +3365,51 @@ export function AdminModal() {
                   <span>Bin · auto-purges 90 days after delete (recoverable until then)</span>
                   <span className="text-muted-foreground normal-case">{codesData.bin.length} item(s)</span>
                 </div>
+                {/* v0.7.264 — Bin bulk-action bar. Operator request:
+                    "Select all + Delete" for the bin. Permanent (hard)
+                    delete because bin rows are already soft-deleted. */}
+                {codesSelectMode && codesSelected.size > 0 && (
+                  <div className="flex items-center gap-2 px-3 py-2 border-b border-rose-500/30 bg-rose-500/5 text-[11px]">
+                    <span className="font-semibold text-rose-200">{codesSelected.size} selected</span>
+                    <div className="flex-1" />
+                    <Button
+                      size="sm" className="h-7 text-[10px] bg-rose-600 hover:bg-rose-500"
+                      onClick={() => askConfirm({
+                        title: `Permanently delete ${codesSelected.size} code${codesSelected.size === 1 ? '' : 's'}?`,
+                        description: 'This cannot be undone. The activation rows will be wiped from the audit log forever.',
+                        confirmLabel: `Delete ${codesSelected.size} forever`,
+                        destructive: true,
+                        // Defensive: scope to codes that actually exist
+                        // in the bin so a stale selection cannot purge an
+                        // active-view code even if a future code path
+                        // forgets to clear the selection on view switch.
+                        onConfirm: () => bulkDelete(
+                          'activation',
+                          codesData.bin.map((r) => r.code).filter((c) => codesSelected.has(c)),
+                          { permanent: true },
+                        ),
+                      })}
+                    ><Trash className="h-3 w-3 mr-1" />Delete forever ({codesSelected.size})</Button>
+                  </div>
+                )}
                 {codesData.bin.length === 0 ? (
                   <div className="py-8 text-center text-muted-foreground text-xs">Bin is empty.</div>
                 ) : (
                   <table className="w-full text-[11px]">
                     <thead className="text-[9px] uppercase tracking-wider text-muted-foreground bg-background/30">
                       <tr>
+                        {codesSelectMode && (
+                          <th className="px-2 py-1.5 w-8 text-center">
+                            <Checkbox
+                              checked={codesData.bin.length > 0 && codesData.bin.every((r) => codesSelected.has(r.code))}
+                              onCheckedChange={(c) => {
+                                if (c) setCodesSelected(new Set(codesData.bin.map((r) => r.code)))
+                                else setCodesSelected(new Set())
+                              }}
+                              aria-label="Select all binned codes"
+                            />
+                          </th>
+                        )}
                         <th className="text-left px-2 py-1.5">Code</th>
                         <th className="text-left px-2 py-1.5">Plan</th>
                         <th className="text-left px-2 py-1.5">Buyer</th>
@@ -3320,7 +3425,16 @@ export function AdminModal() {
                           ? Math.max(0, Math.ceil(r.binMsRemaining / 86400000))
                           : null
                         return (
-                          <tr key={r.code}>
+                          <tr key={r.code} className={cn(codesSelectMode && codesSelected.has(r.code) && 'bg-rose-500/5')}>
+                            {codesSelectMode && (
+                              <td className="px-2 py-1.5 text-center align-top">
+                                <Checkbox
+                                  checked={codesSelected.has(r.code)}
+                                  onCheckedChange={() => setCodesSelected((s) => toggleSet(s, r.code))}
+                                  aria-label={`Select code ${r.code}`}
+                                />
+                              </td>
+                            )}
                             <td className="px-2 py-1.5 font-mono text-[10px] break-all">{r.code}</td>
                             <td className="px-2 py-1.5 text-[10px]">{r.planCode} · {r.days}d</td>
                             <td className="px-2 py-1.5 text-[10px]">

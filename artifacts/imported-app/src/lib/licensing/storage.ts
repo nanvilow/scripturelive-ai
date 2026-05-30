@@ -139,6 +139,18 @@ export interface ActivationCodeRecord {
    *  pointing at the original activation moment. `usedAt` continues
    *  to track the MOST RECENT activation. */
   originalActivatedAt?: string
+
+  // ─── v0.7.265 — Per-user Deepgram AI-detection usage ─────────────
+  /** Cumulative milliseconds of audio this code has streamed through
+   *  Deepgram for AI verse detection. Accumulated ONLY on the cloud
+   *  install (the single source of truth): each desktop reports the
+   *  audio it streamed for the code currently powering its
+   *  subscription via /api/telemetry/usage, and the cloud adds the
+   *  delta here. The admin dashboard multiplies (ms / 60000) by the
+   *  owner-set `deepgramPricePerMinute` to show estimated cost per
+   *  user. Cross-device admin merge takes the MAX so a stale pull on
+   *  a secondary admin device never regresses the running total. */
+  deepgramUsageMs?: number
 }
 
 export interface NotificationRecord {
@@ -233,6 +245,11 @@ export interface RuntimeConfig {
    *  Strictly per-PC — never synced to the cloud (would create a
    *  trust loop). */
   cloudAdminCode?: string
+  /** v0.7.265 — Owner-set Deepgram price per minute (USD) used by the
+   *  admin dashboard to estimate AI-detection cost per user. Defaults
+   *  to 0.0077 (Nova-3 streaming pay-as-you-go) when unset. Shared
+   *  admin setting — syncs cross-device like planPriceOverrides. */
+  deepgramPricePerMinute?: number
   /** Last time the owner saved this config (ISO) — for audit display */
   updatedAt?: string
 }
@@ -1521,6 +1538,8 @@ export interface AdminCodeRow {
   lastSeenIp?: string
   lastSeenLocation?: string
   softDeletedAt?: string
+  /** v0.7.265 — Cumulative Deepgram audio streamed (ms) for this code. */
+  deepgramUsageMs?: number
   // computed
   status: CodeStatus
   /** Days remaining (active codes) or days since expiry (negative).
@@ -1571,11 +1590,38 @@ export function listAdminCodes(opts: { includeDeleted?: boolean } = {}): AdminCo
         lastSeenIp: a.lastSeenIp,
         lastSeenLocation: a.lastSeenLocation,
         softDeletedAt: a.softDeletedAt,
+        deepgramUsageMs: a.deepgramUsageMs,
         status,
         daysRemaining,
         binMsRemaining,
       }
     })
+}
+
+/** v0.7.265 — Accumulate Deepgram streaming usage (milliseconds of
+ *  audio streamed) onto an activation code's running total. Called on
+ *  the CLOUD by the /api/telemetry/usage ingest route when a desktop
+ *  install reports the audio it streamed for the code currently
+ *  powering its subscription.
+ *
+ *  Single-accumulator model: ONLY the cloud increments (desktops
+ *  report disjoint deltas); the cross-device admin merge takes MAX so
+ *  a stale pull from a secondary admin device never regresses it.
+ *
+ *  A single report is capped at 30 minutes so a client clock glitch
+ *  can't balloon the ledger (desktops report every ~60 s).
+ *
+ *  Returns true when a matching code was found and incremented. */
+export function addDeepgramUsage(code: string, deltaMs: number): boolean {
+  if (!code) return false
+  if (!Number.isFinite(deltaMs) || deltaMs <= 0) return false
+  const add = Math.min(deltaMs, 30 * 60 * 1000)
+  const f = load()
+  const a = f.activationCodes.find((r) => r.code === code)
+  if (!a) return false
+  a.deepgramUsageMs = (a.deepgramUsageMs ?? 0) + add
+  persist(f)
+  return true
 }
 
 /** Cancel an activation code. If it's currently the active
@@ -2473,6 +2519,13 @@ export function applyAdminLedgerSnapshot(snap: AdminLedgerSnapshot): number {
     const incXfer = inc.transferCount ?? 0
     const curXfer = cur.transferCount ?? 0
     if (incXfer > curXfer) { cur.transferCount = incXfer; mutated = true }
+
+    // v0.7.265 — Deepgram usage is a monotonic accumulator. Take the
+    // MAX so a secondary admin device that pulled a stale snapshot can
+    // never regress the cloud's authoritative running total.
+    const incUsage = inc.deepgramUsageMs ?? 0
+    const curUsage = cur.deepgramUsageMs ?? 0
+    if (incUsage > curUsage) { cur.deepgramUsageMs = incUsage; mutated = true }
 
     // v0.7.166 — Activation LIFECYCLE fields (isUsed / usedAt /
     // subscriptionExpiresAt) MUST propagate cross-device. The

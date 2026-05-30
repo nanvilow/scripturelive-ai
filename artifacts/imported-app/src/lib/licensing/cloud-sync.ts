@@ -75,7 +75,17 @@ export interface AdminLedgerSnapshot {
   deletedNotificationIds?: { id: string; deletedAt: string }[]
 }
 
-const DEFAULT_CLOUD_BASE = 'https://scripturelive.replit.app'
+// v0.7.264 — Completes the v0.7.256 Hetzner migration. v0.7.256 flipped
+// the transcribe/telemetry defaults AND the cloud-sync-test DIAGNOSTIC
+// route to cloud.scriptureliveai.com, but MISSED this file — the one
+// that performs the ACTUAL admin-ledger pull/push, activation claim, and
+// payment mirror. Desktop installs (where SCRIPTURELIVE_CLOUD_BASE is
+// unset) therefore read/wrote real admin records against the dead
+// scripturelive.replit.app while the "Cross-device sync: connected"
+// badge (driven by cloud-sync-test) pointed at Hetzner — so records
+// showed differently on every PC. Default now matches the canonical
+// store. Env override (read inline in cloudBase() per request) still wins.
+const DEFAULT_CLOUD_BASE = 'https://cloud.scriptureliveai.com'
 
 /** Resolve the cloud base URL. Empty string = disabled (dev). */
 function cloudBase(): string | null {

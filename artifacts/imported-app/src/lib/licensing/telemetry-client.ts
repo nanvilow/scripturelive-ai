@@ -110,6 +110,23 @@ export function pingHeartbeat(p: HeartbeatPayload): Promise<void> {
   return postFireAndForget('/heartbeat', { sessionId: SESSION_ID, ...p })
 }
 
+// v0.7.265 — Deepgram AI-detection usage report. The desktop streams
+// audio to Deepgram in the renderer; the local /api/telemetry/deepgram-
+// usage route resolves the active code and forwards the streamed-ms
+// delta here, to the CLOUD accumulator (/api/telemetry/usage), which
+// adds it to the per-code ledger total powering the admin dashboard's
+// per-user cost columns. Fire-and-forget like every other telemetry.
+export interface DeepgramUsagePayload {
+  installId: string
+  /** Activation code currently powering the reporting device. */
+  code?: string
+  /** Milliseconds of audio streamed since the last report. */
+  deltaMs: number
+}
+export function reportDeepgramUsage(p: DeepgramUsagePayload): Promise<void> {
+  return postFireAndForget('/usage', p)
+}
+
 export interface ErrorPayload {
   installId: string
   code?: string

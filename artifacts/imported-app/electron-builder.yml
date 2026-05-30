@@ -1,6 +1,32 @@
 appId: ai.scripturelive.desktop
 productName: ScriptureLive AI
 copyright: ScriptureLive AI
+# v0.7.250 — Inject productName into the bundled package.json inside
+# the asar. Without this, the package.json shipped inside the app is
+# the original workspace one with name="@workspace/imported-app" and
+# NO productName field, so:
+#   (a) Electron's runtime app.getName() resolves to the npm scope
+#       name "@workspace/imported-app" before electron/main.ts L178
+#       app.setName() patches it — anything that reads the name before
+#       that line (e.g. very-early crash handlers) sees the scope name.
+#   (b) electron-builder's rcedit step that stamps PE VersionInfo
+#       FileDescription/ProductName on Windows occasionally falls back
+#       to info.metadata.name (= "@workspace/imported-app") instead of
+#       info.config.productName under pnpm workspace hoisting, producing
+#       an .exe whose Task Manager group label reads "Electron" (the
+#       built-in default when the productName lookup chain returns an
+#       invalid scoped name). Operator screenshot v0.7.249 showed
+#       "Electron (8)" + Electron atom icon in Win11 Task Manager while
+#       every other broadcast tool (Wirecast, OBS Studio, Brave) showed
+#       its branded name + logo. extraMetadata mutates the package.json
+#       that ships INSIDE the app AND is what electron-builder reads
+#       for the rcedit step, so both surfaces now resolve to
+#       "ScriptureLive AI" consistently. Belt-and-suspenders pair with
+#       the productName field also being added directly to
+#       artifacts/imported-app/package.json — either alone usually
+#       works, both together is bulletproof.
+extraMetadata:
+  productName: ScriptureLive AI
 # Pinned because electron-builder cannot reliably auto-detect the
 # electron version in a pnpm workspace (the package is hoisted to the
 # repo root, not under artifacts/imported-app/node_modules), which
@@ -129,11 +155,48 @@ extraResources:
   - from: build-resources/ndi
     to: ndi
     filter: ["Processing.NDI.Lib.x64.dll"]
+  # v0.7.253 — Ship build-resources/icon.ico into resources/icon.ico so
+  # electron/main.ts can pass it as BrowserWindow `icon:` at runtime via
+  # `process.resourcesPath`. This is the load-bearing fix for the Win11
+  # Task Manager "Electron (N)" + atom-icon group label that survived
+  # v0.7.251 (AUMID registry + afterPack rcedit) and v0.7.252.
+  #
+  # Root cause: BrowserWindow used to point its `icon:` at
+  # `resources/app/.next/standalone/.../public/icon-512.png` — a path that
+  # only sometimes exists (depends on output: 'standalone' tracing), and
+  # even when it does, PNG icons on Windows convert flakily for the
+  # window-class icon Task Manager renders for the running process group.
+  # When the PNG load silently fails Electron falls back to the EXE's PE
+  # icon resource, which is the Electron atom (because afterPack's
+  # JSON-args rcedit invocation may also silently drop --set-icon).
+  # Both fallbacks fail together, producing "Electron + atom".
+  #
+  # Fix: ship the canonical multi-resolution .ico from build-resources/
+  # to a stable, well-known path inside resources/, then point
+  # BrowserWindow at it. Task Manager reads BrowserWindow.icon directly
+  # (via WM_SETICON), so the running process group icon stops depending
+  # on whether afterPack's --set-icon arg landed correctly.
+  #
+  # GUARD-RAIL: do NOT change the destination filename ('icon.ico') or
+  # path ('icon.ico' at resources/ root) without updating electron/main.ts
+  # BrowserWindow icon: in lockstep. Canonical pre-ship grep:
+  # `rg "icon\.ico" artifacts/imported-app/electron-builder.yml
+  # artifacts/imported-app/electron/main.ts`
+  - from: build-resources/icon.ico
+    to: icon.ico
 # A small hook that runs after electron-builder finishes signing each platform
 # package. For macOS it submits the .app to Apple's notarytool when notarization
 # credentials are present in the environment. For all other platforms (and when
 # credentials are missing) it is a no-op.
 afterSign: build-resources/notarize.js
+# v0.7.251 — afterPack hook re-stamps the inner ScriptureLive AI.exe
+# with rcedit (FileDescription, ProductName, CompanyName, InternalName,
+# OriginalFilename, icon). Belt-and-suspenders against the Win11 Task
+# Manager "Electron (N)" + atom icon escalation that survived v0.7.247
+# + v0.7.250. The hook is idempotent, Windows-only, and explained in
+# heavy detail at the top of the file. Pair with the AUMID registry
+# writes added to build-resources/installer.nsh in the same release.
+afterPack: build-resources/afterPack.js
 win:
   target:
     - target: nsis
@@ -149,6 +212,21 @@ win:
   # and gets a 404 — so auto-update silently fails. Hardcoding a
   # slug-safe name keeps both names identical.
   artifactName: "ScriptureLive-AI-${version}-Setup-${arch}.${ext}"
+  # v0.7.241 — `signAndEditExecutable: false` REMOVED. The v0.7.226 comment
+  # claimed the GH Actions Windows runner "ignores this flag" but that was
+  # wrong: electron-builder applies the YAML config on every platform, and
+  # when this flag is false it skips BOTH signing AND PE resource editing
+  # (which is what rcedit uses to stamp the custom icon into the EXE's
+  # PE .rsrc section). Result: every NSIS build from v0.7.226 → v0.7.240
+  # shipped an EXE whose embedded icon was still the default Electron atom,
+  # so Windows displayed the atom on the Desktop shortcut even though
+  # build-resources/icon.ico contains the round ScriptureLive AI logo at
+  # all 7 sizes (16/32/48/64/96/128/256). The workaround was for the
+  # local Replit sandbox `pnpm package` path which can't run rcedit-ia32.exe
+  # (no wine i386 ABI) — but that sandbox path is already a one-way trapdoor
+  # per replit.md (strip:workspace-symlinks), so we don't need the YAML
+  # escape hatch any more. GH Actions Windows runner has native rcedit + a
+  # signtool that work fine with the default `signAndEditExecutable: true`.
   # Authenticode code signing.
   # electron-builder reads the certificate from these standard env vars:
   #   CSC_LINK            path to .pfx, base64-encoded .pfx contents, or https URL
@@ -178,7 +256,13 @@ nsis:
   # reliably across every Windows version we ship to.
   oneClick: false
   perMachine: false
-  allowToChangeInstallationDirectory: false
+  # v0.7.249 — Enable Choose Install Location page (OBS/Wirecast/vMix
+  # parity). Operators on stage PCs frequently install to a fixed path
+  # (e.g. D:\Worship\ScriptureLive AI) so the wizard now exposes the
+  # Browse… dialog like every other professional broadcast tool. Default
+  # stays $LOCALAPPDATA per-user install — no UAC unless the operator
+  # picks a system path themselves.
+  allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
   # Show the EULA before install. license.txt sits beside this YAML

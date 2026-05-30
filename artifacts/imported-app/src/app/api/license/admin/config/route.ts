@@ -29,7 +29,13 @@ interface Defaults {
   notifyEmail: string
   whatsappNumber: string
   planPrices: Record<string, number>
+  /** v0.7.265 — Deepgram price/min (USD) used for AI-cost estimates. */
+  deepgramPricePerMinute: number
 }
+
+// v0.7.265 — Nova-3 streaming pay-as-you-go list price. Owner can
+// override in Settings to their negotiated/actual rate.
+const DEFAULT_DEEPGRAM_PRICE_PER_MINUTE = 0.0077
 
 function defaults(): Defaults {
   const planPrices: Record<string, number> = {}
@@ -41,6 +47,7 @@ function defaults(): Defaults {
     notifyEmail: NOTIFICATION_EMAIL,
     whatsappNumber: NOTIFICATION_WHATSAPP,
     planPrices,
+    deepgramPricePerMinute: DEFAULT_DEEPGRAM_PRICE_PER_MINUTE,
   }
 }
 
@@ -77,6 +84,8 @@ interface SavePayload {
   /** v0.7.153 — Cross-device admin sync credential (the cloud
    *  install's masterCode). Per-PC; never leaves this device. */
   cloudAdminCode?: string | null
+  /** v0.7.265 — Deepgram price per minute (USD) for AI cost estimates. */
+  deepgramPricePerMinute?: number | null
 }
 
 function clean(v: unknown): unknown {
@@ -149,6 +158,21 @@ export async function POST(req: NextRequest) {
   if ('momoNumber' in body) patch.momoNumber = clean(body.momoNumber)
   if ('whatsappNumber' in body) patch.whatsappNumber = clean(body.whatsappNumber)
   if ('notifyEmail' in body) patch.notifyEmail = clean(body.notifyEmail)
+
+  // v0.7.265 — Deepgram price/min override (USD). null clears it (UI
+  // falls back to the compiled default); a finite >= 0 number sets it,
+  // clamped to a sane 0..10 USD/min band.
+  if ('deepgramPricePerMinute' in body) {
+    if (body.deepgramPricePerMinute === null) {
+      patch.deepgramPricePerMinute = null
+    } else if (
+      typeof body.deepgramPricePerMinute === 'number' &&
+      Number.isFinite(body.deepgramPricePerMinute) &&
+      body.deepgramPricePerMinute >= 0
+    ) {
+      patch.deepgramPricePerMinute = Math.min(10, body.deepgramPricePerMinute)
+    }
+  }
 
   if ('trialMinutes' in body) {
     if (body.trialMinutes === null) {
